@@ -61,7 +61,9 @@ jobs:
           check gx-kinds gx-layout gx-render-svg gx-mcp gx-app
           check gx-layout gx-kinds gx-render-svg gx-mcp gx-app
           check gx-render-svg gx-layout gx-kinds gx-mcp gx-app
-          if grep -rn '"graph"' crates/gx-mcp/src | grep -v '^\s*//' ; then
+          # gx-mcp reaches a kind only through the registry (PRD §9.1):
+          # it must not match on the name of a kind.
+          if grep -rnE 'match +[^=]*"(graph|er|flowchart|sequence|class|state|component|dataflow|block|api|trust|deployment|network|neural|tree|mindmap|orgchart|sankey|gitgraph|timeline|swimlane|activity|journey|gantt)"' crates/gx-mcp/src crates/gx-app/src; then
             echo "::error::gx-mcp must not match on kind names"
             fail=1
           fi
