@@ -215,6 +215,7 @@ fn every_painted_class_of_the_drawing_has_a_rule_in_the_canvas() {
         include_str!("golden/swimlane-soporte.svg"),
         include_str!("golden/flowchart-approval.svg"),
         include_str!("golden/state-order.svg"),
+        include_str!("golden/dataflow-etl.svg"),
     ];
 
     let mut painted: Vec<String> = Vec::new();

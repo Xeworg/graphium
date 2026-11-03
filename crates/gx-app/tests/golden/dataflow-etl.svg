@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="0.00 0.00 137.04 736.50" width="137.04" height="736.50">
+<style>
+.bg{fill:rgba(27, 27, 27, 1.00)}
+.node-fill{fill:rgba(42, 42, 48, 1.00)}
+.node-stroke{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.node-text{fill:rgba(233, 233, 236, 1.00)}
+.edge-stroke{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.edge-text{fill:rgba(185, 185, 194, 1.00)}
+.accent{fill:rgba(110, 168, 254, 1.00);stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight{stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight-text{fill:rgba(110, 168, 254, 1.00)}
+.emphasis-muted{opacity:0.55}
+.lane-band{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.35;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.lane-label{fill:rgba(185, 185, 194, 1.00)}
+.lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
+.stroke-dashed{stroke-dasharray:6.00 4.00}
+.text{font-family:Inter, sans-serif}
+.arrow-normal{fill:rgba(138, 138, 150, 1.00)}
+.arrow-highlight{fill:rgba(110, 168, 254, 1.00)}
+.arrow-muted{fill:rgba(138, 138, 150, 1.00);opacity:0.55}
+</style>
+<defs>
+<marker id="arrow-normal" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
+<path class="arrow-normal" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00 Z"/>
+</marker>
+</defs>
+<g class="layer-edges">
+<polyline id="m-crm-ingesta" class="edge-stroke" points="68.52,41.50 68.52,90.25 68.52,139.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="105.05" y="90.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">pedidos</text>
+<polyline id="m-crudo-limpieza" class="edge-stroke" points="68.52,319.50 68.52,368.25 68.52,417.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="129.97" y="368.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">pedidos crudos</text>
+<polyline id="m-curado-bi" class="edge-stroke" points="68.52,597.50 68.52,646.25 68.52,695.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="133.90" y="646.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">pedidos curados</text>
+<polyline id="m-ingesta-crudo" class="edge-stroke" points="68.52,180.50 68.52,229.25 68.52,278.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="129.97" y="229.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">pedidos crudos</text>
+<polyline id="m-limpieza-curado" class="edge-stroke" points="68.52,458.50 68.52,507.25 68.52,556.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="133.90" y="507.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">pedidos curados</text>
+</g>
+<g class="layer-nodes">
+<rect id="g-bi" class="node-fill node-stroke shape-box" x="32.77" y="695.00" width="71.50" height="41.50"/>
+<text class="node-text text" x="68.52" y="715.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">tablero</text>
+<rect id="g-crm" class="node-fill node-stroke shape-box" x="40.34" y="0.00" width="56.36" height="41.50"/>
+<text class="node-text text" x="68.52" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">CRM</text>
+<path id="g-crudo" class="node-fill node-stroke shape-cylinder" d="M 3.95 284.00 C 3.95 276.00 133.08 276.00 133.08 284.00 L 133.08 313.50 C 133.08 321.50 3.95 321.50 3.95 313.50 Z"/>
+<path class="node-stroke shape-cylinder" fill="none" d="M 3.95 284.00 C 3.95 292.00 133.08 292.00 133.08 284.00"/>
+<text class="node-text text" x="68.52" y="298.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">pedidos crudos</text>
+<path id="g-curado" class="node-fill node-stroke shape-cylinder" d="M 0.00 562.00 C 0.00 554.00 137.04 554.00 137.04 562.00 L 137.04 591.50 C 137.04 599.50 0.00 599.50 0.00 591.50 Z"/>
+<path class="node-stroke shape-cylinder" fill="none" d="M 0.00 562.00 C 0.00 570.00 137.04 570.00 137.04 562.00"/>
+<text class="node-text text" x="68.52" y="576.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">pedidos curados</text>
+<rect id="g-ingesta" class="node-fill node-stroke shape-rounded" x="31.52" y="139.00" width="74.00" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="68.52" y="159.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">ingesta</text>
+<rect id="g-limpieza" class="node-fill node-stroke shape-rounded" x="28.36" y="417.00" width="80.32" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="68.52" y="437.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">limpieza</text>
+</g>
+</svg>

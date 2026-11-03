@@ -416,6 +416,20 @@ fn limits_of(limits: gx_core::kind::KindLimits) -> LimitsPayload {
 /// The minimal example of a kind (PRD §6.1).
 fn min_example_of(kind: &str) -> Value {
     match kind {
+        "dataflow" => serde_json::json!({
+            "version": 1,
+            "kind": "dataflow",
+            "title": "ETL",
+            "nodes": [
+                { "id": "crm", "label": "CRM", "role": "external" },
+                { "id": "ingesta", "label": "ingesta", "role": "process" },
+                { "id": "crudo", "label": "pedidos crudos", "role": "store" }
+            ],
+            "edges": [
+                { "from": "crm", "to": "ingesta", "label": "pedidos" },
+                { "from": "ingesta", "to": "crudo", "label": "pedidos crudos" }
+            ]
+        }),
         "er" => serde_json::json!({
             "version": 1,
             "kind": "er",
@@ -563,6 +577,14 @@ fn rules_of(kind: &str) -> Vec<String> {
                 "Un evento con `end` es un tramo y `end` tiene que ser posterior a `order`."
                     .to_string(),
             );
+        }
+        "dataflow" => {
+            rules.push(
+                "El `role` de un nodo decide su forma: `process` (redondeado, por defecto), `store` (cilindro), `external` (caja)."
+                    .to_string(),
+            );
+            rules.push("Un flujo no puede ir de un depósito a otro ni de una entidad externa a otra: en el medio va un proceso.".to_string());
+            rules.push("La etiqueta del flujo es el dato que viaja.".to_string());
         }
         "flowchart" => {
             rules.push(
