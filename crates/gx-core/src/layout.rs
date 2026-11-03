@@ -63,5 +63,19 @@ impl LayoutGraph {
 /// A layout engine behind a trait, so the open source dependency stays
 /// isolated (PRD §8.4).
 pub trait LayoutEngine: Send + Sync {
-    fn layout(&self, graph: &IrGraph) -> LayoutGraph;
+    fn layout(&self, graph: &IrGraph, opts: &LayoutOpts) -> LayoutGraph;
+}
+
+/// Options of one layout run (PRD §7.3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LayoutOpts {
+    /// Multiplier of every separation between nodes. The degradation ladder
+    /// of PRD §7.3 tightens the drawing with `0.7`.
+    pub spacing_scale: f64,
+}
+
+impl Default for LayoutOpts {
+    fn default() -> Self {
+        Self { spacing_scale: 1.0 }
+    }
 }

@@ -15,7 +15,7 @@ use serde_json::Value;
 use crate::error::{ErrorCode, ValidationError};
 use crate::ir::{Ir, IrGraph};
 use crate::kind::{self, KindLimits};
-use crate::layout::LayoutEngine;
+use crate::layout::{LayoutEngine, LayoutOpts};
 use crate::render::{Palette, RenderMetrics, RenderOpts, RenderOutcome, SvgRenderer};
 use crate::text::{TextMetrics, TextStyle};
 use crate::tokens::TOKENS;
@@ -92,11 +92,29 @@ pub fn render_json(src: &str, opts: &RenderOpts) -> Result<RenderOutcome, Vec<Va
 
     let mut ir = kind.process_json(&document)?;
 
+    // PRD §7.3, S21: `opts.extract` narrows the graph to one neighbourhood
+    // before anything is measured, so the subgraph is what gets laid out and
+    // the limits are checked against it.
+    if let Some(extract) = &opts.extract {
+        let narrowed = ir
+            .extracted(&extract.around, extract.depth)
+            .map_err(|error| vec![error])?;
+        ir = narrowed;
+    }
+
     if let Ir::Graph(graph) = &mut ir {
+        // Step 1 of the ladder: without edge labels the drawing is smaller
+        // and tighter, so the labels leave before the layout, not after
+        // (PRD §7.3).
+        if opts.degradation.omit_edge_labels {
+            for edge in &mut graph.edges {
+                edge.label = None;
+            }
+        }
         for node in &mut graph.nodes {
-            node.size = engines
-                .metrics
-                .measure(&node.label, &TextStyle::regular(TOKENS.text_size));
+            // The node is its label plus its detail rows, when it has any
+            // (PRD §6.1: a table is a node whose rows are its columns).
+            node.size = measure_node(&*engines.metrics, node, opts.degradation.no_fine_kerning);
         }
     }
 
@@ -111,7 +129,10 @@ pub fn render_json(src: &str, opts: &RenderOpts) -> Result<RenderOutcome, Vec<Va
     check_limits(kind.limits(), graph)?;
 
     let layout_started = Instant::now();
-    let layout = engines.layout.layout(graph);
+    let layout_opts = LayoutOpts {
+        spacing_scale: opts.degradation.spacing_scale,
+    };
+    let layout = engines.layout.layout(graph, &layout_opts);
     let layout_ms = layout_started.elapsed().as_millis() as u64;
 
     let palette = Palette::for_theme(opts.theme);
@@ -132,6 +153,57 @@ pub fn render_json(src: &str, opts: &RenderOpts) -> Result<RenderOutcome, Vec<Va
             svg_bytes,
         },
     })
+}
+
+/// Measures a node: the label, padded, plus the detail rows.
+fn measure_node(
+    metrics: &dyn TextMetrics,
+    node: &crate::ir::IrNode,
+    no_fine_kerning: bool,
+) -> crate::geom::Size {
+    use crate::geom::Size;
+
+    let style = |style: TextStyle| {
+        if no_fine_kerning {
+            style.without_kerning()
+        } else {
+            style
+        }
+    };
+    let label = metrics.measure(
+        &node.label,
+        &style(TextStyle::semibold(TOKENS.text_size)),
+    );
+    let mut width = label.w;
+    let mut height = label.h + 2.0 * TOKENS.node_padding;
+
+    if !node.rows.is_empty() {
+        // The badge of the key occupies its own column, and the note is drawn
+        // against the right edge: the box has to fit badge + name + note.
+        let badge = metrics.measure(
+            "PK, FK",
+            &style(TextStyle::regular(TOKENS.text_size)),
+        );
+        let gap = TOKENS.node_padding;
+        height += TOKENS.border_width;
+        for row in &node.rows {
+            let name = metrics.measure(
+                &row.text,
+                &style(TextStyle::regular(TOKENS.text_size)),
+            );
+            let mut row_width = badge.w + gap + name.w;
+            if let Some(note) = &row.note {
+                let measured_note =
+                    metrics.measure(note, &style(TextStyle::regular(TOKENS.text_size)));
+                row_width += gap + measured_note.w;
+            }
+            width = width.max(row_width);
+            height += name.h;
+        }
+        height += TOKENS.node_padding;
+    }
+
+    Size::new(width + 2.0 * TOKENS.node_padding, height)
 }
 
 /// Enforces the limits declared by the kind (PRD §7.3).

@@ -35,7 +35,11 @@ pub(crate) const MINIMAL: &str = r#"{
 struct StubLayout;
 
 impl LayoutEngine for StubLayout {
-    fn layout(&self, graph: &IrGraph) -> LayoutGraph {
+    fn layout(&self, graph: &IrGraph, _opts: &gx_core::layout::LayoutOpts) -> LayoutGraph {
+        let delay = LAYOUT_DELAY_MS.load(std::sync::atomic::Ordering::SeqCst);
+        if delay > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(delay));
+        }
         let mut nodes = std::collections::BTreeMap::new();
         let mut x = 0.0;
         let mut height = 0.0_f64;
@@ -85,8 +89,27 @@ impl TextMetrics for StubMetrics {
     }
 }
 
-/// A renderer stub: valid, non-empty SVG with the node labels.
+/// A renderer stub: valid, non-empty SVG with the labels of nodes and edges.
 struct StubRenderer;
+
+/// When set, the stub renderer pads its SVG past the byte budget of
+/// PRD §7.3, so the cut of the ladder can be tested without a real
+/// 2 MB document.
+static OVERSIZE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Makes the stub renderer produce an SVG past the budget (or not).
+pub(crate) fn set_oversize(on: bool) {
+    OVERSIZE.store(on, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// How long the layout stub takes, in milliseconds. A slow layout is the
+/// only way to miss the deadline of PRD §7.3 without a huge diagram.
+static LAYOUT_DELAY_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Makes the next layouts of the stub take `ms` milliseconds (0: instant).
+pub(crate) fn set_layout_delay(ms: u64) {
+    LAYOUT_DELAY_MS.store(ms, std::sync::atomic::Ordering::SeqCst);
+}
 
 impl SvgRenderer for StubRenderer {
     fn render(&self, ir: &Ir, layout: &LayoutGraph, _palette: &Palette) -> String {
@@ -103,7 +126,17 @@ impl SvgRenderer for StubRenderer {
                 ));
             }
         }
+        // The edge labels: a renderer that hides them is the first step of
+        // the degradation ladder (PRD §7.3).
+        for edge in &graph.edges {
+            if let Some(label) = &edge.label {
+                svg.push_str(&format!("<text class=\"edge-label\">{label}</text>"));
+            }
+        }
         svg.push_str("</svg>");
+        if OVERSIZE.load(std::sync::atomic::Ordering::SeqCst) {
+            svg.push_str(&"<".repeat(tools::SVG_BUDGET_BYTES));
+        }
         svg
     }
 }
@@ -130,6 +163,8 @@ static RENDER_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 fn prepare() {
     diagram_store().reset_for_tests();
     tools::set_render_hook(None);
+    set_oversize(false);
+    set_layout_delay(0);
     install_stub_engines();
 }
 

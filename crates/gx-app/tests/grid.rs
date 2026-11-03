@@ -71,10 +71,14 @@ fn the_stylesheet_uses_the_same_numbers() {
     // The tile has to be a multiple of the period of the pattern: with the
     // tile at the size of the viewport the mesh breaks into strips while
     // the camera moves, and a tile that does not scale breaks the same way
-    // when the camera zooms out.
+    // when the camera zooms out. It is rectangular because the period along
+    // the rows depends on the angle (see `the_tile_keeps_the_mesh_seamless`).
+    // The whitespace of the declaration does not matter; the rule does.
+    let flat: String = css.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        css.contains(
-            "calc(var(--grid-diagonal) * var(--zoom)) calc(var(--grid-diagonal) * var(--zoom))"
+        flat.contains(
+            "calc(var(--grid-diagonal) * var(--grid-tan) * var(--zoom)) \
+             calc(var(--grid-diagonal) * var(--zoom))"
         ),
         "the tile of the grid must be one cell of the mesh, scaled with the camera"
     );
@@ -128,5 +132,66 @@ fn the_frontend_keeps_the_sine_and_the_cosine_in_sync() {
     assert!(
         js.contains("--zoom"),
         "the frontend has to publish the zoom: the tile of the grid scales with it"
+    );
+}
+
+/// The period of the mesh along a row, in plan units: the perpendicular step
+/// between two lines divided by the cosine of the inclination.
+fn period_along_rows(degrees: f64, separation: f64) -> f64 {
+    let theta = degrees * PI / 180.0;
+    separation * theta.sin() / theta.cos()
+}
+
+/// The period of the mesh along a column, in plan units.
+fn period_along_columns(separation: f64) -> f64 {
+    separation
+}
+
+fn is_a_multiple(length: f64, period: f64) -> bool {
+    let ratio = length / period;
+    (ratio - ratio.round()).abs() < 1e-6
+}
+
+/// The angle is a setting (RF25), so the tile has to keep the mesh seamless
+/// for every angle the panel offers, not only for the 45 degrees of the
+/// preset. A square tile of side `D` is seamless only when `cot(angle)` is a
+/// whole number: it works at 45 degrees and breaks at 20, 30 or 60.
+/// `D * tan(angle)` by `D` is seamless at every angle and is the same square
+/// at 45 degrees.
+#[test]
+fn the_tile_keeps_the_mesh_seamless_at_every_angle() {
+    for degrees in [15.0, 20.0, 30.0, 45.0, 60.0, 75.0] {
+        let theta = degrees * PI / 180.0;
+        let rectangle_width = DIAGONAL * theta.tan();
+        let rectangle_height = DIAGONAL;
+
+        assert!(
+            is_a_multiple(rectangle_width, period_along_rows(degrees, DIAGONAL)),
+            "the rectangular tile does not tile the rows at {degrees} degrees"
+        );
+        assert!(
+            is_a_multiple(
+                rectangle_height,
+                period_along_columns(DIAGONAL)
+            ),
+            "the rectangular tile does not tile the columns at {degrees} degrees"
+        );
+
+        let square_is_seamless = is_a_multiple(DIAGONAL, period_along_rows(degrees, DIAGONAL));
+        let cotangent_is_whole = {
+            let cotangent = 1.0 / theta.tan();
+            (cotangent - cotangent.round()).abs() < 1e-6
+        };
+        assert_eq!(
+            square_is_seamless, cotangent_is_whole,
+            "the square tile is seamless exactly when cot(angle) is whole ({degrees} degrees)"
+        );
+    }
+
+    // The proof that the shape of the tile was not arbitrary: at 20 degrees
+    // the square is off by more than a pixel and the human would see a seam.
+    assert!(
+        !is_a_multiple(DIAGONAL, period_along_rows(20.0, DIAGONAL)),
+        "a square tile has to break at 20 degrees"
     );
 }

@@ -5,11 +5,14 @@
  * diagonal lines, so the thickness stays 1 screen pixel while the
  * separation scales with the zoom (PRD §7.2, decision S23).
  *
- * Geometry of the cells: the two families deviate 32 degrees from the
- * vertical (58 and 122 degrees in CSS), so the lines are steep and the
- * cells are tall rhombi. Every family has the same perpendicular step, so
- * all the cells are congruent: the rhombi have equal sides and their major
- * (vertical) diagonal measures 59 px.
+ * Geometry of the cells: the two families deviate the same angle from the
+ * vertical, one to each side, so all the cells are congruent rhombi with
+ * their major (vertical) diagonal measuring the separation the human chose
+ * (59 px in the `plano` preset). The angle is a setting (RF25): the frontend
+ * publishes it as `--grid-angle` with its sine and cosine, and recomputes
+ * the perpendicular step from it. The numbers below are the defaults of the
+ * `plano` preset, which is also what the plan paints before the first
+ * `graphium://settings` arrives.
  */
 
 :root {
@@ -25,6 +28,10 @@
      --grid-angle, so RF25 can change the angle without touching the CSS. */
   --grid-sin: 0.7071;
   --grid-cos: 0.7071;
+  /* The tangent of the angle, published with the angle: the tile of the
+     mesh is `diagonal * tan(angle)` wide and `diagonal` tall, which is what
+     keeps the lattice seamless at every angle (see grid.rs). */
+  --grid-tan: 1;
   /* The perpendicular step between two lines of the same family:
      diagonal * sin(angle). */
   --grid-step: 41.72px;
@@ -37,6 +44,13 @@
   --zoom: 1;
   --accent: #6ea8fe;
   --text: #e9e9ec;
+  /* Chrome of the window: the settings panel, the ghost box and the inline
+     code of the empty state. They follow the theme, like the drawings. */
+  --surface: #232329;
+  --surface-border: #3a3a44;
+  --surface-shadow: rgba(0, 0, 0, 0.45);
+  --hairline: rgba(255, 255, 255, 0.35);
+  --code-bg: rgba(255, 255, 255, 0.08);
 
   /* Palette of the plan (PRD §8.5.2). The SVG carries the same tokens as
      CSS classes; in the canvas the colors come from here, not from the
@@ -49,8 +63,11 @@
   --edge-text: #b9b9c2;
 }
 
-/* The `claro` preset is a real theme, not a white background (PRD §8.5.2). */
-[data-theme="claro"] {
+/* The light theme (RF22, S18): a real theme, not a white background. The
+ * nodes, their labels and the arrows keep their contrast, so the drawing is
+ * still readable. The name is `light`, the name the settings file uses; the
+ * page paints it with `data-theme` on the root element. */
+[data-theme="light"] {
   --bg: #f7f7f8;
   --grid-color: rgba(0, 0, 0, 0.09);
   --node-fill: #ffffff;
@@ -60,6 +77,11 @@
   --edge-text: #4a4a54;
   --accent: #2f6fd0;
   --text: #1b1b1f;
+  --surface: #ffffff;
+  --surface-border: #d3d3db;
+  --surface-shadow: rgba(20, 20, 30, 0.18);
+  --hairline: rgba(0, 0, 0, 0.3);
+  --code-bg: rgba(0, 0, 0, 0.06);
 }
 
 /* The tokens of the diagram, applied over the classes of the SVG.
@@ -91,6 +113,26 @@
 .graphium .accent {
   fill: var(--accent);
   stroke: var(--accent);
+}
+
+/* Rows of a table and the crow's foot of a relation (PRD §6.1). */
+.graphium .row-badge,
+.graphium .row-note {
+  fill: var(--edge-text);
+}
+
+.graphium .row-key {
+  font-weight: 600;
+}
+
+.graphium .row-nullable {
+  opacity: 0.75;
+}
+
+.graphium .cardinality {
+  fill: none;
+  stroke: var(--edge-stroke);
+  stroke-width: 1px;
 }
 
 * {
@@ -153,7 +195,8 @@ body {
      breaks into strips while the camera moves, and a tile that does not
      scale breaks the same way when the camera zooms out. */
   background-size:
-    calc(var(--grid-diagonal) * var(--zoom)) calc(var(--grid-diagonal) * var(--zoom));
+    calc(var(--grid-diagonal) * var(--grid-tan) * var(--zoom))
+      calc(var(--grid-diagonal) * var(--zoom));
   background-position:
     calc(var(--grid-cos) * var(--shift-a)) calc(-1 * var(--grid-sin) * var(--shift-a)),
     calc(var(--grid-cos) * var(--shift-b)) calc(var(--grid-sin) * var(--shift-b));
@@ -208,7 +251,7 @@ body {
 
 .empty code {
   font-family: ui-monospace, SFMono-Regular, monospace;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--code-bg);
   padding: 1px 5px;
   border-radius: 4px;
 }
@@ -223,6 +266,9 @@ body {
   align-items: flex-start;
   gap: 12px;
   padding: 10px 12px;
+  /* The banner reaches the gear in the top-right corner: it stops short of
+     it so its close button stays clickable. */
+  padding-right: 56px;
   background: #3a1d1d;
   border-bottom: 1px solid #7a3434;
   font-size: 13px;
@@ -269,11 +315,202 @@ body {
   transform: translate(-50%, -50%);
   width: 320px;
   height: 180px;
-  border: 1px dashed rgba(255, 255, 255, 0.35);
+  border: 1px dashed var(--hairline);
   border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
   opacity: 0.7;
   pointer-events: none;
+}
+
+/* The settings of the plan (PRD §7.1 RF25, S19): the gear, top-right of the
+ * plan, and the panel it opens. Both are siblings of `#plan`, never children:
+ * the wheel and the drag of the camera listen on the plan, so a control over
+ * it can never steal them. */
+.settings-toggle {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 30;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.settings-toggle:hover,
+.settings-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.settings-panel {
+  position: fixed;
+  top: 52px;
+  right: 12px;
+  z-index: 30;
+  width: 252px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px var(--surface-shadow);
+  font-size: 13px;
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.settings-close {
+  padding: 0 4px;
+  font-size: 16px;
+  line-height: 1;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.settings-close:hover {
+  opacity: 1;
+}
+
+.settings-field {
+  display: grid;
+  grid-template-columns: 80px 1fr 46px;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-field label {
+  opacity: 0.85;
+}
+
+.settings-field input[type="color"] {
+  width: 100%;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--surface-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.settings-field input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.settings-field input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+.settings-field input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-field input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-value {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  text-align: right;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-theme {
+  margin: 0;
+  padding: 0;
+  border: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-theme legend {
+  float: left;
+  margin-right: 2px;
+  padding: 0;
+  opacity: 0.85;
+}
+
+.settings-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.settings-radio input {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 2px;
+  border-top: 1px solid var(--surface-border);
+}
+
+.settings-preset {
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: none;
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.settings-preset:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Every control of the panel is reachable and visible with the keyboard. */
+.settings-toggle:focus-visible,
+.settings-close:focus-visible,
+.settings-preset:focus-visible,
+.settings-radio input:focus-visible,
+.settings-field input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }

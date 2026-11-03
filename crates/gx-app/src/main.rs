@@ -1,6 +1,6 @@
 //! Graphium binary entry point (PRD §8.6.1).
 
-use gx_app::{help_text, mcp_config, run_solo_ui, run_stdio};
+use gx_app::{help_text, mcp_config_for, run_solo_ui, run_stdio};
 
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -8,7 +8,16 @@ fn main() {
         None => run_solo_ui(),
         Some("--stdio") => run_stdio(),
         Some("mcp-config") => {
-            println!("{}", mcp_config());
+            // `graphium mcp-config [--client <pi|claude|cursor|generic>]`
+            let client = match arguments.get(1).map(String::as_str) {
+                Some("--client") => arguments.get(2).map(String::as_str).unwrap_or("generic"),
+                Some(other) => {
+                    eprintln!("graphium: unknown argument for mcp-config: {other}");
+                    std::process::exit(2);
+                }
+                None => "generic",
+            };
+            println!("{}", mcp_config_for(client));
             Ok(())
         }
         Some("--version") | Some("-V") => {

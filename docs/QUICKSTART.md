@@ -72,3 +72,50 @@ ventana y ninguno abre una segunda.
   responde `rendered: false` y el diagrama se puede exportar igual.
 - **La grilla no se ve**: con zoom menor a 0.3 la grilla se oculta a propósito
   para no tapar los diagramas.
+
+## Para agentes: cuándo usar Graphium y cuándo no
+
+Graphium le manda al cliente MCP sus propias instrucciones: el agente no
+necesita leer este archivo para saber qué hacer. El resumen es este.
+
+**Usalo** cuando una imagen explique mejor que un texto: el flujo de una
+función o módulo, dependencias entre paquetes, el schema de una base de datos
+(tablas, columnas, claves, cardinalidad), o la arquitectura de unos servicios.
+
+**No lo uses** para un dato suelto, una lista de archivos, un diff o un stack
+trace: un diagrama ahí cuesta una ventana y no agrega nada. Nunca dibujes para
+compensar no haber entendido el código: primero se lee.
+
+### El ciclo que el agente sigue
+
+| Paso | Tool | Qué pasa |
+|---|---|---|
+| 1 | `get_diagram_schema` (sin `kind`) | Lista los kinds disponibles con sus límites y un ejemplo. |
+| 2 | `get_diagram_schema` con `kind` | El JSON Schema, las reglas cruzadas, los shapes válidos y los límites. |
+| 3 | `validate_diagram` | Dry-run: la misma validación que el render, **sin abrir nada**. Se itera gratis. |
+| 4 | `render_diagram` | Dibuja en el plano. `rendered: true` es que la ventana confirmó el pintado. |
+| 5 | `update_diagram` | Cambia un diagrama existente con un merge patch RFC 7386, transaccional. |
+
+Después de una compaction, el agente recupera el contexto con
+`list_diagrams` y `get_diagram` en vez de adivinar un `diagram_id`.
+
+### Los códigos de error que hay que mirar
+
+| Código | Qué significa |
+|---|---|
+| `unknown_ref` | Una arista o relación apunta a un id que no existe. |
+| `duplicate_id` | Dos nodos o tablas con el mismo id. |
+| `unknown_field` | Una clave que el schema no admite; el `hint` trae el nombre parecido. |
+| `unknown_kind` | El kind no existe; el `hint` lista los que sí. |
+| `too_large` | El documento supera el límite de su kind. |
+| `stale_revision` | Se mandó una revisión vieja a `update_diagram`. |
+| `not_owner` | El diagrama pertenece a otra sesión MCP. |
+
+### Configurar el cliente
+
+```bash
+graphium mcp-config --client pi      # TOML para Pi
+graphium mcp-config --client claude  # JSON para Claude
+graphium mcp-config --client cursor  # JSON para Cursor
+graphium mcp-config                 # el JSON genérico del PRD
+```

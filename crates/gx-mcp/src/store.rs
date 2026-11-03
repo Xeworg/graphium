@@ -20,12 +20,23 @@ pub struct DiagramSummary {
     /// ISO-8601 timestamp in UTC, e.g. `2026-11-03T12:34:56Z`.
     pub updated_at: String,
     pub session_id: String,
+    /// Monotonic revision: grows on every accepted update (PRD §11.1).
+    pub revision: u64,
+}
+
+/// A diagram with its source document, for `get_diagram` (PRD §11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagramRecord {
+    pub summary: DiagramSummary,
+    /// The source document, kept as JSON text so `get_diagram` returns what
+    /// the agent sent (normalized) instead of a Rust struct.
+    pub document: String,
 }
 
 /// The diagrams of the plan.
 #[derive(Debug, Default)]
 pub struct DiagramStore {
-    diagrams: Mutex<BTreeMap<String, DiagramSummary>>,
+    documents: Mutex<BTreeMap<String, DiagramRecord>>,
     /// Last id handed out. Ids are never reused, so it only grows.
     last_id: AtomicU64,
 }
@@ -41,13 +52,14 @@ impl DiagramStore {
         format_id(number)
     }
 
-    /// Stores a summary stamped with the current UTC time.
+    /// Stores a diagram with its document, stamped with the current UTC time.
     pub fn insert(
         &self,
         diagram_id: String,
         title: String,
         kind: String,
         session_id: String,
+        document: String,
     ) -> DiagramSummary {
         // Keep the counter ahead of any id that arrives from outside (restored
         // state) so that a later `next_id` can never hand it out again.
@@ -61,38 +73,113 @@ impl DiagramStore {
             kind,
             updated_at: now_iso8601(),
             session_id,
+            revision: 1,
         };
-        self.diagrams
+        let record = DiagramRecord {
+            summary: summary.clone(),
+            document,
+        };
+        self.documents
             .lock()
             .expect("the diagram store is not poisoned")
-            .insert(summary.diagram_id.clone(), summary.clone());
+            .insert(summary.diagram_id.clone(), record);
         summary
+    }
+
+    /// Replaces the document of a diagram and grows its revision.
+    ///
+    /// Returns the new summary, or `None` when the diagram does not exist.
+    pub fn replace(
+        &self,
+        diagram_id: &str,
+        title: String,
+        document: String,
+    ) -> Option<DiagramSummary> {
+        let mut documents = self
+            .documents
+            .lock()
+            .expect("the diagram store is not poisoned");
+        let record = documents.get_mut(diagram_id)?;
+        record.summary.revision += 1;
+        record.summary.updated_at = now_iso8601();
+        record.summary.title = title;
+        record.document = document;
+        Some(record.summary.clone())
     }
 
     /// Every diagram on the plan, ordered by `diagram_id`.
     pub fn list(&self) -> Vec<DiagramSummary> {
-        self.diagrams
+        self.documents
             .lock()
             .expect("the diagram store is not poisoned")
             .values()
-            .cloned()
+            .map(|record| record.summary.clone())
+            .collect()
+    }
+
+    /// Every diagram of one session, ordered by `diagram_id` (PRD §11.1).
+    pub fn list_for_session(&self, session_id: &str) -> Vec<DiagramSummary> {
+        self.list()
+            .into_iter()
+            .filter(|summary| summary.session_id == session_id)
             .collect()
     }
 
     /// A diagram by id, `None` when it does not exist.
     pub fn get(&self, diagram_id: &str) -> Option<DiagramSummary> {
-        self.diagrams
+        self.documents
+            .lock()
+            .expect("the diagram store is not poisoned")
+            .get(diagram_id)
+            .map(|record| record.summary.clone())
+    }
+
+    /// A diagram with its document.
+    pub fn record(&self, diagram_id: &str) -> Option<DiagramRecord> {
+        self.documents
             .lock()
             .expect("the diagram store is not poisoned")
             .get(diagram_id)
             .cloned()
     }
 
+    /// The ids currently on the plan, for the `known_ids[]` of the errors.
+    pub fn known_ids(&self) -> Vec<String> {
+        self.documents
+            .lock()
+            .expect("the diagram store is not poisoned")
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    /// Removes every diagram of one session and returns how many were removed.
+    pub fn clear_session(&self, session_id: &str) -> usize {
+        let mut documents = self
+            .documents
+            .lock()
+            .expect("the diagram store is not poisoned");
+        let before = documents.len();
+        documents.retain(|_, record| record.summary.session_id != session_id);
+        before - documents.len()
+    }
+
+    /// Removes every diagram of the plan and returns how many were removed.
+    pub fn clear_all(&self) -> usize {
+        let mut documents = self
+            .documents
+            .lock()
+            .expect("the diagram store is not poisoned");
+        let before = documents.len();
+        documents.clear();
+        before
+    }
+
     /// Empties the store for a test. Test-only: in production nothing recycles
     /// an id (PRD §11.1).
     #[cfg(test)]
     pub(crate) fn reset_for_tests(&self) {
-        self.diagrams
+        self.documents
             .lock()
             .expect("the diagram store is not poisoned")
             .clear();
@@ -168,6 +255,7 @@ mod tests {
             "t".to_string(),
             "graph".to_string(),
             "s".to_string(),
+            "{}".to_string(),
         )
     }
 

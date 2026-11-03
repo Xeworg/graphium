@@ -13,8 +13,8 @@ members = [
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.82"
-license = "Apache-2.0"
-repository = "https://github.com/graphium-dev/graphium"
+license = "MIT"
+repository = "https://github.com/Xeworg/graphium"
 
 [workspace.dependencies]
 gx-core = { path = "crates/gx-core" }

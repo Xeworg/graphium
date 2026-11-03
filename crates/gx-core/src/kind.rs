@@ -72,6 +72,12 @@ pub trait KindHandler: Send + Sync {
     /// Validates a document against the kind contract.
     fn validate_json(&self, document: &Value) -> Result<(), Vec<ValidationError>>;
 
+    /// The cross rules of the kind: empty when the document is valid.
+    ///
+    /// These are the rules JSON Schema cannot express (PRD §11.1, regla de
+    /// oro): unknown references, duplicated ids and the limits of size.
+    fn check(&self, document: &Value) -> Vec<ValidationError>;
+
     /// Validates and translates a document into the IR.
     fn process_json(&self, document: &Value) -> Result<Ir, Vec<ValidationError>>;
 }
@@ -109,6 +115,14 @@ impl<K: DiagramKind> KindHandler for KindAdapter<K> {
         self.kind.validate(&input)
     }
 
+    fn check(&self, document: &Value) -> Vec<ValidationError> {
+        let input = match parse_input::<K>(document) {
+            Ok(input) => input,
+            Err(errors) => return errors,
+        };
+        self.kind.validate(&input).err().unwrap_or_default()
+    }
+
     fn process_json(&self, document: &Value) -> Result<Ir, Vec<ValidationError>> {
         let input = parse_input::<K>(document)?;
         self.kind.validate(&input)?;
@@ -118,12 +132,16 @@ impl<K: DiagramKind> KindHandler for KindAdapter<K> {
 
 /// Parses a document into the typed input of a kind, mapping the failure to
 /// a stable error code.
+///
+/// An unknown field is reported with the path of the field and a did-you-mean
+/// hint with the closest admitted name (PRD §7 RF5).
 fn parse_input<K: DiagramKind>(document: &Value) -> Result<K::Input, Vec<ValidationError>> {
     serde_json::from_value(document.clone()).map_err(|error| {
         let message = error.to_string();
-        let code = if message.contains("unknown field") {
-            ErrorCode::UnknownField
-        } else if message.contains("missing field") {
+        if message.contains("unknown field") {
+            return vec![unknown_field_error(&message, K::KIND)];
+        }
+        let code = if message.contains("missing field") {
             ErrorCode::MissingField
         } else {
             ErrorCode::InvalidSchema
@@ -135,6 +153,81 @@ fn parse_input<K: DiagramKind>(document: &Value) -> Result<K::Input, Vec<Validat
             Some("consultá get_diagram_schema para ver los campos admitidos".to_string()),
         )]
     })
+}
+
+/// Builds the error of an unknown field, with the closest admitted name.
+fn unknown_field_error(message: &str, kind: &str) -> ValidationError {
+    let unknown = message
+        .split("unknown field `")
+        .nth(1)
+        .and_then(|rest| rest.split('`').next())
+        .unwrap_or_default();
+    let field = unknown.rsplit('.').next().unwrap_or(unknown);
+    let path = unknown.replace('.', "[") + if unknown.contains('.') { "]" } else { "" };
+
+    let hint = closest_field(field, kind)
+        .map(|closest| format!("did you mean `{closest}`?"))
+        .unwrap_or_else(|| "consultá get_diagram_schema para ver los campos admitidos".to_string());
+
+    ValidationError::new(
+        path,
+        ErrorCode::UnknownField,
+        format!("campo desconocido `{field}` en el documento de `{kind}`"),
+        Some(hint),
+    )
+}
+
+/// The admitted fields of a kind, read from its schema.
+fn admitted_fields(kind: &str) -> Vec<String> {
+    let Some(handler) = crate::kind::for_kind(kind) else {
+        return Vec::new();
+    };
+    let schema = handler.schema();
+    let mut fields = Vec::new();
+    if let Some(object) = schema.get("properties").and_then(|value| value.as_object()) {
+        fields.extend(object.keys().cloned());
+    }
+    if let Some(definitions) = schema.get("$defs").and_then(|value| value.as_object()) {
+        for definition in definitions.values() {
+            if let Some(object) = definition
+                .get("properties")
+                .and_then(|value| value.as_object())
+            {
+                fields.extend(object.keys().cloned());
+            }
+        }
+    }
+    fields
+}
+
+/// The admitted field closest to `field`, by edit distance.
+fn closest_field(field: &str, kind: &str) -> Option<String> {
+    let admitted = admitted_fields(kind);
+    admitted
+        .iter()
+        .map(|candidate| (levenshtein(field, candidate), candidate))
+        .min_by(|left, right| left.0.cmp(&right.0))
+        .filter(|(distance, _)| *distance <= (field.len() / 3).max(2))
+        .map(|(_, candidate)| candidate.clone())
+}
+
+/// The edit distance between two words.
+fn levenshtein(left: &str, right: &str) -> usize {
+    let left: Vec<char> = left.chars().collect();
+    let right: Vec<char> = right.chars().collect();
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    let mut current = vec![0usize; right.len() + 1];
+    for (i, left_char) in left.iter().enumerate() {
+        current[0] = i + 1;
+        for (j, right_char) in right.iter().enumerate() {
+            let cost = usize::from(left_char != right_char);
+            current[j + 1] = (previous[j] + cost)
+                .min(previous[j + 1] + 1)
+                .min(current[j] + 1);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right.len()]
 }
 
 type KindMap = BTreeMap<&'static str, &'static dyn KindHandler>;

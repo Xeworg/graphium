@@ -4,6 +4,7 @@
 //! translation to the IR. Adding a kind never touches `gx-mcp` nor `gx-app`
 //! (PRD §7, O7).
 
+pub mod er;
 pub mod graph;
 
 use gx_core::kind::DiagramKind;
@@ -11,9 +12,10 @@ use gx_core::kind::DiagramKind;
 /// Registers every kind of this crate in the global registry.
 pub fn register_all() {
     graph::register();
+    er::register();
 }
 
 /// The names of the kinds registered by this crate.
 pub fn kind_names() -> Vec<&'static str> {
-    vec![graph::GraphKind::KIND]
+    vec![graph::GraphKind::KIND, er::ErKind::KIND]
 }

@@ -20,20 +20,22 @@ pub fn forwarded_session_id() -> String {
     format!("sock-{}-{}", std::process::id(), counter)
 }
 
-/// The schema of the `render_diagram` tool, as the MCP clients see it.
-pub fn render_diagram_tool() -> Value {
-    json!({
-        "name": "render_diagram",
-        "description": "Render a diagram on the Graphium plan. The diagram is a JSON document with a `kind` field; the kind must be available in the catalog.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "diagram": { "type": "object", "description": "The diagram document." },
-                "opts": { "type": "object", "description": "Render options." }
-            },
-            "required": ["diagram"]
-        }
-    })
+/// The tools of the server, as a forwarded client sees them.
+///
+/// The list comes from the single dispatcher of `gx-mcp`, so a client that
+/// reaches the owner through the socket sees the same tools as one that
+/// speaks stdio to the owner directly.
+pub fn tools() -> Vec<Value> {
+    gx_mcp::dispatch::TOOL_NAMES
+        .iter()
+        .map(|name| {
+            json!({
+                "name": name,
+                "description": gx_mcp::harness::description(name),
+                "inputSchema": gx_mcp::dispatch::tool_schema(name)
+            })
+        })
+        .collect()
 }
 
 /// Handles one JSON-RPC line and returns the response line.
@@ -67,31 +69,28 @@ pub fn handle_request(line: &str, session_id: &str) -> String {
                 "serverInfo": { "name": "graphium", "version": env!("CARGO_PKG_VERSION") }
             }),
         ),
-        "tools/list" => success_response(id, json!({ "tools": [render_diagram_tool()] })),
+        "tools/list" => success_response(id, json!({ "tools": tools() })),
         "tools/call" => {
             let params = request.get("params").cloned().unwrap_or(json!({}));
             let name = params
                 .get("name")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if name != "render_diagram" {
-                return error_response(id, -32601, &format!("unknown tool: {name}"));
-            }
             let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
-            let document = arguments.get("diagram").cloned().unwrap_or(json!({}));
-            let request = gx_mcp::tools::RenderRequest {
-                document: document.to_string(),
-                session_id: session_id.to_string(),
-            };
-            let response = gx_mcp::tools::render_diagram(&request);
-            let payload = serde_json::to_value(&response).unwrap_or(json!({}));
-            success_response(
-                id,
-                json!({
-                    "content": [ { "type": "text", "text": payload.to_string() } ],
-                    "isError": !response.ok
-                }),
-            )
+            match gx_mcp::dispatch::call_tool(name, &arguments, session_id) {
+                Ok(payload) => {
+                    let failed = payload.get("ok") == Some(&Value::Bool(false));
+                    success_response(
+                        id,
+                        json!({
+                            "content": [ { "type": "text", "text": payload.to_string() } ],
+                            "structuredContent": payload,
+                            "isError": failed
+                        }),
+                    )
+                }
+                Err(message) => error_response(id, -32602, &message),
+            }
         }
         other => error_response(id, -32601, &format!("method not found: {other}")),
     }
@@ -209,7 +208,7 @@ pub fn forward(stream: UnixStream, input: &mut dyn BufRead, output: &mut dyn Wri
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_request, render_diagram_tool};
+    use super::{handle_request, tools};
     use serde_json::Value;
 
     #[test]
@@ -233,13 +232,21 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_returns_the_render_tool() {
+    fn tools_list_returns_every_tool() {
         let response = handle_request(
             r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
             "session-1",
         );
         let value: Value = serde_json::from_str(&response).expect("json");
-        assert_eq!(value["result"]["tools"][0]["name"], "render_diagram");
+        let names: Vec<&str> = value["result"]["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+        assert!(names.contains(&"render_diagram"));
+        assert!(names.contains(&"validate_diagram"));
+        assert!(names.contains(&"list_diagrams"));
     }
 
     #[test]
@@ -257,9 +264,17 @@ mod tests {
     }
 
     #[test]
-    fn the_tool_declares_its_description() {
-        let tool = render_diagram_tool();
-        assert!(tool["description"].as_str().unwrap().len() > 20);
-        assert_eq!(tool["inputSchema"]["required"][0], "diagram");
+    fn every_tool_is_forwarded_with_its_description() {
+        let tools = tools();
+        assert_eq!(tools.len(), gx_mcp::dispatch::TOOL_NAMES.len());
+        for tool in &tools {
+            assert!(tool["description"].as_str().unwrap().len() > 20, "{tool}");
+            assert!(tool["inputSchema"].is_object(), "{tool}");
+        }
+        let render = tools
+            .iter()
+            .find(|tool| tool["name"] == "render_diagram")
+            .expect("render");
+        assert_eq!(render["inputSchema"]["required"][0], "diagram");
     }
 }

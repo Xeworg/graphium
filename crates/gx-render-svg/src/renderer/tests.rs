@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use gx_core::{
-    Ir, IrTimeline, LayoutGraph, Palette, Point, Rect, Shape, Size,
+    Cardinality, CardinalityBound, CardinalityMax, Direction, Ir, IrEdge, IrGraph, IrNode, IrRow,
+    IrTimeline, LayoutEdge, LayoutGraph, LayoutHint, NodeBox, Palette, Point, Rect, Shape, Size,
     SvgRenderer as SvgRendererContract,
 };
 use roxmltree::Document;
@@ -427,4 +428,82 @@ fn a_timeline_ir_still_renders_a_valid_canvas() {
 
     assert_eq!(document.root_element().tag_name().name(), "svg");
     assert!(element(&document, "script").is_empty());
+}
+
+/// The crow's foot opens towards the table: the ankle is away from it and the
+/// three toes touch its edge. Opening away from the table would draw an
+/// arrowhead, which means the opposite.
+#[test]
+fn the_crow_foot_opens_towards_the_table() {
+    let mut from = IrNode::new("users", "users");
+    from.rows = vec![IrRow::new("id")];
+    let mut to = IrNode::new("posts", "posts");
+    to.rows = vec![IrRow::new("user_id")];
+
+    let mut edge = IrEdge::new("users", "posts");
+    edge.arrow = false;
+    edge.cardinality = Some(Cardinality {
+        from_min: CardinalityBound::Required,
+        from_max: CardinalityMax::One,
+        to_min: CardinalityBound::Optional,
+        to_max: CardinalityMax::Many,
+    });
+
+    let layout = LayoutGraph {
+        nodes: [
+            (
+                "users".to_string(),
+                NodeBox {
+                    center: gx_core::Point::new(50.0, 50.0),
+                    size: gx_core::Size::new(100.0, 60.0),
+                },
+            ),
+            (
+                "posts".to_string(),
+                NodeBox {
+                    center: gx_core::Point::new(250.0, 50.0),
+                    size: gx_core::Size::new(100.0, 60.0),
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        edges: vec![LayoutEdge {
+            from: "users".to_string(),
+            to: "posts".to_string(),
+            points: vec![
+                gx_core::Point::new(100.0, 50.0),
+                gx_core::Point::new(200.0, 50.0),
+            ],
+            label_at: None,
+        }],
+        groups: Vec::new(),
+        bbox: Rect::new(0.0, 0.0, 300.0, 100.0),
+    };
+
+    let svg = engine().render(
+        &Ir::Graph(IrGraph {
+            direction: Direction::LR,
+            layout_hint: LayoutHint::Layered,
+            nodes: vec![from, to],
+            edges: vec![edge],
+            groups: Vec::new(),
+        }),
+        &layout,
+        &Palette::plano(),
+    );
+
+    // The foot: three strokes from an ankle to the table edge at x = 200.
+    let foot = svg
+        .split("<path class=\"cardinality")
+        .nth(1)
+        .expect("the crow's foot is drawn");
+    let foot = &foot[..foot.find("/>").expect("closed")];
+    let toes_on_the_table = foot.matches("L 200.00").count();
+    assert!(
+        toes_on_the_table >= 1,
+        "a toe has to touch the table edge: {foot}"
+    );
+    // The ankle is back from the table, never past it.
+    assert!(foot.contains("M 178.00"), "the ankle sits away: {foot}");
 }

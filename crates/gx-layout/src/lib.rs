@@ -14,7 +14,7 @@ use dagre::graph::{Graph, GraphOptions};
 use dagre::{layout, EdgeLabel, LayoutOptions, NodeLabel, RankDir, Ranker};
 use gx_core::geom::{Point, Rect, Size};
 use gx_core::ir::{Direction, IrGraph};
-use gx_core::layout::{LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, NodeBox};
+use gx_core::layout::{LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, LayoutOpts, NodeBox};
 use gx_core::text::{TextMetrics, TextStyle};
 use gx_core::tokens::TOKENS;
 
@@ -22,6 +22,12 @@ use gx_core::tokens::TOKENS;
 const NODE_SEPARATION: f64 = 60.0;
 /// Separation between ranks, in plan units.
 const RANK_SEPARATION: f64 = 80.0;
+/// Separation between ranks when the nodes have rows.
+///
+/// A table is wide and its relations carry glyphs (the crow's foot and the
+/// circle of the optional side), so the gap between the two tables has to be
+/// bigger than the gap between two plain boxes.
+const RANK_SEPARATION_WITH_ROWS: f64 = 130.0;
 /// Separation between edges of the same rank.
 const EDGE_SEPARATION: f64 = 20.0;
 /// Margin around the drawing.
@@ -38,16 +44,6 @@ impl DagreEngine {
         Self { metrics }
     }
 
-    /// The size of the box of a node: the measured text plus the padding.
-    fn node_size(&self, label: &str) -> Size {
-        let text = self
-            .metrics
-            .measure(label, &TextStyle::regular(TOKENS.text_size));
-        Size::new(
-            text.w + 2.0 * TOKENS.node_padding,
-            text.h + 2.0 * TOKENS.node_padding,
-        )
-    }
 }
 
 fn rank_dir(direction: Direction) -> RankDir {
@@ -60,7 +56,7 @@ fn rank_dir(direction: Direction) -> RankDir {
 }
 
 impl LayoutEngine for DagreEngine {
-    fn layout(&self, graph: &IrGraph) -> LayoutGraph {
+    fn layout(&self, graph: &IrGraph, opts: &LayoutOpts) -> LayoutGraph {
         let mut dagre: Graph<NodeLabel, EdgeLabel> = Graph::with_options(GraphOptions {
             directed: true,
             multigraph: true,
@@ -68,7 +64,10 @@ impl LayoutEngine for DagreEngine {
         });
 
         for node in &graph.nodes {
-            let size = self.node_size(&node.label);
+            // The size is the one the door measured (PRD §8.4.1): measuring
+            // again here gave two sources of truth for the same box, and
+            // they drifted apart when the degradation changed the text.
+            let size = node.size;
             dagre.set_node(
                 node.id.clone(),
                 Some(NodeLabel {
@@ -108,11 +107,17 @@ impl LayoutEngine for DagreEngine {
             );
         }
 
+        let has_rows = graph.nodes.iter().any(|node| !node.rows.is_empty());
+        let scale = opts.spacing_scale;
         let options = LayoutOptions {
             rankdir: rank_dir(graph.direction),
-            nodesep: NODE_SEPARATION,
-            ranksep: RANK_SEPARATION,
-            edgesep: EDGE_SEPARATION,
+            nodesep: NODE_SEPARATION * scale,
+            ranksep: if has_rows {
+                RANK_SEPARATION_WITH_ROWS * scale
+            } else {
+                RANK_SEPARATION * scale
+            },
+            edgesep: EDGE_SEPARATION * scale,
             marginx: MARGIN,
             marginy: MARGIN,
             ranker: Ranker::NetworkSimplex,
@@ -141,6 +146,7 @@ impl LayoutEngine for DagreEngine {
 
         let mut edges = Vec::new();
         for (index, edge) in graph.edges.iter().enumerate() {
+            let _ = index;
             let name = format!("e{index}");
             let Some(label) = dagre.edge(edge.from.as_str(), edge.to.as_str(), Some(name.as_str()))
             else {
@@ -156,6 +162,14 @@ impl LayoutEngine for DagreEngine {
             } else {
                 None
             };
+            let mut points = points;
+            // The ports of a schema: the relation leaves and arrives at the
+            // row of the key, and when the two tables sit side by side the
+            // route is a straight segment between those two rows. A bent line
+            // reads as a different relation (PRD §6.1).
+            if let Some(orthogonal) = orthogonal_route(&nodes, edge) {
+                points = orthogonal;
+            }
             edges.push(LayoutEdge {
                 from: edge.from.clone(),
                 to: edge.to.clone(),
@@ -214,6 +228,85 @@ impl LayoutEngine for DagreEngine {
             bbox,
         }
     }
+}
+
+/// An orthogonal route between two rows, when the tables sit side by side.
+///
+/// The relation leaves the source horizontally, turns vertically at the
+/// middle of the gap and arrives at the target row horizontally: every
+/// segment is horizontal or vertical, which is what makes a schema easy to
+/// follow. A diagonal segment leaves the reader guessing which row it
+/// belongs to.
+///
+/// Returns `None` when the boxes are stacked or the edge has no ports: there
+/// the routed polyline of the engine is the one that applies.
+fn orthogonal_route(
+    nodes: &BTreeMap<String, NodeBox>,
+    edge: &gx_core::ir::IrEdge,
+) -> Option<Vec<Point>> {
+    let (from_row, to_row) = (edge.from_row?, edge.to_row?);
+    let from = nodes.get(&edge.from)?;
+    let to = nodes.get(&edge.to)?;
+
+    let from_y = row_center(from, from_row);
+    let to_y = row_center(to, to_row);
+
+    // Side by side: the target starts after the source ends, or the reverse.
+    let right_to_left = from.center.x + from.size.w / 2.0 <= to.center.x - to.size.w / 2.0;
+    let left_to_right = to.center.x + to.size.w / 2.0 <= from.center.x - from.size.w / 2.0;
+    if !right_to_left && !left_to_right {
+        return None;
+    }
+
+    // The two tables have to be neighbours: a Z route drawn between two
+    // tables with a third one in the middle would cross that box, and a
+    // relation that goes through a table is unreadable. In that case the
+    // routed polyline of the engine, which avoids the obstacles, applies.
+    let (low, high) = if from.center.x < to.center.x {
+        (from.center.x, to.center.x)
+    } else {
+        (to.center.x, from.center.x)
+    };
+    let blocked = nodes.iter().any(|(id, other)| {
+        id != &edge.from && id != &edge.to && other.center.x > low && other.center.x < high
+    });
+    if blocked {
+        return None;
+    }
+
+    let (start_x, end_x) = if right_to_left {
+        (
+            from.center.x + from.size.w / 2.0,
+            to.center.x - to.size.w / 2.0,
+        )
+    } else {
+        (
+            from.center.x - from.size.w / 2.0,
+            to.center.x + to.size.w / 2.0,
+        )
+    };
+
+    // The rows are at the same height: a single horizontal segment.
+    if (from_y - to_y).abs() < f64::EPSILON {
+        return Some(vec![Point::new(start_x, from_y), Point::new(end_x, to_y)]);
+    }
+
+    // The Z: out, turn at the middle of the gap, and in.
+    let middle_x = (start_x + end_x) / 2.0;
+    Some(vec![
+        Point::new(start_x, from_y),
+        Point::new(middle_x, from_y),
+        Point::new(middle_x, to_y),
+        Point::new(end_x, to_y),
+    ])
+}
+
+/// The vertical center of a row inside a node, in the same coordinates the
+/// renderer uses for its detail rows.
+fn row_center(placed: &NodeBox, row: u32) -> f64 {
+    let top = placed.center.y - placed.size.h / 2.0;
+    let line = TOKENS.text_size * TOKENS.line_height;
+    top + TOKENS.node_padding + line + line * (f64::from(row) + 0.5)
 }
 
 /// The smallest translation that brings the drawing to the origin.

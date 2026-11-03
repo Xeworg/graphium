@@ -10,10 +10,15 @@
 //! the frontend confirmed the paint after two animation frames. Without a hook
 //! the diagram is rendered and stored but not painted.
 
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::collections::VecDeque;
+use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
+use std::time::{Duration, Instant};
 
-use gx_core::error::ValidationError;
-use gx_core::render::{RenderMetrics, RenderOpts};
+use gx_core::error::{ErrorCode, ValidationError};
+use gx_core::render::{
+    Degradation, Extract, RenderMetrics, RenderOpts, DEFAULT_LAYOUT_TIMEOUT_MS, MAX_LAYOUT_TIMEOUT_MS,
+};
 use serde::Serialize;
 
 use crate::store::diagram_store;
@@ -25,6 +30,27 @@ pub struct RenderRequest {
     pub document: String,
     /// The MCP session that owns the diagram (PRD §11.1).
     pub session_id: String,
+}
+
+/// The options one render accepts (PRD §7.3, S21).
+///
+/// `render_diagram` uses the defaults; `render_diagram_with` takes what the
+/// agent asked for in `opts`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderOptions {
+    /// Draws only the neighbourhood of one node instead of the whole graph.
+    pub extract: Option<Extract>,
+    /// Deadline of the whole pipeline, in milliseconds.
+    pub layout_timeout_ms: u64,
+}
+
+impl Default for RenderOptions {
+    fn default() -> Self {
+        Self {
+            extract: None,
+            layout_timeout_ms: DEFAULT_LAYOUT_TIMEOUT_MS,
+        }
+    }
 }
 
 /// The response of `render_diagram` (PRD §11, S21).
@@ -42,6 +68,18 @@ pub struct RenderResponse {
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metrics: Option<Metrics>,
+    /// The parent diagram and the depth of the subgraph that was painted:
+    /// `<diagram_id>@<depth>` (PRD §7.3, S21).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extracted_from: Option<String>,
+    /// How many renders were waiting when the queue refused this one
+    /// (PRD §7.3, S22).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue_depth: Option<usize>,
+    /// How long the agent should wait before rendering again, in
+    /// milliseconds (PRD §7.3, S22).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_ms: Option<u64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<ErrorPayload>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -56,6 +94,10 @@ pub struct Metrics {
     pub layout_ms: u64,
     pub render_ms: u64,
     pub svg_bytes: u64,
+    /// Wall time of a render that did not finish: only `layout_timeout`
+    /// pays for it (PRD §7.3, S21).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
 }
 
 impl From<RenderMetrics> for Metrics {
@@ -66,6 +108,7 @@ impl From<RenderMetrics> for Metrics {
             layout_ms: metrics.layout_ms,
             render_ms: metrics.render_ms,
             svg_bytes: metrics.svg_bytes as u64,
+            elapsed_ms: None,
         }
     }
 }
@@ -92,20 +135,10 @@ impl From<&ValidationError> for ErrorPayload {
 }
 
 /// A non-fatal note about a render.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Warning {
-    pub code: String,
-    pub message: String,
-}
-
-impl Warning {
-    fn new(code: &str, message: impl Into<String>) -> Self {
-        Self {
-            code: code.to_string(),
-            message: message.into(),
-        }
-    }
-}
+///
+/// One type for the whole crate: the render and the dry run report warnings
+/// with the same shape and the same vocabulary (PRD §7 RF20).
+pub use crate::contract::Warning;
 
 /// Everything `gx-app` needs to paint a diagram (PRD §8.6.1 step 3).
 #[derive(Debug, Clone, PartialEq)]
@@ -185,6 +218,172 @@ fn installed_hook() -> Option<RenderHook> {
         .clone()
 }
 
+/// How many renders wait for a slot before the queue refuses more
+/// (PRD §7.3, S22 / RNF8).
+pub const QUEUE_DEPTH: usize = 8;
+/// How many renders lay out at the same time (PRD §7.3, S22 / RNF8).
+pub const MAX_PARALLEL_RENDERS: usize = 2;
+/// What the `busy` answer tells the agent to wait before trying again.
+///
+/// The PRD asks for `retry_after_ms` but fixes no number: a render of the
+/// warning line takes tens of milliseconds, so a tenth of a second is long
+/// enough to be useful and short enough not to be a stall.
+pub const BUSY_RETRY_AFTER_MS: u64 = 100;
+
+/// The FIFO queue of renders of this process (PRD §7.3, S22).
+///
+/// Two renders lay out at a time; the rest wait in arrival order, up to
+/// [`QUEUE_DEPTH`]. The [`MAX_PARALLEL_RENDERS`] runs and the waiting room
+/// are one state, so the agent gets an honest `busy` instead of a timeout.
+#[derive(Debug, Default)]
+pub struct RenderQueue {
+    state: Mutex<QueueState>,
+    ready: Condvar,
+}
+
+#[derive(Debug, Default)]
+struct QueueState {
+    running: usize,
+    waiting: VecDeque<u64>,
+    next_ticket: u64,
+}
+
+/// What the queue says to a render that just arrived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Admission {
+    /// There was a free slot: run now.
+    Admitted,
+    /// The render is in the queue, at that position.
+    Queued(u64),
+    /// The waiting room is full: come back later.
+    Full { depth: usize },
+}
+
+impl RenderQueue {
+    fn lock(&self) -> std::sync::MutexGuard<'_, QueueState> {
+        self.state.lock().expect("the render queue is not poisoned")
+    }
+
+    /// Whether a slot is free and nobody is waiting ahead.
+    ///
+    /// The waiting room is FIFO: an arrival never overtakes a ticket, not
+    /// even when a slot is free, or the queue would starve its own front.
+    pub fn try_acquire(&self) -> Admission {
+        let mut state = self.lock();
+        if state.running < MAX_PARALLEL_RENDERS && state.waiting.is_empty() {
+            state.running += 1;
+            return Admission::Admitted;
+        }
+        if state.waiting.len() >= QUEUE_DEPTH {
+            return Admission::Full {
+                depth: state.waiting.len(),
+            };
+        }
+        let ticket = state.next_ticket;
+        state.next_ticket += 1;
+        state.waiting.push_back(ticket);
+        Admission::Queued(ticket)
+    }
+
+    /// Takes the slot for `ticket` if it is the head of the queue and a slot
+    /// is free. Returns whether the render may run now.
+    pub fn poll(&self, ticket: u64) -> bool {
+        let mut state = self.lock();
+        if state.running >= MAX_PARALLEL_RENDERS || state.waiting.front() != Some(&ticket) {
+            return false;
+        }
+        state.waiting.pop_front();
+        state.running += 1;
+        true
+    }
+
+    /// Waits, in queue order, until the render may run.
+    pub fn wait_for(&self, ticket: u64) {
+        let mut state = self.lock();
+        loop {
+            if state.running < MAX_PARALLEL_RENDERS && state.waiting.front() == Some(&ticket) {
+                state.waiting.pop_front();
+                state.running += 1;
+                return;
+            }
+            state = self
+                .ready
+                .wait(state)
+                .expect("the render queue is not poisoned");
+        }
+    }
+
+    /// How many renders are running and how many are waiting.
+    pub fn counters(&self) -> (usize, usize) {
+        let state = self.lock();
+        (state.running, state.waiting.len())
+    }
+
+    /// Frees a slot and wakes the queue.
+    pub fn release(&self) {
+        {
+            let mut state = self.lock();
+            state.running = state.running.saturating_sub(1);
+        }
+        self.ready.notify_all();
+    }
+}
+
+/// The queue of this process.
+pub fn render_queue() -> &'static RenderQueue {
+    static QUEUE: OnceLock<RenderQueue> = OnceLock::new();
+    QUEUE.get_or_init(RenderQueue::default)
+}
+
+/// Holds a slot of the queue and frees it when it leaves the scope, also on
+/// the early returns of a rejected render.
+struct RenderSlot;
+
+impl Drop for RenderSlot {
+    fn drop(&mut self) {
+        render_queue().release();
+    }
+}
+
+/// Takes a slot, or returns how deep the waiting room was when it refused.
+fn enter_queue() -> Result<RenderSlot, usize> {
+    let queue = render_queue();
+    match queue.try_acquire() {
+        Admission::Admitted => Ok(RenderSlot),
+        Admission::Queued(ticket) => {
+            queue.wait_for(ticket);
+            Ok(RenderSlot)
+        }
+        Admission::Full { depth } => Err(depth),
+    }
+}
+
+/// The answer of a full queue (PRD §7.3, S22).
+fn busy(depth: usize) -> RenderResponse {
+    RenderResponse {
+        ok: false,
+        diagram_id: None,
+        rendered_kind: None,
+        rendered: false,
+        reason: None,
+        metrics: None,
+        extracted_from: None,
+        queue_depth: Some(depth),
+        retry_after_ms: Some(BUSY_RETRY_AFTER_MS),
+        errors: vec![ErrorPayload {
+            path: "diagram".to_string(),
+            code: "busy".to_string(),
+            message: format!(
+                "la cola de renders está llena: {depth} renders esperando y {MAX_PARALLEL_RENDERS} en curso"
+            ),
+            hint: Some(format!(
+                "esperá {BUSY_RETRY_AFTER_MS} ms y volvé a intentar, o mandá menos diagramas a la vez"
+            )),
+        }],
+        warnings: Vec::new(),
+    }
+}
+
 /// Renders a diagram document through the single engine door
 /// ([`gx_core::engine::render_json`]) and stores it in the diagram store.
 ///
@@ -193,23 +392,91 @@ fn installed_hook() -> Option<RenderHook> {
 /// the text, lays out and renders. On success the diagram is stored and then
 /// handed to the render hook; `rendered` is whatever the hook answered.
 pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
+    render_diagram_with(request, &RenderOptions::default())
+}
+
+/// Renders with the options the agent asked for (PRD §7.3, S21).
+///
+/// The pipeline runs on a worker thread and the caller waits for it with the
+/// deadline of `opts.layout_timeout_ms`, clamped to
+/// `1..=MAX_LAYOUT_TIMEOUT_MS`. When the deadline beats the layout the answer
+/// is `layout_timeout` with the elapsed time and nothing is stored, so the
+/// plane stays untouched. The detached worker may finish later: its result is
+/// dropped.
+pub fn render_diagram_with(request: &RenderRequest, opts: &RenderOptions) -> RenderResponse {
     crate::bootstrap();
 
-    let outcome = match gx_core::engine::render_json(&request.document, &RenderOpts::default()) {
-        Ok(outcome) => outcome,
-        Err(errors) => {
-            return RenderResponse {
-                ok: false,
-                diagram_id: None,
-                rendered_kind: None,
-                rendered: false,
-                reason: None,
-                metrics: None,
-                errors: errors.iter().map(ErrorPayload::from).collect(),
-                warnings: Vec::new(),
-            };
-        }
+    // The queue is taken before anything else: a refused render must not
+    // touch the plan, the store nor the clock of the deadline.
+    let _slot = match enter_queue() {
+        Ok(slot) => slot,
+        Err(depth) => return busy(depth),
     };
+
+    let deadline_ms = opts
+        .layout_timeout_ms
+        .clamp(MIN_LAYOUT_TIMEOUT_MS, MAX_LAYOUT_TIMEOUT_MS);
+    let started = Instant::now();
+    let (sender, receiver) = mpsc::channel();
+    let document = request.document.clone();
+    let worker_opts = opts.clone();
+    let worker = std::thread::Builder::new()
+        .name("gx-mcp-render".to_string())
+        .spawn(move || {
+            // A closed channel means the caller already answered: what a slow
+            // render produces past its deadline is discarded, never stored.
+            let _ = sender.send(pipeline(&document, &worker_opts));
+        });
+
+    let (outcome, applied) = match worker {
+        // Without a thread the deadline cannot be enforced, so the pipeline
+        // runs here instead of failing a valid render.
+        Err(_) => match pipeline(&request.document, opts) {
+            Ok(painted) => painted,
+            Err(errors) => return rejected(errors),
+        },
+        Ok(_) => match receiver.recv_timeout(Duration::from_millis(deadline_ms)) {
+            Ok(Ok(painted)) => painted,
+            Ok(Err(errors)) => return rejected(errors),
+            Err(RecvTimeoutError::Timeout) => {
+                return layout_timeout(deadline_ms, started.elapsed());
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return rejected(vec![ValidationError::without_hint(
+                    "diagram",
+                    ErrorCode::InvalidValue,
+                    "el render terminó sin resultado",
+                )]);
+            }
+        },
+    };
+
+    // Step 4: even the last step could not enter the budget. The render
+    // cuts and says how to continue instead of painting two megabytes.
+    if outcome.metrics.svg_bytes > SVG_BUDGET_BYTES {
+        let metrics = Metrics::from(outcome.metrics);
+        return RenderResponse {
+            ok: false,
+            diagram_id: None,
+            rendered_kind: None,
+            rendered: false,
+            reason: None,
+            metrics: Some(metrics),
+            extracted_from: None,
+            queue_depth: None,
+            retry_after_ms: None,
+            errors: vec![ErrorPayload {
+                path: "diagram".to_string(),
+                code: "too_large".to_string(),
+                message: format!(
+                    "el SVG resultante tiene {} bytes y el presupuesto es {}",
+                    metrics.svg_bytes, SVG_BUDGET_BYTES
+                ),
+                hint: Some("usá opts.extract: {around, depth}".to_string()),
+            }],
+            warnings: Vec::new(),
+        };
+    }
 
     // The document is valid JSON from here on: the door just accepted it.
     let document: serde_json::Value =
@@ -228,20 +495,53 @@ pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
         .to_string();
 
     let metrics = Metrics::from(outcome.metrics);
+    // The size of what was just painted is reported, never hidden: the same
+    // warning the dry run gives, in the same words (PRD §7 RF20, S6).
+    let mut warnings = match gx_core::kind::for_kind(&kind) {
+        Some(registered) => crate::contract::size_warnings(
+            outcome.metrics.nodes,
+            outcome.metrics.edges,
+            registered.limits(),
+        ),
+        None => Vec::new(),
+    };
+    if !applied.is_empty() {
+        warnings.push(Warning::new(
+            "degraded",
+            format!(
+                "el diagrama se degradó para entrar en el presupuesto: {}",
+                applied
+                    .iter()
+                    .map(|step| match step {
+                        1 => "paso 1 (labels de aristas omitidos)",
+                        2 => "paso 2 (espaciado al 70%)",
+                        _ => "paso 3 (texto sin kerning fino)",
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ));
+    }
     // Bounding box of the layout: the size of the diagram in plan units.
     let width = outcome.bbox.w;
     let height = outcome.bbox.h;
 
     let store = diagram_store();
     let diagram_id = store.next_id();
+    // The document is kept normalized: `get_diagram` returns exactly this.
+    let document = serde_json::to_string(
+        &serde_json::from_str::<serde_json::Value>(&request.document)
+            .unwrap_or(serde_json::Value::Null),
+    )
+    .unwrap_or_else(|_| request.document.clone());
     store.insert(
         diagram_id.clone(),
         title,
         kind.clone(),
         request.session_id.clone(),
+        document,
     );
 
-    let mut warnings = Vec::new();
     let status = match installed_hook() {
         Some(hook) => hook(&RenderHookPayload {
             diagram_id: diagram_id.clone(),
@@ -268,6 +568,11 @@ pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
         }
     }
 
+    let extracted_from = opts
+        .extract
+        .as_ref()
+        .map(|extract| format!("{diagram_id}@{}", extract.depth));
+
     RenderResponse {
         ok: true,
         diagram_id: Some(diagram_id),
@@ -275,9 +580,254 @@ pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
         rendered: status.painted(),
         reason: status.reason().map(str::to_string),
         metrics: Some(metrics),
+        extracted_from,
+        queue_depth: None,
+        retry_after_ms: None,
         errors: Vec::new(),
         warnings,
     }
+}
+
+/// The number of nodes above which a render is warned and degraded
+/// (PRD §7.3, S6 and S20).
+pub const WARNING_NODES: usize = 150;
+/// The budget of bytes of a painted SVG: past it the render cuts
+/// (PRD §7.3, S20 step 4).
+pub const SVG_BUDGET_BYTES: usize = 2 * 1024 * 1024;
+/// The shortest deadline accepted: `0` would never let a layout finish.
+pub const MIN_LAYOUT_TIMEOUT_MS: u64 = 1;
+
+/// Runs the whole pipeline: the door, then the degradation ladder.
+///
+/// The ladder (PRD §7.3, S20) is walked here and not inside the door: past
+/// the warning line the diagram is not rejected, it is degraded. Step 1
+/// always applies above the line; the later steps are only paid when the SVG
+/// is still past the budget, so a big but healthy diagram degrades once and
+/// no more. The steps applied come back with the outcome.
+#[allow(clippy::type_complexity)]
+fn pipeline(
+    document: &str,
+    opts: &RenderOptions,
+) -> Result<(gx_core::render::RenderOutcome, Vec<u8>), Vec<ValidationError>> {
+    let mut outcome = render_with(document, opts, Degradation::NONE)?;
+    let mut applied = Vec::new();
+    if outcome.metrics.nodes > WARNING_NODES {
+        outcome = render_with(document, opts, Degradation::step_one())?;
+        applied.push(1u8);
+        for (step, degradation) in [
+            (2u8, Degradation::step_two()),
+            (3, Degradation::step_three()),
+        ] {
+            if outcome.metrics.svg_bytes <= SVG_BUDGET_BYTES {
+                break;
+            }
+            outcome = render_with(document, opts, degradation)?;
+            applied.push(step);
+        }
+    }
+    Ok((outcome, applied))
+}
+
+/// Renders a document with a given level of the degradation ladder.
+fn render_with(
+    document: &str,
+    opts: &RenderOptions,
+    degradation: Degradation,
+) -> Result<gx_core::render::RenderOutcome, Vec<ValidationError>> {
+    gx_core::engine::render_json(
+        document,
+        &RenderOpts {
+            degradation,
+            extract: opts.extract.clone(),
+            layout_timeout_ms: opts.layout_timeout_ms,
+            ..RenderOpts::default()
+        },
+    )
+}
+
+/// The response of a document the door rejected.
+pub(crate) fn rejected(errors: Vec<ValidationError>) -> RenderResponse {
+    RenderResponse {
+        ok: false,
+        diagram_id: None,
+        rendered_kind: None,
+        rendered: false,
+        reason: None,
+        metrics: None,
+        extracted_from: None,
+        queue_depth: None,
+        retry_after_ms: None,
+        errors: errors.iter().map(ErrorPayload::from).collect(),
+        warnings: Vec::new(),
+    }
+}
+
+/// The response of a layout that did not finish in time (PRD §7.3, S21).
+///
+/// Nothing was stored and nothing was painted: the plane stays untouched.
+fn layout_timeout(deadline_ms: u64, elapsed: Duration) -> RenderResponse {
+    let elapsed_ms = elapsed.as_millis() as u64;
+    RenderResponse {
+        ok: false,
+        diagram_id: None,
+        rendered_kind: None,
+        rendered: false,
+        reason: None,
+        metrics: Some(Metrics {
+            nodes: 0,
+            edges: 0,
+            layout_ms: elapsed_ms,
+            render_ms: 0,
+            svg_bytes: 0,
+            elapsed_ms: Some(elapsed_ms),
+        }),
+        extracted_from: None,
+        queue_depth: None,
+        retry_after_ms: None,
+        errors: vec![ErrorPayload {
+            path: "diagram".to_string(),
+            code: ErrorCode::LayoutTimeout.as_str().to_string(),
+            message: format!("el layout no terminó en {deadline_ms} ms"),
+            hint: Some(
+                "subí opts.layout_timeout_ms o partí el diagrama con opts.extract".to_string(),
+            ),
+        }],
+        warnings: Vec::new(),
+    }
+}
+
+/// Depth of the subgraph when `opts.extract.depth` is absent (PRD §7.3, S21).
+pub const DEFAULT_EXTRACT_DEPTH: usize = 1;
+
+/// Reads `opts` into [`RenderOptions`] (PRD §7.3, S21).
+///
+/// The keys that belong to F2/F3 are accepted and reported in an
+/// `opts_ignored` warning that names them, so the agent knows when they
+/// arrive instead of guessing. A malformed value is an error with its own
+/// path, never a silent default: rendering the whole diagram because `around`
+/// was not a string would paint the opposite of what was asked.
+pub fn parse_opts(
+    raw: Option<&serde_json::Value>,
+) -> Result<(RenderOptions, Vec<Warning>), Vec<gx_core::error::ValidationError>> {
+    use gx_core::error::{ErrorCode, ValidationError};
+
+    let mut render_opts = RenderOptions::default();
+    let mut warnings = Vec::new();
+    let Some(value) = raw else {
+        return Ok((render_opts, warnings));
+    };
+    let Some(object) = value.as_object() else {
+        return Err(vec![ValidationError::new(
+            "opts",
+            ErrorCode::InvalidValue,
+            "`opts` tiene que ser un objeto JSON",
+            Some(
+                "mandá `opts: { extract: { around, depth? }, layout_timeout_ms? }` o nada"
+                    .to_string(),
+            ),
+        )]);
+    };
+
+    let mut ignored: Vec<&str> = Vec::new();
+    for (key, value) in object {
+        match key.as_str() {
+            "extract" => render_opts.extract = Some(parse_extract(value)?),
+            "layout_timeout_ms" => {
+                let Some(ms) = value.as_u64() else {
+                    return Err(vec![ValidationError::new(
+                        "opts.layout_timeout_ms",
+                        ErrorCode::InvalidValue,
+                        format!(
+                            "`opts.layout_timeout_ms` tiene que ser un entero de milisegundos, no `{value}`"
+                        ),
+                        Some(format!(
+                            "mandá un número entre 1 y {}",
+                            gx_core::render::MAX_LAYOUT_TIMEOUT_MS
+                        )),
+                    )]);
+                };
+                render_opts.layout_timeout_ms = ms;
+            }
+            other => ignored.push(other),
+        }
+    }
+
+    if !ignored.is_empty() {
+        warnings.push(Warning {
+            code: "opts_ignored".to_string(),
+            message: format!(
+                "`opts.{}` se ignora en F1: `opts.focus`, `opts.replace_id` y `opts.interactive` llegan en F2/F3, y esta versión solo honra `opts.extract` y `opts.layout_timeout_ms`",
+                ignored.join("`, `opts.")
+            ),
+        });
+    }
+    Ok((render_opts, warnings))
+}
+
+/// Reads `opts.extract` into a [`gx_core::render::Extract`] (PRD §7.3, S21).
+pub fn parse_extract(
+    value: &serde_json::Value,
+) -> Result<gx_core::render::Extract, Vec<gx_core::error::ValidationError>> {
+    use gx_core::error::{ErrorCode, ValidationError};
+
+    let Some(object) = value.as_object() else {
+        return Err(vec![ValidationError::new(
+            "opts.extract",
+            ErrorCode::InvalidValue,
+            "`opts.extract` tiene que ser un objeto con `around` y, opcionalmente, `depth`",
+            Some("mandá `opts.extract: { around: \"<id>\", depth: 1 }`".to_string()),
+        )]);
+    };
+    let around = object
+        .get("around")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if around.is_empty() {
+        return Err(vec![ValidationError::new(
+            "opts.extract.around",
+            ErrorCode::MissingField,
+            "`opts.extract.around` falta: es el `id` del nodo alrededor del cual se dibuja",
+            Some("usá el `id` de un nodo de este diagrama".to_string()),
+        )]);
+    }
+    let depth = match object.get("depth") {
+        None | Some(serde_json::Value::Null) => DEFAULT_EXTRACT_DEPTH,
+        Some(value) => match value.as_u64() {
+            Some(depth) => usize::try_from(depth).unwrap_or(usize::MAX),
+            None => {
+                return Err(vec![ValidationError::new(
+                    "opts.extract.depth",
+                    ErrorCode::InvalidValue,
+                    format!("`opts.extract.depth` tiene que ser un entero >= 0, no `{value}`"),
+                    Some("omití `depth` para el default 1 o mandá un entero".to_string()),
+                )])
+            }
+        },
+    };
+    Ok(gx_core::render::Extract {
+        around: around.to_string(),
+        depth,
+    })
+}
+
+/// Renders a document with the raw `opts` the agent sent (PRD §7.3, S21).
+///
+/// One implementation for every entry point: the stdio server and the socket
+/// relay both come through here, so `opts.extract` and
+/// `opts.layout_timeout_ms` cannot work in one and be silently ignored in the
+/// other.
+pub fn render_diagram_from_json(
+    request: &RenderRequest,
+    raw_opts: Option<&serde_json::Value>,
+) -> RenderResponse {
+    let (opts, warnings) = match parse_opts(raw_opts) {
+        Ok(parsed) => parsed,
+        Err(errors) => return rejected(errors),
+    };
+    let mut response = render_diagram_with(request, &opts);
+    response.warnings.extend(warnings);
+    response
 }
 
 #[cfg(test)]
@@ -285,10 +835,13 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{
-        render_diagram, set_render_hook, RenderHook, RenderRequest, RenderResponse, RenderStatus,
+        busy, render_diagram, render_diagram_with, render_queue, set_render_hook, Admission,
+        RenderHook, RenderOptions, RenderQueue, RenderRequest, RenderResponse, RenderStatus,
+        BUSY_RETRY_AFTER_MS, MAX_PARALLEL_RENDERS, QUEUE_DEPTH, SVG_BUDGET_BYTES,
     };
     use crate::store::diagram_store;
     use crate::test_support::{lock_renders_blocking, MINIMAL};
+    use gx_core::render::Extract;
 
     fn render(document: &str) -> RenderResponse {
         render_diagram(&RenderRequest {
@@ -297,12 +850,258 @@ mod tests {
         })
     }
 
+    fn render_with_opts(document: &str, opts: RenderOptions) -> RenderResponse {
+        render_diagram_with(
+            &RenderRequest {
+                document: document.to_string(),
+                session_id: "session-test".to_string(),
+            },
+            &opts,
+        )
+    }
+
+    fn extract(around: &str, depth: usize) -> RenderOptions {
+        RenderOptions {
+            extract: Some(Extract {
+                around: around.to_string(),
+                depth,
+            }),
+            ..RenderOptions::default()
+        }
+    }
+
     fn error_codes(response: &RenderResponse) -> Vec<String> {
         response
             .errors
             .iter()
             .map(|error| error.code.clone())
             .collect()
+    }
+
+    fn warning_codes(response: &RenderResponse) -> Vec<String> {
+        response
+            .warnings
+            .iter()
+            .map(|warning| warning.code.clone())
+            .collect()
+    }
+
+    /// A chain of `nodes` nodes: wide enough to test the size ladder.
+    fn chain(nodes: usize) -> String {
+        let nodes: Vec<String> = (0..nodes)
+            .map(|i| format!(r#"{{ "id": "n{i}", "label": "nodo {i}" }}"#))
+            .collect();
+        let edges: Vec<String> = (0..nodes.len().saturating_sub(1))
+            .map(|i| {
+                format!(
+                    r#"{{ "from": "n{i}", "to": "n{}", "label": "sigue" }}"#,
+                    i + 1
+                )
+            })
+            .collect();
+        format!(
+            r#"{{ "version": 1, "kind": "graph", "title": "cadena",
+                 "nodes": [{}], "edges": [{}] }}"#,
+            nodes.join(", "),
+            edges.join(", ")
+        )
+    }
+
+
+    /// PRD §7.3, S22 / RNF8: two renders lay out at a time and eight wait in
+    /// arrival order. The ninth is refused instead of quietly piling up.
+    #[test]
+    fn the_queue_runs_two_and_holds_eight_in_order() {
+        let queue = RenderQueue::default();
+
+        assert_eq!(MAX_PARALLEL_RENDERS, 2);
+        assert_eq!(QUEUE_DEPTH, 8);
+        assert_eq!(queue.try_acquire(), Admission::Admitted);
+        assert_eq!(queue.try_acquire(), Admission::Admitted);
+
+        let mut tickets = Vec::new();
+        for _ in 0..QUEUE_DEPTH {
+            match queue.try_acquire() {
+                Admission::Queued(ticket) => tickets.push(ticket),
+                other => panic!("the room is not full yet: {other:?}"),
+            }
+        }
+        assert_eq!(
+            queue.try_acquire(),
+            Admission::Full {
+                depth: QUEUE_DEPTH
+            }
+        );
+
+        // FIFO: the second ticket never overtakes the first.
+        queue.release();
+        assert!(
+            !queue.poll(tickets[1]),
+            "the queue has to serve the head first"
+        );
+        assert!(queue.poll(tickets[0]));
+        queue.release();
+        assert!(queue.poll(tickets[1]));
+        // Both tickets hold a slot now; the other six wait their turn.
+        assert_eq!(queue.counters(), (2, 6));
+    }
+
+    #[test]
+    fn the_busy_answer_names_the_queue_and_the_retry() {
+        let response = busy(QUEUE_DEPTH);
+
+        assert!(!response.ok);
+        assert_eq!(response.errors[0].code, "busy");
+        assert_eq!(response.queue_depth, Some(QUEUE_DEPTH));
+        assert_eq!(response.retry_after_ms, Some(BUSY_RETRY_AFTER_MS));
+        let json = serde_json::to_value(&response).expect("the response serializes");
+        assert_eq!(json["queue_depth"], 8);
+        assert_eq!(json["retry_after_ms"], BUSY_RETRY_AFTER_MS);
+    }
+
+    /// A render that finishes leaves its slot free: the queue is a gate, not
+    /// a leak.
+    #[test]
+    fn a_finished_render_leaves_the_queue_empty() {
+        let _guard = lock_renders_blocking();
+
+        let response = render(MINIMAL);
+
+        assert!(response.ok, "{:?}", response.errors);
+        assert_eq!(render_queue().counters(), (0, 0));
+    }
+
+    /// PRD §7 RF20, S6: between 150 nodes and the hard limit the diagram is
+    /// not rejected; the render reports the size in `warnings[]`.
+    #[test]
+    fn a_big_diagram_renders_with_the_size_warning() {        let _guard = lock_renders_blocking();
+
+        let response = render(&chain(160));
+
+        assert!(response.ok, "{:?}", response.errors);
+        assert_eq!(response.metrics.expect("metrics").nodes, 160);
+        let codes = warning_codes(&response);
+        assert!(
+            codes.contains(&"too_many_nodes".to_string()),
+            "the render has to report the size it just painted: {codes:?}"
+        );
+    }
+
+    /// The hard limit is the one thing that rejects (PRD §7.3, S6): the
+    /// error names the count it received and the maximum, and the plane is
+    /// left untouched.
+    #[test]
+    fn a_diagram_over_the_hard_limit_is_rejected_and_not_stored() {
+        let _guard = lock_renders_blocking();
+
+        let response = render(&chain(301));
+
+        assert!(!response.ok);
+        assert_eq!(error_codes(&response), vec!["too_large"]);
+        assert!(
+            response.errors[0].message.contains("301"),
+            "the error names the count it received: {:?}",
+            response.errors[0]
+        );
+        assert!(response.errors[0].message.contains("300"));
+        assert!(response.errors[0].hint.is_some());
+        assert!(response.metrics.is_none());
+        assert!(
+            diagram_store().list().is_empty(),
+            "a rejected diagram never reaches the plane"
+        );
+    }
+
+    #[test]
+    fn a_diagram_under_the_warning_line_has_no_size_warning() {
+        let _guard = lock_renders_blocking();
+
+        let response = render(&chain(150));
+
+        assert!(response.ok, "{:?}", response.errors);
+        let codes = warning_codes(&response);
+        assert!(
+            !codes.contains(&"too_many_nodes".to_string()),
+            "150 nodes are exactly the line: {codes:?}"
+        );
+    }
+
+    /// PRD §7.3, S20 step 1: past the warning line the edge labels go first,
+    /// and the render says which step it applied.
+    #[test]
+    fn a_big_diagram_is_degraded_and_the_warning_names_the_step() {
+        let _guard = lock_renders_blocking();
+
+        let painted = Arc::new(Mutex::new(String::new()));
+        let recorder = Arc::clone(&painted);
+        set_render_hook(Some(Arc::new(move |payload| {
+            *recorder.lock().expect("the recorder is not poisoned") = payload.svg.clone();
+            RenderStatus::Painted
+        })));
+
+        let response = render(&chain(160));
+
+        assert!(response.ok, "{:?}", response.errors);
+        let degraded = response
+            .warnings
+            .iter()
+            .find(|warning| warning.code == "degraded")
+            .expect("the degradation is reported");
+        assert!(
+            degraded.message.contains("paso 1"),
+            "the warning names the step: {}",
+            degraded.message
+        );
+        let svg = painted.lock().expect("the recorder is not poisoned").clone();
+        assert!(
+            !svg.contains("sigue"),
+            "step 1 omits the edge labels: {svg}"
+        );
+
+        set_render_hook(None);
+    }
+
+    /// A small diagram pays nothing: the ladder only starts above the
+    /// warning line (PRD §7.3).
+    #[test]
+    fn a_small_diagram_is_not_degraded() {
+        let _guard = lock_renders_blocking();
+
+        let response = render(MINIMAL);
+
+        let codes = warning_codes(&response);
+        assert!(
+            !codes.contains(&"degraded".to_string()),
+            "a two-node diagram is drawn whole: {codes:?}"
+        );
+    }
+
+    /// PRD §7.3, S20 step 4: when even the last step leaves the SVG past the
+    /// budget, the render cuts and says how to continue instead of painting
+    /// two megabytes.
+    #[test]
+    fn an_oversized_diagram_is_cut_with_the_budget_and_the_hint() {
+        let _guard = lock_renders_blocking();
+        crate::test_support::set_oversize(true);
+
+        let response = render(&chain(160));
+
+        assert!(!response.ok, "{response:?}");
+        assert_eq!(error_codes(&response), vec!["too_large"]);
+        let error = &response.errors[0];
+        assert!(
+            error.hint.as_deref().unwrap_or_default().contains("opts.extract"),
+            "the hint points at extract: {error:?}"
+        );
+        let metrics = response.metrics.expect("the cost is reported");
+        assert!(
+            metrics.svg_bytes as usize > SVG_BUDGET_BYTES,
+            "the response names the size: {metrics:?}"
+        );
+        assert!(
+            diagram_store().list().is_empty(),
+            "a cut diagram never reaches the plane"
+        );
     }
 
     #[test]
@@ -365,11 +1164,39 @@ mod tests {
         assert!(diagram_store().list().is_empty());
     }
 
+    /// The `er` kind draws tables with their columns and a crow's foot
+    /// relation (PRD §6.1, H2).
+    #[test]
+    fn the_er_kind_renders_a_schema() {
+        let _guard = lock_renders_blocking();
+
+        let document = r#"{
+          "version": 1, "kind": "er", "title": "Schema — posts",
+          "tables": [
+            { "name": "users", "columns": [ { "name": "id", "type": "uuid", "key": "pk" } ] },
+            { "name": "posts", "columns": [
+                { "name": "id", "type": "uuid", "key": "pk" },
+                { "name": "user_id", "type": "uuid", "key": "fk", "nullable": true }
+            ] }
+          ],
+          "relations": [
+            { "from": { "table": "users", "column": "id" },
+              "to": { "table": "posts", "column": "user_id" },
+              "cardinality": "1:N" }
+          ]
+        }"#;
+        let response = render(document);
+
+        assert!(response.ok, "{response:?}");
+        assert_eq!(response.rendered_kind.as_deref(), Some("er"));
+        assert_eq!(response.metrics.expect("metrics").nodes, 2);
+    }
+
     #[test]
     fn an_unknown_kind_is_reported() {
         let _guard = lock_renders_blocking();
 
-        let response = render(r#"{ "version": 1, "kind": "er" }"#);
+        let response = render(r#"{ "version": 1, "kind": "sankey" }"#);
 
         assert!(!response.ok);
         assert_eq!(error_codes(&response), vec!["unknown_kind"]);
@@ -471,5 +1298,167 @@ mod tests {
                 response.warnings
             );
         }
+    }
+
+    /// S21: the subgraph of `opts.extract` is what gets painted, it keeps the
+    /// id of the parent and the response names it in `extracted_from`.
+    #[test]
+    fn extract_renders_the_neighbourhood_and_names_the_parent() {
+        let _guard = lock_renders_blocking();
+
+        let painted = Arc::new(Mutex::new(String::new()));
+        let recorder = Arc::clone(&painted);
+        set_render_hook(Some(Arc::new(move |payload| {
+            *recorder.lock().expect("the recorder is not poisoned") = payload.svg.clone();
+            RenderStatus::Painted
+        })));
+
+        let response = render_with_opts(&chain(4), extract("n1", 1));
+
+        set_render_hook(None);
+
+        assert!(response.ok, "{:?}", response.errors);
+        assert_eq!(response.diagram_id.as_deref(), Some("d-0001"));
+        assert_eq!(response.extracted_from.as_deref(), Some("d-0001@1"));
+        let metrics = response.metrics.expect("the cost is reported");
+        assert_eq!(metrics.nodes, 3, "the neighbourhood of n1 in a chain of 4");
+        assert_eq!(metrics.edges, 2);
+
+        let svg = painted.lock().expect("the recorder is not poisoned").clone();
+        for inside in ["nodo 0", "nodo 1", "nodo 2"] {
+            assert!(svg.contains(inside), "the subgraph paints {inside}: {svg}");
+        }
+        assert!(!svg.contains("nodo 3"), "the far node stays out: {svg}");
+
+        // Extract is a view, not an edit: the plane keeps the whole document.
+        let stored = diagram_store()
+            .record("d-0001")
+            .expect("the diagram is stored")
+            .document;
+        let stored: serde_json::Value = serde_json::from_str(&stored).expect("the document is JSON");
+        assert_eq!(
+            stored["nodes"].as_array().expect("nodes is an array").len(),
+            4,
+            "get_diagram returns the document the agent sent"
+        );
+
+        let json = serde_json::to_value(&response).expect("the response serializes");
+        assert_eq!(json["extracted_from"], "d-0001@1");
+        assert_eq!(json["diagram_id"], "d-0001");
+    }
+
+    /// S21: an `around` that is not a node of the diagram is an actionable
+    /// error and the plane is left untouched.
+    #[test]
+    fn extract_of_an_unknown_node_is_reported_and_stores_nothing() {
+        let _guard = lock_renders_blocking();
+
+        let response = render_with_opts(MINIMAL, extract("nope", 1));
+
+        assert!(!response.ok, "{response:?}");
+        assert_eq!(error_codes(&response), vec!["unknown_ref"]);
+        assert_eq!(response.errors[0].path, "opts.extract.around");
+        assert!(
+            response.errors[0].message.contains("nope"),
+            "the error names the id: {:?}",
+            response.errors[0]
+        );
+        assert!(response.errors[0].hint.is_some());
+        assert_eq!(response.diagram_id, None);
+        assert_eq!(response.extracted_from, None);
+        assert!(response.metrics.is_none());
+        assert!(
+            diagram_store().list().is_empty(),
+            "a rejected diagram never reaches the plane"
+        );
+    }
+
+    /// S21: a layout that runs past `opts.layout_timeout_ms` answers
+    /// `layout_timeout` with the elapsed time and paints nothing.
+    #[test]
+    fn a_layout_that_misses_the_deadline_reports_the_elapsed_time_and_paints_nothing() {
+        let _guard = lock_renders_blocking();
+        crate::test_support::set_layout_delay(200);
+
+        let painted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let saw_paint = Arc::clone(&painted);
+        set_render_hook(Some(Arc::new(move |_payload| {
+            saw_paint.store(true, std::sync::atomic::Ordering::SeqCst);
+            RenderStatus::Painted
+        })));
+
+        let response = render_with_opts(
+            MINIMAL,
+            RenderOptions {
+                layout_timeout_ms: 20,
+                ..RenderOptions::default()
+            },
+        );
+
+        set_render_hook(None);
+        crate::test_support::set_layout_delay(0);
+
+        assert!(!response.ok, "{response:?}");
+        assert_eq!(error_codes(&response), vec!["layout_timeout"]);
+        let error = &response.errors[0];
+        assert_eq!(error.path, "diagram");
+        assert!(
+            error.message.contains("20 ms"),
+            "the error names the deadline: {error:?}"
+        );
+        let hint = error.hint.as_deref().unwrap_or_default();
+        assert!(hint.contains("opts.layout_timeout_ms"), "{error:?}");
+        assert!(hint.contains("opts.extract"), "{error:?}");
+
+        let metrics = response.metrics.expect("the elapsed time is reported");
+        let elapsed = metrics.elapsed_ms.expect("layout_timeout carries elapsed_ms");
+        assert!(elapsed >= 20, "the elapsed time is the real one: {metrics:?}");
+        assert_eq!(metrics.nodes, 0);
+        assert_eq!(metrics.edges, 0);
+        assert_eq!(metrics.render_ms, 0);
+        assert_eq!(metrics.svg_bytes, 0);
+
+        assert_eq!(response.diagram_id, None);
+        assert_eq!(response.extracted_from, None);
+        assert!(
+            !painted.load(std::sync::atomic::Ordering::SeqCst),
+            "a layout past the deadline is never painted"
+        );
+        assert!(
+            diagram_store().list().is_empty(),
+            "the plane is left untouched"
+        );
+
+        let json = serde_json::to_value(&response).expect("the response serializes");
+        assert_eq!(json["metrics"]["elapsed_ms"].as_u64(), Some(elapsed));
+        assert!(json.get("diagram_id").is_none(), "{json}");
+    }
+
+    /// S21: a layout inside the deadline is painted as always, and a healthy
+    /// render does not pay for the deadline in its wire shape.
+    #[test]
+    fn a_layout_inside_the_deadline_is_painted() {
+        let _guard = lock_renders_blocking();
+        crate::test_support::set_layout_delay(20);
+        set_render_hook(Some(Arc::new(|_payload| RenderStatus::Painted)));
+
+        let response = render_with_opts(
+            MINIMAL,
+            RenderOptions {
+                layout_timeout_ms: 2000,
+                ..RenderOptions::default()
+            },
+        );
+
+        set_render_hook(None);
+
+        assert!(response.ok, "{:?}", response.errors);
+        assert!(response.rendered);
+        assert_eq!(response.diagram_id.as_deref(), Some("d-0001"));
+        assert_eq!(response.extracted_from, None);
+        let metrics = response.metrics.expect("metrics are reported");
+        assert_eq!(metrics.nodes, 2);
+        assert_eq!(metrics.elapsed_ms, None, "a healthy render keeps the old shape");
+        assert_eq!(diagram_store().list().len(), 1);
     }
 }

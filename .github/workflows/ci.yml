@@ -1,9 +1,13 @@
 name: CI
 
+# El CI corre cuando se publica una etiqueta de versión, y solo entonces:
+# los gates (tests, golden, clippy, presupuestos) son de entrega, no de cada
+# push. Para comprobar una rama antes de etiquetarla, `cargo test --workspace`
+# y `cargo clippy --workspace --all-targets` en local; la etiqueta es la que
+# decide si el artefacto sale.
 on:
   push:
-    branches: [main, "feature/**"]
-  pull_request:
+    tags: ["v*"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -42,6 +46,13 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # PRD §14.3 y §7.3: el mismo JSON tiene que dar los mismos bytes (O8) y
+      # el dibujo tiene que entrar en el presupuesto de RNF1-ter. El test
+      # imprime el hash de cada golden para que el log del CI muestre qué
+      # cambió sin abrir el diff.
+      - name: Golden SVG and byte budget (O8, RNF1-ter)
+        run: cargo test -p gx-app --test golden_svg -- --nocapture
 
       # PRD §9.1: the dependency matrix is a gate, not a convention.
       - name: Dependency gate (PRD §9.1)

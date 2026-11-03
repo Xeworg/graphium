@@ -34,6 +34,90 @@
       <span id="ghost-text">calculando layout…</span>
     </div>
 
+    <!-- The settings of the plan (PRD §7.1 RF25, §8.5.2 RF22, S19).
+         The look belongs to the human: the agent never changes it.
+         The gear and the panel sit here, outside `#plan`, so the wheel and
+         the drag of the camera never see them. -->
+    <button
+      id="settings-toggle"
+      class="settings-toggle"
+      type="button"
+      aria-label="ajustes del plano"
+      aria-expanded="false"
+      aria-controls="settings-panel"
+      title="ajustes del plano"
+    >
+      ⚙
+    </button>
+
+    <section
+      id="settings-panel"
+      class="settings-panel hidden"
+      role="dialog"
+      aria-label="ajustes del plano"
+    >
+      <div class="settings-head">
+        <h2 class="settings-title">ajustes del plano</h2>
+        <button id="settings-close" class="settings-close" type="button" aria-label="cerrar los ajustes">
+          ×
+        </button>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-background">fondo</label>
+        <input id="settings-background" type="color" />
+        <span class="settings-value"></span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-grid-color">grilla</label>
+        <input id="settings-grid-color" type="color" />
+        <span class="settings-value"></span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-grid-opacity">opacidad</label>
+        <input id="settings-grid-opacity" type="range" min="0" max="1" step="0.01" />
+        <output id="settings-grid-opacity-value" class="settings-value" for="settings-grid-opacity"></output>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-grid-diagonal">separación</label>
+        <input id="settings-grid-diagonal" type="range" min="20" max="200" step="1" />
+        <output id="settings-grid-diagonal-value" class="settings-value" for="settings-grid-diagonal"></output>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-grid-angle">ángulo</label>
+        <input id="settings-grid-angle" type="range" min="15" max="75" step="1" />
+        <output id="settings-grid-angle-value" class="settings-value" for="settings-grid-angle"></output>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-grid-visible">mostrar grilla</label>
+        <input id="settings-grid-visible" type="checkbox" />
+        <span class="settings-value"></span>
+      </div>
+
+      <fieldset class="settings-theme">
+        <legend>tema</legend>
+        <label class="settings-radio">
+          <input type="radio" name="settings-theme" value="dark" />
+          oscuro
+        </label>
+        <label class="settings-radio">
+          <input type="radio" name="settings-theme" value="light" />
+          claro
+        </label>
+      </fieldset>
+
+      <div class="settings-presets">
+        <button type="button" class="settings-preset" data-preset="plano">plano</button>
+        <button type="button" class="settings-preset" data-preset="claro">claro</button>
+        <button type="button" class="settings-preset" data-preset="sin grilla">sin grilla</button>
+      </div>
+    </section>
+
     <script src="plan.js"></script>
   </body>
 </html>

@@ -1,18 +1,26 @@
 //! The Tauri application: the plan and its window (PRD §7, §8.6.1).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Listener, Manager, WindowEvent};
 
-use crate::camera::CameraSnapshot;
+use crate::camera::{self, CameraSnapshot};
+use crate::settings::Settings;
+use gx_core::geom::Size;
 
 /// How long the frontend has to confirm the paint (PRD §8.6.1, step 5).
 pub const RENDER_ACK_TIMEOUT_MS: u64 = 2000;
+/// How long the first render waits for the webview to announce itself.
+///
+/// The webview says `graphium://ready` when its scripts are alive; a render
+/// that arrives before that would be emitted to nobody and would end as a
+/// timeout. The wait is bounded and only happens until the page is up.
+pub const READY_TIMEOUT_MS: u64 = 2000;
 
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -22,6 +30,8 @@ static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub struct PlanState {
     camera: Mutex<CameraSnapshot>,
     pending: Mutex<HashMap<String, Sender<bool>>>,
+    ready: AtomicBool,
+    settings: Mutex<Settings>,
 }
 
 impl PlanState {
@@ -31,6 +41,41 @@ impl PlanState {
 
     pub fn set_camera(&self, camera: CameraSnapshot) {
         *self.camera.lock().expect("camera lock") = camera;
+    }
+
+    /// The settings of the plan the human chose (PRD §7.1 RF25).
+    pub fn settings(&self) -> Settings {
+        self.settings.lock().expect("settings lock").clone()
+    }
+
+    /// Replaces the settings: the panel changed something.
+    pub fn set_settings(&self, settings: Settings) {
+        *self.settings.lock().expect("settings lock") = settings;
+    }
+
+    /// Whether the frontend already announced itself (`graphium://ready`).
+    pub fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::Relaxed)
+    }
+
+    /// Marks the frontend as alive.
+    pub fn set_ready(&self) {
+        self.ready.store(true, Ordering::Relaxed);
+    }
+
+    /// Waits until the frontend announces itself, bounded by `timeout`.
+    ///
+    /// Returns whether the page is up. The wait only matters for the first
+    /// render after the window is created or recreated.
+    pub fn wait_ready(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while !self.is_ready() {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        true
     }
 
     /// Registers a pending render and returns the channel that the
@@ -57,6 +102,32 @@ struct RenderEvent {
     req_id: String,
     diagram_id: String,
     svg: String,
+    /// Where the diagram goes in plan units: the center of the view it
+    /// arrived in (PRD §7.2, `place`). Absent when the window size is
+    /// unknown: the plan then places it at its own center.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    placement: Option<Placement>,
+    /// The camera that frames the diagram (PRD §7.2, `fit`). The camera
+    /// lives in the frontend: this is an intent, not a write.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    camera: Option<CameraSnapshot>,
+}
+
+/// The top-left corner of a diagram in plan units.
+#[derive(Debug, Clone, Copy, Serialize)]
+struct Placement {
+    x: f64,
+    y: f64,
+}
+
+/// The size of the plan in CSS pixels, or `None` when the window cannot tell.
+fn viewport_of(window: &tauri::WebviewWindow) -> Option<Size> {
+    let size = window.inner_size().ok()?;
+    let logical = size.to_logical::<f64>(window.scale_factor().ok()?);
+    if logical.width <= 0.0 || logical.height <= 0.0 {
+        return None;
+    }
+    Some(Size::new(logical.width, logical.height))
 }
 
 /// One diagram of the state that Rust owns (PRD §8.6.1, S22).
@@ -134,6 +205,33 @@ pub fn build(keep_alive: bool) -> (tauri::App<tauri::Wry>, Arc<PlanState>) {
             ack_state.resolve_ack(&payload.req_id, payload.ok);
         }
     });
+    // The settings live in `~/.graphium/settings.json` and belong to the
+    // human: the window reads them at start and writes them when the panel
+    // changes something (PRD §7.1 RF25, S19).
+    state.set_settings(Settings::load());
+
+    let ready_state = Arc::clone(&state);
+    let ready_handle = handle.clone();
+    handle.listen("graphium://ready", move |_event| {
+        ready_state.set_ready();
+        let _ = ready_handle.emit("graphium://settings", ready_state.settings());
+    });
+
+    let settings_state = Arc::clone(&state);
+    let settings_handle = handle.clone();
+    handle.listen("settings-changed", move |event| {
+        let Ok(settings) = serde_json::from_str::<Settings>(event.payload()) else {
+            return;
+        };
+        if settings.save().is_err() {
+            return;
+        }
+        // What the file holds is what the panel shows: the sanitised value
+        // comes back, so a rejected field never leaves the UI lying.
+        let settings = Settings::load();
+        settings_state.set_settings(settings.clone());
+        let _ = settings_handle.emit("graphium://settings", settings);
+    });
 
     (application, state)
 }
@@ -157,14 +255,41 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
         let _ = window.show();
         let _ = window.unminimize();
 
+        // The first render after the window is created can arrive before the
+        // page is alive; emitting then would reach nobody. The wait is
+        // bounded by `READY_TIMEOUT_MS` and only happens until the page has
+        // announced itself (PRD §8.6.1).
+        if !state.wait_ready(Duration::from_millis(READY_TIMEOUT_MS)) {
+            return gx_mcp::tools::RenderStatus::Error;
+        }
+
         // The render is emitted and the answer is awaited: the timeout of
-        // the acknowledgement is the only wait (PRD §8.6.1, step 5). A
-        // webview that is not alive yet never answers, and the render ends
-        // with `rendered: false` and the reason `ui_timeout`.
+        // the acknowledgement is the only wait (PRD §8.6.1, step 5).
+        //
+        // The diagram lands on the center of the view it arrives in, and the
+        // view fits it: a diagram that does not fit is cut by the window,
+        // and a cut diagram cannot be read (PRD §7.2, S17 and S23).
+        let viewport = viewport_of(&window);
+        let placement = viewport.map(|viewport| {
+            camera::place(
+                Size::new(payload.width, payload.height),
+                &state.camera(),
+                viewport,
+            )
+        });
+        let fit = match (placement, viewport) {
+            (Some(rect), Some(viewport)) => Some(camera::fit(rect, viewport)),
+            _ => None,
+        };
         let event = RenderEvent {
             req_id: req_id.clone(),
             diagram_id: payload.diagram_id.clone(),
             svg: payload.svg.clone(),
+            placement: placement.map(|rect| Placement {
+                x: rect.x,
+                y: rect.y,
+            }),
+            camera: fit,
         };
         if window.emit("graphium://render", event).is_err() {
             return gx_mcp::tools::RenderStatus::Error;
