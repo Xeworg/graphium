@@ -22,6 +22,12 @@ use gx_core::tokens::TOKENS;
 const NODE_SEPARATION: f64 = 60.0;
 /// Separation between ranks, in plan units.
 const RANK_SEPARATION: f64 = 80.0;
+/// Separation between ranks when the nodes have rows.
+///
+/// A table is wide and its relations carry glyphs (the crow's foot and the
+/// circle of the optional side), so the gap between the two tables has to be
+/// bigger than the gap between two plain boxes.
+const RANK_SEPARATION_WITH_ROWS: f64 = 130.0;
 /// Separation between edges of the same rank.
 const EDGE_SEPARATION: f64 = 20.0;
 /// Margin around the drawing.
@@ -136,10 +142,15 @@ impl LayoutEngine for DagreEngine {
             );
         }
 
+        let has_rows = graph.nodes.iter().any(|node| !node.rows.is_empty());
         let options = LayoutOptions {
             rankdir: rank_dir(graph.direction),
             nodesep: NODE_SEPARATION,
-            ranksep: RANK_SEPARATION,
+            ranksep: if has_rows {
+                RANK_SEPARATION_WITH_ROWS
+            } else {
+                RANK_SEPARATION
+            },
             edgesep: EDGE_SEPARATION,
             marginx: MARGIN,
             marginy: MARGIN,
@@ -190,8 +201,8 @@ impl LayoutEngine for DagreEngine {
             // row of the key, and when the two tables sit side by side the
             // route is a straight segment between those two rows. A bent line
             // reads as a different relation (PRD §6.1).
-            if let Some(straight) = straight_route(graph, &nodes, edge) {
-                points = straight;
+            if let Some(orthogonal) = orthogonal_route(&nodes, edge) {
+                points = orthogonal;
             }
             edges.push(LayoutEdge {
                 from: edge.from.clone(),
@@ -253,21 +264,28 @@ impl LayoutEngine for DagreEngine {
     }
 }
 
-/// A straight route between two rows, when the tables sit side by side.
+/// An orthogonal route between two rows, when the tables sit side by side.
 ///
-/// Returns `None` when the boxes are stacked (the relation has to be routed)
-/// or when the edge has no ports.
-fn straight_route(
-    graph: &IrGraph,
+/// The relation leaves the source horizontally, turns vertically at the
+/// middle of the gap and arrives at the target row horizontally: every
+/// segment is horizontal or vertical, which is what makes a schema easy to
+/// follow. A diagonal segment leaves the reader guessing which row it
+/// belongs to.
+///
+/// Returns `None` when the boxes are stacked or the edge has no ports: there
+/// the routed polyline of the engine is the one that applies.
+fn orthogonal_route(
     nodes: &BTreeMap<String, NodeBox>,
     edge: &gx_core::ir::IrEdge,
 ) -> Option<Vec<Point>> {
     let (from_row, to_row) = (edge.from_row?, edge.to_row?);
     let from = nodes.get(&edge.from)?;
     let to = nodes.get(&edge.to)?;
-    let _ = graph;
 
-    // Side by side: the target starts after the source ends, or the other way.
+    let from_y = row_center(from, from_row);
+    let to_y = row_center(to, to_row);
+
+    // Side by side: the target starts after the source ends, or the reverse.
     let right_to_left = from.center.x + from.size.w / 2.0 <= to.center.x - to.size.w / 2.0;
     let left_to_right = to.center.x + to.size.w / 2.0 <= from.center.x - from.size.w / 2.0;
     if !right_to_left && !left_to_right {
@@ -286,9 +304,18 @@ fn straight_route(
         )
     };
 
+    // The rows are at the same height: a single horizontal segment.
+    if (from_y - to_y).abs() < f64::EPSILON {
+        return Some(vec![Point::new(start_x, from_y), Point::new(end_x, to_y)]);
+    }
+
+    // The Z: out, turn at the middle of the gap, and in.
+    let middle_x = (start_x + end_x) / 2.0;
     Some(vec![
-        Point::new(start_x, row_center(from, from_row)),
-        Point::new(end_x, row_center(to, to_row)),
+        Point::new(start_x, from_y),
+        Point::new(middle_x, from_y),
+        Point::new(middle_x, to_y),
+        Point::new(end_x, to_y),
     ])
 }
 

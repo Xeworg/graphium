@@ -209,10 +209,11 @@ fn the_origin_of_the_drawing_is_reachable() {
     let _ = Point::new(0.0, 0.0);
 }
 
-/// A relation of a schema goes straight between the two key rows when the
-/// tables sit side by side: a bent line reads as another relation.
+/// A relation of a schema is routed with right angles when the tables sit
+/// side by side: every segment is horizontal or vertical, so the reader
+/// follows it without guessing which row it belongs to.
 #[test]
-fn a_relation_between_side_by_side_tables_is_a_straight_segment() {
+fn a_relation_between_side_by_side_tables_is_orthogonal() {
     let mut source = IrNode::new("users", "users");
     source.rows = vec![IrRow::new("id"), IrRow::new("email")];
     let mut target = IrNode::new("posts", "posts");
@@ -233,16 +234,51 @@ fn a_relation_between_side_by_side_tables_is_a_straight_segment() {
 
     let layout = DagreEngine::new(Arc::new(FakeMetrics)).layout(&graph);
     let route = &layout.edges[0];
+
+    // The Z: out, turn, in.
     assert_eq!(
         route.points.len(),
-        2,
-        "the route has to be a straight segment: {:?}",
+        4,
+        "a routed relation needs the two turns: {:?}",
         route.points
     );
-    // The two ends are on different rows, so the segment is diagonal but it
-    // has no bend: a middle point would mean a routed polyline.
-    assert_ne!(
-        route.points[0].y, route.points[1].y,
-        "each end anchors to its own row"
-    );
+    for pair in route.points.windows(2) {
+        let horizontal = (pair[0].y - pair[1].y).abs() < 0.001;
+        let vertical = (pair[0].x - pair[1].x).abs() < 0.001;
+        assert!(
+            horizontal || vertical,
+            "every segment is horizontal or vertical: {:?}",
+            pair
+        );
+    }
+    // The turns share the x of the middle of the gap.
+    assert!((route.points[1].x - route.points[2].x).abs() < 0.001);
+    // Each end anchors to its own row.
+    assert_ne!(route.points[0].y, route.points[3].y);
+}
+
+/// When the two rows are at the same height the relation is one horizontal
+/// segment: a turn with zero length would be noise.
+#[test]
+fn a_relation_between_rows_at_the_same_height_is_one_segment() {
+    let mut source = IrNode::new("users", "users");
+    source.rows = vec![IrRow::new("id")];
+    let mut target = IrNode::new("posts", "posts");
+    target.rows = vec![IrRow::new("user_id")];
+
+    let mut edge = IrEdge::new("users", "posts");
+    edge.from_row = Some(0);
+    edge.to_row = Some(0);
+    edge.arrow = false;
+
+    let graph = IrGraph {
+        direction: Direction::LR,
+        layout_hint: gx_core::ir::LayoutHint::Layered,
+        nodes: vec![source, target],
+        edges: vec![edge],
+        groups: Vec::new(),
+    };
+
+    let layout = DagreEngine::new(Arc::new(FakeMetrics)).layout(&graph);
+    assert_eq!(layout.edges[0].points.len(), 2);
 }
