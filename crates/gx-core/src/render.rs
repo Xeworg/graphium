@@ -114,17 +114,36 @@ pub struct RenderOpts {
     pub direction: Option<Direction>,
     /// Deadline of the layout phase, in milliseconds (PRD §7.3).
     pub layout_timeout_ms: u64,
+    /// Draws only the neighbourhood of one node instead of the whole graph
+    /// (PRD §7.3, S21).
+    pub extract: Option<Extract>,
     /// How much of the drawing is degraded to enter the budget of
     /// PRD §7.3. The caller walks the ladder; the door only obeys.
     pub degradation: Degradation,
 }
+
+/// The neighbourhood to draw instead of the whole graph (PRD §7.3, S21).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Extract {
+    /// `id` of the node the subgraph is built around.
+    pub around: String,
+    /// Hops of the walk: `1` is the parent and its direct neighbours.
+    pub depth: usize,
+}
+
+/// Deadline of the layout when the caller asks for nothing (PRD §7.3, S21).
+pub const DEFAULT_LAYOUT_TIMEOUT_MS: u64 = 2000;
+
+/// Ceiling of the layout deadline, whatever the caller sends (PRD §7.3, S21).
+pub const MAX_LAYOUT_TIMEOUT_MS: u64 = 10_000;
 
 impl Default for RenderOpts {
     fn default() -> Self {
         Self {
             theme: Theme::Dark,
             direction: None,
-            layout_timeout_ms: 2000,
+            layout_timeout_ms: DEFAULT_LAYOUT_TIMEOUT_MS,
+            extract: None,
             degradation: Degradation::NONE,
         }
     }

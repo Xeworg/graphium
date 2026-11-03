@@ -74,6 +74,7 @@ fn the_render_hook_maps_a_paint_into_a_reason() {
             layout_ms: 1,
             render_ms: 0,
             svg_bytes: 6,
+            elapsed_ms: None,
         },
     };
 

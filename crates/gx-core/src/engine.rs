@@ -92,6 +92,16 @@ pub fn render_json(src: &str, opts: &RenderOpts) -> Result<RenderOutcome, Vec<Va
 
     let mut ir = kind.process_json(&document)?;
 
+    // PRD §7.3, S21: `opts.extract` narrows the graph to one neighbourhood
+    // before anything is measured, so the subgraph is what gets laid out and
+    // the limits are checked against it.
+    if let Some(extract) = &opts.extract {
+        let narrowed = ir
+            .extracted(&extract.around, extract.depth)
+            .map_err(|error| vec![error])?;
+        ir = narrowed;
+    }
+
     if let Ir::Graph(graph) = &mut ir {
         // Step 1 of the ladder: without edge labels the drawing is smaller
         // and tighter, so the labels leave before the layout, not after

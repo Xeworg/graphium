@@ -77,13 +77,19 @@ a JSON object in `diagram`, not as a string. A `graph` document looks like: \
 as `unknown_kind` with the available kinds in `hint`. Every node needs a \
 unique `id`; edges reference node ids with `from` and `to`. \
 Unknown fields are rejected, so send only documented keys. The response is \
-JSON: { ok, diagram_id, rendered_kind, rendered, metrics, errors, warnings }. \
-`ok: false` means nothing was placed and `errors[]` carries `{ path, code, \
-message, hint? }` with a stable `code`; `ok: true` returns the new \
-`diagram_id`, the `rendered_kind`, `metrics { nodes, edges, layout_ms, \
-render_ms, svg_bytes }` and `rendered` telling whether the window confirmed \
-the paint. `opts` is accepted for forward compatibility and currently \
-ignored.";
+JSON: { ok, diagram_id, rendered_kind, rendered, metrics, extracted_from, \
+errors, warnings }. `ok: false` means nothing was placed and `errors[]` \
+carries `{ path, code, message, hint? }` with a stable `code`; `ok: true` \
+returns the new `diagram_id`, the `rendered_kind`, `metrics { nodes, edges, \
+layout_ms, render_ms, svg_bytes }` and `rendered` telling whether the window \
+confirmed the paint. `opts` is optional: `opts.extract: { around, depth? }` \
+draws only the neighbourhood of one node (default `depth: 1`, at most 300 \
+nodes) and the response carries `extracted_from: \"<diagram_id>@<depth>\"`; \
+`opts.layout_timeout_ms` sets the layout deadline (default 2000, ceiling \
+10000) and a layout that misses it answers `ok: false, code: \
+\"layout_timeout\"` with `metrics.elapsed_ms`, leaving the plan untouched. \
+`opts.focus`, `opts.replace_id` and `opts.interactive` arrive in F2/F3 and \
+are ignored for now.";
 
 /// Description of the `validate_diagram` tool, written for the agent.
 const VALIDATE_DIAGRAM_DESCRIPTION: &str = "\
@@ -189,10 +195,126 @@ pub struct UpdateDiagramParams {
 pub struct RenderDiagramParams {
     /// The complete diagram document, as a JSON object.
     pub diagram: serde_json::Value,
-    /// Reserved for later phases (`focus`, `extract`, `replace_id`,
-    /// `interactive`); F0 honors nothing yet.
+    /// Options of the render: `extract { around, depth? }` and
+    /// `layout_timeout_ms`. `focus`, `replace_id` and `interactive` arrive in
+    /// F2/F3 and are ignored for now.
     #[serde(default)]
     pub opts: Option<serde_json::Value>,
+}
+
+/// Depth of the subgraph when `opts.extract.depth` is absent (PRD §7.3, S21).
+const DEFAULT_EXTRACT_DEPTH: usize = 1;
+
+/// Reads `opts` into [`tools::RenderOptions`] (PRD §7.3, S21).
+///
+/// The keys that belong to F2/F3 are accepted and reported in an
+/// `opts_ignored` warning that names them, so the agent knows when they
+/// arrive instead of guessing. A malformed value is an error with its own
+/// path, never a silent default: rendering the whole diagram because `around`
+/// was not a string would paint the opposite of what was asked.
+fn parse_opts(
+    raw: Option<&serde_json::Value>,
+) -> Result<(tools::RenderOptions, Vec<tools::Warning>), Vec<gx_core::error::ValidationError>> {
+    use gx_core::error::{ErrorCode, ValidationError};
+
+    let mut render_opts = tools::RenderOptions::default();
+    let mut warnings = Vec::new();
+    let Some(value) = raw else {
+        return Ok((render_opts, warnings));
+    };
+    let Some(object) = value.as_object() else {
+        return Err(vec![ValidationError::new(
+            "opts",
+            ErrorCode::InvalidValue,
+            "`opts` tiene que ser un objeto JSON",
+            Some(
+                "mandá `opts: { extract: { around, depth? }, layout_timeout_ms? }` o nada"
+                    .to_string(),
+            ),
+        )]);
+    };
+
+    let mut ignored: Vec<&str> = Vec::new();
+    for (key, value) in object {
+        match key.as_str() {
+            "extract" => render_opts.extract = Some(parse_extract(value)?),
+            "layout_timeout_ms" => {
+                let Some(ms) = value.as_u64() else {
+                    return Err(vec![ValidationError::new(
+                        "opts.layout_timeout_ms",
+                        ErrorCode::InvalidValue,
+                        format!(
+                            "`opts.layout_timeout_ms` tiene que ser un entero de milisegundos, no `{value}`"
+                        ),
+                        Some(format!(
+                            "mandá un número entre 1 y {}",
+                            gx_core::render::MAX_LAYOUT_TIMEOUT_MS
+                        )),
+                    )]);
+                };
+                render_opts.layout_timeout_ms = ms;
+            }
+            other => ignored.push(other),
+        }
+    }
+
+    if !ignored.is_empty() {
+        warnings.push(tools::Warning {
+            code: "opts_ignored".to_string(),
+            message: format!(
+                "`opts.{}` se ignora en F1: `opts.focus`, `opts.replace_id` y `opts.interactive` llegan en F2/F3, y esta versión solo honra `opts.extract` y `opts.layout_timeout_ms`",
+                ignored.join("`, `opts.")
+            ),
+        });
+    }
+    Ok((render_opts, warnings))
+}
+
+/// Reads `opts.extract` into a [`gx_core::render::Extract`] (PRD §7.3, S21).
+fn parse_extract(
+    value: &serde_json::Value,
+) -> Result<gx_core::render::Extract, Vec<gx_core::error::ValidationError>> {
+    use gx_core::error::{ErrorCode, ValidationError};
+
+    let Some(object) = value.as_object() else {
+        return Err(vec![ValidationError::new(
+            "opts.extract",
+            ErrorCode::InvalidValue,
+            "`opts.extract` tiene que ser un objeto con `around` y, opcionalmente, `depth`",
+            Some("mandá `opts.extract: { around: \"<id>\", depth: 1 }`".to_string()),
+        )]);
+    };
+    let around = object
+        .get("around")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if around.is_empty() {
+        return Err(vec![ValidationError::new(
+            "opts.extract.around",
+            ErrorCode::MissingField,
+            "`opts.extract.around` falta: es el `id` del nodo alrededor del cual se dibuja",
+            Some("usá el `id` de un nodo de este diagrama".to_string()),
+        )]);
+    }
+    let depth = match object.get("depth") {
+        None | Some(serde_json::Value::Null) => DEFAULT_EXTRACT_DEPTH,
+        Some(value) => match value.as_u64() {
+            Some(depth) => usize::try_from(depth).unwrap_or(usize::MAX),
+            None => {
+                return Err(vec![ValidationError::new(
+                    "opts.extract.depth",
+                    ErrorCode::InvalidValue,
+                    format!("`opts.extract.depth` tiene que ser un entero >= 0, no `{value}`"),
+                    Some("omití `depth` para el default 1 o mandá un entero".to_string()),
+                )])
+            }
+        },
+    };
+    Ok(gx_core::render::Extract {
+        around: around.to_string(),
+        depth,
+    })
 }
 
 /// The MCP server of Graphium.
@@ -244,29 +366,25 @@ impl GraphiumServer {
         let document = serde_json::to_string(&params.diagram).map_err(|error| {
             ErrorData::invalid_params(format!("`diagram` is not valid JSON: {error}"), None)
         })?;
+        let (opts, opts_warnings) = match parse_opts(params.opts.as_ref()) {
+            Ok(parsed) => parsed,
+            Err(errors) => return structured(tools::rejected(errors)),
+        };
         let request = tools::RenderRequest {
             document,
             session_id: self.session_id.clone(),
         };
 
-        // Validate + IR + layout + SVG run off the async loop (PRD §8.6.1).
-        let mut response = tokio::task::spawn_blocking(move || tools::render_diagram(&request))
-            .await
-            .map_err(|error| {
-                ErrorData::internal_error(format!("the render task failed: {error}"), None)
-            })?;
-
-        if params
-            .opts
-            .as_ref()
-            .and_then(serde_json::Value::as_object)
-            .is_some_and(|opts| !opts.is_empty())
-        {
-            response.warnings.push(tools::Warning {
-                code: "opts_ignored".to_string(),
-                message: "F0 accepts `opts` but honors no option yet".to_string(),
-            });
-        }
+        // Validate + IR + layout + SVG run off the async loop, under the
+        // deadline of `opts.layout_timeout_ms` (PRD §8.6.1, §7.3).
+        let mut response = tokio::task::spawn_blocking(move || {
+            tools::render_diagram_with(&request, &opts)
+        })
+        .await
+        .map_err(|error| {
+            ErrorData::internal_error(format!("the render task failed: {error}"), None)
+        })?;
+        response.warnings.extend(opts_warnings);
 
         let value = serde_json::to_value(&response).map_err(|error| {
             ErrorData::internal_error(format!("cannot serialize the response: {error}"), None)
@@ -534,6 +652,95 @@ mod tests {
             .collect();
         assert!(warnings.contains(&"opts_ignored"), "{warnings:?}");
         assert!(warnings.contains(&"no_window"), "{warnings:?}");
+    }
+
+    /// S21: `opts.extract` is honoured and, when every key is supported,
+    /// there is no `opts_ignored` warning at all.
+    #[tokio::test]
+    async fn opts_extract_is_honored_without_an_opts_ignored_warning() {
+        let _guard = lock_renders().await;
+        let server = GraphiumServer::new();
+        let diagram = serde_json::from_str(MINIMAL).expect("the example is JSON");
+
+        let result = server
+            .render_diagram(Parameters(RenderDiagramParams {
+                diagram,
+                opts: Some(serde_json::json!({ "extract": { "around": "read" } })),
+            }))
+            .await
+            .expect("a valid document never fails the tool");
+
+        let value = result.structured_content.expect("structured content");
+        assert_eq!(value["ok"], true, "{value}");
+        assert_eq!(value["extracted_from"], "d-0001@1");
+        assert_eq!(value["metrics"]["nodes"], 2);
+        let warnings: Vec<&str> = value["warnings"]
+            .as_array()
+            .expect("warnings are reported")
+            .iter()
+            .filter_map(|warning| warning["code"].as_str())
+            .collect();
+        assert!(
+            !warnings.contains(&"opts_ignored"),
+            "every key is supported, nothing is ignored: {warnings:?}"
+        );
+    }
+
+    /// S21: the message of `opts_ignored` names the keys of F2/F3, so the
+    /// agent learns when they arrive.
+    #[tokio::test]
+    async fn opts_ignored_names_the_keys_of_the_later_phases() {
+        let _guard = lock_renders().await;
+        let server = GraphiumServer::new();
+        let diagram = serde_json::from_str(MINIMAL).expect("the example is JSON");
+
+        let result = server
+            .render_diagram(Parameters(RenderDiagramParams {
+                diagram,
+                opts: Some(serde_json::json!({ "focus": "read" })),
+            }))
+            .await
+            .expect("a valid document never fails the tool");
+
+        let value = result.structured_content.expect("structured content");
+        let warning = value["warnings"]
+            .as_array()
+            .expect("warnings are reported")
+            .iter()
+            .find(|warning| warning["code"] == "opts_ignored")
+            .expect("the ignored key is reported");
+        let message = warning["message"].as_str().expect("the warning says why");
+        for key in ["opts.focus", "opts.replace_id", "opts.interactive"] {
+            assert!(message.contains(key), "the message names {key}: {message}");
+        }
+        assert!(message.contains("F2/F3"), "{message}");
+    }
+
+    /// A malformed `opts.extract` never falls back to the whole diagram: it is
+    /// an actionable error and nothing is stored.
+    #[tokio::test]
+    async fn a_malformed_extract_is_reported_and_stores_nothing() {
+        let _guard = lock_renders().await;
+        let server = GraphiumServer::new();
+        let diagram = serde_json::from_str(MINIMAL).expect("the example is JSON");
+
+        let result = server
+            .render_diagram(Parameters(RenderDiagramParams {
+                diagram,
+                opts: Some(serde_json::json!({ "extract": { "depth": 2 } })),
+            }))
+            .await
+            .expect("a malformed option is an answer, not a crash");
+
+        let value = result.structured_content.expect("structured content");
+        assert_eq!(value["ok"], false, "{value}");
+        assert_eq!(value["errors"][0]["path"], "opts.extract.around");
+        assert_eq!(value["errors"][0]["code"], "missing_field");
+        assert!(value.get("diagram_id").is_none(), "{value}");
+        assert!(
+            crate::store::diagram_store().list().is_empty(),
+            "a malformed option never reaches the plane"
+        );
     }
 
     /// Reads one line and decodes it as JSON-RPC: anything else on the wire is

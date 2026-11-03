@@ -41,12 +41,26 @@ the paint, and `rendered: false` comes with a `reason` (`headless`, `no_window`,
 merge patch and the `revision` you read: it is transactional, so a bad patch \
 leaves the diagram untouched. Do not render a new one to replace it.
 
+BIG DIAGRAMS. Hundreds of nodes are not one picture: they are a view of one. \
+`render_diagram` accepts `opts.extract: { around: \"<id>\", depth }` (default \
+`depth: 1`, at most 300 nodes in the subgraph) and draws only the neighbourhood \
+of that node, following the edges in both directions. The subgraph keeps the \
+`diagram_id` of the parent and the response names it in `extracted_from` \
+(`\"<diagram_id>@<depth>\"`); `get_diagram` still returns the whole document, \
+because extract is a view and never an edit. Every layout also has a deadline: \
+`opts.layout_timeout_ms` defaults to 2000 ms with a ceiling of 10000, and a \
+layout that misses it answers `ok: false` with code `layout_timeout` and \
+`metrics.elapsed_ms`, leaving the plan untouched. `opts.focus`, `opts.replace_id` \
+and `opts.interactive` arrive in F2/F3: sending them today costs a warning, \
+never the diagram.
+
 ERRORS. Every failure carries `{ path, code, message, hint? }` with a stable code \
 and the JSON path of the problem. `unknown_ref` and `duplicate_id` are rules of a \
 kind, `unknown_field` means a key the schema does not admit (`hint` carries the \
 closest name), `unknown_kind` lists the kinds that exist, `too_large` means the \
 document is over the limit of its kind, `stale_revision` means you read an old \
-version. Fix the path the error names instead of rewriting the whole document.
+version, `layout_timeout` means the layout missed `opts.layout_timeout_ms`. Fix \
+the path the error names instead of rewriting the whole document.
 
 THE PLAN. Diagrams stay on the plan until the human closes them or \
 `clear_canvas` removes them. `list_diagrams` and `get_diagram` are how you find \
@@ -70,7 +84,14 @@ anything, so call it first when the document is long or the last render failed. 
 `ok: true` returns `diagram_id`, `rendered_kind`, `metrics { nodes, edges, \
 layout_ms, render_ms, svg_bytes }` and `rendered`, which tells whether the window \
 confirmed the paint; when `rendered` is false, `reason` says why. `ok: false` \
-means nothing was placed and `errors[]` carries `{ path, code, message, hint? }`."
+means nothing was placed and `errors[]` carries `{ path, code, message, hint? }`. \
+For a diagram of hundreds of nodes, `opts.extract: { around, depth }` (default \
+`depth: 1`, at most 300 nodes) draws only the neighbourhood of that node and the \
+response carries `extracted_from` (`\"<diagram_id>@<depth>\"`); the document \
+itself is unchanged. `opts.layout_timeout_ms` (default 2000, ceiling 10000) is \
+the deadline of the layout: missing it answers `ok: false`, code \
+`layout_timeout`, with `metrics.elapsed_ms` and nothing on the plan. \
+`opts.focus`, `opts.replace_id` and `opts.interactive` arrive in F2/F3."
         }
         "validate_diagram" => {
             "\
@@ -177,6 +198,7 @@ mod tests {
             "unknown_kind",
             "too_large",
             "stale_revision",
+            "layout_timeout",
         ] {
             assert!(INSTRUCTIONS.contains(code), "falta `{code}`");
         }
@@ -188,6 +210,26 @@ mod tests {
             let text = description(tool);
             assert!(text.len() > 120, "{tool} needs a real description");
             assert_ne!(text, description("nope"), "{tool} is a fallback");
+        }
+    }
+
+    /// S21: the agent learns that `opts.extract`, `opts.layout_timeout_ms` and
+    /// `extracted_from` exist without reading any other document.
+    #[test]
+    fn the_harness_teaches_opts_extract_and_the_layout_deadline() {
+        let render = description("render_diagram");
+        for needle in [
+            "opts.extract",
+            "opts.layout_timeout_ms",
+            "extracted_from",
+            "layout_timeout",
+        ] {
+            assert!(render.contains(needle), "render_diagram lacks `{needle}`");
+            assert!(INSTRUCTIONS.contains(needle), "the instructions lack `{needle}`");
+        }
+        for future in ["opts.focus", "opts.replace_id", "opts.interactive"] {
+            assert!(render.contains(future), "render_diagram lacks `{future}`");
+            assert!(INSTRUCTIONS.contains(future), "the instructions lack `{future}`");
         }
     }
 
