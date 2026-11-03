@@ -165,6 +165,10 @@ mod tests {
 
     #[test]
     fn the_lifecycle_is_reachable_through_the_dispatcher() {
+        // The global store is shared: the test that renders serializes with
+        // the rest of the suite.
+        let _guard = crate::test_support::lock_renders_blocking();
+
         let rendered = call_tool(
             "render_diagram",
             &serde_json::json!({ "diagram": serde_json::from_str::<serde_json::Value>(MINIMAL).unwrap() }),
