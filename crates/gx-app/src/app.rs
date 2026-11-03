@@ -85,65 +85,68 @@ struct AckPayload {
 ///
 /// `keep_alive` is true in MCP mode: closing the window must not kill the
 /// process while a session is alive (PRD §8.6).
-pub fn build(keep_alive: bool) -> tauri::App<tauri::Wry> {
-    tauri::Builder::default()
-        .setup(move |app| {
-            app.manage(PlanState::default());
-            let handle = app.handle().clone();
+///
+/// The plan state is created here and shared with the render hook: the setup
+/// hook of Tauri 2 only runs when the event loop starts, so a state that
+/// lives in the Tauri state manager would not exist yet when the MCP thread
+/// asks for it.
+pub fn build(keep_alive: bool) -> (tauri::App<tauri::Wry>, Arc<PlanState>) {
+    let state = Arc::new(PlanState::default());
 
-            let Some(window) = app.get_webview_window("main") else {
-                return Err(Box::<dyn std::error::Error>::from(std::io::Error::other(
-                    "the main window is missing",
-                )));
-            };
-
-            // Closing the window does not kill the process while an MCP
-            // session is alive: the window hides and the next render brings
-            // it back (PRD §8.6).
-            let hidden = window.clone();
-            window.on_window_event(move |event| {
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    if keep_alive {
-                        api.prevent_close();
-                        let _ = hidden.hide();
-                    }
-                }
-            });
-
-            let camera_window = window.clone();
-            let ack_window = window.clone();
-            let ready_window = window.clone();
-            let camera_handle = handle.clone();
-            let ack_handle = handle.clone();
-            let ready_handle = handle.clone();
-            camera_window.listen("camera-changed", move |event| {
-                if let Ok(payload) = serde_json::from_str::<CameraPayload>(event.payload()) {
-                    let state = camera_handle.state::<PlanState>();
-                    state.set_camera(CameraSnapshot::new(payload.tx, payload.ty, payload.zoom));
-                }
-            });
-            ack_window.listen("render_ack", move |event| {
-                if let Ok(payload) = serde_json::from_str::<AckPayload>(event.payload()) {
-                    let state = ack_handle.state::<PlanState>();
-                    state.resolve_ack(&payload.req_id, payload.ok);
-                }
-            });
-            ready_window.listen("graphium://ready", move |_event| {
-                ready_handle.state::<PlanState>().set_ready();
-            });
-
-            Ok(())
-        })
+    let application = tauri::Builder::default()
         .build(tauri::generate_context!())
-        .expect("the tauri application must build")
+        .expect("the tauri application must build");
+
+    // The window is created here, before the event loop starts: the window
+    // declared in the configuration only appears when the loop is ready, and
+    // by then the page may have already announced itself.
+    let handle = application.handle().clone();
+
+    let window = tauri::WebviewWindowBuilder::new(&handle, "main", tauri::WebviewUrl::default())
+        .title("Graphium")
+        .inner_size(1280.0, 800.0)
+        .resizable(true)
+        .build()
+        .expect("the main window must be created");
+
+    // Closing the window does not kill the process while an MCP session is
+    // alive: the window hides and the next render brings it back (PRD §8.6).
+    let hidden = window.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            if keep_alive {
+                api.prevent_close();
+                let _ = hidden.hide();
+            }
+        }
+    });
+
+    let camera_state = Arc::clone(&state);
+    let ack_state = Arc::clone(&state);
+    let ready_state = Arc::clone(&state);
+    handle.listen("camera-changed", move |event| {
+        if let Ok(payload) = serde_json::from_str::<CameraPayload>(event.payload()) {
+            camera_state.set_camera(CameraSnapshot::new(payload.tx, payload.ty, payload.zoom));
+        }
+    });
+    handle.listen("render_ack", move |event| {
+        if let Ok(payload) = serde_json::from_str::<AckPayload>(event.payload()) {
+            ack_state.resolve_ack(&payload.req_id, payload.ok);
+        }
+    });
+    handle.listen("graphium://ready", move |_event| {
+        ready_state.set_ready();
+    });
+
+    (application, state)
 }
 
 /// Installs the hook that paints a diagram in the window and waits for the
 /// frontend to confirm it.
-pub fn install_render_hook(handle: tauri::AppHandle) {
+pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
     let hook: gx_mcp::tools::RenderHook = Arc::new(move |payload| {
         let req_id = format!("req-{}", REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed));
-        let receiver = handle.state::<PlanState>().register_ack(&req_id);
+        let receiver = state.register_ack(&req_id);
 
         let Some(window) = handle.get_webview_window("main") else {
             return false;
@@ -154,7 +157,7 @@ pub fn install_render_hook(handle: tauri::AppHandle) {
         // The frontend announces itself when the webview is alive; the
         // render waits for that announcement before giving up (PRD §8.6.1).
         let deadline = Instant::now() + Duration::from_millis(READY_TIMEOUT_MS);
-        while !handle.state::<PlanState>().is_ready() {
+        while !state.is_ready() {
             if Instant::now() >= deadline {
                 return false;
             }
@@ -174,7 +177,6 @@ pub fn install_render_hook(handle: tauri::AppHandle) {
             .recv_timeout(Duration::from_millis(RENDER_ACK_TIMEOUT_MS))
             .unwrap_or(false);
         if !acknowledged {
-            let state = handle.state::<PlanState>();
             state.pending.lock().expect("pending lock").remove(&req_id);
         }
         acknowledged

@@ -29,19 +29,42 @@ let cameraTimer = null;
 // --- Tauri bridge -------------------------------------------------------
 
 const tauri = window.__TAURI__;
+const internals = window.__TAURI_INTERNALS__;
 
+/**
+ * Emits an event to Rust.
+ *
+ * The global bundle (`window.__TAURI__`) is the documented path. When it is
+ * not there, the internal IPC is used directly: it is the same protocol the
+ * bundle speaks (`plugin:event|emit`), so the plan works either way.
+ */
 function emit(name, payload) {
-  if (!tauri) {
+  if (tauri && tauri.event && typeof tauri.event.emit === "function") {
+    tauri.event.emit(name, payload);
     return;
   }
-  tauri.event.emit(name, payload);
+  if (internals && typeof internals.invoke === "function") {
+    internals.invoke("plugin:event|emit", { event: name, payload });
+    return;
+  }
+  console.error(`graphium: no hay puente de Tauri para emitir ${name}`);
 }
 
+/**
+ * Listens to an event coming from Rust, with the same fallback as `emit`.
+ */
 function listen(name, handler) {
-  if (!tauri) {
+  if (tauri && tauri.event && typeof tauri.event.listen === "function") {
+    tauri.event.listen(name, handler);
     return;
   }
-  tauri.event.listen(name, handler);
+  if (internals && typeof internals.invoke === "function") {
+    internals.invoke("plugin:event|listen", {
+      event: name,
+      target: { kind: "Any" },
+      handler: internals.transformCallback((event) => handler(event)),
+    });
+  }
 }
 
 // --- Camera -------------------------------------------------------------
