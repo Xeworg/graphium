@@ -5,7 +5,7 @@
 //! self loops and the disconnected nodes.
 
 use gx_core::geom::Point;
-use gx_core::ir::{Direction, IrEdge, IrGraph, IrGroup, IrNode};
+use gx_core::ir::{Direction, IrEdge, IrGraph, IrGroup, IrNode, IrRow};
 use gx_core::layout::LayoutEngine;
 use gx_core::layout::LayoutGraph;
 use gx_layout::DagreEngine;
@@ -207,4 +207,42 @@ fn the_origin_of_the_drawing_is_reachable() {
     assert!(closest >= 0.0);
     assert!(closest < f64::INFINITY);
     let _ = Point::new(0.0, 0.0);
+}
+
+/// A relation of a schema goes straight between the two key rows when the
+/// tables sit side by side: a bent line reads as another relation.
+#[test]
+fn a_relation_between_side_by_side_tables_is_a_straight_segment() {
+    let mut source = IrNode::new("users", "users");
+    source.rows = vec![IrRow::new("id"), IrRow::new("email")];
+    let mut target = IrNode::new("posts", "posts");
+    target.rows = vec![IrRow::new("id"), IrRow::new("user_id")];
+
+    let mut edge = IrEdge::new("users", "posts");
+    edge.from_row = Some(0);
+    edge.to_row = Some(1);
+    edge.arrow = false;
+
+    let graph = IrGraph {
+        direction: Direction::LR,
+        layout_hint: gx_core::ir::LayoutHint::Layered,
+        nodes: vec![source, target],
+        edges: vec![edge],
+        groups: Vec::new(),
+    };
+
+    let layout = DagreEngine::new(Arc::new(FakeMetrics)).layout(&graph);
+    let route = &layout.edges[0];
+    assert_eq!(
+        route.points.len(),
+        2,
+        "the route has to be a straight segment: {:?}",
+        route.points
+    );
+    // The two ends are on different rows, so the segment is diagonal but it
+    // has no bend: a middle point would mean a routed polyline.
+    assert_ne!(
+        route.points[0].y, route.points[1].y,
+        "each end anchors to its own row"
+    );
 }

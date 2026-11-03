@@ -186,17 +186,12 @@ impl LayoutEngine for DagreEngine {
                 None
             };
             let mut points = points;
-            // The ports: a relation of a schema anchors to the row of the
-            // key, not to the middle of the table (PRD §6.1).
-            if let Some(row) = edge.to_row {
-                if let (Some(point), Some(placed)) = (points.last_mut(), nodes.get(&edge.to)) {
-                    point.y = row_center(placed, row);
-                }
-            }
-            if let Some(row) = edge.from_row {
-                if let (Some(point), Some(placed)) = (points.first_mut(), nodes.get(&edge.from)) {
-                    point.y = row_center(placed, row);
-                }
+            // The ports of a schema: the relation leaves and arrives at the
+            // row of the key, and when the two tables sit side by side the
+            // route is a straight segment between those two rows. A bent line
+            // reads as a different relation (PRD §6.1).
+            if let Some(straight) = straight_route(graph, &nodes, edge) {
+                points = straight;
             }
             edges.push(LayoutEdge {
                 from: edge.from.clone(),
@@ -256,6 +251,45 @@ impl LayoutEngine for DagreEngine {
             bbox,
         }
     }
+}
+
+/// A straight route between two rows, when the tables sit side by side.
+///
+/// Returns `None` when the boxes are stacked (the relation has to be routed)
+/// or when the edge has no ports.
+fn straight_route(
+    graph: &IrGraph,
+    nodes: &BTreeMap<String, NodeBox>,
+    edge: &gx_core::ir::IrEdge,
+) -> Option<Vec<Point>> {
+    let (from_row, to_row) = (edge.from_row?, edge.to_row?);
+    let from = nodes.get(&edge.from)?;
+    let to = nodes.get(&edge.to)?;
+    let _ = graph;
+
+    // Side by side: the target starts after the source ends, or the other way.
+    let right_to_left = from.center.x + from.size.w / 2.0 <= to.center.x - to.size.w / 2.0;
+    let left_to_right = to.center.x + to.size.w / 2.0 <= from.center.x - from.size.w / 2.0;
+    if !right_to_left && !left_to_right {
+        return None;
+    }
+
+    let (start_x, end_x) = if right_to_left {
+        (
+            from.center.x + from.size.w / 2.0,
+            to.center.x - to.size.w / 2.0,
+        )
+    } else {
+        (
+            from.center.x - from.size.w / 2.0,
+            to.center.x + to.size.w / 2.0,
+        )
+    };
+
+    Some(vec![
+        Point::new(start_x, row_center(from, from_row)),
+        Point::new(end_x, row_center(to, to_row)),
+    ])
 }
 
 /// The vertical center of a row inside a node, in the same coordinates the

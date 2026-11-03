@@ -337,7 +337,14 @@ fn write_node(out: &mut String, node: &IrNode, placed: &NodeBox) {
 }
 
 /// Size of the glyphs of the crow's foot, in plan units.
-const CROW_FOOT: f64 = 14.0;
+///
+/// The legs of the foot are wide and short: a narrow fan reads as an
+/// arrowhead, which is the one thing a crow's foot must not look like.
+const CROW_FOOT: f64 = 16.0;
+/// How far back from the table the legs of the foot spread.
+const CROW_FOOT_LENGTH: f64 = 0.5;
+/// How wide the legs of the foot open.
+const CROW_FOOT_SPREAD: f64 = 0.85;
 
 /// Horizontal space reserved for the `PK` / `FK` badge of a row.
 const BADGE_WIDTH: f64 = 26.0;
@@ -414,35 +421,37 @@ fn write_crow_foot(
     let side = |point: gx_core::Point, offset: f64| {
         gx_core::Point::new(point.x - dy * offset, point.y + dx * offset)
     };
-    let spread = CROW_FOOT / 2.0;
-
     match max {
         gx_core::ir::CardinalityMax::Many => {
-            // The fork: three strokes from a point one glyph back.
-            let fork = back(CROW_FOOT);
-            let stroke = |from: gx_core::Point, to: gx_core::Point| {
+            // The crow's foot: three legs that fan out from the edge of the
+            // table, so the symbol reads as "many" and not as an arrowhead.
+            let apex = at;
+            let leg = back(CROW_FOOT * CROW_FOOT_LENGTH);
+            let spread = CROW_FOOT * CROW_FOOT_SPREAD;
+            let stroke = |to: gx_core::Point| {
                 format!(
                     "M {} {} L {} {} ",
-                    fmt_num(from.x),
-                    fmt_num(from.y),
+                    fmt_num(apex.x),
+                    fmt_num(apex.y),
                     fmt_num(to.x),
                     fmt_num(to.y)
                 )
             };
             let mut path = String::new();
-            path.push_str(&stroke(at, side(fork, spread)));
-            path.push_str(&stroke(at, side(fork, -spread)));
-            path.push_str(&stroke(fork, side(fork, spread)));
-            path.push_str(&stroke(fork, side(fork, -spread)));
+            path.push_str(&stroke(leg));
+            path.push_str(&stroke(side(leg, spread)));
+            path.push_str(&stroke(side(leg, -spread)));
             out.push_str(&format!(
                 "<path class=\"{classes}\" d=\"{}\"/>\n",
                 path.trim_end()
             ));
         }
         gx_core::ir::CardinalityMax::One => {
-            let mark = back(CROW_FOOT);
-            let from = side(mark, spread);
-            let to = side(mark, -spread);
+            // Exactly one: a single stroke across the relation.
+            let mark = back(CROW_FOOT * 0.6);
+            let half = CROW_FOOT * CROW_FOOT_SPREAD;
+            let from = side(mark, half);
+            let to = side(mark, -half);
             out.push_str(&format!(
                 "<line class=\"{classes}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>\n",
                 fmt_num(from.x),
@@ -454,7 +463,7 @@ fn write_crow_foot(
     }
 
     if bound == gx_core::ir::CardinalityBound::Optional {
-        let center = back(CROW_FOOT * 1.9);
+        let center = back(CROW_FOOT * 1.5);
         out.push_str(&format!(
             "<circle class=\"{classes}\" cx=\"{}\" cy=\"{}\" r=\"{}\"/>\n",
             fmt_num(center.x),
