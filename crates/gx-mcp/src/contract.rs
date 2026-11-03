@@ -479,6 +479,20 @@ fn min_example_of(kind: &str) -> Value {
                 { "label": "v1.1", "lane": "q1" }
             ]
         }),
+        "flowchart" => serde_json::json!({
+            "version": 1,
+            "kind": "flowchart",
+            "title": "aprobación",
+            "nodes": [
+                { "id": "inicio", "label": "pedido", "role": "start" },
+                { "id": "limite", "label": "¿supera el límite?", "role": "decision" },
+                { "id": "fin", "label": "fin", "role": "end" }
+            ],
+            "edges": [
+                { "from": "inicio", "to": "limite" },
+                { "from": "limite", "to": "fin", "label": "sí" }
+            ]
+        }),
         "swimlane" => serde_json::json!({
             "version": 1,
             "kind": "swimlane",
@@ -533,6 +547,16 @@ fn rules_of(kind: &str) -> Vec<String> {
             );
             rules.push(
                 "Un evento con `end` es un tramo y `end` tiene que ser posterior a `order`."
+                    .to_string(),
+            );
+        }
+        "flowchart" => {
+            rules.push(
+                "El `role` de un nodo decide su forma: `start`, `end`, `process` (por defecto), `decision`, `data`, `note`."
+                    .to_string(),
+            );
+            rules.push(
+                "La etiqueta de una arista es la condición del camino, por ejemplo `sí` / `no`."
                     .to_string(),
             );
         }

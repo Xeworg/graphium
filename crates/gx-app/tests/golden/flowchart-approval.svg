@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="0.00 0.00 342.04 545.00" width="342.04" height="545.00">
+<style>
+.bg{fill:rgba(27, 27, 27, 1.00)}
+.node-fill{fill:rgba(42, 42, 48, 1.00)}
+.node-stroke{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.node-text{fill:rgba(233, 233, 236, 1.00)}
+.edge-stroke{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.edge-text{fill:rgba(185, 185, 194, 1.00)}
+.accent{fill:rgba(110, 168, 254, 1.00);stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight{stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight-text{fill:rgba(110, 168, 254, 1.00)}
+.emphasis-muted{opacity:0.55}
+.lane-band{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.35;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.lane-label{fill:rgba(185, 185, 194, 1.00)}
+.lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
+.stroke-dashed{stroke-dasharray:6.00 4.00}
+.text{font-family:Inter, sans-serif}
+.arrow-normal{fill:rgba(138, 138, 150, 1.00)}
+.arrow-highlight{fill:rgba(110, 168, 254, 1.00)}
+.arrow-muted{fill:rgba(138, 138, 150, 1.00);opacity:0.55}
+</style>
+<defs>
+<marker id="arrow-normal" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
+<path class="arrow-normal" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00 Z"/>
+</marker>
+</defs>
+<g class="layer-edges">
+<polyline id="m-auto-fin" class="edge-stroke" points="78.81,423.50 78.81,463.50 158.44,511.63" marker-end="url(#arrow-normal)"/>
+<polyline id="m-inicio-monto" class="edge-stroke" points="179.32,41.50 179.32,81.50 179.32,121.50" marker-end="url(#arrow-normal)"/>
+<polyline id="m-jefe-fin" class="edge-stroke" points="279.83,423.50 279.83,463.50 200.19,511.63" marker-end="url(#arrow-normal)"/>
+<polyline id="m-limite-auto" class="edge-stroke" points="149.31,284.50 78.81,333.25 78.81,382.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="97.14" y="333.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">no</text>
+<polyline id="m-limite-jefe" class="edge-stroke" points="209.32,284.50 279.83,333.25 279.83,382.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="295.22" y="333.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">sí</text>
+<polyline id="m-monto-limite" class="edge-stroke" points="179.32,163.00 179.32,203.00 179.32,243.00" marker-end="url(#arrow-normal)"/>
+</g>
+<g class="layer-nodes">
+<rect id="g-auto" class="node-fill node-stroke shape-rounded" x="0.00" y="382.00" width="157.62" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="78.81" y="402.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">aprobado en el acto</text>
+<ellipse id="g-fin" class="node-fill node-stroke shape-ellipse" cx="179.32" cy="524.25" rx="20.88" ry="20.75"/>
+<text class="node-text text" x="179.32" y="524.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">fin</text>
+<ellipse id="g-inicio" class="node-fill node-stroke shape-ellipse" cx="179.32" cy="20.75" rx="35.34" ry="20.75"/>
+<text class="node-text text" x="179.32" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">pedido</text>
+<rect id="g-jefe" class="node-fill node-stroke shape-rounded" x="217.62" y="382.00" width="124.42" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="279.83" y="402.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">aprueba el jefe</text>
+<polygon id="g-limite" class="node-fill node-stroke shape-diamond" points="179.32,243.00 250.14,263.75 179.32,284.50 108.50,263.75"/>
+<text class="node-text text" x="179.32" y="263.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">¿supera el límite?</text>
+<rect id="g-monto" class="node-fill node-stroke shape-rounded" x="113.03" y="121.50" width="132.58" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="179.32" y="142.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">monto del gasto</text>
+</g>
+</svg>

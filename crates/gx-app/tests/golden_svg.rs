@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 9] = [
+const CASES: [(&str, &str); 10] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -42,6 +42,7 @@ const CASES: [(&str, &str); 9] = [
     ("sequence-order", SEQUENCE),
     ("timeline-roadmap", TIMELINE_ROADMAP),
     ("swimlane-soporte", SWIMLANE_SOPORTE),
+    ("flowchart-approval", FLOWCHART_APPROVAL),
 ];
 
 const MINIMAL: &str = r#"{
@@ -188,6 +189,28 @@ const SWIMLANE_SOPORTE: &str = r#"{
     { "label": "abre el ticket", "lane": "soporte" },
     { "label": "consulta el envío", "lane": "logistica" },
     { "label": "responde", "lane": "soporte" }
+  ]
+}"#;
+
+const FLOWCHART_APPROVAL: &str = r#"{
+  "version": 1,
+  "kind": "flowchart",
+  "title": "aprobación de un gasto",
+  "nodes": [
+    { "id": "inicio", "label": "pedido", "role": "start" },
+    { "id": "monto", "label": "monto del gasto" },
+    { "id": "limite", "label": "¿supera el límite?", "role": "decision" },
+    { "id": "jefe", "label": "aprueba el jefe" },
+    { "id": "auto", "label": "aprobado en el acto" },
+    { "id": "fin", "label": "fin", "role": "end" }
+  ],
+  "edges": [
+    { "from": "inicio", "to": "monto" },
+    { "from": "monto", "to": "limite" },
+    { "from": "limite", "to": "jefe", "label": "sí" },
+    { "from": "limite", "to": "auto", "label": "no" },
+    { "from": "jefe", "to": "fin" },
+    { "from": "auto", "to": "fin" }
   ]
 }"#;
 
