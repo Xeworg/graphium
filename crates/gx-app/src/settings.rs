@@ -24,7 +24,13 @@ const PLANO_GRID_OPACITY: f64 = 0.14;
 /// Separations the panel lets the human choose, in plan units.
 const DIAGONAL_RANGE: std::ops::RangeInclusive<f64> = 20.0..=200.0;
 /// Angles the panel lets the human choose, in degrees.
-const ANGLE_RANGE: std::ops::RangeInclusive<f64> = 0.0..=90.0;
+///
+/// The ends are open on purpose. The separation of the grid is the major
+/// diagonal of the cell, so at 0 degrees the step collapses to zero (a solid
+/// wash) and at 90 the two families of lines become one: outside 15..75 the
+/// cell stops being a rhombus and the geometry stops meaning what the PRD
+/// says it means.
+const ANGLE_RANGE: std::ops::RangeInclusive<f64> = 15.0..=75.0;
 
 /// What the human chose for the plan (PRD §7.1 RF25).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -55,7 +61,7 @@ impl Default for Settings {
 /// The three presets of F1 (PRD §8.5.2).
 pub mod presets {
     use super::{
-        Settings, ANGLE_RANGE, DIAGONAL_RANGE, PLANO_BACKGROUND, PLANO_GRID, PLANO_GRID_OPACITY,
+        Settings, PLANO_BACKGROUND, PLANO_GRID, PLANO_GRID_OPACITY,
     };
 
     /// The dark plan of the reference: dark background and a white grid.
@@ -78,8 +84,8 @@ pub mod presets {
             background: "#f4f4f5".to_string(),
             grid_color: "#1b1b1b".to_string(),
             grid_opacity: 0.10,
-            grid_diagonal: *DIAGONAL_RANGE.start() + 39.0,
-            grid_angle_degrees: *ANGLE_RANGE.start() + 45.0,
+            grid_diagonal: 59.0,
+            grid_angle_degrees: 45.0,
             grid_visible: true,
             theme: "light".to_string(),
         }
