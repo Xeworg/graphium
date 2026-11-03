@@ -12,7 +12,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Summary of a diagram placed on the plan (PRD §8.6.1, §11).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DiagramSummary {
     pub diagram_id: String,
     pub title: String,
@@ -22,15 +22,24 @@ pub struct DiagramSummary {
     pub session_id: String,
     /// Monotonic revision: grows on every accepted update (PRD §11.1).
     pub revision: u64,
+    /// Top-left corner of the object on the plan, in plan units
+    /// (PRD §7.2). `None` until the window places it.
+    pub pos: Option<gx_core::geom::Point>,
+    /// Size of the object with its padding, in plan units (PRD §7.2).
+    pub bbox: Option<gx_core::geom::Size>,
 }
 
 /// A diagram with its source document, for `get_diagram` (PRD §11).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DiagramRecord {
     pub summary: DiagramSummary,
     /// The source document, kept as JSON text so `get_diagram` returns what
     /// the agent sent (normalized) instead of a Rust struct.
     pub document: String,
+    /// Whether the diagram is on the plan. Closing it takes it out of the
+    /// list and invalidates its id for the tools, but the document stays in
+    /// memory until the window closes or `clear_canvas` runs (PRD §11.1).
+    pub open: bool,
 }
 
 /// The diagrams of the plan.
@@ -74,10 +83,13 @@ impl DiagramStore {
             updated_at: now_iso8601(),
             session_id,
             revision: 1,
+            pos: None,
+            bbox: None,
         };
         let record = DiagramRecord {
             summary: summary.clone(),
             document,
+            open: true,
         };
         self.documents
             .lock()
@@ -107,14 +119,68 @@ impl DiagramStore {
         Some(record.summary.clone())
     }
 
-    /// Every diagram on the plan, ordered by `diagram_id`.
+    /// Every diagram **on the plan**, ordered by `diagram_id`.
+    ///
+    /// A closed diagram is not on the plan any more: its document stays in
+    /// memory but no tool sees it (PRD §11.1).
     pub fn list(&self) -> Vec<DiagramSummary> {
         self.documents
             .lock()
             .expect("the diagram store is not poisoned")
             .values()
+            .filter(|record| record.open)
             .map(|record| record.summary.clone())
             .collect()
+    }
+
+    /// How many diagrams are on the plan (PRD §11.1, RF13).
+    pub fn open_count(&self) -> usize {
+        self.documents
+            .lock()
+            .expect("the diagram store is not poisoned")
+            .values()
+            .filter(|record| record.open)
+            .count()
+    }
+
+    /// Whether the plan is at its cap of open diagrams (PRD §11.1, RF13).
+    pub fn is_full(&self) -> bool {
+        self.open_count() >= MAX_OPEN_DIAGRAMS
+    }
+
+    /// Places a diagram on the plan: its corner and the size of its object.
+    pub fn place(
+        &self,
+        diagram_id: &str,
+        pos: gx_core::geom::Point,
+        bbox: gx_core::geom::Size,
+    ) -> Option<DiagramSummary> {
+        let mut documents = self
+            .documents
+            .lock()
+            .expect("the diagram store is not poisoned");
+        let record = documents.get_mut(diagram_id)?;
+        record.summary.pos = Some(pos);
+        record.summary.bbox = Some(bbox);
+        Some(record.summary.clone())
+    }
+
+    /// Takes a diagram out of the plan without deleting its document.
+    ///
+    /// Closing frees the slot, never the identifier: the id stays invalid for
+    /// the tools and is never handed out again (PRD §11.1, RF28).
+    pub fn close(&self, diagram_id: &str) -> bool {
+        let mut documents = self
+            .documents
+            .lock()
+            .expect("the diagram store is not poisoned");
+        match documents.get_mut(diagram_id) {
+            Some(record) if record.open => {
+                record.open = false;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Every diagram of one session, ordered by `diagram_id` (PRD §11.1).
@@ -131,6 +197,7 @@ impl DiagramStore {
             .lock()
             .expect("the diagram store is not poisoned")
             .get(diagram_id)
+            .filter(|record| record.open)
             .map(|record| record.summary.clone())
     }
 
@@ -140,6 +207,7 @@ impl DiagramStore {
             .lock()
             .expect("the diagram store is not poisoned")
             .get(diagram_id)
+            .filter(|record| record.open)
             .cloned()
     }
 
@@ -148,8 +216,9 @@ impl DiagramStore {
         self.documents
             .lock()
             .expect("the diagram store is not poisoned")
-            .keys()
-            .cloned()
+            .values()
+            .filter(|record| record.open)
+            .map(|record| record.summary.diagram_id.clone())
             .collect()
     }
 
@@ -186,6 +255,9 @@ impl DiagramStore {
         self.last_id.store(0, Ordering::SeqCst);
     }
 }
+
+/// How many diagrams the plan holds at once (PRD §11.1, RF13: default 12).
+pub const MAX_OPEN_DIAGRAMS: usize = 12;
 
 /// The single store of the process.
 pub fn diagram_store() -> &'static DiagramStore {
@@ -247,7 +319,7 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{iso8601_utc, DiagramStore};
+    use super::{iso8601_utc, DiagramStore, MAX_OPEN_DIAGRAMS};
 
     fn summary(store: &DiagramStore, id: &str) -> super::DiagramSummary {
         store.insert(
@@ -316,5 +388,70 @@ mod tests {
         assert_eq!(iso8601_utc(0), "1970-01-01T00:00:00Z");
         assert_eq!(iso8601_utc(946_684_800), "2000-01-01T00:00:00Z");
         assert_eq!(iso8601_utc(1_790_000_000), "2026-09-21T14:13:20Z");
+    }
+
+    /// PRD §11.1 (RF28): cerrar saca el diagrama del plano e invalida su id,
+    /// pero **no** borra el documento: eso no es lo mismo que borrar.
+    #[test]
+    fn closing_takes_the_diagram_out_of_the_plan_and_keeps_the_document() {
+        let store = DiagramStore::new();
+        summary(&store, "d-0001");
+        assert_eq!(store.open_count(), 1);
+
+        assert!(store.close("d-0001"));
+
+        assert!(store.list().is_empty(), "el panel no lo lista más");
+        assert!(store.known_ids().is_empty(), "el id ya no está en el plano");
+        assert_eq!(store.get("d-0001"), None);
+        assert_eq!(store.record("d-0001"), None);
+        // El documento sigue en memoria hasta que se vacíe el plano.
+        assert_eq!(store.clear_all(), 1);
+        assert!(!store.close("d-0001"), "cerrar dos veces no es un cierre");
+    }
+
+    #[test]
+    fn a_closed_id_is_never_handed_out_again() {
+        let store = DiagramStore::new();
+        summary(&store, "d-0001");
+        store.close("d-0001");
+
+        assert_eq!(store.next_id(), "d-0002");
+    }
+
+    /// PRD §11.1 (RF13): el plano tiene tope, y una vez lleno lo dice.
+    #[test]
+    fn the_plan_holds_at_most_twelve() {
+        let store = DiagramStore::new();
+        assert_eq!(MAX_OPEN_DIAGRAMS, 12);
+        for _ in 0..MAX_OPEN_DIAGRAMS {
+            let id = store.next_id();
+            summary(&store, &id);
+        }
+
+        assert!(store.is_full());
+        assert_eq!(store.open_count(), MAX_OPEN_DIAGRAMS);
+
+        // Cerrar uno libera el slot, no el identificador.
+        store.close("d-0003");
+        assert!(!store.is_full());
+        assert_eq!(store.next_id(), "d-0013");
+    }
+
+    /// PRD §7.2 y §8.6.1: el estado que el panel consume lleva dónde está
+    /// cada objeto y cuánto mide.
+    #[test]
+    fn a_placed_diagram_reports_where_it_is() {
+        let store = DiagramStore::new();
+        summary(&store, "d-0001");
+        assert_eq!(store.get("d-0001").expect("existe").pos, None);
+
+        let pos = gx_core::geom::Point::new(120.0, -40.0);
+        let bbox = gx_core::geom::Size::new(320.0, 180.0);
+        let placed = store.place("d-0001", pos, bbox).expect("colocado");
+
+        assert_eq!(placed.pos, Some(pos));
+        assert_eq!(placed.bbox, Some(bbox));
+        assert_eq!(store.get("d-0001").expect("existe").pos, Some(pos));
+        assert!(store.place("d-9999", pos, bbox).is_none());
     }
 }
