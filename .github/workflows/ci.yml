@@ -1,9 +1,13 @@
 name: CI
 
+# El CI corre cuando se publica una etiqueta de versión, y solo entonces:
+# los gates (tests, golden, clippy, presupuestos) son de entrega, no de cada
+# push. Para comprobar una rama antes de etiquetarla, `cargo test --workspace`
+# y `cargo clippy --workspace --all-targets` en local; la etiqueta es la que
+# decide si el artefacto sale.
 on:
   push:
-    branches: [main, "feature/**"]
-  pull_request:
+    tags: ["v*"]
 
 env:
   CARGO_TERM_COLOR: always
