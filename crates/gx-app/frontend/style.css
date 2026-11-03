@@ -93,6 +93,26 @@
   stroke: var(--accent);
 }
 
+/* Rows of a table and the crow's foot of a relation (PRD §6.1). */
+.graphium .row-badge,
+.graphium .row-note {
+  fill: var(--edge-text);
+}
+
+.graphium .row-key {
+  font-weight: 600;
+}
+
+.graphium .row-nullable {
+  opacity: 0.75;
+}
+
+.graphium .cardinality {
+  fill: none;
+  stroke: var(--edge-stroke);
+  stroke-width: 1px;
+}
+
 * {
   box-sizing: border-box;
 }

@@ -36,6 +36,8 @@ pub enum ErrorCode {
     DuplicateId,
     UnknownRef,
     InvalidValue,
+    InvalidEnum,
+    UnsupportedVersion,
     TooLarge,
     EngineUnavailable,
 }
@@ -70,6 +72,8 @@ impl ErrorCode {
             ErrorCode::DuplicateId => "duplicate_id",
             ErrorCode::UnknownRef => "unknown_ref",
             ErrorCode::InvalidValue => "invalid_value",
+            ErrorCode::InvalidEnum => "invalid_enum",
+            ErrorCode::UnsupportedVersion => "unsupported_version",
             ErrorCode::TooLarge => "too_large",
             ErrorCode::EngineUnavailable => "engine_unavailable",
         }

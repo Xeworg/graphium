@@ -372,11 +372,39 @@ mod tests {
         assert!(diagram_store().list().is_empty());
     }
 
+    /// The `er` kind draws tables with their columns and a crow's foot
+    /// relation (PRD §6.1, H2).
+    #[test]
+    fn the_er_kind_renders_a_schema() {
+        let _guard = lock_renders_blocking();
+
+        let document = r#"{
+          "version": 1, "kind": "er", "title": "Schema — posts",
+          "tables": [
+            { "name": "users", "columns": [ { "name": "id", "type": "uuid", "key": "pk" } ] },
+            { "name": "posts", "columns": [
+                { "name": "id", "type": "uuid", "key": "pk" },
+                { "name": "user_id", "type": "uuid", "key": "fk", "nullable": true }
+            ] }
+          ],
+          "relations": [
+            { "from": { "table": "users", "column": "id" },
+              "to": { "table": "posts", "column": "user_id" },
+              "cardinality": "1:N" }
+          ]
+        }"#;
+        let response = render(document);
+
+        assert!(response.ok, "{response:?}");
+        assert_eq!(response.rendered_kind.as_deref(), Some("er"));
+        assert_eq!(response.metrics.expect("metrics").nodes, 2);
+    }
+
     #[test]
     fn an_unknown_kind_is_reported() {
         let _guard = lock_renders_blocking();
 
-        let response = render(r#"{ "version": 1, "kind": "er" }"#);
+        let response = render(r#"{ "version": 1, "kind": "sankey" }"#);
 
         assert!(!response.ok);
         assert_eq!(error_codes(&response), vec!["unknown_kind"]);

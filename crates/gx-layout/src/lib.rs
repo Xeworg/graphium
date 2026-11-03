@@ -38,15 +38,43 @@ impl DagreEngine {
         Self { metrics }
     }
 
-    /// The size of the box of a node: the measured text plus the padding.
-    fn node_size(&self, label: &str) -> Size {
-        let text = self
+    /// The size of the box of a node: the label, padded, plus its rows.
+    ///
+    /// The rows are the columns of a table (PRD §6.1): the box has to be tall
+    /// enough to hold them, or the drawing would overlap the text.
+    fn node_size(&self, node: &gx_core::ir::IrNode) -> Size {
+        let label = self
             .metrics
-            .measure(label, &TextStyle::regular(TOKENS.text_size));
-        Size::new(
-            text.w + 2.0 * TOKENS.node_padding,
-            text.h + 2.0 * TOKENS.node_padding,
-        )
+            .measure(&node.label, &TextStyle::semibold(TOKENS.text_size));
+        let mut width = label.w;
+        let mut height = label.h + 2.0 * TOKENS.node_padding;
+
+        if !node.rows.is_empty() {
+            // The badge of the key occupies its own column and the note is
+            // drawn against the right edge: badge + name + note have to fit.
+            let badge = self
+                .metrics
+                .measure("PK, FK", &TextStyle::regular(TOKENS.text_size));
+            let gap = TOKENS.node_padding;
+            height += TOKENS.border_width;
+            for row in &node.rows {
+                let name = self
+                    .metrics
+                    .measure(&row.text, &TextStyle::regular(TOKENS.text_size));
+                let mut row_width = badge.w + gap + name.w;
+                if let Some(note) = &row.note {
+                    let measured_note = self
+                        .metrics
+                        .measure(note, &TextStyle::regular(TOKENS.text_size));
+                    row_width += gap + measured_note.w;
+                }
+                width = width.max(row_width);
+                height += name.h;
+            }
+            height += TOKENS.node_padding;
+        }
+
+        Size::new(width + 2.0 * TOKENS.node_padding, height)
     }
 }
 
@@ -68,7 +96,7 @@ impl LayoutEngine for DagreEngine {
         });
 
         for node in &graph.nodes {
-            let size = self.node_size(&node.label);
+            let size = self.node_size(node);
             dagre.set_node(
                 node.id.clone(),
                 Some(NodeLabel {
@@ -141,6 +169,7 @@ impl LayoutEngine for DagreEngine {
 
         let mut edges = Vec::new();
         for (index, edge) in graph.edges.iter().enumerate() {
+            let _ = index;
             let name = format!("e{index}");
             let Some(label) = dagre.edge(edge.from.as_str(), edge.to.as_str(), Some(name.as_str()))
             else {
@@ -156,6 +185,19 @@ impl LayoutEngine for DagreEngine {
             } else {
                 None
             };
+            let mut points = points;
+            // The ports: a relation of a schema anchors to the row of the
+            // key, not to the middle of the table (PRD §6.1).
+            if let Some(row) = edge.to_row {
+                if let (Some(point), Some(placed)) = (points.last_mut(), nodes.get(&edge.to)) {
+                    point.y = row_center(placed, row);
+                }
+            }
+            if let Some(row) = edge.from_row {
+                if let (Some(point), Some(placed)) = (points.first_mut(), nodes.get(&edge.from)) {
+                    point.y = row_center(placed, row);
+                }
+            }
             edges.push(LayoutEdge {
                 from: edge.from.clone(),
                 to: edge.to.clone(),
@@ -214,6 +256,14 @@ impl LayoutEngine for DagreEngine {
             bbox,
         }
     }
+}
+
+/// The vertical center of a row inside a node, in the same coordinates the
+/// renderer uses for its detail rows.
+fn row_center(placed: &NodeBox, row: u32) -> f64 {
+    let top = placed.center.y - placed.size.h / 2.0;
+    let line = TOKENS.text_size * TOKENS.line_height;
+    top + TOKENS.node_padding + line + line * (f64::from(row) + 0.5)
 }
 
 /// The smallest translation that brings the drawing to the origin.

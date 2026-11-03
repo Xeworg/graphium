@@ -94,9 +94,9 @@ pub fn render_json(src: &str, opts: &RenderOpts) -> Result<RenderOutcome, Vec<Va
 
     if let Ir::Graph(graph) = &mut ir {
         for node in &mut graph.nodes {
-            node.size = engines
-                .metrics
-                .measure(&node.label, &TextStyle::regular(TOKENS.text_size));
+            // The node is its label plus its detail rows, when it has any
+            // (PRD §6.1: a table is a node whose rows are its columns).
+            node.size = measure_node(&*engines.metrics, node);
         }
     }
 
@@ -132,6 +132,36 @@ pub fn render_json(src: &str, opts: &RenderOpts) -> Result<RenderOutcome, Vec<Va
             svg_bytes,
         },
     })
+}
+
+/// Measures a node: the label, padded, plus the detail rows.
+fn measure_node(metrics: &dyn TextMetrics, node: &crate::ir::IrNode) -> crate::geom::Size {
+    use crate::geom::Size;
+
+    let label = metrics.measure(&node.label, &TextStyle::semibold(TOKENS.text_size));
+    let mut width = label.w;
+    let mut height = label.h + 2.0 * TOKENS.node_padding;
+
+    if !node.rows.is_empty() {
+        // The badge of the key occupies its own column, and the note is drawn
+        // against the right edge: the box has to fit badge + name + note.
+        let badge = metrics.measure("PK, FK", &TextStyle::regular(TOKENS.text_size));
+        let gap = TOKENS.node_padding;
+        height += TOKENS.border_width;
+        for row in &node.rows {
+            let name = metrics.measure(&row.text, &TextStyle::regular(TOKENS.text_size));
+            let mut row_width = badge.w + gap + name.w;
+            if let Some(note) = &row.note {
+                let measured_note = metrics.measure(note, &TextStyle::regular(TOKENS.text_size));
+                row_width += gap + measured_note.w;
+            }
+            width = width.max(row_width);
+            height += name.h;
+        }
+        height += TOKENS.node_padding;
+    }
+
+    Size::new(width + 2.0 * TOKENS.node_padding, height)
 }
 
 /// Enforces the limits declared by the kind (PRD §7.3).

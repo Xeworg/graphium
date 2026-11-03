@@ -292,6 +292,12 @@ fn write_edge(out: &mut String, edge: &IrEdge, route: &LayoutEdge) {
         points.join(" ")
     ));
 
+    // The crow's foot: the end of the line says how many rows of the other
+    // table can point here, and whether zero is allowed (PRD §6.1).
+    if let Some(cardinality) = edge.cardinality {
+        write_cardinality(out, cardinality, route);
+    }
+
     if let (Some(label), Some(anchor)) = (edge.label.as_deref(), route.label_at) {
         let mut text_classes = String::from("edge-text text");
         push_emphasis(&mut text_classes, edge.emphasis, true);
@@ -323,7 +329,213 @@ fn write_node(out: &mut String, node: &IrNode, placed: &NodeBox) {
         Shape::Ellipse => write_ellipse(out, &id, &classes, &rect),
         Shape::Note => write_note(out, &id, &classes, &rect),
     }
-    write_node_text(out, node, placed);
+    if node.rows.is_empty() {
+        write_node_text(out, node, placed);
+    } else {
+        write_node_table(out, node, placed);
+    }
+}
+
+/// Size of the glyphs of the crow's foot, in plan units.
+const CROW_FOOT: f64 = 14.0;
+
+/// Horizontal space reserved for the `PK` / `FK` badge of a row.
+const BADGE_WIDTH: f64 = 26.0;
+
+/// Draws the two ends of a relation with the crow's foot notation.
+///
+/// Each end says how many rows of the other table can point here and whether
+/// zero is allowed, which is what makes a schema diagram readable (PRD §6.1).
+fn write_cardinality(out: &mut String, cardinality: gx_core::ir::Cardinality, route: &LayoutEdge) {
+    let (Some(first), Some(last)) = (route.points.first(), route.points.last()) else {
+        return;
+    };
+
+    // The direction of the line at each end, pointing into the box.
+    let end_direction = direction_at(route, true);
+    let start_direction = direction_at(route, false);
+
+    let mut classes = String::from("cardinality");
+    if cardinality.to_min == gx_core::ir::CardinalityBound::Optional {
+        classes.push_str(" cardinality-optional");
+    }
+
+    write_crow_foot(
+        out,
+        *last,
+        end_direction,
+        cardinality.to_min,
+        cardinality.to_max,
+        &classes,
+    );
+    write_crow_foot(
+        out,
+        *first,
+        start_direction,
+        cardinality.from_min,
+        cardinality.from_max,
+        &classes,
+    );
+}
+
+/// The unit direction of the line at one of its ends.
+fn direction_at(route: &LayoutEdge, at_end: bool) -> (f64, f64) {
+    let (from, to) = if at_end {
+        let last = route.points.last().copied().unwrap_or_default();
+        let before = route.points.iter().rev().nth(1).copied().unwrap_or(last);
+        (last, before)
+    } else {
+        let first = route.points.first().copied().unwrap_or_default();
+        let after = route.points.get(1).copied().unwrap_or(first);
+        (first, after)
+    };
+    let dx = from.x - to.x;
+    let dy = from.y - to.y;
+    let length = (dx * dx + dy * dy).sqrt();
+    if length <= f64::EPSILON {
+        (1.0, 0.0)
+    } else {
+        (dx / length, dy / length)
+    }
+}
+
+/// Draws the glyphs of one end: the circle when zero rows are allowed and the
+/// fork when many rows are.
+fn write_crow_foot(
+    out: &mut String,
+    at: gx_core::Point,
+    direction: (f64, f64),
+    bound: gx_core::ir::CardinalityBound,
+    max: gx_core::ir::CardinalityMax,
+    classes: &str,
+) {
+    let (dx, dy) = direction;
+    let back = |distance: f64| gx_core::Point::new(at.x - dx * distance, at.y - dy * distance);
+    let side = |point: gx_core::Point, offset: f64| {
+        gx_core::Point::new(point.x - dy * offset, point.y + dx * offset)
+    };
+    let spread = CROW_FOOT / 2.0;
+
+    match max {
+        gx_core::ir::CardinalityMax::Many => {
+            // The fork: three strokes from a point one glyph back.
+            let fork = back(CROW_FOOT);
+            let stroke = |from: gx_core::Point, to: gx_core::Point| {
+                format!(
+                    "M {} {} L {} {} ",
+                    fmt_num(from.x),
+                    fmt_num(from.y),
+                    fmt_num(to.x),
+                    fmt_num(to.y)
+                )
+            };
+            let mut path = String::new();
+            path.push_str(&stroke(at, side(fork, spread)));
+            path.push_str(&stroke(at, side(fork, -spread)));
+            path.push_str(&stroke(fork, side(fork, spread)));
+            path.push_str(&stroke(fork, side(fork, -spread)));
+            out.push_str(&format!(
+                "<path class=\"{classes}\" d=\"{}\"/>\n",
+                path.trim_end()
+            ));
+        }
+        gx_core::ir::CardinalityMax::One => {
+            let mark = back(CROW_FOOT);
+            let from = side(mark, spread);
+            let to = side(mark, -spread);
+            out.push_str(&format!(
+                "<line class=\"{classes}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>\n",
+                fmt_num(from.x),
+                fmt_num(from.y),
+                fmt_num(to.x),
+                fmt_num(to.y)
+            ));
+        }
+    }
+
+    if bound == gx_core::ir::CardinalityBound::Optional {
+        let center = back(CROW_FOOT * 1.9);
+        out.push_str(&format!(
+            "<circle class=\"{classes}\" cx=\"{}\" cy=\"{}\" r=\"{}\"/>\n",
+            fmt_num(center.x),
+            fmt_num(center.y),
+            fmt_num(CROW_FOOT / 3.5)
+        ));
+    }
+}
+
+/// Draws a node that has rows: a header with the label, a rule, and one line
+/// per row, with the key role on the left (PRD §6.1: a table is a node whose
+/// rows are its columns).
+fn write_node_table(out: &mut String, node: &IrNode, placed: &NodeBox) {
+    let rect = node_rect(placed);
+    let padding = TOKENS.node_padding;
+    let line = TOKENS.text_size * TOKENS.line_height;
+
+    // The header: the label, centered, in the first line of the box.
+    let header_y = rect.y + padding + line / 2.0;
+    let mut label_classes = String::from("node-text text");
+    push_emphasis(&mut label_classes, node.emphasis, true);
+    out.push_str(&format!(
+        "<text class=\"{label_classes}\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\" font-weight=\"{}\">{}</text>\n",
+        fmt_num(rect.center().x),
+        fmt_num(header_y),
+        fmt_num(TOKENS.text_size),
+        TOKENS.semibold_weight,
+        escape_text(&node.label),
+    ));
+
+    // The rule that separates the header from the rows.
+    let rule_y = header_y + line / 2.0;
+    out.push_str(&format!(
+        "<line class=\"node-stroke\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke-width=\"{}\"/>\n",
+        fmt_num(rect.x),
+        fmt_num(rule_y),
+        fmt_num(rect.max_x()),
+        fmt_num(rule_y),
+        fmt_num(TOKENS.border_width),
+    ));
+
+    // One line per row: the key role on the left, the name, the note right.
+    for (index, row) in node.rows.iter().enumerate() {
+        let y = rule_y + line * (index as f64 + 0.5);
+        let badge = match row.key {
+            gx_core::ir::RowKey::Pk => "PK".to_string(),
+            gx_core::ir::RowKey::Fk => "FK".to_string(),
+            gx_core::ir::RowKey::PkFk => "PK, FK".to_string(),
+            gx_core::ir::RowKey::None => String::new(),
+        };
+        let mut name_classes = String::from("node-text text");
+        if matches!(row.key, gx_core::ir::RowKey::Pk | gx_core::ir::RowKey::PkFk) {
+            name_classes.push_str(" row-key");
+        }
+        if row.nullable {
+            name_classes.push_str(" row-nullable");
+        }
+        out.push_str(&format!(
+            "<text class=\"row-badge text\" x=\"{}\" y=\"{}\" font-size=\"{}\" dominant-baseline=\"central\">{}</text>\n",
+            fmt_num(rect.x + padding / 2.0),
+            fmt_num(y),
+            fmt_num(TOKENS.text_size * 0.85),
+            escape_text(&badge),
+        ));
+        out.push_str(&format!(
+            "<text class=\"{name_classes}\" x=\"{}\" y=\"{}\" font-size=\"{}\" dominant-baseline=\"central\">{}</text>\n",
+            fmt_num(rect.x + padding + BADGE_WIDTH),
+            fmt_num(y),
+            fmt_num(TOKENS.text_size),
+            escape_text(&row.text),
+        ));
+        if let Some(note) = &row.note {
+            out.push_str(&format!(
+                "<text class=\"row-note text\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"end\" dominant-baseline=\"central\">{}</text>\n",
+                fmt_num(rect.max_x() - padding / 2.0),
+                fmt_num(y),
+                fmt_num(TOKENS.text_size * 0.9),
+                escape_text(note),
+            ));
+        }
+    }
 }
 
 /// Adds the classes an emphasis needs. Highlighting a shape changes its stroke
