@@ -19,6 +19,14 @@ const PAN_MS = 250;
 // already applied it to `placement` and to the `bbox` of the state, so the
 // page only uses it to put the SVG one padding inside the object.
 const OBJECT_PADDING = 24;
+// Culling (PRD RNF1-ter, §7.2, §7.3). The canvas keeps at most this many
+// SVGs of diagrams in the DOM; an object out of the view, or seen at a zoom
+// below `CULL_ZOOM`, is a box with its title and its size instead.
+// RNF1-ter fixes the ceiling at 3 and the threshold at 0.4, and §7.2 already
+// asks for the boxes below 0.3: the 0.4 of RNF1-ter is the one applied, so a
+// drawing is never on the page at a zoom where the PRD wants a box.
+const MAX_LIVE_SVGS = 3;
+const CULL_ZOOM = 0.4;
 
 // The keys of `Settings` in Rust (`crates/gx-app/src/settings.rs`), in the
 // order the page sends them back. The panel reads and writes exactly these:
@@ -222,6 +230,11 @@ function applyCamera() {
   for (const element of objects.values()) {
     element.style.transform = transform;
   }
+  // The camera is also what decides which drawings stay in the page
+  // (RNF1-ter): every frame of a pan, every step of the wheel, every
+  // insertion, focus and fit end up here, so this is the single place where
+  // the culling is due.
+  applyCulling();
 }
 
 function notifyCamera() {
@@ -299,6 +312,10 @@ function applyCameraIntent(intent) {
   if (!intent) {
     return;
   }
+  // A pan in flight would keep writing the camera every frame and would
+  // leave the human where the pan was going, not where the intent says: the
+  // intent wins (PRD §7.2, RF27).
+  cancelPan();
   camera.tx = Number(intent.tx || 0);
   camera.ty = Number(intent.ty || 0);
   camera.zoom = clampZoom(Number(intent.zoom || 1));
@@ -714,6 +731,11 @@ function insertDiagram(payload) {
 
   content.style.left = `${center.x - width / 2}px`;
   content.style.top = `${center.y - height / 2}px`;
+  // The content keeps the size of its drawing even while the drawing is out
+  // of the DOM (RNF1-ter): the `×` of the object hangs from its top-right
+  // corner, and the object must not change shape because of the culling.
+  content.style.width = `${width}px`;
+  content.style.height = `${height}px`;
   content.appendChild(svg);
   container.appendChild(content);
 
@@ -737,6 +759,45 @@ function insertDiagram(payload) {
   });
   content.appendChild(close);
 
+  // The rectangle of the object in plan units (PRD §7.2: the SVG plus its
+  // 24 px padding). The state carries the same numbers; this is the copy the
+  // culling tests every frame, and it never asks the DOM for a layout to get
+  // it.
+  container.rect = {
+    x: center.x - width / 2 - OBJECT_PADDING,
+    y: center.y - height / 2 - OBJECT_PADDING,
+    w: width + 2 * OBJECT_PADDING,
+    h: height + 2 * OBJECT_PADDING,
+  };
+
+  // The box that stands in for the drawing while its SVG is out of the DOM
+  // (RNF1-ter). It is created with the object and only shown when the
+  // culling asks for it, so the plan never changes shape because of it.
+  const box = document.createElement("div");
+  box.className = "diagram-box hidden";
+  const boxLabel = document.createElement("span");
+  boxLabel.className = "diagram-box-label";
+  box.appendChild(boxLabel);
+  // The box goes **before** the content, so the `×` of the object (a child of
+  // `.content`, in the padding ring) keeps painting above it: a culled
+  // diagram is still closable from its own object (PRD §7 RF28).
+  container.insertBefore(box, content);
+
+  // What the culling keeps of this object, hung from the object itself: the
+  // drawing it may have to leave out of the page, the box that replaces it,
+  // the rectangle to test and the title and the size to show. It is not a
+  // second map on purpose: when the state drops the diagram the element
+  // leaves the plan and its record leaves with it, so the two can never
+  // drift.
+  container.diagramId = payload.diagram_id;
+  container.svg = svg;
+  container.content = content;
+  container.box = box;
+  container.boxLabel = boxLabel;
+  container.caption = "";
+  container.culled = false;
+  paintBox(container);
+
   // F2: a new diagram **sums** to the plan, it does not replace the one
   // that was there (PRD §11.1, S9). The plan is a canvas with room for
   // several objects, each one where Rust placed it.
@@ -748,11 +809,13 @@ function insertDiagram(payload) {
   const first = framesOnInsert();
   objects.set(payload.diagram_id, container);
   diagrams.appendChild(container);
-  applyCamera();
+  // The size of the plan is refreshed before the camera paints, so the
+  // culling tests the new object against the window it really has.
   viewport = {
     w: plan.clientWidth || window.innerWidth,
     h: plan.clientHeight || window.innerHeight,
   };
+  applyCamera();
   empty.classList.add("hidden");
 
   // One single place decides what the camera does with the intent of the
@@ -783,6 +846,153 @@ function framesOnInsert() {
   return objects.size === 0;
 }
 
+// --- Culling (PRD RNF1-ter, §7.2, §7.3) ---------------------------------
+
+/**
+ * The rectangle of the plan the camera shows, in plan units.
+ *
+ * `viewport` is the size of the plan in screen pixels and the camera scales
+ * plan units by `zoom`, so the division gives the window the objects are
+ * tested against. The size the page already keeps is used on purpose: the
+ * culling never reads a layout in the middle of a frame.
+ */
+function visibleRect() {
+  return {
+    x: -camera.tx / camera.zoom,
+    y: -camera.ty / camera.zoom,
+    w: viewport.w / camera.zoom,
+    h: viewport.h / camera.zoom,
+  };
+}
+
+/** Whether two rectangles of the plan share at least one point. */
+function rectsIntersect(a, b) {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+/** How far the centre of `rect` is from the centre of the view, squared. */
+function distanceToView(rect, view) {
+  const dx = rect.x + rect.w / 2 - (view.x + view.w / 2);
+  const dy = rect.y + rect.h / 2 - (view.y + view.h / 2);
+  return dx * dx + dy * dy;
+}
+
+/**
+ * What the box of a culled diagram says (RNF1-ter): its title and the size
+ * of its object in plan units, e.g. `schema — 320 × 180`. The size is the
+ * rectangle the box occupies, padding included, so the number is the one the
+ * human sees on the plan.
+ */
+function boxText(element) {
+  // A diagram the state has not listed yet has no title to show: the page
+  // falls back to the identifier Rust gave it instead of inventing one.
+  const title = element.caption || element.diagramId;
+  const width = Math.round(element.rect.w);
+  const height = Math.round(element.rect.h);
+  return `${title} — ${width} × ${height}`;
+}
+
+/**
+ * Paints the box of an object: the very rectangle of the object in plan
+ * units, plus the title and the size it reads.
+ */
+function paintBox(element) {
+  element.box.style.left = `${element.rect.x}px`;
+  element.box.style.top = `${element.rect.y}px`;
+  element.box.style.width = `${element.rect.w}px`;
+  element.box.style.height = `${element.rect.h}px`;
+  element.boxLabel.textContent = boxText(element);
+}
+
+/**
+ * Takes the drawing of an object out of the DOM (RNF1-ter).
+ *
+ * The node is **not** dropped: it stays reachable from the object
+ * (`element.svg`), so coming back into the view re-appends the same node
+ * instead of parsing the markup of the render again. The `div.diagram` and
+ * its `div.content` stay where they are: the object keeps its place and its
+ * size at every zoom (PRD §7.2), and only its content changes.
+ */
+function cullObject(element) {
+  if (element.culled) {
+    return;
+  }
+  element.culled = true;
+  element.svg.remove();
+  element.box.classList.remove("hidden");
+}
+
+/** Brings the drawing of an object back into the DOM (RNF1-ter). */
+function materializeObject(element) {
+  if (!element.culled) {
+    return;
+  }
+  element.culled = false;
+  // The `×` of the object is the last child of `.content`: the drawing goes
+  // before it, the way `insertDiagram` left it.
+  element.content.prepend(element.svg);
+  element.box.classList.add("hidden");
+}
+
+/**
+ * Decides, object by object, whether its SVG stays in the DOM (PRD
+ * RNF1-ter; §7.2, `culling`).
+ *
+ * An object out of the view, or seen at a zoom below `CULL_ZOOM`, becomes a
+ * box with its title and its size; the rest keep their drawing, up to
+ * `MAX_LIVE_SVGS` of them. The PRD fixes the ceiling and not the tie-break,
+ * so the objects closest to the centre of the view are the ones that stay
+ * materialized: they are the ones the human is looking at. A tie keeps the
+ * order of insertion.
+ *
+ * It runs on every `applyCamera()` (each frame of the pan, each step of the
+ * wheel, each insertion, focus and fit) and after every state, and costs one
+ * pass over the objects with the rectangles the state already carries: no
+ * `getBBox()` and no layout read per object in the middle of a frame.
+ */
+function applyCulling() {
+  const view = visibleRect();
+  // Below this zoom a drawing is not worth its bytes, and the boxes read
+  // better than a shrunken diagram (PRD §7.2, §7.3).
+  const zoomedOut = camera.zoom < CULL_ZOOM;
+  const candidates = [];
+  for (const element of objects.values()) {
+    if (zoomedOut || !rectsIntersect(element.rect, view)) {
+      cullObject(element);
+      continue;
+    }
+    candidates.push({ element, distance: distanceToView(element.rect, view) });
+  }
+  candidates.sort((left, right) => left.distance - right.distance);
+  for (let index = 0; index < candidates.length; index += 1) {
+    if (index < MAX_LIVE_SVGS) {
+      materializeObject(candidates[index].element);
+    } else {
+      cullObject(candidates[index].element);
+    }
+  }
+}
+
+/**
+ * Reads from the state where an object sits and what it is called (PRD
+ * §8.6.1, S8). The page invents neither: a state without `pos`/`bbox` keeps
+ * the rectangle the render placed, and a title is only replaced by one.
+ */
+function readObject(element, diagram) {
+  if (typeof diagram.title === "string" && diagram.title !== "") {
+    element.caption = diagram.title;
+  }
+  if (diagram.pos && diagram.bbox) {
+    element.rect = {
+      x: Number(diagram.pos.x),
+      y: Number(diagram.pos.y),
+      w: Number(diagram.bbox.w),
+      h: Number(diagram.bbox.h),
+    };
+  }
+  paintBox(element);
+}
+
 /**
  * Drops from the plan the objects Rust no longer lists (PRD §7 RF28): the
  * state is the truth, so a closed diagram leaves the plan when the state says
@@ -800,6 +1010,18 @@ function syncObjects() {
   if (selectedId !== null && !open.has(selectedId)) {
     selectedId = null;
   }
+  // The state is also where the title and the rectangle of an object come
+  // from (PRD §8.6.1, S8): a box left on the plan reads them from here, and
+  // the culling tests the rectangle Rust placed.
+  for (const diagram of state.diagrams) {
+    const element = objects.get(diagram.diagram_id);
+    if (element) {
+      readObject(element, diagram);
+    }
+  }
+  // A state may have moved an object or given it a title: whether it keeps
+  // its SVG depends on both, so the culling is decided again.
+  applyCulling();
 }
 
 function showError(payload) {

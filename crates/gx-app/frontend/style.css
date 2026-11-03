@@ -263,6 +263,36 @@ body {
   border-color: var(--accent);
 }
 
+/* The box that stands in for a diagram whose SVG left the DOM (PRD RNF1-ter,
+ * §7.2, §7.3): the very rectangle of the object, with a dashed border and its
+ * title and size. It is chrome of the plan, never part of a drawing, so it
+ * paints with the tokens of the theme and reads in both of them (RF22, S18);
+ * and it never takes the pointer, because the wheel and the drag of the
+ * camera belong to the plan. */
+.diagram-box {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px dashed var(--hairline);
+  border-radius: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  pointer-events: none;
+  user-select: none;
+}
+
+.diagram-box-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* State 1: empty plan. */
 .empty {
   position: fixed;
