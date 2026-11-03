@@ -5,9 +5,18 @@
 //! event, and uses it to compute where a new diagram goes.
 
 use gx_core::geom::{Point, Rect, Size};
+use serde::{Deserialize, Serialize};
+
+/// The margin left around a diagram when the view fits it (PRD §7.2).
+pub const FIT_MARGIN: f64 = 32.0;
+/// The floor of the fit: below this zoom the diagram is no longer shrunk
+/// (PRD §7.2, S23). Degradation and `extract` solve the rest.
+pub const FIT_MIN_ZOOM: f64 = 0.4;
+/// The ceiling of the fit: an insertion never goes above 100% (PRD §7.2).
+pub const FIT_MAX_ZOOM: f64 = 1.0;
 
 /// Copy of the frontend camera, in screen pixels and zoom factor.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct CameraSnapshot {
     pub tx: f64,
     pub ty: f64,
@@ -38,6 +47,37 @@ pub fn place(size: Size, camera: &CameraSnapshot, viewport: Size) -> Rect {
         center.y - size.h / 2.0,
         size.w,
         size.h,
+    )
+}
+
+/// The camera that frames `rect` in `viewport` (PRD §7.2, S23).
+///
+/// The zoom is the one that leaves [`FIT_MARGIN`] on the tighter side,
+/// clamped between [`FIT_MIN_ZOOM`] and [`FIT_MAX_ZOOM`], so a huge diagram
+/// stays readable instead of shrinking forever and a small one is never
+/// blown up. The diagram is centered in the viewport.
+pub fn fit(rect: Rect, viewport: Size) -> CameraSnapshot {
+    let available_w = (viewport.w - 2.0 * FIT_MARGIN).max(0.0);
+    let available_h = (viewport.h - 2.0 * FIT_MARGIN).max(0.0);
+
+    let zoom_x = if rect.w > 0.0 {
+        available_w / rect.w
+    } else {
+        FIT_MAX_ZOOM
+    };
+    let zoom_y = if rect.h > 0.0 {
+        available_h / rect.h
+    } else {
+        FIT_MAX_ZOOM
+    };
+    let zoom = zoom_x.min(zoom_y).clamp(FIT_MIN_ZOOM, FIT_MAX_ZOOM);
+
+    // The center of the diagram lands on the center of the viewport.
+    let center = rect.center();
+    CameraSnapshot::new(
+        viewport.w / 2.0 - center.x * zoom,
+        viewport.h / 2.0 - center.y * zoom,
+        zoom,
     )
 }
 

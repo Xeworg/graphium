@@ -27,6 +27,11 @@ const camera = { tx: 0, ty: 0, zoom: 1 };
 const objects = new Map(); // diagram_id -> element
 const state = { diagrams: [] }; // the state Rust owns (PRD §8.6.1)
 let cameraTimer = null;
+// The size of the plan in CSS pixels, before the current resize.
+let viewport = {
+  w: plan.clientWidth || window.innerWidth,
+  h: plan.clientHeight || window.innerHeight,
+};
 
 // --- Tauri bridge -------------------------------------------------------
 
@@ -165,6 +170,38 @@ function endDrag(event) {
 plan.addEventListener("pointerup", endDrag);
 plan.addEventListener("pointercancel", endDrag);
 
+/**
+ * Applies a camera intent coming from Rust (PRD §7.2): the camera lives
+ * here, Rust only says where to look.
+ */
+function applyCameraIntent(intent) {
+  if (!intent) {
+    return;
+  }
+  camera.tx = Number(intent.tx || 0);
+  camera.ty = Number(intent.ty || 0);
+  camera.zoom = clampZoom(Number(intent.zoom || 1));
+  applyCamera();
+  notifyCamera();
+}
+
+// A window resize keeps the world point that was under the center of the
+// view: it never refits, because refitting would throw away the human's view
+// (PRD §7.2, S23).
+window.addEventListener("resize", () => {
+  const next = {
+    w: plan.clientWidth || window.innerWidth,
+    h: plan.clientHeight || window.innerHeight,
+  };
+  // The world point under the center stays put when the translation moves by
+  // half of the growth of the viewport.
+  camera.tx += (next.w - viewport.w) / 2;
+  camera.ty += (next.h - viewport.h) / 2;
+  viewport = next;
+  applyCamera();
+  notifyCamera();
+});
+
 // --- Diagrams -----------------------------------------------------------
 
 function worldCenter() {
@@ -193,7 +230,12 @@ function insertDiagram(payload) {
 
   const width = Number.parseFloat(svg.getAttribute("width") || "0");
   const height = Number.parseFloat(svg.getAttribute("height") || "0");
-  const center = worldCenter();
+  // Rust says where the diagram goes in plan units (PRD §7.2, `place`);
+  // without that intent it lands on the center of the view.
+  const placement = payload.placement;
+  const center = placement
+    ? { x: placement.x + width / 2, y: placement.y + height / 2 }
+    : worldCenter();
 
   content.style.left = `${center.x - width / 2}px`;
   content.style.top = `${center.y - height / 2}px`;
@@ -212,6 +254,13 @@ function insertDiagram(payload) {
   objects.set(payload.diagram_id, container);
   diagrams.appendChild(container);
   applyCamera();
+  // The view fits the new diagram (PRD §7.2, S17): a diagram that does not
+  // fit is cut by the window, and a cut diagram cannot be read.
+  applyCameraIntent(payload.camera);
+  viewport = {
+    w: plan.clientWidth || window.innerWidth,
+    h: plan.clientHeight || window.innerHeight,
+  };
   empty.classList.add("hidden");
 
   // The frontend answers after two animation frames: the SVG is painted

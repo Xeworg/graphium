@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Listener, Manager, WindowEvent};
 
-use crate::camera::CameraSnapshot;
+use crate::camera::{self, CameraSnapshot};
+use gx_core::geom::Size;
 
 /// How long the frontend has to confirm the paint (PRD §8.6.1, step 5).
 pub const RENDER_ACK_TIMEOUT_MS: u64 = 2000;
@@ -89,6 +90,32 @@ struct RenderEvent {
     req_id: String,
     diagram_id: String,
     svg: String,
+    /// Where the diagram goes in plan units: the center of the view it
+    /// arrived in (PRD §7.2, `place`). Absent when the window size is
+    /// unknown: the plan then places it at its own center.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    placement: Option<Placement>,
+    /// The camera that frames the diagram (PRD §7.2, `fit`). The camera
+    /// lives in the frontend: this is an intent, not a write.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    camera: Option<CameraSnapshot>,
+}
+
+/// The top-left corner of a diagram in plan units.
+#[derive(Debug, Clone, Copy, Serialize)]
+struct Placement {
+    x: f64,
+    y: f64,
+}
+
+/// The size of the plan in CSS pixels, or `None` when the window cannot tell.
+fn viewport_of(window: &tauri::WebviewWindow) -> Option<Size> {
+    let size = window.inner_size().ok()?;
+    let logical = size.to_logical::<f64>(window.scale_factor().ok()?);
+    if logical.width <= 0.0 || logical.height <= 0.0 {
+        return None;
+    }
+    Some(Size::new(logical.width, logical.height))
 }
 
 /// One diagram of the state that Rust owns (PRD §8.6.1, S22).
@@ -203,10 +230,31 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
 
         // The render is emitted and the answer is awaited: the timeout of
         // the acknowledgement is the only wait (PRD §8.6.1, step 5).
+        //
+        // The diagram lands on the center of the view it arrives in, and the
+        // view fits it: a diagram that does not fit is cut by the window,
+        // and a cut diagram cannot be read (PRD §7.2, S17 and S23).
+        let viewport = viewport_of(&window);
+        let placement = viewport.map(|viewport| {
+            camera::place(
+                Size::new(payload.width, payload.height),
+                &state.camera(),
+                viewport,
+            )
+        });
+        let fit = match (placement, viewport) {
+            (Some(rect), Some(viewport)) => Some(camera::fit(rect, viewport)),
+            _ => None,
+        };
         let event = RenderEvent {
             req_id: req_id.clone(),
             diagram_id: payload.diagram_id.clone(),
             svg: payload.svg.clone(),
+            placement: placement.map(|rect| Placement {
+                x: rect.x,
+                y: rect.y,
+            }),
+            camera: fit,
         };
         if window.emit("graphium://render", event).is_err() {
             return gx_mcp::tools::RenderStatus::Error;
