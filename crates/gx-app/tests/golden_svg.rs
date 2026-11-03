@@ -32,12 +32,13 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 5] = [
+const CASES: [(&str, &str); 6] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
     ("er-posts", ER_POSTS),
     ("tree-src", TREE_SRC),
+    ("mindmap-feature", MINDMAP),
 ];
 
 const MINIMAL: &str = r#"{
@@ -122,6 +123,17 @@ const TREE_SRC: &str = r#"{
       { "name": "render.rs", "note": "312 líneas" },
       { "name": "layout.rs" }
     ] }
+  ] }
+}"#;
+
+const MINDMAP: &str = r#"{
+  "version": 1,
+  "kind": "mindmap",
+  "title": "Graphium",
+  "root": { "topic": "Graphium", "branches": [
+    { "topic": "MCP", "emphasis": "highlight", "branches": [
+      { "topic": "tools" }, { "topic": "harness" } ] },
+    { "topic": "Plano", "branches": [ { "topic": "cámara" }, { "topic": "culling" } ] }
   ] }
 }"#;
 
