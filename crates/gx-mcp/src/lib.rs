@@ -202,121 +202,6 @@ pub struct RenderDiagramParams {
     pub opts: Option<serde_json::Value>,
 }
 
-/// Depth of the subgraph when `opts.extract.depth` is absent (PRD §7.3, S21).
-const DEFAULT_EXTRACT_DEPTH: usize = 1;
-
-/// Reads `opts` into [`tools::RenderOptions`] (PRD §7.3, S21).
-///
-/// The keys that belong to F2/F3 are accepted and reported in an
-/// `opts_ignored` warning that names them, so the agent knows when they
-/// arrive instead of guessing. A malformed value is an error with its own
-/// path, never a silent default: rendering the whole diagram because `around`
-/// was not a string would paint the opposite of what was asked.
-fn parse_opts(
-    raw: Option<&serde_json::Value>,
-) -> Result<(tools::RenderOptions, Vec<tools::Warning>), Vec<gx_core::error::ValidationError>> {
-    use gx_core::error::{ErrorCode, ValidationError};
-
-    let mut render_opts = tools::RenderOptions::default();
-    let mut warnings = Vec::new();
-    let Some(value) = raw else {
-        return Ok((render_opts, warnings));
-    };
-    let Some(object) = value.as_object() else {
-        return Err(vec![ValidationError::new(
-            "opts",
-            ErrorCode::InvalidValue,
-            "`opts` tiene que ser un objeto JSON",
-            Some(
-                "mandá `opts: { extract: { around, depth? }, layout_timeout_ms? }` o nada"
-                    .to_string(),
-            ),
-        )]);
-    };
-
-    let mut ignored: Vec<&str> = Vec::new();
-    for (key, value) in object {
-        match key.as_str() {
-            "extract" => render_opts.extract = Some(parse_extract(value)?),
-            "layout_timeout_ms" => {
-                let Some(ms) = value.as_u64() else {
-                    return Err(vec![ValidationError::new(
-                        "opts.layout_timeout_ms",
-                        ErrorCode::InvalidValue,
-                        format!(
-                            "`opts.layout_timeout_ms` tiene que ser un entero de milisegundos, no `{value}`"
-                        ),
-                        Some(format!(
-                            "mandá un número entre 1 y {}",
-                            gx_core::render::MAX_LAYOUT_TIMEOUT_MS
-                        )),
-                    )]);
-                };
-                render_opts.layout_timeout_ms = ms;
-            }
-            other => ignored.push(other),
-        }
-    }
-
-    if !ignored.is_empty() {
-        warnings.push(tools::Warning {
-            code: "opts_ignored".to_string(),
-            message: format!(
-                "`opts.{}` se ignora en F1: `opts.focus`, `opts.replace_id` y `opts.interactive` llegan en F2/F3, y esta versión solo honra `opts.extract` y `opts.layout_timeout_ms`",
-                ignored.join("`, `opts.")
-            ),
-        });
-    }
-    Ok((render_opts, warnings))
-}
-
-/// Reads `opts.extract` into a [`gx_core::render::Extract`] (PRD §7.3, S21).
-fn parse_extract(
-    value: &serde_json::Value,
-) -> Result<gx_core::render::Extract, Vec<gx_core::error::ValidationError>> {
-    use gx_core::error::{ErrorCode, ValidationError};
-
-    let Some(object) = value.as_object() else {
-        return Err(vec![ValidationError::new(
-            "opts.extract",
-            ErrorCode::InvalidValue,
-            "`opts.extract` tiene que ser un objeto con `around` y, opcionalmente, `depth`",
-            Some("mandá `opts.extract: { around: \"<id>\", depth: 1 }`".to_string()),
-        )]);
-    };
-    let around = object
-        .get("around")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .unwrap_or_default();
-    if around.is_empty() {
-        return Err(vec![ValidationError::new(
-            "opts.extract.around",
-            ErrorCode::MissingField,
-            "`opts.extract.around` falta: es el `id` del nodo alrededor del cual se dibuja",
-            Some("usá el `id` de un nodo de este diagrama".to_string()),
-        )]);
-    }
-    let depth = match object.get("depth") {
-        None | Some(serde_json::Value::Null) => DEFAULT_EXTRACT_DEPTH,
-        Some(value) => match value.as_u64() {
-            Some(depth) => usize::try_from(depth).unwrap_or(usize::MAX),
-            None => {
-                return Err(vec![ValidationError::new(
-                    "opts.extract.depth",
-                    ErrorCode::InvalidValue,
-                    format!("`opts.extract.depth` tiene que ser un entero >= 0, no `{value}`"),
-                    Some("omití `depth` para el default 1 o mandá un entero".to_string()),
-                )])
-            }
-        },
-    };
-    Ok(gx_core::render::Extract {
-        around: around.to_string(),
-        depth,
-    })
-}
-
 /// The MCP server of Graphium.
 ///
 /// It is a plain [`ServerHandler`]: the tool router comes from the
@@ -366,25 +251,23 @@ impl GraphiumServer {
         let document = serde_json::to_string(&params.diagram).map_err(|error| {
             ErrorData::invalid_params(format!("`diagram` is not valid JSON: {error}"), None)
         })?;
-        let (opts, opts_warnings) = match parse_opts(params.opts.as_ref()) {
-            Ok(parsed) => parsed,
-            Err(errors) => return structured(tools::rejected(errors)),
-        };
         let request = tools::RenderRequest {
             document,
             session_id: self.session_id.clone(),
         };
+        let raw_opts = params.opts.clone();
 
         // Validate + IR + layout + SVG run off the async loop, under the
-        // deadline of `opts.layout_timeout_ms` (PRD §8.6.1, §7.3).
-        let mut response = tokio::task::spawn_blocking(move || {
-            tools::render_diagram_with(&request, &opts)
+        // deadline of `opts.layout_timeout_ms` (PRD §8.6.1, §7.3). The opts
+        // are parsed by `gx-mcp`, in one place, so this path and the socket
+        // relay cannot diverge.
+        let response = tokio::task::spawn_blocking(move || {
+            tools::render_diagram_from_json(&request, raw_opts.as_ref())
         })
         .await
         .map_err(|error| {
             ErrorData::internal_error(format!("the render task failed: {error}"), None)
         })?;
-        response.warnings.extend(opts_warnings);
 
         let value = serde_json::to_value(&response).map_err(|error| {
             ErrorData::internal_error(format!("cannot serialize the response: {error}"), None)

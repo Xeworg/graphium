@@ -696,6 +696,140 @@ fn layout_timeout(deadline_ms: u64, elapsed: Duration) -> RenderResponse {
     }
 }
 
+/// Depth of the subgraph when `opts.extract.depth` is absent (PRD §7.3, S21).
+pub const DEFAULT_EXTRACT_DEPTH: usize = 1;
+
+/// Reads `opts` into [`RenderOptions`] (PRD §7.3, S21).
+///
+/// The keys that belong to F2/F3 are accepted and reported in an
+/// `opts_ignored` warning that names them, so the agent knows when they
+/// arrive instead of guessing. A malformed value is an error with its own
+/// path, never a silent default: rendering the whole diagram because `around`
+/// was not a string would paint the opposite of what was asked.
+pub fn parse_opts(
+    raw: Option<&serde_json::Value>,
+) -> Result<(RenderOptions, Vec<Warning>), Vec<gx_core::error::ValidationError>> {
+    use gx_core::error::{ErrorCode, ValidationError};
+
+    let mut render_opts = RenderOptions::default();
+    let mut warnings = Vec::new();
+    let Some(value) = raw else {
+        return Ok((render_opts, warnings));
+    };
+    let Some(object) = value.as_object() else {
+        return Err(vec![ValidationError::new(
+            "opts",
+            ErrorCode::InvalidValue,
+            "`opts` tiene que ser un objeto JSON",
+            Some(
+                "mandá `opts: { extract: { around, depth? }, layout_timeout_ms? }` o nada"
+                    .to_string(),
+            ),
+        )]);
+    };
+
+    let mut ignored: Vec<&str> = Vec::new();
+    for (key, value) in object {
+        match key.as_str() {
+            "extract" => render_opts.extract = Some(parse_extract(value)?),
+            "layout_timeout_ms" => {
+                let Some(ms) = value.as_u64() else {
+                    return Err(vec![ValidationError::new(
+                        "opts.layout_timeout_ms",
+                        ErrorCode::InvalidValue,
+                        format!(
+                            "`opts.layout_timeout_ms` tiene que ser un entero de milisegundos, no `{value}`"
+                        ),
+                        Some(format!(
+                            "mandá un número entre 1 y {}",
+                            gx_core::render::MAX_LAYOUT_TIMEOUT_MS
+                        )),
+                    )]);
+                };
+                render_opts.layout_timeout_ms = ms;
+            }
+            other => ignored.push(other),
+        }
+    }
+
+    if !ignored.is_empty() {
+        warnings.push(Warning {
+            code: "opts_ignored".to_string(),
+            message: format!(
+                "`opts.{}` se ignora en F1: `opts.focus`, `opts.replace_id` y `opts.interactive` llegan en F2/F3, y esta versión solo honra `opts.extract` y `opts.layout_timeout_ms`",
+                ignored.join("`, `opts.")
+            ),
+        });
+    }
+    Ok((render_opts, warnings))
+}
+
+/// Reads `opts.extract` into a [`gx_core::render::Extract`] (PRD §7.3, S21).
+pub fn parse_extract(
+    value: &serde_json::Value,
+) -> Result<gx_core::render::Extract, Vec<gx_core::error::ValidationError>> {
+    use gx_core::error::{ErrorCode, ValidationError};
+
+    let Some(object) = value.as_object() else {
+        return Err(vec![ValidationError::new(
+            "opts.extract",
+            ErrorCode::InvalidValue,
+            "`opts.extract` tiene que ser un objeto con `around` y, opcionalmente, `depth`",
+            Some("mandá `opts.extract: { around: \"<id>\", depth: 1 }`".to_string()),
+        )]);
+    };
+    let around = object
+        .get("around")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if around.is_empty() {
+        return Err(vec![ValidationError::new(
+            "opts.extract.around",
+            ErrorCode::MissingField,
+            "`opts.extract.around` falta: es el `id` del nodo alrededor del cual se dibuja",
+            Some("usá el `id` de un nodo de este diagrama".to_string()),
+        )]);
+    }
+    let depth = match object.get("depth") {
+        None | Some(serde_json::Value::Null) => DEFAULT_EXTRACT_DEPTH,
+        Some(value) => match value.as_u64() {
+            Some(depth) => usize::try_from(depth).unwrap_or(usize::MAX),
+            None => {
+                return Err(vec![ValidationError::new(
+                    "opts.extract.depth",
+                    ErrorCode::InvalidValue,
+                    format!("`opts.extract.depth` tiene que ser un entero >= 0, no `{value}`"),
+                    Some("omití `depth` para el default 1 o mandá un entero".to_string()),
+                )])
+            }
+        },
+    };
+    Ok(gx_core::render::Extract {
+        around: around.to_string(),
+        depth,
+    })
+}
+
+/// Renders a document with the raw `opts` the agent sent (PRD §7.3, S21).
+///
+/// One implementation for every entry point: the stdio server and the socket
+/// relay both come through here, so `opts.extract` and
+/// `opts.layout_timeout_ms` cannot work in one and be silently ignored in the
+/// other.
+pub fn render_diagram_from_json(
+    request: &RenderRequest,
+    raw_opts: Option<&serde_json::Value>,
+) -> RenderResponse {
+    let (opts, warnings) = match parse_opts(raw_opts) {
+        Ok(parsed) => parsed,
+        Err(errors) => return rejected(errors),
+    };
+    let mut response = render_diagram_with(request, &opts);
+    response.warnings.extend(warnings);
+    response
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};

@@ -32,10 +32,15 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
             let document = arguments
                 .get("diagram")
                 .ok_or_else(|| "`diagram` is required".to_string())?;
-            let response = crate::tools::render_diagram(&crate::tools::RenderRequest {
-                document: document.to_string(),
-                session_id: session_id.to_string(),
-            });
+            // The same implementation the stdio server uses: `opts` cannot
+            // work on one path and be ignored on the other.
+            let response = crate::tools::render_diagram_from_json(
+                &crate::tools::RenderRequest {
+                    document: document.to_string(),
+                    session_id: session_id.to_string(),
+                },
+                arguments.get("opts"),
+            );
             serde_json::to_value(&response).map_err(|error| error.to_string())
         }
         "validate_diagram" => {
@@ -161,6 +166,51 @@ mod tests {
         assert!(schema["kinds"]
             .as_array()
             .is_some_and(|kinds| !kinds.is_empty()));
+    }
+
+
+    /// PRD §7.3, S21: an agent that reaches the window owner through the
+    /// socket gets the same answer as one that speaks stdio to it. Before
+    /// this test the relay silently dropped `opts`, so `extract` and
+    /// `layout_timeout_ms` worked on one path and vanished on the other.
+    #[test]
+    fn the_relay_honours_opts_like_the_stdio_server() {
+        let _guard = crate::test_support::lock_renders_blocking();
+
+        let document = serde_json::from_str::<serde_json::Value>(MINIMAL).unwrap();
+        let narrowed = call_tool(
+            "render_diagram",
+            &serde_json::json!({
+                "diagram": document,
+                "opts": { "extract": { "around": "a", "depth": 1 } }
+            }),
+            "session-relay",
+        )
+        .expect("rendered");
+        assert_eq!(narrowed["ok"], true, "{narrowed}");
+        assert!(
+            narrowed["extracted_from"].is_string(),
+            "the relay has to honour opts.extract: {narrowed}"
+        );
+
+        let ignored = call_tool(
+            "render_diagram",
+            &serde_json::json!({
+                "diagram": document,
+                "opts": { "interactive": false }
+            }),
+            "session-relay",
+        )
+        .expect("rendered");
+        assert_eq!(ignored["ok"], true, "{ignored}");
+        assert!(
+            ignored["warnings"]
+                .as_array()
+                .is_some_and(|warnings| warnings
+                    .iter()
+                    .any(|warning| warning["code"] == "opts_ignored")),
+            "the relay has to report the keys of the later phases: {ignored}"
+        );
     }
 
     #[test]
