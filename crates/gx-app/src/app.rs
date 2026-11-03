@@ -159,6 +159,26 @@ struct AckPayload {
     ok: bool,
 }
 
+/// The list of diagrams the plan shows, in the shape the panel reads.
+///
+/// One builder for every path that publishes the state: the panel is built
+/// only from this event, so two shapes there would be two panels (PRD §8.6.1).
+fn state_entries() -> Vec<StateEntry> {
+    gx_mcp::store::diagram_store()
+        .list()
+        .into_iter()
+        .map(|summary| StateEntry {
+            diagram_id: summary.diagram_id,
+            title: summary.title,
+            kind: summary.kind,
+            updated_at: summary.updated_at,
+            session_id: summary.session_id,
+            pos: summary.pos,
+            bbox: summary.bbox,
+        })
+        .collect()
+}
+
 /// Builds the Tauri application with the plan window.
 ///
 /// `keep_alive` is true in MCP mode: closing the window must not kill the
@@ -215,6 +235,28 @@ pub fn build(keep_alive: bool) -> (tauri::App<tauri::Wry>, Arc<PlanState>) {
     // human: the window reads them at start and writes them when the panel
     // changes something (PRD §7.1 RF25, S19).
     state.set_settings(Settings::load());
+
+    // Closing a diagram from the plan belongs to the human: the window asks,
+    // the model answers (PRD §7, RF28). The id stays invalid and is never
+    // handed out again, and the window survives.
+    let close_handle = handle.clone();
+    handle.listen("graphium://close", move |event| {
+        #[derive(Deserialize)]
+        struct ClosePayload {
+            diagram_id: String,
+        }
+        let Ok(payload) = serde_json::from_str::<ClosePayload>(event.payload()) else {
+            return;
+        };
+        if !gx_mcp::store::diagram_store().close(&payload.diagram_id) {
+            return;
+        }
+        let _ = close_handle.emit(
+            "graphium://closed",
+            serde_json::json!({ "diagram_id": payload.diagram_id }),
+        );
+        let _ = close_handle.emit("graphium://state", state_entries());
+    });
 
     let ready_state = Arc::clone(&state);
     let ready_handle = handle.clone();
@@ -332,20 +374,7 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
 
         // The model of the diagrams lives in Rust (PRD §8.6.1, S22): the
         // frontend rebuilds its panel from this event.
-        let diagrams: Vec<StateEntry> = gx_mcp::store::diagram_store()
-            .list()
-            .into_iter()
-            .map(|summary| StateEntry {
-                diagram_id: summary.diagram_id,
-                title: summary.title,
-                kind: summary.kind,
-                updated_at: summary.updated_at,
-                session_id: summary.session_id,
-                pos: summary.pos,
-                bbox: summary.bbox,
-            })
-            .collect();
-        let _ = window.emit("graphium://state", diagrams);
+        let _ = window.emit("graphium://state", state_entries());
 
         gx_mcp::tools::RenderStatus::Painted
     });
