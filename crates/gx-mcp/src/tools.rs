@@ -11,7 +11,8 @@
 //! the diagram is rendered and stored but not painted.
 
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::collections::VecDeque;
+use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use gx_core::error::{ErrorCode, ValidationError};
@@ -71,6 +72,14 @@ pub struct RenderResponse {
     /// `<diagram_id>@<depth>` (PRD §7.3, S21).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extracted_from: Option<String>,
+    /// How many renders were waiting when the queue refused this one
+    /// (PRD §7.3, S22).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue_depth: Option<usize>,
+    /// How long the agent should wait before rendering again, in
+    /// milliseconds (PRD §7.3, S22).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_ms: Option<u64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<ErrorPayload>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -209,6 +218,172 @@ fn installed_hook() -> Option<RenderHook> {
         .clone()
 }
 
+/// How many renders wait for a slot before the queue refuses more
+/// (PRD §7.3, S22 / RNF8).
+pub const QUEUE_DEPTH: usize = 8;
+/// How many renders lay out at the same time (PRD §7.3, S22 / RNF8).
+pub const MAX_PARALLEL_RENDERS: usize = 2;
+/// What the `busy` answer tells the agent to wait before trying again.
+///
+/// The PRD asks for `retry_after_ms` but fixes no number: a render of the
+/// warning line takes tens of milliseconds, so a tenth of a second is long
+/// enough to be useful and short enough not to be a stall.
+pub const BUSY_RETRY_AFTER_MS: u64 = 100;
+
+/// The FIFO queue of renders of this process (PRD §7.3, S22).
+///
+/// Two renders lay out at a time; the rest wait in arrival order, up to
+/// [`QUEUE_DEPTH`]. The [`MAX_PARALLEL_RENDERS`] runs and the waiting room
+/// are one state, so the agent gets an honest `busy` instead of a timeout.
+#[derive(Debug, Default)]
+pub struct RenderQueue {
+    state: Mutex<QueueState>,
+    ready: Condvar,
+}
+
+#[derive(Debug, Default)]
+struct QueueState {
+    running: usize,
+    waiting: VecDeque<u64>,
+    next_ticket: u64,
+}
+
+/// What the queue says to a render that just arrived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Admission {
+    /// There was a free slot: run now.
+    Admitted,
+    /// The render is in the queue, at that position.
+    Queued(u64),
+    /// The waiting room is full: come back later.
+    Full { depth: usize },
+}
+
+impl RenderQueue {
+    fn lock(&self) -> std::sync::MutexGuard<'_, QueueState> {
+        self.state.lock().expect("the render queue is not poisoned")
+    }
+
+    /// Whether a slot is free and nobody is waiting ahead.
+    ///
+    /// The waiting room is FIFO: an arrival never overtakes a ticket, not
+    /// even when a slot is free, or the queue would starve its own front.
+    pub fn try_acquire(&self) -> Admission {
+        let mut state = self.lock();
+        if state.running < MAX_PARALLEL_RENDERS && state.waiting.is_empty() {
+            state.running += 1;
+            return Admission::Admitted;
+        }
+        if state.waiting.len() >= QUEUE_DEPTH {
+            return Admission::Full {
+                depth: state.waiting.len(),
+            };
+        }
+        let ticket = state.next_ticket;
+        state.next_ticket += 1;
+        state.waiting.push_back(ticket);
+        Admission::Queued(ticket)
+    }
+
+    /// Takes the slot for `ticket` if it is the head of the queue and a slot
+    /// is free. Returns whether the render may run now.
+    pub fn poll(&self, ticket: u64) -> bool {
+        let mut state = self.lock();
+        if state.running >= MAX_PARALLEL_RENDERS || state.waiting.front() != Some(&ticket) {
+            return false;
+        }
+        state.waiting.pop_front();
+        state.running += 1;
+        true
+    }
+
+    /// Waits, in queue order, until the render may run.
+    pub fn wait_for(&self, ticket: u64) {
+        let mut state = self.lock();
+        loop {
+            if state.running < MAX_PARALLEL_RENDERS && state.waiting.front() == Some(&ticket) {
+                state.waiting.pop_front();
+                state.running += 1;
+                return;
+            }
+            state = self
+                .ready
+                .wait(state)
+                .expect("the render queue is not poisoned");
+        }
+    }
+
+    /// How many renders are running and how many are waiting.
+    pub fn counters(&self) -> (usize, usize) {
+        let state = self.lock();
+        (state.running, state.waiting.len())
+    }
+
+    /// Frees a slot and wakes the queue.
+    pub fn release(&self) {
+        {
+            let mut state = self.lock();
+            state.running = state.running.saturating_sub(1);
+        }
+        self.ready.notify_all();
+    }
+}
+
+/// The queue of this process.
+pub fn render_queue() -> &'static RenderQueue {
+    static QUEUE: OnceLock<RenderQueue> = OnceLock::new();
+    QUEUE.get_or_init(RenderQueue::default)
+}
+
+/// Holds a slot of the queue and frees it when it leaves the scope, also on
+/// the early returns of a rejected render.
+struct RenderSlot;
+
+impl Drop for RenderSlot {
+    fn drop(&mut self) {
+        render_queue().release();
+    }
+}
+
+/// Takes a slot, or returns how deep the waiting room was when it refused.
+fn enter_queue() -> Result<RenderSlot, usize> {
+    let queue = render_queue();
+    match queue.try_acquire() {
+        Admission::Admitted => Ok(RenderSlot),
+        Admission::Queued(ticket) => {
+            queue.wait_for(ticket);
+            Ok(RenderSlot)
+        }
+        Admission::Full { depth } => Err(depth),
+    }
+}
+
+/// The answer of a full queue (PRD §7.3, S22).
+fn busy(depth: usize) -> RenderResponse {
+    RenderResponse {
+        ok: false,
+        diagram_id: None,
+        rendered_kind: None,
+        rendered: false,
+        reason: None,
+        metrics: None,
+        extracted_from: None,
+        queue_depth: Some(depth),
+        retry_after_ms: Some(BUSY_RETRY_AFTER_MS),
+        errors: vec![ErrorPayload {
+            path: "diagram".to_string(),
+            code: "busy".to_string(),
+            message: format!(
+                "la cola de renders está llena: {depth} renders esperando y {MAX_PARALLEL_RENDERS} en curso"
+            ),
+            hint: Some(format!(
+                "esperá {BUSY_RETRY_AFTER_MS} ms y volvé a intentar, o mandá menos diagramas a la vez"
+            )),
+        }],
+        warnings: Vec::new(),
+    }
+}
+
 /// Renders a diagram document through the single engine door
 /// ([`gx_core::engine::render_json`]) and stores it in the diagram store.
 ///
@@ -230,6 +405,13 @@ pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
 /// dropped.
 pub fn render_diagram_with(request: &RenderRequest, opts: &RenderOptions) -> RenderResponse {
     crate::bootstrap();
+
+    // The queue is taken before anything else: a refused render must not
+    // touch the plan, the store nor the clock of the deadline.
+    let _slot = match enter_queue() {
+        Ok(slot) => slot,
+        Err(depth) => return busy(depth),
+    };
 
     let deadline_ms = opts
         .layout_timeout_ms
@@ -281,6 +463,8 @@ pub fn render_diagram_with(request: &RenderRequest, opts: &RenderOptions) -> Ren
             reason: None,
             metrics: Some(metrics),
             extracted_from: None,
+            queue_depth: None,
+            retry_after_ms: None,
             errors: vec![ErrorPayload {
                 path: "diagram".to_string(),
                 code: "too_large".to_string(),
@@ -397,6 +581,8 @@ pub fn render_diagram_with(request: &RenderRequest, opts: &RenderOptions) -> Ren
         reason: status.reason().map(str::to_string),
         metrics: Some(metrics),
         extracted_from,
+        queue_depth: None,
+        retry_after_ms: None,
         errors: Vec::new(),
         warnings,
     }
@@ -469,6 +655,8 @@ pub(crate) fn rejected(errors: Vec<ValidationError>) -> RenderResponse {
         reason: None,
         metrics: None,
         extracted_from: None,
+        queue_depth: None,
+        retry_after_ms: None,
         errors: errors.iter().map(ErrorPayload::from).collect(),
         warnings: Vec::new(),
     }
@@ -494,6 +682,8 @@ fn layout_timeout(deadline_ms: u64, elapsed: Duration) -> RenderResponse {
             elapsed_ms: Some(elapsed_ms),
         }),
         extracted_from: None,
+        queue_depth: None,
+        retry_after_ms: None,
         errors: vec![ErrorPayload {
             path: "diagram".to_string(),
             code: ErrorCode::LayoutTimeout.as_str().to_string(),
@@ -511,8 +701,9 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{
-        render_diagram, render_diagram_with, set_render_hook, RenderHook, RenderOptions,
-        RenderRequest, RenderResponse, RenderStatus, SVG_BUDGET_BYTES,
+        busy, render_diagram, render_diagram_with, render_queue, set_render_hook, Admission,
+        RenderHook, RenderOptions, RenderQueue, RenderRequest, RenderResponse, RenderStatus,
+        BUSY_RETRY_AFTER_MS, MAX_PARALLEL_RENDERS, QUEUE_DEPTH, SVG_BUDGET_BYTES,
     };
     use crate::store::diagram_store;
     use crate::test_support::{lock_renders_blocking, MINIMAL};
@@ -580,6 +771,70 @@ mod tests {
             nodes.join(", "),
             edges.join(", ")
         )
+    }
+
+
+    /// PRD §7.3, S22 / RNF8: two renders lay out at a time and eight wait in
+    /// arrival order. The ninth is refused instead of quietly piling up.
+    #[test]
+    fn the_queue_runs_two_and_holds_eight_in_order() {
+        let queue = RenderQueue::default();
+
+        assert_eq!(MAX_PARALLEL_RENDERS, 2);
+        assert_eq!(QUEUE_DEPTH, 8);
+        assert_eq!(queue.try_acquire(), Admission::Admitted);
+        assert_eq!(queue.try_acquire(), Admission::Admitted);
+
+        let mut tickets = Vec::new();
+        for _ in 0..QUEUE_DEPTH {
+            match queue.try_acquire() {
+                Admission::Queued(ticket) => tickets.push(ticket),
+                other => panic!("the room is not full yet: {other:?}"),
+            }
+        }
+        assert_eq!(
+            queue.try_acquire(),
+            Admission::Full {
+                depth: QUEUE_DEPTH
+            }
+        );
+
+        // FIFO: the second ticket never overtakes the first.
+        queue.release();
+        assert!(
+            !queue.poll(tickets[1]),
+            "the queue has to serve the head first"
+        );
+        assert!(queue.poll(tickets[0]));
+        queue.release();
+        assert!(queue.poll(tickets[1]));
+        // Both tickets hold a slot now; the other six wait their turn.
+        assert_eq!(queue.counters(), (2, 6));
+    }
+
+    #[test]
+    fn the_busy_answer_names_the_queue_and_the_retry() {
+        let response = busy(QUEUE_DEPTH);
+
+        assert!(!response.ok);
+        assert_eq!(response.errors[0].code, "busy");
+        assert_eq!(response.queue_depth, Some(QUEUE_DEPTH));
+        assert_eq!(response.retry_after_ms, Some(BUSY_RETRY_AFTER_MS));
+        let json = serde_json::to_value(&response).expect("the response serializes");
+        assert_eq!(json["queue_depth"], 8);
+        assert_eq!(json["retry_after_ms"], BUSY_RETRY_AFTER_MS);
+    }
+
+    /// A render that finishes leaves its slot free: the queue is a gate, not
+    /// a leak.
+    #[test]
+    fn a_finished_render_leaves_the_queue_empty() {
+        let _guard = lock_renders_blocking();
+
+        let response = render(MINIMAL);
+
+        assert!(response.ok, "{:?}", response.errors);
+        assert_eq!(render_queue().counters(), (0, 0));
     }
 
     /// PRD §7 RF20, S6: between 150 nodes and the hard limit the diagram is

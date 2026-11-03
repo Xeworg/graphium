@@ -50,7 +50,10 @@ of that node, following the edges in both directions. The subgraph keeps the \
 because extract is a view and never an edit. Every layout also has a deadline: \
 `opts.layout_timeout_ms` defaults to 2000 ms with a ceiling of 10000, and a \
 layout that misses it answers `ok: false` with code `layout_timeout` and \
-`metrics.elapsed_ms`, leaving the plan untouched. `opts.focus`, `opts.replace_id` \
+`metrics.elapsed_ms`, leaving the plan untouched. Renders queue in a FIFO of \
+depth 8 with two laying out at a time: when the queue is full the answer is \
+`ok: false` with code `busy`, `queue_depth` and `retry_after_ms`, so wait that \
+long and send it again instead of retrying in a loop. `opts.focus`, `opts.replace_id` \
 and `opts.interactive` arrive in F2/F3: sending them today costs a warning, \
 never the diagram.
 
@@ -59,7 +62,8 @@ and the JSON path of the problem. `unknown_ref` and `duplicate_id` are rules of 
 kind, `unknown_field` means a key the schema does not admit (`hint` carries the \
 closest name), `unknown_kind` lists the kinds that exist, `too_large` means the \
 document is over the limit of its kind, `stale_revision` means you read an old \
-version, `layout_timeout` means the layout missed `opts.layout_timeout_ms`. Fix \
+version, `layout_timeout` means the layout missed `opts.layout_timeout_ms`, and \
+`busy` means the queue of renders is full: wait `retry_after_ms` and try again. Fix \
 the path the error names instead of rewriting the whole document.
 
 THE PLAN. Diagrams stay on the plan until the human closes them or \
@@ -199,6 +203,7 @@ mod tests {
             "too_large",
             "stale_revision",
             "layout_timeout",
+            "busy",
         ] {
             assert!(INSTRUCTIONS.contains(code), "falta `{code}`");
         }
