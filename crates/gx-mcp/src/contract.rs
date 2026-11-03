@@ -493,6 +493,20 @@ fn min_example_of(kind: &str) -> Value {
                 { "from": "limite", "to": "fin", "label": "sí" }
             ]
         }),
+        "state" => serde_json::json!({
+            "version": 1,
+            "kind": "state",
+            "title": "pedido",
+            "nodes": [
+                { "id": "nuevo", "label": "nuevo", "role": "initial" },
+                { "id": "pago", "label": "pago pendiente" },
+                { "id": "cerrado", "label": "cerrado", "role": "final" }
+            ],
+            "edges": [
+                { "from": "nuevo", "to": "pago", "label": "crear" },
+                { "from": "pago", "to": "cerrado", "label": "cancelar" }
+            ]
+        }),
         "swimlane" => serde_json::json!({
             "version": 1,
             "kind": "swimlane",
@@ -557,6 +571,20 @@ fn rules_of(kind: &str) -> Vec<String> {
             );
             rules.push(
                 "La etiqueta de una arista es la condición del camino, por ejemplo `sí` / `no`."
+                    .to_string(),
+            );
+        }
+        "state" => {
+            rules.push(
+                "El `role` de un nodo decide su forma: `initial` (elipse), `state` (redondeado, por defecto), `final` (elipse)."
+                    .to_string(),
+            );
+            rules.push(
+                "Una máquina tiene **un solo** estado `initial`: dos entradas son dos máquinas."
+                    .to_string(),
+            );
+            rules.push(
+                "La etiqueta de una transición es el evento que la dispara, por ejemplo `pagar`."
                     .to_string(),
             );
         }

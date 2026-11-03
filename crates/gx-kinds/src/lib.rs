@@ -11,6 +11,7 @@ pub mod graph;
 pub mod lanes;
 pub mod mindmap;
 pub mod sequence;
+pub mod state;
 pub mod swimlane;
 pub mod timeline;
 pub mod tree;
@@ -25,6 +26,7 @@ pub fn register_all() {
     mindmap::register();
     sequence::register();
     flowchart::register();
+    state::register();
     timeline::register();
     swimlane::register();
 }
@@ -38,6 +40,7 @@ pub fn kind_names() -> Vec<&'static str> {
         mindmap::MindmapKind::KIND,
         sequence::SequenceKind::KIND,
         flowchart::FlowchartKind::KIND,
+        state::StateKind::KIND,
         timeline::TimelineKind::KIND,
         swimlane::SwimlaneKind::KIND,
     ]
