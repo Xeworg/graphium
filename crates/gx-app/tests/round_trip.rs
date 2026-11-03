@@ -68,6 +68,7 @@ fn the_render_hook_maps_a_paint_into_a_reason() {
         svg: "<svg/>".to_string(),
         width: 100.0,
         height: 50.0,
+        focus: None,
         metrics: gx_mcp::tools::Metrics {
             nodes: 2,
             edges: 1,

@@ -53,9 +53,10 @@ layout that misses it answers `ok: false` with code `layout_timeout` and \
 `metrics.elapsed_ms`, leaving the plan untouched. Renders queue in a FIFO of \
 depth 8 with two laying out at a time: when the queue is full the answer is \
 `ok: false` with code `busy`, `queue_depth` and `retry_after_ms`, so wait that \
-long and send it again instead of retrying in a loop. `opts.focus`, `opts.replace_id` \
-and `opts.interactive` arrive in F2/F3: sending them today costs a warning, \
-never the diagram.
+long and send it again instead of retrying in a loop. `opts.focus: { id, depth? }` \
+puts the camera on one node and, with `depth`, on its neighbourhood (default 1, \
+max 300 nodes). `opts.replace_id` and `opts.interactive` arrive in F2/F3: \
+sending them today costs a warning, never the diagram.
 
 ERRORS. Every failure carries `{ path, code, message, hint? }` with a stable code \
 and the JSON path of the problem. `unknown_ref` and `duplicate_id` are rules of a \
@@ -95,7 +96,8 @@ response carries `extracted_from` (`\"<diagram_id>@<depth>\"`); the document \
 itself is unchanged. `opts.layout_timeout_ms` (default 2000, ceiling 10000) is \
 the deadline of the layout: missing it answers `ok: false`, code \
 `layout_timeout`, with `metrics.elapsed_ms` and nothing on the plan. \
-`opts.focus`, `opts.replace_id` and `opts.interactive` arrive in F2/F3."
+`opts.focus` puts the camera on a node and its neighbourhood; `opts.replace_id` \
+and `opts.interactive` arrive in F2/F3."
         }
         "validate_diagram" => {
             "\
@@ -235,7 +237,7 @@ mod tests {
                 "the instructions lack `{needle}`"
             );
         }
-        for future in ["opts.focus", "opts.replace_id", "opts.interactive"] {
+        for future in ["opts.replace_id", "opts.interactive"] {
             assert!(render.contains(future), "render_diagram lacks `{future}`");
             assert!(
                 INSTRUCTIONS.contains(future),

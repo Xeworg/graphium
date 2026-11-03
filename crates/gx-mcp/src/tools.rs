@@ -41,14 +41,27 @@ pub struct RenderRequest {
 pub struct RenderOptions {
     /// Draws only the neighbourhood of one node instead of the whole graph.
     pub extract: Option<Extract>,
+    /// Puts the camera on one node and, optionally, its neighbourhood
+    /// (PRD §7, RF27).
+    pub focus: Option<Focus>,
     /// Deadline of the whole pipeline, in milliseconds.
     pub layout_timeout_ms: u64,
+}
+
+/// Where the camera goes after a render (PRD §7, RF27).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Focus {
+    /// `id` of the node to center.
+    pub around: String,
+    /// Hops of the neighbourhood to frame with it: `0` is the node alone.
+    pub depth: usize,
 }
 
 impl Default for RenderOptions {
     fn default() -> Self {
         Self {
             extract: None,
+            focus: None,
             layout_timeout_ms: DEFAULT_LAYOUT_TIMEOUT_MS,
         }
     }
@@ -151,6 +164,9 @@ pub struct RenderHookPayload {
     pub width: f64,
     /// Height of the diagram in plan units, from the layout bounding box.
     pub height: f64,
+    /// The box the camera has to show, in SVG coordinates, when the agent
+    /// asked for `opts.focus` (PRD §7, RF27).
+    pub focus: Option<gx_core::geom::Rect>,
     pub metrics: Metrics,
 }
 
@@ -527,6 +543,16 @@ pub fn render_diagram_with(request: &RenderRequest, opts: &RenderOptions) -> Ren
     let width = outcome.bbox.w;
     let height = outcome.bbox.h;
 
+    // The camera intent of `opts.focus` is computed before anything is stored:
+    // an unknown id has to leave the plane exactly as it was.
+    let focus = match opts.focus.as_ref() {
+        Some(focus) => match focus_box(&outcome.layout, focus) {
+            Ok(rect) => Some(rect),
+            Err(error) => return rejected(vec![error]),
+        },
+        None => None,
+    };
+
     let store = diagram_store();
     // The plan holds a dozen diagrams (PRD §11.1, RF13). A render that would
     // not fit is refused **before** anything is stored or painted, so the
@@ -579,6 +605,7 @@ pub fn render_diagram_with(request: &RenderRequest, opts: &RenderOptions) -> Ren
             svg: outcome.svg,
             width,
             height,
+            focus,
             metrics,
         }),
         None => {
@@ -762,6 +789,7 @@ pub fn parse_opts(
     for (key, value) in object {
         match key.as_str() {
             "extract" => render_opts.extract = Some(parse_extract(value)?),
+            "focus" => render_opts.focus = Some(parse_focus(value)?),
             "layout_timeout_ms" => {
                 let Some(ms) = value.as_u64() else {
                     return Err(vec![ValidationError::new(
@@ -786,12 +814,60 @@ pub fn parse_opts(
         warnings.push(Warning {
             code: "opts_ignored".to_string(),
             message: format!(
-                "`opts.{}` se ignora en F1: `opts.focus`, `opts.replace_id` y `opts.interactive` llegan en F2/F3, y esta versión solo honra `opts.extract` y `opts.layout_timeout_ms`",
+                "`opts.{}` todavía se ignora: `opts.replace_id` llega con el ciclo de reemplazo y `opts.interactive` en F3; esta versión honra `opts.extract`, `opts.focus` y `opts.layout_timeout_ms`",
                 ignored.join("`, `opts.")
             ),
         });
     }
     Ok((render_opts, warnings))
+}
+
+/// Reads `opts.focus` into a [`Focus`] (PRD §7, RF27).
+fn parse_focus(value: &serde_json::Value) -> Result<Focus, Vec<gx_core::error::ValidationError>> {
+    use gx_core::error::{ErrorCode, ValidationError};
+
+    let Some(object) = value.as_object() else {
+        return Err(vec![ValidationError::new(
+            "opts.focus",
+            ErrorCode::InvalidValue,
+            "`opts.focus` tiene que ser un objeto con `id` y, opcionalmente, `depth`",
+            Some("mandá `opts.focus: { id: \"<id>\", depth: 1 }`".to_string()),
+        )]);
+    };
+    let around = object
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| object.get("around").and_then(serde_json::Value::as_str))
+        .map(str::trim)
+        .unwrap_or_default();
+    if around.is_empty() {
+        return Err(vec![ValidationError::new(
+            "opts.focus.id",
+            ErrorCode::MissingField,
+            "`opts.focus.id` falta: es el `id` del nodo que la cámara tiene que mostrar",
+            Some("usá el `id` de un nodo de este diagrama".to_string()),
+        )]);
+    }
+    let depth = match object.get("depth") {
+        None | Some(serde_json::Value::Null) => DEFAULT_EXTRACT_DEPTH,
+        Some(value) => match value.as_u64() {
+            Some(depth) => usize::try_from(depth).unwrap_or(usize::MAX),
+            None => {
+                return Err(vec![ValidationError::new(
+                    "opts.focus.depth",
+                    ErrorCode::InvalidValue,
+                    format!("`opts.focus.depth` tiene que ser un entero >= 0, no `{value}`"),
+                    Some(
+                        "omití `depth` para el default 1, o mandá 0 para el nodo solo".to_string(),
+                    ),
+                )])
+            }
+        },
+    };
+    Ok(Focus {
+        around: around.to_string(),
+        depth,
+    })
 }
 
 /// Reads `opts.extract` into a [`gx_core::render::Extract`] (PRD §7.3, S21).
@@ -838,6 +914,74 @@ pub fn parse_extract(
     Ok(gx_core::render::Extract {
         around: around.to_string(),
         depth,
+    })
+}
+
+/// The box the camera has to show for `opts.focus` (PRD §7, RF27).
+///
+/// It walks the routed layout in both directions up to `depth` hops and
+/// returns the union of the boxes it reaches. An unknown id is an error with
+/// its own path: pointing the camera at nothing would leave the human
+/// looking at an empty spot.
+fn focus_box(
+    layout: &gx_core::layout::LayoutGraph,
+    focus: &Focus,
+) -> Result<gx_core::geom::Rect, ValidationError> {
+    use std::collections::{BTreeSet, VecDeque};
+
+    if !layout.nodes.contains_key(&focus.around) {
+        return Err(ValidationError::new(
+            "opts.focus.around",
+            ErrorCode::UnknownRef,
+            format!("no hay ningún nodo `{}` en el diagrama", focus.around),
+            Some("usá el `id` de un nodo de este diagrama".to_string()),
+        ));
+    }
+
+    let mut reached: BTreeSet<&str> = BTreeSet::new();
+    reached.insert(focus.around.as_str());
+    let mut queue: VecDeque<(&str, usize)> = VecDeque::new();
+    queue.push_back((focus.around.as_str(), 0));
+    while let Some((id, hops)) = queue.pop_front() {
+        if hops >= focus.depth {
+            continue;
+        }
+        for edge in &layout.edges {
+            let next = if edge.from == id {
+                edge.to.as_str()
+            } else if edge.to == id {
+                edge.from.as_str()
+            } else {
+                continue;
+            };
+            if reached.insert(next) {
+                queue.push_back((next, hops + 1));
+            }
+        }
+    }
+
+    let mut union: Option<gx_core::geom::Rect> = None;
+    for id in reached {
+        let Some(placed) = layout.nodes.get(id) else {
+            continue;
+        };
+        let rect = gx_core::geom::Rect::new(
+            placed.center.x - placed.size.w / 2.0,
+            placed.center.y - placed.size.h / 2.0,
+            placed.size.w,
+            placed.size.h,
+        );
+        union = Some(match union {
+            Some(current) => current.union(&rect),
+            None => rect,
+        });
+    }
+    union.ok_or_else(|| {
+        ValidationError::without_hint(
+            "opts.focus.around",
+            ErrorCode::UnknownRef,
+            "no hay ninguna caja que mostrar para `opts.focus`",
+        )
     })
 }
 
@@ -888,6 +1032,16 @@ mod tests {
             },
             &opts,
         )
+    }
+
+    fn focus(around: &str, depth: usize) -> RenderOptions {
+        RenderOptions {
+            focus: Some(super::Focus {
+                around: around.to_string(),
+                depth,
+            }),
+            ..RenderOptions::default()
+        }
     }
 
     fn extract(around: &str, depth: usize) -> RenderOptions {
@@ -1047,6 +1201,55 @@ mod tests {
             diagram_store().open_count(),
             crate::store::MAX_OPEN_DIAGRAMS
         );
+    }
+
+    /// PRD §7 (RF27): `opts.focus` pide que la cámara muestre un nodo y, si
+    /// se pide, su vecindad. El payload del hook lleva la caja a mostrar.
+    #[test]
+    fn focus_asks_the_window_to_show_one_node() {
+        let _guard = lock_renders_blocking();
+
+        let painted = Arc::new(Mutex::new(Vec::new()));
+        let recorder = Arc::clone(&painted);
+        set_render_hook(Some(Arc::new(move |payload| {
+            recorder
+                .lock()
+                .expect("the recorder is not poisoned")
+                .push(payload.focus);
+            RenderStatus::Painted
+        })));
+
+        let graph = chain(4);
+        let alone = render_with_opts(&graph, focus("n2", 0));
+        let neighbourhood = render_with_opts(&graph, focus("n2", 1));
+
+        assert!(alone.ok && neighbourhood.ok, "{alone:?} {neighbourhood:?}");
+        let boxes = painted
+            .lock()
+            .expect("the recorder is not poisoned")
+            .clone();
+        let alone = boxes[0].expect("el foco del nodo solo");
+        let neighbourhood = boxes[1].expect("el foco de la vecindad");
+        assert!(
+            neighbourhood.w >= alone.w && neighbourhood.h >= alone.h,
+            "la vecindad no puede ser más chica que el nodo solo: {alone:?} vs {neighbourhood:?}"
+        );
+
+        set_render_hook(None);
+    }
+
+    /// Un `opts.focus` que apunta a un nodo que no existe deja el plano como
+    /// estaba: no hay nada que mostrar y el agente tiene que enterarse.
+    #[test]
+    fn focus_on_an_unknown_node_stores_nothing() {
+        let _guard = lock_renders_blocking();
+
+        let response = render_with_opts(&chain(3), focus("no-existe", 1));
+
+        assert!(!response.ok, "{response:?}");
+        assert_eq!(error_codes(&response), vec!["unknown_ref"]);
+        assert_eq!(response.errors[0].path, "opts.focus.around");
+        assert!(diagram_store().list().is_empty());
     }
 
     /// PRD §7 RF20, S6: between 150 nodes and the hard limit the diagram is

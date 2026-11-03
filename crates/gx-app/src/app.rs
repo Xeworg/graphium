@@ -111,6 +111,20 @@ struct RenderEvent {
     /// lives in the frontend: this is an intent, not a write.
     #[serde(skip_serializing_if = "Option::is_none")]
     camera: Option<CameraSnapshot>,
+    /// The box of `opts.focus` in plan units (PRD §7, RF27). When it is
+    /// there the page applies the camera even if the plan is already full:
+    /// the agent asked to be shown this, not to keep the view.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    focus: Option<FocusBox>,
+}
+
+/// A box in plan units, as the frontend reads it.
+#[derive(Debug, Clone, Copy, Serialize)]
+struct FocusBox {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
 }
 
 /// The top-left corner of a diagram in plan units.
@@ -346,8 +360,24 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
                 gx_core::geom::Size::new(rect.w, rect.h),
             );
         }
-        let fit = match (placement, viewport) {
-            (Some(rect), Some(viewport)) => Some(camera::fit(rect, viewport)),
+        // `opts.focus` wins over the frame of the whole diagram: the agent
+        // asked to be shown one node (PRD §7, RF27). The box arrives in SVG
+        // coordinates, so the object padding of the plan is added back.
+        let focus_box = match (payload.focus, placement) {
+            (Some(box_), Some(rect)) => Some(FocusBox {
+                x: rect.x + camera::OBJECT_PADDING + box_.x,
+                y: rect.y + camera::OBJECT_PADDING + box_.y,
+                w: box_.w,
+                h: box_.h,
+            }),
+            _ => None,
+        };
+        let fit = match (focus_box, placement, viewport) {
+            (Some(box_), _, Some(viewport)) => Some(camera::fit(
+                gx_core::geom::Rect::new(box_.x, box_.y, box_.w, box_.h),
+                viewport,
+            )),
+            (None, Some(rect), Some(viewport)) => Some(camera::fit(rect, viewport)),
             _ => None,
         };
         let event = RenderEvent {
@@ -359,6 +389,7 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
                 y: rect.y,
             }),
             camera: fit,
+            focus: focus_box,
         };
         if window.emit("graphium://render", event).is_err() {
             return gx_mcp::tools::RenderStatus::Error;

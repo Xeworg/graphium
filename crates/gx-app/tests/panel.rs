@@ -269,10 +269,21 @@ fn an_insertion_on_a_plan_with_objects_keeps_the_zoom_of_the_human() {
         "one definition and one call: the camera of the event is applied in a \
          single place"
     );
-    let framed = slice_between(insert, "if (first) {", "} else if (placement) {");
+    // El encuadre de la cámara del evento se aplica en dos casos y en un solo
+    // sitio: el primer diagrama del plano y cuando el agente pidió
+    // `opts.focus` (PRD §7, RF27).
+    let framed = slice_between(
+        insert,
+        "if (first || payload.focus) {",
+        "} else if (placement) {",
+    );
     assert!(
         framed.contains("applyCameraIntent(payload.camera)"),
-        "the first diagram is framed with the camera of the event: {framed}"
+        "the first diagram and the focused one use the camera of the event: {framed}"
+    );
+    assert!(
+        insert.contains("payload.focus"),
+        "`opts.focus` tiene que llegar a la decisión de la cámara: {insert}"
     );
 
     let after = insert

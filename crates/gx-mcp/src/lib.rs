@@ -88,7 +88,8 @@ nodes) and the response carries `extracted_from: \"<diagram_id>@<depth>\"`; \
 `opts.layout_timeout_ms` sets the layout deadline (default 2000, ceiling \
 10000) and a layout that misses it answers `ok: false, code: \
 \"layout_timeout\"` with `metrics.elapsed_ms`, leaving the plan untouched. \
-`opts.focus`, `opts.replace_id` and `opts.interactive` arrive in F2/F3 and \
+`opts.focus: { id, depth? }` puts the camera on that node and, with `depth`, on \
+its neighbourhood. `opts.replace_id` and `opts.interactive` arrive in F2/F3 and \
 are ignored for now.";
 
 /// Description of the `validate_diagram` tool, written for the agent.
@@ -569,8 +570,9 @@ mod tests {
         );
     }
 
-    /// S21: the message of `opts_ignored` names the keys of F2/F3, so the
-    /// agent learns when they arrive.
+    /// S21: the message of `opts_ignored` names the keys of the later phases,
+    /// so the agent learns when they arrive. `opts.focus` ya se honra en F2,
+    /// así que el aviso queda para las que faltan.
     #[tokio::test]
     async fn opts_ignored_names_the_keys_of_the_later_phases() {
         let _guard = lock_renders().await;
@@ -580,7 +582,7 @@ mod tests {
         let result = server
             .render_diagram(Parameters(RenderDiagramParams {
                 diagram,
-                opts: Some(serde_json::json!({ "focus": "read" })),
+                opts: Some(serde_json::json!({ "replace_id": "d-0001" })),
             }))
             .await
             .expect("a valid document never fails the tool");
@@ -593,10 +595,48 @@ mod tests {
             .find(|warning| warning["code"] == "opts_ignored")
             .expect("the ignored key is reported");
         let message = warning["message"].as_str().expect("the warning says why");
-        for key in ["opts.focus", "opts.replace_id", "opts.interactive"] {
+        for key in ["opts.replace_id", "opts.interactive"] {
             assert!(message.contains(key), "the message names {key}: {message}");
         }
-        assert!(message.contains("F2/F3"), "{message}");
+        // `opts.focus` aparece en el texto como honrada, no como ignorada:
+        // lo que importa es que el aviso nombre solo las que faltan.
+        assert!(
+            message.contains("esta versión honra"),
+            "el aviso dice qué se honra hoy: {message}"
+        );
+    }
+
+    /// PRD §7 (RF27): `opts.focus` llega a la ventana como una caja a mostrar
+    /// y no deja ningún aviso de opción ignorada.
+    #[tokio::test]
+    async fn opts_focus_is_honored_without_a_warning() {
+        let _guard = lock_renders().await;
+        let server = GraphiumServer::new();
+        let diagram = serde_json::from_str(MINIMAL).expect("the example is JSON");
+
+        let result = server
+            .render_diagram(Parameters(RenderDiagramParams {
+                diagram,
+                opts: Some(serde_json::json!({ "focus": { "id": "read", "depth": 0 } })),
+            }))
+            .await
+            .expect("the tool answers");
+
+        let value = result.structured_content.expect("structured content");
+        assert_eq!(value["ok"], true, "{value}");
+        let codes: Vec<&str> = value["warnings"]
+            .as_array()
+            .map(|warnings| {
+                warnings
+                    .iter()
+                    .filter_map(|warning| warning["code"].as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            !codes.contains(&"opts_ignored"),
+            "`opts.focus` se honra: {codes:?}"
+        );
     }
 
     /// A malformed `opts.extract` never falls back to the whole diagram: it is

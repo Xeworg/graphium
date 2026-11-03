@@ -755,9 +755,10 @@ function insertDiagram(payload) {
   };
   empty.classList.add("hidden");
 
-  if (first) {
-    // The view fits the new diagram (PRD §7.2, S17): a diagram that does not
-    // fit is cut by the window, and a cut diagram cannot be read.
+  // One single place decides what the camera does with the intent of the
+  // event: mostrar la cámara del render cuando el plano está vacío o cuando
+  // el agente pidió `opts.focus`, y hacer pan sin tocar el zoom en el resto.
+  if (first || payload.focus) {
     applyCameraIntent(payload.camera);
   } else if (placement) {
     panTo(cameraOn(center));
