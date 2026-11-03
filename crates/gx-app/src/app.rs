@@ -1,10 +1,10 @@
 //! The Tauri application: the plan and its window (PRD §7, §8.6.1).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Listener, Manager, WindowEvent};
@@ -13,8 +13,6 @@ use crate::camera::CameraSnapshot;
 
 /// How long the frontend has to confirm the paint (PRD §8.6.1, step 5).
 pub const RENDER_ACK_TIMEOUT_MS: u64 = 2000;
-/// How long the frontend has to announce itself as ready.
-pub const READY_TIMEOUT_MS: u64 = 2000;
 
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -24,7 +22,6 @@ static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub struct PlanState {
     camera: Mutex<CameraSnapshot>,
     pending: Mutex<HashMap<String, Sender<bool>>>,
-    ready: AtomicBool,
 }
 
 impl PlanState {
@@ -34,15 +31,6 @@ impl PlanState {
 
     pub fn set_camera(&self, camera: CameraSnapshot) {
         *self.camera.lock().expect("camera lock") = camera;
-    }
-
-    /// Whether the frontend already announced itself (`graphium://ready`).
-    pub fn is_ready(&self) -> bool {
-        self.ready.load(Ordering::Relaxed)
-    }
-
-    pub fn set_ready(&self) {
-        self.ready.store(true, Ordering::Relaxed);
     }
 
     fn register_ack(&self, req_id: &str) -> std::sync::mpsc::Receiver<bool> {
@@ -123,7 +111,6 @@ pub fn build(keep_alive: bool) -> (tauri::App<tauri::Wry>, Arc<PlanState>) {
 
     let camera_state = Arc::clone(&state);
     let ack_state = Arc::clone(&state);
-    let ready_state = Arc::clone(&state);
     handle.listen("camera-changed", move |event| {
         if let Ok(payload) = serde_json::from_str::<CameraPayload>(event.payload()) {
             camera_state.set_camera(CameraSnapshot::new(payload.tx, payload.ty, payload.zoom));
@@ -133,9 +120,6 @@ pub fn build(keep_alive: bool) -> (tauri::App<tauri::Wry>, Arc<PlanState>) {
         if let Ok(payload) = serde_json::from_str::<AckPayload>(event.payload()) {
             ack_state.resolve_ack(&payload.req_id, payload.ok);
         }
-    });
-    handle.listen("graphium://ready", move |_event| {
-        ready_state.set_ready();
     });
 
     (application, state)
@@ -154,16 +138,10 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
         let _ = window.show();
         let _ = window.unminimize();
 
-        // The frontend announces itself when the webview is alive; the
-        // render waits for that announcement before giving up (PRD §8.6.1).
-        let deadline = Instant::now() + Duration::from_millis(READY_TIMEOUT_MS);
-        while !state.is_ready() {
-            if Instant::now() >= deadline {
-                return false;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-
+        // The render is emitted and the answer is awaited: the timeout of
+        // the acknowledgement is the only wait (PRD §8.6.1, step 5). A
+        // webview that is not alive yet never answers, and the render ends
+        // with `rendered: false` and the reason `ui_timeout`.
         let event = RenderEvent {
             req_id: req_id.clone(),
             diagram_id: payload.diagram_id.clone(),

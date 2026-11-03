@@ -15,8 +15,16 @@
 :root {
   --bg: #1b1b1b;
   --grid-color: rgba(255, 255, 255, 0.14);
+  /* The deviation of the lines from the vertical (RF24: 32 degrees). */
+  --grid-angle: 32deg;
+  /* The major diagonal of the rhombus: the measure the human sees. */
+  --grid-diagonal: 59px;
+  /* sin and cos of the deviation. The frontend keeps them in sync with
+     --grid-angle, so RF25 can change the angle without touching the CSS. */
+  --grid-sin: 0.5299;
+  --grid-cos: 0.848;
   /* The perpendicular step between two lines of the same family:
-     59 px of major diagonal * sin(32 degrees). */
+     diagonal * sin(angle). */
   --grid-step: 31.26px;
   --grid-line: 1px;
   --grid-opacity: 1;
@@ -51,8 +59,8 @@ body {
   /* Phase of every family: the pan projected on the normal of that family.
      A single offset for both families would make them drift apart while
      the camera moves, and the cells would stop being congruent. */
-  --shift-a: calc(0.848 * var(--tx) - 0.53 * var(--ty));
-  --shift-b: calc(0.848 * var(--tx) + 0.53 * var(--ty));
+  --shift-a: calc(var(--grid-cos) * var(--tx) - var(--grid-sin) * var(--ty));
+  --shift-b: calc(var(--grid-cos) * var(--tx) + var(--grid-sin) * var(--ty));
 }
 
 .plan.dragging {
@@ -70,18 +78,18 @@ body {
   opacity: var(--grid-opacity);
   background-image:
     repeating-linear-gradient(
-      58deg,
+      calc(90deg - var(--grid-angle)),
       transparent 0 calc(var(--grid-step) - var(--grid-line)),
       var(--grid-color) 0 var(--grid-step)
     ),
     repeating-linear-gradient(
-      122deg,
+      calc(90deg + var(--grid-angle)),
       transparent 0 calc(var(--grid-step) - var(--grid-line)),
       var(--grid-color) 0 var(--grid-step)
     );
   background-position:
-    calc(0.848 * var(--shift-a)) calc(-0.53 * var(--shift-a)),
-    calc(0.848 * var(--shift-b)) calc(0.53 * var(--shift-b));
+    calc(var(--grid-cos) * var(--shift-a)) calc(-1 * var(--grid-sin) * var(--shift-a)),
+    calc(var(--grid-cos) * var(--shift-b)) calc(var(--grid-sin) * var(--shift-b));
 }
 
 .diagrams {
