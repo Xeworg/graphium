@@ -1,0 +1,183 @@
+//! The single engine door (PRD §9.1, RNF6).
+//!
+//! `render_json` is the only path from JSON to SVG. `gx-mcp` and the tests
+//! call exactly this function: no test of RNF6 needs Tauri, webkit or a
+//! webview.
+//!
+//! The concrete engines are injected globally (F0 decision L7) because
+//! `gx-core` cannot depend on `dagre` nor on `rustybuzz`.
+
+use std::sync::{Arc, OnceLock, RwLock};
+use std::time::Instant;
+
+use serde_json::Value;
+
+use crate::error::{ErrorCode, ValidationError};
+use crate::ir::{Ir, IrGraph};
+use crate::kind::{self, KindLimits};
+use crate::layout::LayoutEngine;
+use crate::render::{Palette, RenderMetrics, RenderOpts, RenderOutcome, SvgRenderer};
+use crate::text::{TextMetrics, TextStyle};
+use crate::tokens::TOKENS;
+
+/// The engines used by the door.
+#[derive(Clone)]
+pub struct Engines {
+    pub layout: Arc<dyn LayoutEngine>,
+    pub metrics: Arc<dyn TextMetrics>,
+    pub renderer: Arc<dyn SvgRenderer>,
+}
+
+static ENGINES: OnceLock<RwLock<Option<Engines>>> = OnceLock::new();
+
+fn engines_slot() -> &'static RwLock<Option<Engines>> {
+    ENGINES.get_or_init(|| RwLock::new(None))
+}
+
+/// Installs the engines used by [`render_json`].
+pub fn install(engines: Engines) {
+    let mut slot = engines_slot().write().expect("engine slot is not poisoned");
+    *slot = Some(engines);
+}
+
+/// Whether the engines are installed.
+pub fn is_installed() -> bool {
+    engines_slot()
+        .read()
+        .expect("engine slot is not poisoned")
+        .is_some()
+}
+
+/// Renders a diagram document into SVG.
+///
+/// The pipeline is: parse → resolve kind → validate → IR → measure → check
+/// limits → layout → render. Every caller gets the same behaviour.
+pub fn render_json(src: &str, opts: &RenderOpts) -> Result<RenderOutcome, Vec<ValidationError>> {
+    let engines = engines_slot()
+        .read()
+        .expect("engine slot is not poisoned")
+        .clone()
+        .ok_or_else(|| {
+            vec![ValidationError::without_hint(
+                "",
+                ErrorCode::EngineUnavailable,
+                "no hay motores instalados: el binario debe llamar gx_core::engine::install",
+            )]
+        })?;
+
+    let document: Value = serde_json::from_str(src).map_err(|error| {
+        vec![ValidationError::new(
+            "",
+            ErrorCode::InvalidJson,
+            format!("JSON inválido: {error}"),
+            Some("el documento debe ser un objeto JSON con el campo `kind`".to_string()),
+        )]
+    })?;
+
+    let kind_name = document
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    let kind = kind::for_kind(&kind_name).ok_or_else(|| {
+        let available = kind::kind_names().join(", ");
+        vec![ValidationError::new(
+            "kind",
+            ErrorCode::UnknownKind,
+            format!("kind desconocido: `{kind_name}`"),
+            Some(format!("kinds disponibles: {available}")),
+        )]
+    })?;
+
+    let mut ir = kind.process_json(&document)?;
+
+    if let Ir::Graph(graph) = &mut ir {
+        for node in &mut graph.nodes {
+            node.size = engines
+                .metrics
+                .measure(&node.label, &TextStyle::regular(TOKENS.text_size));
+        }
+    }
+
+    let graph = ir.graph().ok_or_else(|| {
+        vec![ValidationError::without_hint(
+            "",
+            ErrorCode::InvalidValue,
+            "el kind no produce un grafo",
+        )]
+    })?;
+
+    check_limits(kind.limits(), graph)?;
+
+    let layout_started = Instant::now();
+    let layout = engines.layout.layout(graph);
+    let layout_ms = layout_started.elapsed().as_millis() as u64;
+
+    let palette = Palette::for_theme(opts.theme);
+    let render_started = Instant::now();
+    let svg = engines.renderer.render(&ir, &layout, &palette);
+    let render_ms = render_started.elapsed().as_millis() as u64;
+    let svg_bytes = svg.len();
+
+    Ok(RenderOutcome {
+        svg,
+        bbox: layout.bbox,
+        layout,
+        metrics: RenderMetrics {
+            nodes: graph.nodes.len(),
+            edges: graph.edges.len(),
+            layout_ms,
+            render_ms,
+            svg_bytes,
+        },
+    })
+}
+
+/// Enforces the limits declared by the kind (PRD §7.3).
+fn check_limits(limits: KindLimits, graph: &IrGraph) -> Result<(), Vec<ValidationError>> {
+    let mut errors = Vec::new();
+    if graph.nodes.len() > limits.max_nodes {
+        errors.push(ValidationError::new(
+            "nodes",
+            ErrorCode::TooLarge,
+            format!(
+                "{} nodos superan el límite de {}",
+                graph.nodes.len(),
+                limits.max_nodes
+            ),
+            Some("partí el diagrama con opts.extract".to_string()),
+        ));
+    }
+    if graph.edges.len() > limits.max_edges {
+        errors.push(ValidationError::new(
+            "edges",
+            ErrorCode::TooLarge,
+            format!(
+                "{} aristas superan el límite de {}",
+                graph.edges.len(),
+                limits.max_edges
+            ),
+            Some("partí el diagrama con opts.extract".to_string()),
+        ));
+    }
+    if !graph.nodes.is_empty() {
+        let density = graph.edges.len() as f64 / graph.nodes.len() as f64;
+        if density > limits.max_density {
+            errors.push(ValidationError::new(
+                "edges",
+                ErrorCode::TooLarge,
+                format!(
+                    "densidad {:.2} supera el límite de {:.2}",
+                    density, limits.max_density
+                ),
+                Some("redují las aristas o partí el diagrama".to_string()),
+            ));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
