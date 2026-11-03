@@ -10,6 +10,12 @@ F0 (`odd/tasks/f0-spike-tecnico.md`) quedó cerrado: el camino end-to-end
 funciona (JSON → schema → validate → IR → dagre → SVG → plano) y
 `render_diagram` devuelve `rendered: true`.
 
+**Estado: F1 cerrado (2026-11-03).** Las nueve tareas están hechas y con
+commit; el criterio de salida se cumple con los golden SVG y los presupuestos
+medidos en CI. Lo que queda abierto no es implementación: la estrategia de
+entrega de la rama (L13) y los dos pendientes conocidos de F2 (ruteo con
+obstáculos y `opts.focus` con vecindad).
+
 ## Specs
 
 - **S1** (PRD §7, RF3): «Tool MCP `get_diagram_schema(kind?)`: devuelve el JSON Schema (obligatorio `kind`, o índice de kinds disponibles con tamaño; nunca los 24 schemas inline).»
@@ -47,10 +53,10 @@ funciona (JSON → schema → validate → IR → dagre → SVG → plano) y
 
 | ID | Tarea | Specs | Ruta | Commit |
 |---|---|---|---|---|
-| T1 | Feature doc de F1 + mirror + lista de tareas | S1-S30 | inline | este commit |
-| T2 | `validate_diagram` (dry-run, mismo pipeline que `render_diagram`) + `get_diagram_schema` (índice y schema por kind) + tope de 20 errores + did-you-mean de campos | S1, S2, S3, S4, S5, S25 | inline | `feat(gx-mcp): validate_diagram y get_diagram_schema` |
-| T3 | `list_diagrams`, `get_diagram`, `clear_canvas` y `update_diagram` (RFC 7386 transaccional) con revisión monótona, alcance de sesión y ciclo de vida del `diagram_id` | S7, S8, S9, S10, S11, S16 | inline | `feat(gx-mcp): list, get, clear y update transaccional` |
-| T4 | **El harness del agente**: instrucciones del servidor MCP (cuándo usar cada tool y cuándo no), descripciones de cada tool, `mcp-config --client` y `docs/QUICKSTART.md` para agentes | S12, S13, S14, S15 | inline | `feat(gx-mcp): harness de instrucciones para el agente` |
+| T1 | Feature doc de F1 + mirror + lista de tareas | S1-S30 | inline | `f1-mvp` inicial (previo a `d54d6c2`) |
+| T2 | `validate_diagram` (dry-run, mismo pipeline que `render_diagram`) + `get_diagram_schema` (índice y schema por kind) + tope de 20 errores + did-you-mean de campos | S1, S2, S3, S4, S5, S25 | inline | `d54d6c2` |
+| T3 | `list_diagrams`, `get_diagram`, `clear_canvas` y `update_diagram` (RFC 7386 transaccional) con revisión monótona, alcance de sesión y ciclo de vida del `diagram_id` | S7, S8, S9, S10, S11, S16 | inline | `359e14a` |
+| T4 | **El harness del agente**: instrucciones del servidor MCP (cuándo usar cada tool y cuándo no), descripciones de cada tool, `mcp-config --client` y `docs/QUICKSTART.md` para agentes | S12, S13, S14, S15 | inline | `52cb576` |
 | T5 | Kind `er` completo: schema (`schemars`), reglas cruzadas, traducción a la IR y render de las tablas como cajas de columnas | S26, S27 | inline | `1a84723` — 15 tests en gx-kinds, verificado en la ventana |
 | T6a | RF20/S6: el render reporta el tamaño (`too_many_nodes` > 150) y rechaza con `too_large` por encima del límite duro, con el mismo texto que el dry run | S6 | inline | `c49fa2e` — 3 tests en `gx-mcp` |
 | T6b | S20: escalera de degradación (4 pasos) con `warnings[].code = "degraded"` y el corte en 2 MB con hint de `opts.extract` | S20 | worker para los tests de layout y kerning | `005cef9` — 167 tests en verde |
@@ -94,3 +100,5 @@ funciona (JSON → schema → validate → IR → dagre → SVG → plano) y
 - **L20** (2026-11-03, T7 cerrado y un defecto que el panel destapó): la baldosa de la grilla era **cuadrada** y solo empalmaba cuando `cot(ángulo)` es entero. A 45° —el único ángulo posible hasta ahora— cerraba perfecto; con el slider del panel, 20°, 30° o 60° dejaban costura visible al hacer pan. La baldosa correcta es **rectangular**, `D·tan(ángulo) × D`, que a 45° es el mismo cuadrado y no tiene costura en ningún ángulo; el test `the_tile_keeps_the_mesh_seamless_at_every_angle` lo demuestra con los períodos de la malla (horizontal `D·tan`, vertical `D`) y prueba además que la cuadrada **tiene** que fallar a 20°. Lección: habilitar un control habilita también las combinaciones que el código nunca vio.
 - **L21** (2026-11-03, decisión del rango de ángulo): el slider y el saneo de `settings.json` aceptan **15..75** grados. El PRD define la separación como la diagonal mayor del rombo: a 0° el paso se va a cero (una mancha) y a 90° las dos familias de líneas se vuelven una sola, así que fuera de ese rango la definición no significa nada. Es una decisión de ingeniería declarada, no un requisito nuevo.
 - **L22** (2026-11-03, verificación de T7): verificado en la ventana el tema `claro` (nodos, labels y aristas con contraste, grilla a 30° sin costura) y el preset `sin grilla` (fondo oscuro sin retícula). El **click** en el engranaje no se pudo automatizar: esta máquina no tiene `xdotool` ni equivalente, así que la apertura del panel queda para el ojo humano; el contrato del panel (markup, eventos, claves, tema claro y baldosa) está fijado por los tests de `settings_panel.rs` y `grid.rs`.
+
+- **L23** (2026-11-03, cierre de F1): auditoría de las nueve tareas contra las 30 specs. Cada `S#` tiene su test; los códigos que el agente tiene que distinguir (`unknown_ref`, `duplicate_id`, `unknown_field`, `unknown_kind`, `too_large`, `switch`/`stale_revision`, `layout_timeout`, `busy`, `not_owner`, `unknown_diagram`) aparecen en el harness y en los tests. Verificación de cierre: **210 tests en verde**, clippy limpio, golden SVG byte a byte, RNF1-ter medido, RNF1-bis y RNF1-quater en el workflow, y verificación en la ventana de cada cosa que tiene pixeles (fit-to-view, extract, tema claro, grilla oculta, ángulo 30°). Lo único que quedó sin verificar con mis ojos es el click del engranaje, porque esta máquina no puede sintetizar clicks (L22).
