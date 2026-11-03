@@ -87,6 +87,22 @@ pub fn validate_flow(
     roles: &[Role],
     default_role: &str,
 ) -> Vec<ValidationError> {
+    let pairs: Vec<(&str, &str)> = edges
+        .iter()
+        .map(|edge| (edge.from.as_str(), edge.to.as_str()))
+        .collect();
+    let mut errors = validate_nodes(kind, nodes, roles, default_role);
+    errors.extend(validate_refs(&pairs, nodes));
+    errors
+}
+
+/// Validates the nodes: unique, non empty ids and a role the kind admits.
+pub fn validate_nodes(
+    kind: &str,
+    nodes: &[FlowNode],
+    roles: &[Role],
+    default_role: &str,
+) -> Vec<ValidationError> {
     let mut errors = Vec::new();
 
     if nodes.is_empty() {
@@ -134,25 +150,31 @@ pub fn validate_flow(
         }
     }
 
-    for (index, edge) in edges.iter().enumerate() {
-        if !seen.contains(&edge.from.as_str()) {
+    errors
+}
+
+/// Validates that every edge joins two declared nodes.
+pub fn validate_refs(pairs: &[(&str, &str)], nodes: &[FlowNode]) -> Vec<ValidationError> {
+    let ids: Vec<&str> = nodes.iter().map(|node| node.id.as_str()).collect();
+    let mut errors = Vec::new();
+    for (index, (from, to)) in pairs.iter().enumerate() {
+        if !ids.contains(from) {
             errors.push(ValidationError::new(
                 format!("edges[{index}].from"),
                 ErrorCode::UnknownRef,
-                format!("nodo de origen desconocido: `{}`", edge.from),
+                format!("nodo de origen desconocido: `{from}`"),
                 Some("las aristas referencian nodos declarados en `nodes`".to_string()),
             ));
         }
-        if !seen.contains(&edge.to.as_str()) {
+        if !ids.contains(to) {
             errors.push(ValidationError::new(
                 format!("edges[{index}].to"),
                 ErrorCode::UnknownRef,
-                format!("nodo de destino desconocido: `{}`", edge.to),
+                format!("nodo de destino desconocido: `{to}`"),
                 Some("las aristas referencian nodos declarados en `nodes`".to_string()),
             ));
         }
     }
-
     errors
 }
 
@@ -183,16 +205,9 @@ pub fn validate_header(
     errors
 }
 
-/// Translates a validated flow document to the layered IR.
-pub fn to_graph(
-    nodes: &[FlowNode],
-    edges: &[FlowEdge],
-    roles: &[Role],
-    default_role: &str,
-    direction: Option<Direction>,
-    layout_hint: LayoutHint,
-) -> IrGraph {
-    let nodes: Vec<IrNode> = nodes
+/// Translates the nodes of a validated flow document to IR nodes.
+pub fn to_ir_nodes(nodes: &[FlowNode], roles: &[Role], default_role: &str) -> Vec<IrNode> {
+    nodes
         .iter()
         .map(|node| {
             let mut ir_node = IrNode::new(
@@ -212,7 +227,19 @@ pub fn to_graph(
             }
             ir_node
         })
-        .collect();
+        .collect()
+}
+
+/// Translates a validated flow document to the layered IR.
+pub fn to_graph(
+    nodes: &[FlowNode],
+    edges: &[FlowEdge],
+    roles: &[Role],
+    default_role: &str,
+    direction: Option<Direction>,
+    layout_hint: LayoutHint,
+) -> IrGraph {
+    let nodes = to_ir_nodes(nodes, roles, default_role);
 
     let edges: Vec<IrEdge> = edges
         .iter()

@@ -4,6 +4,7 @@
 //! translation to the IR. Adding a kind never touches `gx-mcp` nor `gx-app`
 //! (PRD §7, O7).
 
+pub mod class;
 pub mod er;
 pub mod flow;
 pub mod flowchart;
@@ -25,6 +26,7 @@ pub fn register_all() {
     mindmap::register();
     sequence::register();
     flowchart::register();
+    class::register();
     timeline::register();
     swimlane::register();
 }
@@ -38,6 +40,7 @@ pub fn kind_names() -> Vec<&'static str> {
         mindmap::MindmapKind::KIND,
         sequence::SequenceKind::KIND,
         flowchart::FlowchartKind::KIND,
+        class::ClassKind::KIND,
         timeline::TimelineKind::KIND,
         swimlane::SwimlaneKind::KIND,
     ]

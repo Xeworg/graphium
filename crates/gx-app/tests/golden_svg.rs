@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 10] = [
+const CASES: [(&str, &str); 11] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -43,6 +43,7 @@ const CASES: [(&str, &str); 10] = [
     ("timeline-roadmap", TIMELINE_ROADMAP),
     ("swimlane-soporte", SWIMLANE_SOPORTE),
     ("flowchart-approval", FLOWCHART_APPROVAL),
+    ("class-shop", CLASS_SHOP),
 ];
 
 const MINIMAL: &str = r#"{
@@ -211,6 +212,25 @@ const FLOWCHART_APPROVAL: &str = r#"{
     { "from": "limite", "to": "auto", "label": "no" },
     { "from": "jefe", "to": "fin" },
     { "from": "auto", "to": "fin" }
+  ]
+}"#;
+
+const CLASS_SHOP: &str = r#"{
+  "version": 1,
+  "kind": "class",
+  "title": "pedidos",
+  "nodes": [
+    { "id": "Base", "label": "Base", "role": "abstract" },
+    { "id": "Order", "label": "Order" },
+    { "id": "Refund", "label": "Refund" },
+    { "id": "Payable", "label": "Payable", "role": "interface" },
+    { "id": "Money", "label": "Money" }
+  ],
+  "edges": [
+    { "from": "Order", "to": "Base", "relation": "extends" },
+    { "from": "Refund", "to": "Order", "relation": "extends" },
+    { "from": "Order", "to": "Payable", "relation": "implements" },
+    { "from": "Order", "to": "Money", "relation": "composition", "label": "total" }
   ]
 }"#;
 
