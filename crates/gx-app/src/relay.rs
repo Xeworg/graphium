@@ -31,36 +31,11 @@ pub fn tools() -> Vec<Value> {
         .map(|name| {
             json!({
                 "name": name,
-                "description": description_of(name),
+                "description": gx_mcp::harness::description(name),
                 "inputSchema": gx_mcp::dispatch::tool_schema(name)
             })
         })
         .collect()
-}
-
-/// The description of a tool, written for the agent.
-fn description_of(name: &str) -> &'static str {
-    match name {
-        "render_diagram" => {
-            "Render a diagram on the Graphium plan. The diagram is a JSON document with a \
-             `kind` field; the kind must be available in the catalog."
-        }
-        "validate_diagram" => {
-            "Check a diagram document WITHOUT opening anything. Same validation as \
-             render_diagram, no window."
-        }
-        "get_diagram_schema" => {
-            "The contract of a diagram kind: its JSON Schema, rules, shapes, limits and an \
-             example. Without `kind`, the index of the kinds."
-        }
-        "list_diagrams" => "The diagrams of this session that are on the plan.",
-        "get_diagram" => "The source document of a diagram and its revision.",
-        "update_diagram" => {
-            "Change an existing diagram with an RFC 7386 merge patch, transactionally."
-        }
-        "clear_canvas" => "Remove the diagrams of this session, or the whole plan.",
-        _ => "A Graphium tool.",
-    }
 }
 
 /// Handles one JSON-RPC line and returns the response line.

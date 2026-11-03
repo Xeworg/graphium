@@ -12,6 +12,7 @@
 
 pub mod contract;
 pub mod dispatch;
+pub mod harness;
 pub mod store;
 pub mod tools;
 
@@ -21,7 +22,7 @@ mod test_support;
 use std::path::Path;
 
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::CallToolResult;
+use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::{tool, tool_handler, tool_router, ErrorData, ServerHandler, ServiceExt};
 
 /// Registers the kinds of `gx-kinds` in the global registry. Idempotent.
@@ -33,13 +34,19 @@ pub fn bootstrap() {
 /// The JSON printed by `graphium mcp-config` (PRD §8.6.1, S15):
 /// `{"command": "<absolute path of the binary>", "args": ["--stdio"]}`.
 pub fn mcp_config_json(binary: &Path) -> String {
+    mcp_config_for("generic", binary)
+}
+
+/// The configuration of `graphium mcp-config --client <client>` (PRD §7 RF19).
+///
+/// Every client speaks the same stdio transport; what changes is the shape of
+/// the configuration file. `generic` is the shape of PRD §8.6.1.
+pub fn mcp_config_for(client: &str, binary: &Path) -> String {
     // `gx-app` passes `current_exe()`, which is already absolute; a relative
     // path is resolved here so the printed config is always usable.
     let command = std::path::absolute(binary).unwrap_or_else(|_| binary.to_path_buf());
-    // Built by hand so the key order of PRD §8.6.1 is byte-stable (a JSON
-    // object does not depend on it, but the printed line does).
-    let command = serde_json::Value::String(command.to_string_lossy().into_owned());
-    format!("{{\"command\":{command},\"args\":[\"--stdio\"]}}")
+    let command = command.to_string_lossy().into_owned();
+    crate::harness::client_config(client, &command)
 }
 
 /// Runs the MCP server on stdio until EOF (PRD §8.6.1).
@@ -403,11 +410,18 @@ impl GraphiumServer {
     }
 }
 
-#[tool_handler(
-    name = "graphium",
-    instructions = "Graphium draws software diagrams from a JSON document and places them on a plan. Call `render_diagram` with a complete diagram document and check `ok`: when it is false, fix the problems listed in `errors` (stable codes such as `invalid_json`, `unknown_kind`, `unknown_field`, `duplicate_id` and `unknown_ref`) and call again; when it is true the diagram is on the plan and `diagram_id` identifies it."
-)]
-impl ServerHandler for GraphiumServer {}
+#[tool_handler(name = "graphium")]
+impl ServerHandler for GraphiumServer {
+    /// The instructions the client shows to the agent.
+    ///
+    /// They come from [`crate::harness`] instead of the attribute of the
+    /// macro, so the text has one source and can be tested.
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new("graphium", env!("CARGO_PKG_VERSION")))
+            .with_instructions(crate::harness::INSTRUCTIONS.to_string())
+    }
+}
 
 /// Serializes a tool response into a structured result.
 fn structured<T: serde::Serialize>(response: T) -> Result<CallToolResult, ErrorData> {

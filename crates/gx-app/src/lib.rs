@@ -36,10 +36,10 @@ pub fn mcp_config_json(binary: &Path) -> String {
     gx_mcp::mcp_config_json(binary)
 }
 
-/// The MCP configuration of this binary.
-pub fn mcp_config() -> String {
+/// The configuration of this binary for a client (PRD §7, RF19).
+pub fn mcp_config_for(client: &str) -> String {
     let binary = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("graphium"));
-    mcp_config_json(&binary)
+    gx_mcp::mcp_config_for(client, &binary)
 }
 
 /// Runs the application in MCP mode: the window plus the stdio server.
@@ -120,8 +120,19 @@ pub fn help_text() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{help_text, mcp_config_json};
+    use super::{help_text, mcp_config_for, mcp_config_json};
     use std::path::Path;
+
+    #[test]
+    fn every_client_gets_its_own_configuration() {
+        for client in ["pi", "claude", "cursor", "generic"] {
+            let config = mcp_config_for(client);
+            assert!(config.contains("--stdio"), "{client}: {config}");
+            // Every shape names the command and the transport.
+            assert!(config.contains("command"), "{client}: {config}");
+        }
+        assert!(mcp_config_for("pi").contains("[mcp_servers.graphium]"));
+    }
 
     #[test]
     fn the_mcp_config_points_at_the_binary_in_stdio_mode() {
