@@ -11,6 +11,7 @@
 //! (PRD §8.6.1, RNF7).
 
 pub mod contract;
+pub mod dispatch;
 pub mod store;
 pub mod tools;
 
@@ -115,6 +116,66 @@ pub struct GetDiagramSchemaParams {
     pub kind: Option<String>,
 }
 
+/// Description of the `list_diagrams` tool, written for the agent.
+const LIST_DIAGRAMS_DESCRIPTION: &str = "\
+The diagrams of this session that are on the plan: their ids, titles, kinds, \
+revisions and when they were updated. Use it after a compaction, or when an \
+id was lost, to find the diagram to update or export. It never renders \
+anything.";
+
+/// Description of the `get_diagram` tool, written for the agent.
+const GET_DIAGRAM_DESCRIPTION: &str = "\
+The source document of a diagram, with its current revision. Use it to read \
+before an `update_diagram` (the revision is the one to send back), or to \
+recover a document after a compaction. It never renders anything.";
+
+/// Description of the `clear_canvas` tool, written for the agent.
+const CLEAR_CANVAS_DESCRIPTION: &str = "\
+Removes diagrams from the plan. Without `scope` it clears only the diagrams \
+of this session; with `scope: \"plano\"` it clears the whole plan, \
+including the diagrams of other sessions. It does not close the window and \
+does not stop the MCP session.";
+
+/// Description of the `update_diagram` tool, written for the agent.
+const UPDATE_DIAGRAM_DESCRIPTION: &str = "\
+Changes an existing diagram instead of creating another one. `patch` is an \
+RFC 7386 merge patch: objects merge key by key, arrays are replaced whole, \
+`null` removes a key. The merge is transactional: the result is validated \
+with the same pipeline as `render_diagram` and only then replaces the \
+document, so a bad patch leaves the diagram untouched and returns \
+`applied: false` with the errors. Send the `revision` you read, so a stale \
+write is rejected with `stale_revision`. The `kind` cannot change.";
+
+/// Parameters of the `clear_canvas` tool (PRD §11).
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClearCanvasParams {
+    /// `"sesion"` (default) or `"plano"`.
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+/// Parameters of the `get_diagram` tool (PRD §11).
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GetDiagramParams {
+    /// The id returned by `render_diagram` or `list_diagrams`.
+    pub diagram_id: String,
+}
+
+/// Parameters of the `update_diagram` tool (PRD §11).
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateDiagramParams {
+    /// The id returned by `render_diagram` or `list_diagrams`.
+    pub diagram_id: String,
+    /// The RFC 7386 merge patch to apply.
+    pub patch: serde_json::Value,
+    /// The revision the caller read; a stale one is rejected.
+    #[serde(default)]
+    pub revision: Option<u64>,
+}
+
 /// Parameters of the `render_diagram` tool (PRD §11).
 #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -207,6 +268,92 @@ impl GraphiumServer {
     }
 
     #[tool(
+        name = "list_diagrams",
+        description = LIST_DIAGRAMS_DESCRIPTION,
+        annotations(
+            title = "List diagrams",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn list_diagrams(&self) -> Result<CallToolResult, ErrorData> {
+        let response = contract::list_diagrams(&self.session_id);
+        structured(response)
+    }
+
+    #[tool(
+        name = "get_diagram",
+        description = GET_DIAGRAM_DESCRIPTION,
+        annotations(
+            title = "Get diagram",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn get_diagram(
+        &self,
+        Parameters(params): Parameters<GetDiagramParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let response = contract::get_diagram(&self.session_id, &params.diagram_id);
+        structured(response)
+    }
+
+    #[tool(
+        name = "clear_canvas",
+        description = CLEAR_CANVAS_DESCRIPTION,
+        annotations(
+            title = "Clear canvas",
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn clear_canvas(
+        &self,
+        Parameters(params): Parameters<ClearCanvasParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let response = contract::clear_canvas(&self.session_id, params.scope.as_deref());
+        structured(response)
+    }
+
+    #[tool(
+        name = "update_diagram",
+        description = UPDATE_DIAGRAM_DESCRIPTION,
+        annotations(
+            title = "Update diagram",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn update_diagram(
+        &self,
+        Parameters(params): Parameters<UpdateDiagramParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // The merge, the validation and the re-render run off the async loop.
+        let session_id = self.session_id.clone();
+        let response = tokio::task::spawn_blocking(move || {
+            contract::update_diagram(
+                &session_id,
+                &params.diagram_id,
+                &params.patch,
+                params.revision,
+            )
+        })
+        .await
+        .map_err(|error| {
+            ErrorData::internal_error(format!("the update task failed: {error}"), None)
+        })?;
+        structured(response)
+    }
+
+    #[tool(
         name = "validate_diagram",
         description = VALIDATE_DIAGRAM_DESCRIPTION,
         annotations(
@@ -261,6 +408,14 @@ impl GraphiumServer {
     instructions = "Graphium draws software diagrams from a JSON document and places them on a plan. Call `render_diagram` with a complete diagram document and check `ok`: when it is false, fix the problems listed in `errors` (stable codes such as `invalid_json`, `unknown_kind`, `unknown_field`, `duplicate_id` and `unknown_ref`) and call again; when it is true the diagram is on the plan and `diagram_id` identifies it."
 )]
 impl ServerHandler for GraphiumServer {}
+
+/// Serializes a tool response into a structured result.
+fn structured<T: serde::Serialize>(response: T) -> Result<CallToolResult, ErrorData> {
+    let value = serde_json::to_value(&response).map_err(|error| {
+        ErrorData::internal_error(format!("cannot serialize the response: {error}"), None)
+    })?;
+    Ok(CallToolResult::structured(value))
+}
 
 /// Builds the runtime, serves stdio and waits for EOF.
 fn run_stdio_service() -> Result<(), String> {

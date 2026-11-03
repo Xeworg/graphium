@@ -234,11 +234,18 @@ pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
 
     let store = diagram_store();
     let diagram_id = store.next_id();
+    // The document is kept normalized: `get_diagram` returns exactly this.
+    let document = serde_json::to_string(
+        &serde_json::from_str::<serde_json::Value>(&request.document)
+            .unwrap_or(serde_json::Value::Null),
+    )
+    .unwrap_or_else(|_| request.document.clone());
     store.insert(
         diagram_id.clone(),
         title,
         kind.clone(),
         request.session_id.clone(),
+        document,
     );
 
     let mut warnings = Vec::new();

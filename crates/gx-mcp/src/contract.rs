@@ -478,6 +478,301 @@ fn shapes_of(kind: &str) -> Vec<String> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Lifecycle of the diagrams on the plan (PRD §11, §11.1)
+// ---------------------------------------------------------------------------
+
+/// The response of `list_diagrams` (PRD §11).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ListResponse {
+    pub ok: bool,
+    pub diagrams: Vec<DiagramEntry>,
+}
+
+/// One diagram of the plan, as `list_diagrams` reports it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DiagramEntry {
+    pub diagram_id: String,
+    pub title: String,
+    pub kind: String,
+    pub updated_at: String,
+    pub session_id: String,
+    pub revision: u64,
+}
+
+/// The response of `get_diagram` (PRD §11).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct GetResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagram: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<ErrorPayload>,
+}
+
+/// The response of `clear_canvas` (PRD §11).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ClearResponse {
+    pub ok: bool,
+    pub removed: usize,
+}
+
+/// The response of `update_diagram` (PRD §11).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct UpdateResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<ErrorPayload>,
+    pub applied: bool,
+    /// The revision after the update, or the current one when it did not
+    /// apply.
+    pub revision: u64,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub errors_truncated: bool,
+}
+
+/// Lists the diagrams of the session (PRD §11.1: session scope by default).
+pub fn list_diagrams(session_id: &str) -> ListResponse {
+    crate::bootstrap();
+    let store = crate::store::diagram_store();
+    ListResponse {
+        ok: true,
+        diagrams: store
+            .list_for_session(session_id)
+            .into_iter()
+            .map(|summary| DiagramEntry {
+                diagram_id: summary.diagram_id,
+                title: summary.title,
+                kind: summary.kind,
+                updated_at: summary.updated_at,
+                session_id: summary.session_id,
+                revision: summary.revision,
+            })
+            .collect(),
+    }
+}
+
+/// Returns the source document of a diagram (PRD §11).
+pub fn get_diagram(session_id: &str, diagram_id: &str) -> GetResponse {
+    crate::bootstrap();
+    let store = crate::store::diagram_store();
+
+    let Some(record) = store.record(diagram_id) else {
+        return GetResponse {
+            ok: false,
+            diagram: None,
+            revision: None,
+            errors: vec![unknown_diagram(diagram_id, &store.known_ids())],
+        };
+    };
+
+    if record.summary.session_id != session_id {
+        return GetResponse {
+            ok: false,
+            diagram: None,
+            revision: None,
+            errors: vec![not_owner(diagram_id)],
+        };
+    }
+
+    GetResponse {
+        ok: true,
+        diagram: serde_json::from_str(&record.document).ok(),
+        revision: Some(record.summary.revision),
+        errors: Vec::new(),
+    }
+}
+
+/// Empties the plan: only the session, or the whole plan (PRD §11, §11.1).
+pub fn clear_canvas(session_id: &str, scope: Option<&str>) -> ClearResponse {
+    crate::bootstrap();
+    let store = crate::store::diagram_store();
+    let removed = match scope {
+        Some("plano") => store.clear_all(),
+        _ => store.clear_session(session_id),
+    };
+    ClearResponse { ok: true, removed }
+}
+
+/// Applies an RFC 7386 merge patch to a diagram, transactionally (PRD §11.1).
+///
+/// The merge runs on a copy, the result goes through the very same pipeline
+/// as `render_diagram` and only then replaces the stored document: when the
+/// patch is invalid the diagram and its render stay untouched.
+pub fn update_diagram(
+    session_id: &str,
+    diagram_id: &str,
+    patch: &Value,
+    expected_revision: Option<u64>,
+) -> UpdateResponse {
+    crate::bootstrap();
+    let store = crate::store::diagram_store();
+
+    let Some(record) = store.record(diagram_id) else {
+        return UpdateResponse {
+            ok: false,
+            errors: vec![unknown_diagram(diagram_id, &store.known_ids())],
+            applied: false,
+            revision: 0,
+            errors_truncated: false,
+        };
+    };
+    if record.summary.session_id != session_id {
+        return UpdateResponse {
+            ok: false,
+            errors: vec![not_owner(diagram_id)],
+            applied: false,
+            revision: record.summary.revision,
+            errors_truncated: false,
+        };
+    }
+    if let Some(expected) = expected_revision {
+        if expected != record.summary.revision {
+            return UpdateResponse {
+                ok: false,
+                errors: vec![ErrorPayload {
+                    path: "revision".to_string(),
+                    code: ErrorCode::StaleRevision.as_str().to_string(),
+                    message: format!(
+                        "la revisión {expected} está vieja: la actual es {}",
+                        record.summary.revision
+                    ),
+                    hint: Some("volvé a leer el diagrama con get_diagram".to_string()),
+                }],
+                applied: false,
+                revision: record.summary.revision,
+                errors_truncated: false,
+            };
+        }
+    }
+
+    let mut document: Value = match serde_json::from_str(&record.document) {
+        Ok(value) => value,
+        Err(_) => Value::Null,
+    };
+
+    if !patch.is_object() {
+        return UpdateResponse {
+            ok: false,
+            errors: vec![ErrorPayload {
+                path: "patch".to_string(),
+                code: ErrorCode::InvalidPatch.as_str().to_string(),
+                message: "el patch tiene que ser un objeto JSON".to_string(),
+                hint: Some("un merge patch RFC 7386 es un objeto; para reemplazar todo, mandá el documento completo".to_string()),
+            }],
+            applied: false,
+            revision: record.summary.revision,
+            errors_truncated: false,
+        };
+    }
+
+    merge_patch(&mut document, patch);
+
+    // The kind cannot change under an existing diagram (PRD §11.1).
+    if document.get("kind").and_then(Value::as_str) != Some(record.summary.kind.as_str()) {
+        return UpdateResponse {
+            ok: false,
+            errors: vec![ErrorPayload {
+                path: "patch.kind".to_string(),
+                code: ErrorCode::KindChangeNotAllowed.as_str().to_string(),
+                message: "el `kind` de un diagrama no se puede cambiar".to_string(),
+                hint: Some("creá un diagrama nuevo con render_diagram".to_string()),
+            }],
+            applied: false,
+            revision: record.summary.revision,
+            errors_truncated: false,
+        };
+    }
+
+    let candidate = document.to_string();
+    let validation = validate_diagram(&candidate);
+    if !validation.ok {
+        return UpdateResponse {
+            ok: false,
+            errors: validation.errors,
+            applied: false,
+            revision: record.summary.revision,
+            errors_truncated: validation.errors_truncated,
+        };
+    }
+
+    let title = document
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| record.summary.title.clone());
+    let Some(summary) = store.replace(diagram_id, title, candidate) else {
+        return UpdateResponse {
+            ok: false,
+            errors: vec![unknown_diagram(diagram_id, &store.known_ids())],
+            applied: false,
+            revision: record.summary.revision,
+            errors_truncated: false,
+        };
+    };
+
+    UpdateResponse {
+        ok: true,
+        errors: Vec::new(),
+        applied: true,
+        revision: summary.revision,
+        errors_truncated: false,
+    }
+}
+
+/// RFC 7386: merge a patch into a document.
+///
+/// `null` removes a key and arrays are replaced whole (PRD §7, RF9).
+fn merge_patch(target: &mut Value, patch: &Value) {
+    let Value::Object(patch_object) = patch else {
+        *target = patch.clone();
+        return;
+    };
+    if !target.is_object() {
+        *target = Value::Object(serde_json::Map::new());
+    }
+    let Value::Object(target_object) = target else {
+        return;
+    };
+    for (key, value) in patch_object {
+        if value.is_null() {
+            target_object.remove(key);
+        } else {
+            let slot = target_object
+                .entry(key.clone())
+                .or_insert_with(|| Value::Object(serde_json::Map::new()));
+            merge_patch(slot, value);
+        }
+    }
+}
+
+/// The error of a diagram that is not on the plan (PRD §11.1).
+fn unknown_diagram(diagram_id: &str, known_ids: &[String]) -> ErrorPayload {
+    ErrorPayload {
+        path: "diagram_id".to_string(),
+        code: ErrorCode::UnknownDiagram.as_str().to_string(),
+        message: format!(
+            "el diagrama `{diagram_id}` no está en el plano; conocidos: {known_ids:?}"
+        ),
+        hint: Some(
+            "el diagrama no está en el plano (quizá lo cerró el humano); usá list_diagrams()"
+                .to_string(),
+        ),
+    }
+}
+
+/// The error of a diagram of another session (PRD §11.1).
+fn not_owner(diagram_id: &str) -> ErrorPayload {
+    ErrorPayload {
+        path: "diagram_id".to_string(),
+        code: ErrorCode::NotOwner.as_str().to_string(),
+        message: format!("el diagrama `{diagram_id}` pertenece a otra sesión MCP"),
+        hint: Some("ese diagrama pertenece a otra sesión MCP".to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{get_diagram_schema, validate_diagram, MAX_ERRORS};
@@ -491,6 +786,176 @@ mod tests {
       "nodes": [ { "id": "read", "label": "read file" }, { "id": "ok", "label": "Config" } ],
       "edges": [ { "from": "read", "to": "ok", "label": "utf-8" } ]
     }"#;
+
+    // ---- Lifecycle (PRD §11, §11.1) -------------------------------------
+
+    /// Renders a document into the store and returns its id.
+    fn render_into_store(document: &str, session_id: &str) -> String {
+        let response = crate::tools::render_diagram(&crate::tools::RenderRequest {
+            document: document.to_string(),
+            session_id: session_id.to_string(),
+        });
+        response.diagram_id.expect("the render stores the diagram")
+    }
+
+    #[test]
+    fn list_returns_only_the_diagrams_of_the_session() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        render_into_store(MINIMAL, "session-a");
+        render_into_store(MINIMAL, "session-b");
+
+        let mine = super::list_diagrams("session-a");
+        assert!(mine.ok);
+        assert_eq!(mine.diagrams.len(), 1);
+        assert_eq!(mine.diagrams[0].session_id, "session-a");
+
+        let all = crate::store::diagram_store().list();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn get_returns_the_document_of_the_session() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = render_into_store(MINIMAL, "session-a");
+
+        let response = super::get_diagram("session-a", &id);
+        assert!(response.ok, "{response:?}");
+        assert_eq!(response.revision, Some(1));
+        let document = response.diagram.expect("document");
+        assert_eq!(document["kind"], "graph");
+        assert_eq!(document["nodes"][0]["id"], "read");
+    }
+
+    #[test]
+    fn get_of_another_session_is_not_owner() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = render_into_store(MINIMAL, "session-a");
+
+        let response = super::get_diagram("session-b", &id);
+        assert!(!response.ok);
+        assert_eq!(response.errors[0].code, "not_owner");
+    }
+
+    #[test]
+    fn an_unknown_diagram_lists_the_known_ids() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = render_into_store(MINIMAL, "session-a");
+
+        let response = super::get_diagram("session-a", "d-9999");
+        assert!(!response.ok);
+        assert_eq!(response.errors[0].code, "unknown_diagram");
+        assert!(
+            response.errors[0].message.contains(&id),
+            "{}",
+            response.errors[0].message
+        );
+    }
+
+    #[test]
+    fn clear_canvas_removes_only_the_session_by_default() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        render_into_store(MINIMAL, "session-a");
+        render_into_store(MINIMAL, "session-b");
+
+        let cleared = super::clear_canvas("session-a", None);
+        assert!(cleared.ok);
+        assert_eq!(cleared.removed, 1);
+        assert_eq!(crate::store::diagram_store().list().len(), 1);
+    }
+
+    #[test]
+    fn clear_canvas_with_the_plan_scope_removes_everything() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        render_into_store(MINIMAL, "session-a");
+        render_into_store(MINIMAL, "session-b");
+
+        let cleared = super::clear_canvas("session-a", Some("plano"));
+        assert_eq!(cleared.removed, 2);
+        assert!(crate::store::diagram_store().list().is_empty());
+    }
+
+    #[test]
+    fn an_update_applies_and_grows_the_revision() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = render_into_store(MINIMAL, "session-a");
+
+        let patch = serde_json::json!({ "title": "nuevo título" });
+        let response = super::update_diagram("session-a", &id, &patch, Some(1));
+        assert!(response.ok, "{response:?}");
+        assert!(response.applied);
+        assert_eq!(response.revision, 2);
+
+        let document = super::get_diagram("session-a", &id)
+            .diagram
+            .expect("document");
+        assert_eq!(document["title"], "nuevo título");
+    }
+
+    #[test]
+    fn an_update_with_a_broken_patch_keeps_the_document_intact() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = render_into_store(MINIMAL, "session-a");
+
+        // `null` borra la clave (RFC 7386) y `kind` es obligatorio.
+        let patch = serde_json::json!({ "kind": null });
+        let response = super::update_diagram("session-a", &id, &patch, None);
+        assert!(!response.ok);
+        assert!(!response.applied);
+        assert_eq!(
+            response.revision, 1,
+            "la revisión no avanza si no se aplicó"
+        );
+
+        let document = super::get_diagram("session-a", &id)
+            .diagram
+            .expect("document");
+        assert_eq!(document["kind"], "graph", "el documento no cambia");
+    }
+
+    #[test]
+    fn an_update_with_a_stale_revision_is_rejected() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = render_into_store(MINIMAL, "session-a");
+
+        let patch = serde_json::json!({ "title": "x" });
+        super::update_diagram("session-a", &id, &patch, Some(1));
+
+        let stale = super::update_diagram("session-a", &id, &patch, Some(1));
+        assert!(!stale.ok);
+        assert_eq!(stale.errors[0].code, "stale_revision");
+        assert_eq!(stale.revision, 2);
+    }
+
+    #[test]
+    fn an_update_cannot_change_the_kind() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = render_into_store(MINIMAL, "session-a");
+
+        let patch = serde_json::json!({ "kind": "er" });
+        let response = super::update_diagram("session-a", &id, &patch, None);
+        assert!(!response.ok);
+        assert_eq!(response.errors[0].code, "kind_change_not_allowed");
+    }
+
+    #[test]
+    fn an_update_that_is_not_an_object_is_a_invalid_patch() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = render_into_store(MINIMAL, "session-a");
+
+        let response = super::update_diagram("session-a", &id, &serde_json::json!([1, 2]), None);
+        assert!(!response.ok);
+        assert_eq!(response.errors[0].code, "invalid_patch");
+    }
+
+    #[test]
+    fn the_merge_patch_of_rfc_7386_replaces_arrays_whole() {
+        let mut target = serde_json::json!({ "nodes": [1, 2, 3], "title": "viejo", "extra": true });
+        let patch = serde_json::json!({ "nodes": [9], "title": null });
+        super::merge_patch(&mut target, &patch);
+        assert_eq!(target["nodes"], serde_json::json!([9]));
+        assert!(target.get("title").is_none(), "null borra la clave");
+        assert_eq!(target["extra"], true);
+    }
 
     #[test]
     fn a_valid_document_validates_without_touching_the_window() {
