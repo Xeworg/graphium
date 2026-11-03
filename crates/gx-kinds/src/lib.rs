@@ -5,6 +5,8 @@
 //! (PRD §7, O7).
 
 pub mod er;
+pub mod flow;
+pub mod flowchart;
 pub mod graph;
 pub mod lanes;
 pub mod mindmap;
@@ -22,6 +24,7 @@ pub fn register_all() {
     tree::register();
     mindmap::register();
     sequence::register();
+    flowchart::register();
     timeline::register();
     swimlane::register();
 }
@@ -34,6 +37,7 @@ pub fn kind_names() -> Vec<&'static str> {
         tree::TreeKind::KIND,
         mindmap::MindmapKind::KIND,
         sequence::SequenceKind::KIND,
+        flowchart::FlowchartKind::KIND,
         timeline::TimelineKind::KIND,
         swimlane::SwimlaneKind::KIND,
     ]
