@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 12] = [
+const CASES: [(&str, &str); 13] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -45,6 +45,7 @@ const CASES: [(&str, &str); 12] = [
     ("flowchart-approval", FLOWCHART_APPROVAL),
     ("state-order", STATE_ORDER),
     ("dataflow-etl", DATAFLOW_ETL),
+    ("class-shop", CLASS_SHOP),
 ];
 
 const MINIMAL: &str = r#"{
@@ -252,6 +253,25 @@ const DATAFLOW_ETL: &str = r#"{
     { "from": "crudo", "to": "limpieza", "label": "pedidos crudos" },
     { "from": "limpieza", "to": "curado", "label": "pedidos curados" },
     { "from": "curado", "to": "bi", "label": "pedidos curados" }
+  ]
+}"#;
+
+const CLASS_SHOP: &str = r#"{
+  "version": 1,
+  "kind": "class",
+  "title": "pedidos",
+  "nodes": [
+    { "id": "Base", "label": "Base", "role": "abstract" },
+    { "id": "Order", "label": "Order" },
+    { "id": "Refund", "label": "Refund" },
+    { "id": "Payable", "label": "Payable", "role": "interface" },
+    { "id": "Money", "label": "Money" }
+  ],
+  "edges": [
+    { "from": "Order", "to": "Base", "relation": "extends" },
+    { "from": "Refund", "to": "Order", "relation": "extends" },
+    { "from": "Order", "to": "Payable", "relation": "implements" },
+    { "from": "Order", "to": "Money", "relation": "composition", "label": "total" }
   ]
 }"#;
 

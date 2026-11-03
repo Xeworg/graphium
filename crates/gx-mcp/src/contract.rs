@@ -493,6 +493,20 @@ fn min_example_of(kind: &str) -> Value {
                 { "label": "v1.1", "lane": "q1" }
             ]
         }),
+        "class" => serde_json::json!({
+            "version": 1,
+            "kind": "class",
+            "title": "pedidos",
+            "nodes": [
+                { "id": "Base", "label": "Base", "role": "abstract" },
+                { "id": "Order", "label": "Order" },
+                { "id": "Payable", "label": "Payable", "role": "interface" }
+            ],
+            "edges": [
+                { "from": "Order", "to": "Base", "relation": "extends" },
+                { "from": "Order", "to": "Payable", "relation": "implements" }
+            ]
+        }),
         "flowchart" => serde_json::json!({
             "version": 1,
             "kind": "flowchart",
@@ -575,6 +589,23 @@ fn rules_of(kind: &str) -> Vec<String> {
             );
             rules.push(
                 "Un evento con `end` es un tramo y `end` tiene que ser posterior a `order`."
+                    .to_string(),
+            );
+        }
+        "class" => {
+            rules.push(
+                "El `role` de un nodo decide su forma: `class` (redondeado, por defecto), `abstract`, `interface`, `enum` (caja)."
+                    .to_string(),
+            );
+            rules.push(
+                "`relation` decide la línea: `association` (sólida con flecha, por defecto), `extends` (sólida, se nombra), `implements` (punteada, se nombra), `composition` (sólida sin flecha), `dependency` (punteada)."
+                    .to_string(),
+            );
+            rules.push(
+                "La herencia no puede tener ciclos: una clase no es su propio padre.".to_string(),
+            );
+            rules.push(
+                "Si la arista no lleva `label`, la línea se nombra con su relación; la asociación no, porque no afirma nada."
                     .to_string(),
             );
         }
