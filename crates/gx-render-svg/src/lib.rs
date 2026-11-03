@@ -10,9 +10,11 @@
 
 pub mod escape;
 pub mod metrics;
+pub mod renderer;
 
 #[cfg(test)]
 pub(crate) mod test_support;
 
 pub use escape::escape_text;
 pub use metrics::{InterMetrics, MetricsError};
+pub use renderer::SvgRenderer;
