@@ -33,7 +33,8 @@ pub const ROLES: [Role; 4] = [
     Role::new("enum", Shape::Box),
 ];
 
-/// Una relación admitida: cómo se dibuja la línea y si es *un* (is-a).
+/// Una relación admitida: cómo se dibuja la línea, si es *un* (is-a) y qué
+/// palabra la nombra cuando el documento no escribe etiqueta.
 #[derive(Debug, Clone, Copy)]
 pub struct Relation {
     /// The name the document writes, e.g. `extends`.
@@ -45,29 +46,48 @@ pub struct Relation {
     /// Whether the relation is an "is a": those are the ones that cannot form
     /// a cycle.
     pub is_a: bool,
+    /// The word the line shows when the document gives no label. `None` is for
+    /// the relation that needs none: a plain arrow says what it says.
+    pub label: Option<&'static str>,
 }
 
 impl Relation {
-    const fn new(name: &'static str, style: Style, arrow: bool, is_a: bool) -> Self {
+    const fn new(
+        name: &'static str,
+        style: Style,
+        arrow: bool,
+        is_a: bool,
+        label: Option<&'static str>,
+    ) -> Self {
         Self {
             name,
             style,
             arrow,
             is_a,
+            label,
         }
     }
 }
 
 /// Las relaciones de un diagrama de clases.
-pub const RELATIONS: [Relation; 4] = [
-    Relation::new("extends", Style::Solid, true, true),
-    Relation::new("implements", Style::Dashed, true, true),
-    Relation::new("composition", Style::Solid, false, false),
-    Relation::new("dependency", Style::Dashed, true, false),
+pub const RELATIONS: [Relation; 5] = [
+    // La relación que no dice nada más que "estos dos se conocen": es el
+    // default, porque una línea sin palabras no puede afirmar una herencia.
+    Relation::new("association", Style::Solid, true, false, None),
+    Relation::new("extends", Style::Solid, true, true, Some("extends")),
+    Relation::new("implements", Style::Dashed, true, true, Some("implements")),
+    Relation::new(
+        "composition",
+        Style::Solid,
+        false,
+        false,
+        Some("composition"),
+    ),
+    Relation::new("dependency", Style::Dashed, true, false, Some("dependency")),
 ];
 
-/// The default relation: what a line means when the document does not say.
-pub const DEFAULT_RELATION: &str = "extends";
+/// The default relation: the one that claims the least.
+pub const DEFAULT_RELATION: &str = "association";
 
 /// A relation between two nodes of the class diagram.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -77,8 +97,8 @@ pub struct ClassEdge {
     pub from: String,
     /// Id of the target node.
     pub to: String,
-    /// What the line means: `extends`, `implements`, `composition` or
-    /// `dependency`. Defaults to `extends`.
+    /// What the line means: `association`, `extends`, `implements`,
+    /// `composition` or `dependency`. Defaults to `association`.
     #[serde(default)]
     pub relation: Option<String>,
     /// Text on the line. When absent, the relation names itself.
@@ -264,13 +284,13 @@ impl DiagramKind for ClassKind {
 
                 let mut ir_edge = IrEdge::new(edge.from.clone(), edge.to.clone());
                 // La relación nombra la línea cuando el documento no lo hace:
-                // dos líneas iguales dirían cosas distintas.
-                ir_edge.label = Some(
-                    edge.label
-                        .clone()
-                        .filter(|label| !label.trim().is_empty())
-                        .unwrap_or_else(|| relation.name.to_string()),
-                );
+                // dos líneas iguales dirían cosas distintas. La asociación no
+                // necesita palabra: una flecha simple no afirma nada más.
+                ir_edge.label = edge
+                    .label
+                    .clone()
+                    .filter(|label| !label.trim().is_empty())
+                    .or_else(|| relation.label.map(str::to_string));
                 ir_edge.style = edge.style.unwrap_or(relation.style);
                 ir_edge.arrow = edge.arrow.unwrap_or(relation.arrow);
                 if let Some(emphasis) = edge.emphasis {
@@ -360,6 +380,27 @@ mod tests {
         assert_eq!(composition.label.as_deref(), Some("total"));
     }
 
+    /// Un vértice sin `relation` es una asociación: sólida, con flecha y **sin
+    /// palabra**. Una línea que no dice nada no puede afirmar una herencia.
+    #[test]
+    fn an_edge_without_a_relation_is_a_plain_association() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "class",
+                 "nodes": [ { "id": "Order" }, { "id": "Customer" } ],
+                 "edges": [ { "from": "Order", "to": "Customer" } ] }"#,
+        );
+        ClassKind.validate(&parsed).expect("es válido");
+
+        let Ir::Graph(graph) = ClassKind.to_ir(&parsed) else {
+            panic!("un diagrama de clases es un grafo");
+        };
+
+        let edge = &graph.edges[0];
+        assert_eq!(edge.style, Style::Solid);
+        assert!(edge.arrow);
+        assert_eq!(edge.label, None, "la asociación no se nombra");
+    }
+
     /// La regla del kind: la herencia no puede tener ciclos.
     #[test]
     fn a_cycle_in_the_inheritance_is_reported() {
@@ -368,9 +409,9 @@ mod tests {
                  "nodes": [
                    { "id": "a" }, { "id": "b" }, { "id": "c" } ],
                  "edges": [
-                   { "from": "a", "to": "b" },
-                   { "from": "b", "to": "c" },
-                   { "from": "c", "to": "a" } ] }"#,
+                   { "from": "a", "to": "b", "relation": "extends" },
+                   { "from": "b", "to": "c", "relation": "extends" },
+                   { "from": "c", "to": "a", "relation": "extends" } ] }"#,
         );
 
         let errors = ClassKind
@@ -393,7 +434,7 @@ mod tests {
         let parsed = input(
             r#"{ "version": 1, "kind": "class",
                  "nodes": [ { "id": "a" } ],
-                 "edges": [ { "from": "a", "to": "a" } ] }"#,
+                 "edges": [ { "from": "a", "to": "a", "relation": "extends" } ] }"#,
         );
 
         let errors = ClassKind
