@@ -43,6 +43,13 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # PRD §14.3 y §7.3: el mismo JSON tiene que dar los mismos bytes (O8) y
+      # el dibujo tiene que entrar en el presupuesto de RNF1-ter. El test
+      # imprime el hash de cada golden para que el log del CI muestre qué
+      # cambió sin abrir el diff.
+      - name: Golden SVG and byte budget (O8, RNF1-ter)
+        run: cargo test -p gx-app --test golden_svg -- --nocapture
+
       # PRD §9.1: the dependency matrix is a gate, not a convention.
       - name: Dependency gate (PRD §9.1)
         run: |
