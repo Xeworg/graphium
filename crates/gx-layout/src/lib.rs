@@ -7,7 +7,7 @@
 
 pub mod matrix;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use dagre::graph::{Graph, GraphOptions};
@@ -474,4 +474,247 @@ fn drawing_bbox(
         return Rect::default();
     }
     Rect::new(min_x, min_y, max_x - min_x, max_y - min_y)
+}
+
+/// Separation between two levels of a tree, in plan units.
+const TREE_LEVEL_SEPARATION: f64 = 60.0;
+/// Separation between two sibling subtrees of a tree, in plan units.
+const TREE_SIBLING_SEPARATION: f64 = 40.0;
+
+/// The hierarchical layout of a tree (PRD §6: kinds `tree` y `mindmap`).
+///
+/// A tree is not a layered graph: the root sits on top, its children hang
+/// below and every subtree owns its own horizontal band, so no two subtrees
+/// overlap. The order of the children is the order of the document, which is
+/// what makes the drawing deterministic without a cache.
+pub struct TreeEngine;
+
+impl TreeEngine {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// The width a subtree needs, in plan units.
+    fn subtree_width(
+        node: &gx_core::ir::IrNode,
+        children: &BTreeMap<&str, Vec<&gx_core::ir::IrNode>>,
+        separation: f64,
+    ) -> f64 {
+        let kids = children.get(node.id.as_str()).cloned().unwrap_or_default();
+        if kids.is_empty() {
+            return node.size.w;
+        }
+        let mut total = 0.0;
+        for (index, kid) in kids.iter().enumerate() {
+            if index > 0 {
+                total += separation;
+            }
+            total += Self::subtree_width(kid, children, separation);
+        }
+        total.max(node.size.w)
+    }
+
+    /// Places the subtree of `node` with its top-left corner at `(left, top)`.
+    fn place(
+        node: &gx_core::ir::IrNode,
+        children: &BTreeMap<&str, Vec<&gx_core::ir::IrNode>>,
+        left: f64,
+        top: f64,
+        separation: f64,
+        level_separation: f64,
+        placed: &mut BTreeMap<String, NodeBox>,
+    ) {
+        let width = Self::subtree_width(node, children, separation);
+        placed.insert(
+            node.id.clone(),
+            NodeBox {
+                center: Point::new(left + width / 2.0, top + node.size.h / 2.0),
+                size: node.size,
+            },
+        );
+
+        let kids = children.get(node.id.as_str()).cloned().unwrap_or_default();
+        let mut cursor = left + (width - Self::children_width(&kids, children, separation)) / 2.0;
+        let child_top = top + node.size.h + level_separation;
+        for kid in kids {
+            let kid_width = Self::subtree_width(kid, children, separation);
+            Self::place(
+                kid,
+                children,
+                cursor,
+                child_top,
+                separation,
+                level_separation,
+                placed,
+            );
+            cursor += kid_width + separation;
+        }
+    }
+
+    /// The width the children of a node occupy together.
+    fn children_width(
+        kids: &[&gx_core::ir::IrNode],
+        children: &BTreeMap<&str, Vec<&gx_core::ir::IrNode>>,
+        separation: f64,
+    ) -> f64 {
+        if kids.is_empty() {
+            return 0.0;
+        }
+        let mut total = 0.0;
+        for (index, kid) in kids.iter().enumerate() {
+            if index > 0 {
+                total += separation;
+            }
+            total += Self::subtree_width(kid, children, separation);
+        }
+        total
+    }
+}
+
+impl Default for TreeEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LayoutEngine for TreeEngine {
+    fn layout(&self, graph: &IrGraph, opts: &LayoutOpts) -> LayoutGraph {
+        let scale = opts.spacing_scale;
+        let separation = TREE_SIBLING_SEPARATION * scale;
+        let level_separation = TREE_LEVEL_SEPARATION * scale;
+
+        if graph.nodes.is_empty() {
+            return LayoutGraph::empty();
+        }
+
+        // The children of every node, in the order of the document.
+        let mut children: BTreeMap<&str, Vec<&gx_core::ir::IrNode>> = BTreeMap::new();
+        let mut has_parent: BTreeSet<&str> = BTreeSet::new();
+        for edge in &graph.edges {
+            let Some(parent) = graph.nodes.iter().find(|node| node.id == edge.from) else {
+                continue;
+            };
+            let Some(child) = graph.nodes.iter().find(|node| node.id == edge.to) else {
+                continue;
+            };
+            children.entry(parent.id.as_str()).or_default().push(child);
+            has_parent.insert(child.id.as_str());
+        }
+
+        // The root is the first node of the document that nobody points at;
+        // if every node has a parent (a cycle), the first one is the root, so
+        // the drawing still happens and stays deterministic.
+        let root = graph
+            .nodes
+            .iter()
+            .find(|node| !has_parent.contains(node.id.as_str()))
+            .or_else(|| graph.nodes.first())
+            .expect("the graph has nodes");
+
+        let mut placed: BTreeMap<String, NodeBox> = BTreeMap::new();
+        Self::place(
+            root,
+            &children,
+            0.0,
+            0.0,
+            separation,
+            level_separation,
+            &mut placed,
+        );
+
+        // A node the walk never reached (a second component) is placed in a
+        // row of its own below the drawing: leaving it out would drop it from
+        // the picture without saying so.
+        let mut bottom = placed
+            .values()
+            .map(|box_| box_.center.y + box_.size.h / 2.0)
+            .fold(0.0_f64, f64::max);
+        for node in &graph.nodes {
+            if placed.contains_key(&node.id) {
+                continue;
+            }
+            bottom += level_separation;
+            placed.insert(
+                node.id.clone(),
+                NodeBox {
+                    center: Point::new(node.size.w / 2.0, bottom + node.size.h / 2.0),
+                    size: node.size,
+                },
+            );
+            bottom += node.size.h;
+        }
+
+        let edges: Vec<LayoutEdge> = graph
+            .edges
+            .iter()
+            .filter_map(|edge| {
+                let from = placed.get(&edge.from)?;
+                let to = placed.get(&edge.to)?;
+                Some(LayoutEdge {
+                    from: edge.from.clone(),
+                    to: edge.to.clone(),
+                    points: vec![
+                        Point::new(from.center.x, from.center.y + from.size.h / 2.0),
+                        Point::new(to.center.x, to.center.y - to.size.h / 2.0),
+                    ],
+                    label_at: edge.label.as_ref().map(|_| {
+                        Point::new(
+                            (from.center.x + to.center.x) / 2.0,
+                            (from.center.y + to.center.y) / 2.0,
+                        )
+                    }),
+                })
+            })
+            .collect();
+
+        let bbox = placed.values().fold(None, |acc: Option<Rect>, box_| {
+            let rect = Rect::new(
+                box_.center.x - box_.size.w / 2.0,
+                box_.center.y - box_.size.h / 2.0,
+                box_.size.w,
+                box_.size.h,
+            );
+            Some(match acc {
+                Some(current) => current.union(&rect),
+                None => rect,
+            })
+        });
+        let bbox = bbox.unwrap_or_default();
+
+        LayoutGraph {
+            nodes: placed,
+            edges,
+            groups: Vec::new(),
+            bbox,
+        }
+    }
+}
+
+/// The engine of every kind, one per layout hint (PRD §6, O7).
+///
+/// The kinds do not choose an engine: their `layout_hint` does. This is the
+/// only place that knows which engine answers which hint, so adding a motor
+/// does not touch a single kind.
+pub struct Layouts {
+    layered: DagreEngine,
+    tree: TreeEngine,
+}
+
+impl Layouts {
+    /// Builds every engine around the single metrics source (PRD §8.4.1).
+    pub fn new(metrics: Arc<dyn TextMetrics>) -> Self {
+        Self {
+            layered: DagreEngine::new(metrics),
+            tree: TreeEngine::new(),
+        }
+    }
+}
+
+impl LayoutEngine for Layouts {
+    fn layout(&self, graph: &IrGraph, opts: &LayoutOpts) -> LayoutGraph {
+        match graph.layout_hint {
+            gx_core::ir::LayoutHint::Tree => self.tree.layout(graph, opts),
+            _ => self.layered.layout(graph, opts),
+        }
+    }
 }
