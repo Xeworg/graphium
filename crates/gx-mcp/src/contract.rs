@@ -131,7 +131,11 @@ pub fn validate_diagram(document: &str) -> ValidateResponse {
         return ValidateResponse {
             ok: true,
             errors: Vec::new(),
-            warnings: Some(size_warnings(kind.limits(), &parsed)),
+            warnings: Some(size_warnings(
+                count(&parsed, "nodes"),
+                count(&parsed, "edges"),
+                kind.limits(),
+            )),
             projected_svg_bytes: Some(projected_svg_bytes(kind.limits(), &parsed)),
             errors_truncated: false,
             supported_versions: Vec::new(),
@@ -152,19 +156,25 @@ pub fn validate_diagram(document: &str) -> ValidateResponse {
     }
 }
 
-/// The warnings of size, without rejecting the document (PRD §7 RF20).
-fn size_warnings(limits: gx_core::kind::KindLimits, document: &Value) -> Vec<Warning> {
-    let nodes = document
-        .get("nodes")
+/// The number of entries of a top-level array of the document.
+fn count(document: &Value, field: &str) -> usize {
+    document
+        .get(field)
         .and_then(Value::as_array)
         .map(Vec::len)
-        .unwrap_or(0);
-    let edges = document
-        .get("edges")
-        .and_then(Value::as_array)
-        .map(Vec::len)
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
 
+/// The warnings of size, without rejecting the document (PRD §7 RF20, S6).
+///
+/// The render and the dry run report the same thing with the same words: an
+/// agent that saw the warning in `validate_diagram` reads it again after the
+/// paint instead of learning a second vocabulary.
+pub(crate) fn size_warnings(
+    nodes: usize,
+    edges: usize,
+    limits: gx_core::kind::KindLimits,
+) -> Vec<Warning> {
     let mut warnings = Vec::new();
     if nodes > 150 {
         warnings.push(Warning::new(

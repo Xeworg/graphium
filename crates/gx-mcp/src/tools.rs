@@ -92,20 +92,10 @@ impl From<&ValidationError> for ErrorPayload {
 }
 
 /// A non-fatal note about a render.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Warning {
-    pub code: String,
-    pub message: String,
-}
-
-impl Warning {
-    fn new(code: &str, message: impl Into<String>) -> Self {
-        Self {
-            code: code.to_string(),
-            message: message.into(),
-        }
-    }
-}
+///
+/// One type for the whole crate: the render and the dry run report warnings
+/// with the same shape and the same vocabulary (PRD §7 RF20).
+pub use crate::contract::Warning;
 
 /// Everything `gx-app` needs to paint a diagram (PRD §8.6.1 step 3).
 #[derive(Debug, Clone, PartialEq)]
@@ -228,6 +218,16 @@ pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
         .to_string();
 
     let metrics = Metrics::from(outcome.metrics);
+    // The size of what was just painted is reported, never hidden: the same
+    // warning the dry run gives, in the same words (PRD §7 RF20, S6).
+    let mut warnings = match gx_core::kind::for_kind(&kind) {
+        Some(registered) => crate::contract::size_warnings(
+            outcome.metrics.nodes,
+            outcome.metrics.edges,
+            registered.limits(),
+        ),
+        None => Vec::new(),
+    };
     // Bounding box of the layout: the size of the diagram in plan units.
     let width = outcome.bbox.w;
     let height = outcome.bbox.h;
@@ -248,7 +248,6 @@ pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
         document,
     );
 
-    let mut warnings = Vec::new();
     let status = match installed_hook() {
         Some(hook) => hook(&RenderHookPayload {
             diagram_id: diagram_id.clone(),
@@ -310,6 +309,86 @@ mod tests {
             .iter()
             .map(|error| error.code.clone())
             .collect()
+    }
+
+    fn warning_codes(response: &RenderResponse) -> Vec<String> {
+        response
+            .warnings
+            .iter()
+            .map(|warning| warning.code.clone())
+            .collect()
+    }
+
+    /// A chain of `nodes` nodes: wide enough to test the size ladder.
+    fn chain(nodes: usize) -> String {
+        let nodes: Vec<String> = (0..nodes)
+            .map(|i| format!(r#"{{ "id": "n{i}", "label": "nodo {i}" }}"#))
+            .collect();
+        let edges: Vec<String> = (0..nodes.len().saturating_sub(1))
+            .map(|i| format!(r#"{{ "from": "n{i}", "to": "n{}" }}"#, i + 1))
+            .collect();
+        format!(
+            r#"{{ "version": 1, "kind": "graph", "title": "cadena",
+                 "nodes": [{}], "edges": [{}] }}"#,
+            nodes.join(", "),
+            edges.join(", ")
+        )
+    }
+
+    /// PRD §7 RF20, S6: between 150 nodes and the hard limit the diagram is
+    /// not rejected; the render reports the size in `warnings[]`.
+    #[test]
+    fn a_big_diagram_renders_with_the_size_warning() {
+        let _guard = lock_renders_blocking();
+
+        let response = render(&chain(160));
+
+        assert!(response.ok, "{:?}", response.errors);
+        assert_eq!(response.metrics.expect("metrics").nodes, 160);
+        let codes = warning_codes(&response);
+        assert!(
+            codes.contains(&"too_many_nodes".to_string()),
+            "the render has to report the size it just painted: {codes:?}"
+        );
+    }
+
+    /// The hard limit is the one thing that rejects (PRD §7.3, S6): the
+    /// error names the count it received and the maximum, and the plane is
+    /// left untouched.
+    #[test]
+    fn a_diagram_over_the_hard_limit_is_rejected_and_not_stored() {
+        let _guard = lock_renders_blocking();
+
+        let response = render(&chain(301));
+
+        assert!(!response.ok);
+        assert_eq!(error_codes(&response), vec!["too_large"]);
+        assert!(
+            response.errors[0].message.contains("301"),
+            "the error names the count it received: {:?}",
+            response.errors[0]
+        );
+        assert!(response.errors[0].message.contains("300"));
+        assert!(response.errors[0].hint.is_some());
+        assert!(response.metrics.is_none());
+        assert!(
+            diagram_store().list().is_empty(),
+            "a rejected diagram never reaches the plane"
+        );
+    }
+
+    #[test]
+    fn a_diagram_under_the_warning_line_has_no_size_warning() {
+        let _guard = lock_renders_blocking();
+
+        let response = render(&chain(150));
+
+        assert!(response.ok, "{:?}", response.errors);
+        let codes = warning_codes(&response);
+        assert!(
+            !codes.contains(&"too_many_nodes".to_string()),
+            "150 nodes are exactly the line: {codes:?}"
+        );
     }
 
     #[test]
