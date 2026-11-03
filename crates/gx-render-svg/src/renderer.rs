@@ -19,8 +19,9 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use gx_core::{
-    fmt_num, Emphasis, Ir, IrEdge, IrGraph, IrNode, LayoutEdge, LayoutGraph, LayoutHint, NodeBox,
-    Palette, Rect, Shape, Style, SvgRenderer as SvgRendererContract, TextMetrics, TOKENS,
+    fmt_num, Emphasis, Ir, IrEdge, IrEvent, IrGraph, IrNode, IrTimeline, LayoutEdge, LayoutGraph,
+    LayoutGroup, LayoutHint, NodeBox, Palette, Rect, Shape, Style,
+    SvgRenderer as SvgRendererContract, TextMetrics, TOKENS,
 };
 
 use crate::escape::escape_text;
@@ -73,13 +74,25 @@ impl SvgRendererContract for SvgRenderer {
         write_style(&mut out, palette);
 
         let graph = ir.graph();
+        let timeline = ir.timeline();
         let routed = match graph {
             Some(graph) => routed_edges(graph, layout),
-            // A timeline has no layered route yet: F2 owns its renderer, so the
-            // safe default is a valid, deterministic, empty canvas.
+            // A timeline has no edges: every order of events is the order of
+            // the columns, never a line between two boxes.
             None => Vec::new(),
         };
         write_defs(&mut out, &routed);
+
+        // Las bandas de carril van primero: son el fondo sobre el que se leen
+        // los eventos. Sin ellas un swimlane es una nube de cajas y no se ve
+        // quién hace qué (PRD §6, `timeline` y `swimlane`).
+        if timeline.is_some() {
+            out.push_str("<g class=\"layer-lanes\">\n");
+            for group in ordered_groups(layout) {
+                write_lane_band(&mut out, group);
+            }
+            out.push_str("</g>\n");
+        }
 
         // Un diagrama de secuencia sin líneas de vida se lee desarmado: cada
         // flecha flota y no se ve a qué columna pertenece. Se dibujan del
@@ -114,6 +127,13 @@ impl SvgRendererContract for SvgRenderer {
             for node in ordered_nodes(graph) {
                 if let Some(placed) = layout.nodes.get(&node.id) {
                     write_node(&mut out, node, placed);
+                }
+            }
+        }
+        if let Some(timeline) = timeline {
+            for event in ordered_events(timeline) {
+                if let Some(placed) = layout.nodes.get(&event.id) {
+                    write_event(&mut out, event, placed);
                 }
             }
         }
@@ -159,6 +179,20 @@ fn ordered_nodes(graph: &IrGraph) -> Vec<&IrNode> {
     nodes
 }
 
+/// The events of a timeline, in id order (PRD §8.5.1: never insertion order).
+fn ordered_events(timeline: &IrTimeline) -> Vec<&IrEvent> {
+    let mut events: Vec<&IrEvent> = timeline.events.iter().collect();
+    events.sort_by(|left, right| left.id.cmp(&right.id));
+    events
+}
+
+/// The lane bands of a timeline, in id order.
+fn ordered_groups(layout: &LayoutGraph) -> Vec<&LayoutGroup> {
+    let mut groups: Vec<&LayoutGroup> = layout.groups.iter().collect();
+    groups.sort_by(|left, right| left.id.cmp(&right.id));
+    groups
+}
+
 /// The edges that can be drawn, in id order.
 fn routed_edges<'a>(
     graph: &'a IrGraph,
@@ -187,7 +221,7 @@ fn routed_edges<'a>(
 
 fn write_style(out: &mut String, palette: &Palette) {
     let border = fmt_num(TOKENS.border_width);
-    let rules: [(&str, String); 16] = [
+    let rules: [(&str, String); 18] = [
         (".bg", format!("fill:{}", palette.bg.css())),
         (".node-fill", format!("fill:{}", palette.node_fill.css())),
         (
@@ -223,6 +257,15 @@ fn write_style(out: &mut String, palette: &Palette) {
             ".emphasis-muted",
             format!("opacity:{}", fmt_num(MUTED_OPACITY)),
         ),
+        (
+            ".lane-band",
+            format!(
+                "fill:{};fill-opacity:0.35;stroke:{};stroke-width:{border}",
+                palette.node_fill.css(),
+                palette.node_stroke.css(),
+            ),
+        ),
+        (".lane-label", format!("fill:{}", palette.edge_text.css())),
         (
             ".lifeline",
             format!(
@@ -371,8 +414,7 @@ fn write_node(out: &mut String, node: &IrNode, placed: &NodeBox) {
     }
 }
 
-/// Size of the glyphs of the crow's foot, in plan units.
-///
+/// Size of the glyphs of the crow's foot, in plan units.///
 /// The legs of the foot are wide and short: a narrow fan reads as an
 /// arrowhead, which is the one thing a crow's foot must not look like.
 const CROW_FOOT: f64 = 22.0;
@@ -704,12 +746,20 @@ fn write_note(out: &mut String, id: &str, classes: &str, rect: &Rect) {
 }
 
 fn write_node_text(out: &mut String, node: &IrNode, placed: &NodeBox) {
-    let lines: Vec<&str> = node.label.lines().collect();
+    let mut classes = String::from("node-text text");
+    push_emphasis(&mut classes, node.emphasis, true);
+    write_centered_text(out, &classes, &node.label, placed);
+}
+
+/// Draws a label centered on its box, one `<text>` per line.
+///
+/// A node and a timeline event are the same thing for the reader —a box with
+/// its name— so they share this writer instead of drifting apart.
+fn write_centered_text(out: &mut String, classes: &str, label: &str, placed: &NodeBox) {
+    let lines: Vec<&str> = label.lines().collect();
     if lines.is_empty() {
         return;
     }
-    let mut classes = String::from("node-text text");
-    push_emphasis(&mut classes, node.emphasis, true);
     let size = fmt_num(TOKENS.text_size);
     let center_x = fmt_num(placed.center.x);
 
@@ -736,6 +786,45 @@ fn write_node_text(out: &mut String, node: &IrNode, placed: &NodeBox) {
         ));
     }
     out.push_str("</text>\n");
+}
+
+/// Draws one lane of a timeline: its band and its name in the left gutter.
+///
+/// The band is what tells the reader which row an event belongs to; the name
+/// sits in the gutter the layout reserved for it, so it never rides on top of
+/// the first event of the row.
+fn write_lane_band(out: &mut String, group: &LayoutGroup) {
+    let id = escape_text(&format!("lane-{}", group.id));
+    write_rect(out, &id, "lane-band", &group.bbox, None);
+
+    let Some(label) = group
+        .label
+        .as_deref()
+        .filter(|label| !label.trim().is_empty())
+    else {
+        return;
+    };
+    out.push_str(&format!(
+        "<text class=\"lane-label text\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"start\" dominant-baseline=\"central\">{}</text>\n",
+        fmt_num(group.bbox.x + TOKENS.node_padding),
+        fmt_num(group.bbox.y + group.bbox.h / 2.0),
+        fmt_num(TOKENS.text_size),
+        escape_text(label),
+    ));
+}
+
+/// Draws one event of a timeline: a box with its label, inside its lane.
+fn write_event(out: &mut String, event: &IrEvent, placed: &NodeBox) {
+    let rect = node_rect(placed);
+    let id = escape_text(&format!("g-{}", event.id));
+    write_rect(
+        out,
+        &id,
+        "node-fill node-stroke shape-rounded",
+        &rect,
+        Some(TOKENS.corner_radius),
+    );
+    write_centered_text(out, "node-text text", &event.label, placed);
 }
 
 #[cfg(test)]

@@ -95,6 +95,19 @@
   fill: none;
 }
 
+/* La banda de un carril de timeline/swimlane: el fondo que dice en qué fila
+ * está cada evento, y el nombre del carril en la canaleta de la izquierda. */
+.graphium .lane-band {
+  fill: var(--node-fill);
+  fill-opacity: 0.35;
+  stroke: var(--node-stroke);
+  stroke-width: 1px;
+}
+
+.graphium .lane-label {
+  fill: var(--edge-text);
+}
+
 .graphium .stroke-dashed {
   stroke-dasharray: 6 4;
 }

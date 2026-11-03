@@ -430,6 +430,156 @@ fn a_timeline_ir_still_renders_a_valid_canvas() {
     assert!(element(&document, "script").is_empty());
 }
 
+/// Un timeline se lee por sus bandas: la banda dice en qué carril está el
+/// evento y su nombre va en la canaleta de la izquierda. Sin banda, el dibujo
+/// es una nube de cajas sueltas.
+#[test]
+fn a_timeline_draws_each_lane_as_a_band_with_its_name() {
+    let ir = Ir::Timeline(IrTimeline {
+        lanes: vec![
+            gx_core::IrLane {
+                id: "q1".to_string(),
+                label: Some("Q1".to_string()),
+            },
+            gx_core::IrLane {
+                id: "q2".to_string(),
+                label: None,
+            },
+        ],
+        events: vec![event("event-0", "q1", "spike")],
+    });
+    let layout = LayoutGraph {
+        nodes: [(
+            "event-0".to_string(),
+            NodeBox {
+                center: Point::new(200.0, 70.0),
+                size: Size::new(120.0, 44.0),
+            },
+        )]
+        .into_iter()
+        .collect(),
+        edges: Vec::new(),
+        groups: vec![
+            group("q1", Some("Q1"), Rect::new(0.0, 0.0, 400.0, 150.0)),
+            group("q2", None, Rect::new(0.0, 150.0, 400.0, 150.0)),
+        ],
+        bbox: Rect::new(0.0, 0.0, 400.0, 300.0),
+    };
+
+    let svg = render(&ir, &layout, &Palette::plano());
+    let document = document(&svg);
+
+    let bands: Vec<_> = element(&document, "rect")
+        .into_iter()
+        .filter(|node| classes(*node) == "lane-band")
+        .collect();
+    assert_eq!(bands.len(), 2, "una banda por carril");
+    assert_eq!(bands[0].attribute("id"), Some("lane-q1"));
+    assert_eq!(bands[0].attribute("y"), Some("0.00"));
+    assert_eq!(bands[1].attribute("y"), Some("150.00"));
+
+    // El nombre del carril va sobre su banda, alineado a la izquierda: es lo
+    // que el layout reservó en la canaleta.
+    let labels: Vec<_> = element(&document, "text")
+        .into_iter()
+        .filter(|node| classes(*node).contains("lane-label"))
+        .collect();
+    assert_eq!(labels.len(), 1, "el carril sin nombre no inventa uno");
+    assert_eq!(labels[0].text(), Some("Q1"));
+    assert_eq!(labels[0].attribute("text-anchor"), Some("start"));
+    assert_eq!(labels[0].attribute("y"), Some("75.00"));
+
+    // El evento es una caja con su texto, como un nodo.
+    assert!(element(&document, "rect")
+        .into_iter()
+        .any(|node| node.attribute("id") == Some("g-event-0")));
+    assert!(element(&document, "text")
+        .into_iter()
+        .any(|node| node.text() == Some("spike")));
+}
+
+/// El orden de los elementos no depende del documento: los eventos y las
+/// bandas salen por id, y las bandas van debajo de las cajas.
+#[test]
+fn the_timeline_is_written_in_id_order_with_the_bands_underneath() {
+    let ir = Ir::Timeline(IrTimeline {
+        lanes: vec![
+            gx_core::IrLane {
+                id: "b".to_string(),
+                label: Some("B".to_string()),
+            },
+            gx_core::IrLane {
+                id: "a".to_string(),
+                label: Some("A".to_string()),
+            },
+        ],
+        events: vec![event("event-1", "b", "uno"), event("event-0", "a", "dos")],
+    });
+    let layout = LayoutGraph {
+        nodes: [
+            (
+                "event-1".to_string(),
+                NodeBox {
+                    center: Point::new(200.0, 220.0),
+                    size: Size::new(120.0, 44.0),
+                },
+            ),
+            (
+                "event-0".to_string(),
+                NodeBox {
+                    center: Point::new(200.0, 70.0),
+                    size: Size::new(120.0, 44.0),
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        edges: Vec::new(),
+        groups: vec![
+            group("b", Some("B"), Rect::new(0.0, 150.0, 400.0, 150.0)),
+            group("a", Some("A"), Rect::new(0.0, 0.0, 400.0, 150.0)),
+        ],
+        bbox: Rect::new(0.0, 0.0, 400.0, 300.0),
+    };
+
+    let svg = render(&ir, &layout, &Palette::plano());
+
+    let a = svg.find("id=\"lane-a\"").expect("la banda a");
+    let b = svg.find("id=\"lane-b\"").expect("la banda b");
+    assert!(a < b, "las bandas salen por id");
+    let first_event = svg.find("id=\"g-event-0\"").expect("el evento 0");
+    let second_event = svg.find("id=\"g-event-1\"").expect("el evento 1");
+    assert!(first_event < second_event, "los eventos salen por id");
+    assert!(
+        svg.find("layer-lanes") < Some(first_event) && svg.find("layer-lanes") < Some(second_event),
+        "las bandas van debajo de las cajas"
+    );
+
+    // Y el dibujo es determinista.
+    assert_eq!(svg, render(&ir, &layout, &Palette::plano()));
+}
+
+/// Un evento de un timeline.
+fn event(id: &str, lane: &str, label: &str) -> gx_core::IrEvent {
+    gx_core::IrEvent {
+        id: id.to_string(),
+        lane: lane.to_string(),
+        label: label.to_string(),
+        order: 0,
+        span: None,
+        kind_data: Default::default(),
+    }
+}
+
+/// Una banda de carril del layout.
+fn group(id: &str, label: Option<&str>, bbox: Rect) -> gx_core::LayoutGroup {
+    gx_core::LayoutGroup {
+        id: id.to_string(),
+        label: label.map(str::to_string),
+        bbox,
+    }
+}
+
 /// The crow's foot opens towards the table: the ankle is away from it and the
 /// three toes touch its edge. Opening away from the table would draw an
 /// arrowhead, which means the opposite.
