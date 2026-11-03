@@ -2,14 +2,22 @@
  *
  * The grid is chrome of the frontend, never part of the SVG export
  * (PRD §7.1). It is drawn with two CSS gradients, one per family of
- * diagonal lines (±32°), so the thickness stays 1 screen pixel while the
+ * diagonal lines, so the thickness stays 1 screen pixel while the
  * separation scales with the zoom (PRD §7.2, decision S23).
+ *
+ * Geometry of the cells: the two families deviate 32 degrees from the
+ * vertical (58 and 122 degrees in CSS), so the lines are steep and the
+ * cells are tall rhombi. Every family has the same perpendicular step, so
+ * all the cells are congruent: the rhombi have equal sides and their major
+ * (vertical) diagonal measures 59 px.
  */
 
 :root {
   --bg: #1b1b1b;
   --grid-color: rgba(255, 255, 255, 0.14);
-  --grid-step: 31.26px; /* 59 px diagonal * sin(32°): the perpendicular step */
+  /* The perpendicular step between two lines of the same family:
+     59 px of major diagonal * sin(32 degrees). */
+  --grid-step: 31.26px;
   --grid-line: 1px;
   --grid-opacity: 1;
   --tx: 0px;
@@ -40,6 +48,11 @@ body {
   overflow: hidden;
   background-color: var(--bg);
   cursor: grab;
+  /* Phase of every family: the pan projected on the normal of that family.
+     A single offset for both families would make them drift apart while
+     the camera moves, and the cells would stop being congruent. */
+  --shift-a: calc(0.848 * var(--tx) - 0.53 * var(--ty));
+  --shift-b: calc(0.848 * var(--tx) + 0.53 * var(--ty));
 }
 
 .plan.dragging {
@@ -57,16 +70,18 @@ body {
   opacity: var(--grid-opacity);
   background-image:
     repeating-linear-gradient(
-      -32deg,
+      58deg,
       transparent 0 calc(var(--grid-step) - var(--grid-line)),
       var(--grid-color) 0 var(--grid-step)
     ),
     repeating-linear-gradient(
-      32deg,
+      122deg,
       transparent 0 calc(var(--grid-step) - var(--grid-line)),
       var(--grid-color) 0 var(--grid-step)
     );
-  background-position: calc(-1 * var(--tx)) calc(-1 * var(--ty));
+  background-position:
+    calc(0.848 * var(--shift-a)) calc(-0.53 * var(--shift-a)),
+    calc(0.848 * var(--shift-b)) calc(0.53 * var(--shift-b));
 }
 
 .diagrams {
