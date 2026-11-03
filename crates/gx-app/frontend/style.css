@@ -84,6 +84,52 @@
   --code-bg: rgba(0, 0, 0, 0.06);
 }
 
+/* Las clases que el renderer escribe y que el SVG de pie resuelve con su
+ * `<style>` interno: en el canvas la CSP bloquea ese bloque, así que cada una
+ * necesita su regla acá o el elemento sale con el color del navegador. Es la
+ * misma razón por la que la paleta vive en variables. */
+.graphium .lifeline {
+  stroke: var(--node-stroke);
+  stroke-width: 1px;
+  stroke-dasharray: 4 4;
+  fill: none;
+}
+
+.graphium .stroke-dashed {
+  stroke-dasharray: 6 4;
+}
+
+.graphium .emphasis-highlight {
+  stroke: var(--accent);
+}
+
+.graphium .emphasis-highlight-text {
+  fill: var(--accent);
+}
+
+.graphium .emphasis-muted {
+  opacity: 0.55;
+}
+
+.graphium .text {
+  font-family: Inter, sans-serif;
+}
+
+/* La punta de flecha es un `<path>` dentro de un `<marker>`: sin regla se
+ * pinta con el negro del navegador. */
+.graphium .arrow-normal {
+  fill: var(--edge-stroke);
+}
+
+.graphium .arrow-highlight {
+  fill: var(--accent);
+}
+
+.graphium .arrow-muted {
+  fill: var(--edge-stroke);
+  opacity: 0.55;
+}
+
 /* The tokens of the diagram, applied over the classes of the SVG.
  * These rules win over the inline <style> of the SVG (and they are the
  * only ones that apply in the app, where the CSP forbids inline styles). */

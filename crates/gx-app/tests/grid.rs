@@ -192,3 +192,70 @@ fn the_tile_keeps_the_mesh_seamless_at_every_angle() {
         "a square tile has to break at 20 degrees"
     );
 }
+
+/// Cada clase que el SVG pinta necesita su regla en el canvas: la CSP bloquea
+/// el `<style>` interno del SVG, así que en la ventana la paleta la pone la
+/// hoja de estilos. Sin la regla, el elemento sale con el color del navegador
+/// —una línea de vida invisible, una punta de flecha negra— sin que nada falle.
+///
+/// El conjunto a cubrir no es "todas las clases": es "las que el propio SVG
+/// pinta", o sea las que aparecen en su bloque `<style>`. Las que sólo nombran
+/// geometría o semántica (`shape-rounded` lleva el `rx` en el atributo,
+/// `cardinality-optional` no pinta nada por su cuenta) no necesitan regla.
+#[test]
+fn every_painted_class_of_the_drawing_has_a_rule_in_the_canvas() {
+    let css = include_str!("../frontend/style.css");
+    let goldens = [
+        include_str!("golden/graph-minimal.svg"),
+        include_str!("golden/er-posts.svg"),
+        include_str!("golden/tree-src.svg"),
+        include_str!("golden/mindmap-feature.svg"),
+        include_str!("golden/sequence-order.svg"),
+    ];
+
+    let mut painted: Vec<String> = Vec::new();
+    let mut used: Vec<String> = Vec::new();
+    for golden in goldens {
+        // Lo que el SVG pinta: los selectores de su bloque de estilo.
+        let style_block = golden
+            .split("<style>")
+            .nth(1)
+            .and_then(|rest| rest.split("</style>").next())
+            .expect("the golden carries its style block");
+        for selector in style_block.split('}') {
+            let Some(name) = selector.split('{').next() else {
+                continue;
+            };
+            let name = name.trim().trim_start_matches('.');
+            if !name.is_empty() && !name.contains(',') && !painted.iter().any(|k| k == name) {
+                painted.push(name.to_string());
+            }
+        }
+        // Lo que el SVG usa: las clases de los elementos.
+        for chunk in golden.split("class=\"").skip(1) {
+            let Some(names) = chunk.split('"').next() else {
+                continue;
+            };
+            for name in names.split_whitespace() {
+                if !used.iter().any(|known| known == name) {
+                    used.push(name.to_string());
+                }
+            }
+        }
+    }
+
+    let mut missing: Vec<&String> = Vec::new();
+    for class in &used {
+        if !painted.iter().any(|name| name == class) {
+            continue;
+        }
+        if !css.contains(&format!(".graphium .{class}")) {
+            missing.push(class);
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "estas clases que el SVG pinta no tienen regla en el canvas y saldrían \
+         con el color del navegador: {missing:?}"
+    );
+}
