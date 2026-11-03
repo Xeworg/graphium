@@ -6,8 +6,11 @@
 
 pub mod er;
 pub mod graph;
+pub mod lanes;
 pub mod mindmap;
 pub mod sequence;
+pub mod swimlane;
+pub mod timeline;
 pub mod tree;
 
 use gx_core::kind::DiagramKind;
@@ -19,6 +22,8 @@ pub fn register_all() {
     tree::register();
     mindmap::register();
     sequence::register();
+    timeline::register();
+    swimlane::register();
 }
 
 /// The names of the kinds registered by this crate.
@@ -29,5 +34,7 @@ pub fn kind_names() -> Vec<&'static str> {
         tree::TreeKind::KIND,
         mindmap::MindmapKind::KIND,
         sequence::SequenceKind::KIND,
+        timeline::TimelineKind::KIND,
+        swimlane::SwimlaneKind::KIND,
     ]
 }
