@@ -13,7 +13,7 @@ use std::sync::Arc;
 use dagre::graph::{Graph, GraphOptions};
 use dagre::{layout, EdgeLabel, LayoutOptions, NodeLabel, RankDir, Ranker};
 use gx_core::geom::{Point, Rect, Size};
-use gx_core::ir::{Direction, IrGraph};
+use gx_core::ir::{Direction, IrEvent, IrGraph, IrLane, IrTimeline};
 use gx_core::layout::{LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, LayoutOpts, NodeBox};
 use gx_core::text::{TextMetrics, TextStyle};
 use gx_core::tokens::TOKENS;
@@ -698,14 +698,16 @@ impl LayoutEngine for TreeEngine {
 pub struct Layouts {
     layered: DagreEngine,
     tree: TreeEngine,
+    lanes: LanesEngine,
 }
 
 impl Layouts {
     /// Builds every engine around the single metrics source (PRD §8.4.1).
     pub fn new(metrics: Arc<dyn TextMetrics>) -> Self {
         Self {
-            layered: DagreEngine::new(metrics),
+            layered: DagreEngine::new(metrics.clone()),
             tree: TreeEngine::new(),
+            lanes: LanesEngine::new(metrics),
         }
     }
 }
@@ -715,6 +717,131 @@ impl LayoutEngine for Layouts {
         match graph.layout_hint {
             gx_core::ir::LayoutHint::Tree => self.tree.layout(graph, opts),
             _ => self.layered.layout(graph, opts),
+        }
+    }
+
+    fn layout_timeline(&self, timeline: &IrTimeline, opts: &LayoutOpts) -> LayoutGraph {
+        self.lanes.layout_timeline(timeline, opts)
+    }
+}
+
+/// Height of a lane band, in plan units.
+const LANE_HEIGHT: f64 = 110.0;
+/// Width of one unit of time in a timeline, in plan units.
+const TIME_STEP: f64 = 150.0;
+/// Padding inside a lane, in plan units.
+const LANE_PADDING: f64 = 16.0;
+
+/// The layout of a timeline: lanes as rows, events as columns (PRD §6).
+///
+/// The horizontal axis is time: the `order` of an event decides its column,
+/// not its position in the document, so a document that arrives unsorted is
+/// still drawn in the order the timeline means. The events measure their own
+/// label with the single metrics source, the same one the rest of the engine
+/// uses.
+pub struct LanesEngine {
+    metrics: Arc<dyn TextMetrics>,
+}
+
+impl LanesEngine {
+    pub fn new(metrics: Arc<dyn TextMetrics>) -> Self {
+        Self { metrics }
+    }
+
+    /// The size of the box of an event: its label plus padding, and the width
+    /// of the span it covers when it has one.
+    fn event_size(&self, event: &IrEvent, step: f64, padding: f64) -> Size {
+        let label = self
+            .metrics
+            .measure(&event.label, &TextStyle::regular(TOKENS.text_size));
+        let columns = match &event.span {
+            // A span is a stretch of time: its width in columns is the
+            // distance between its ends, and a point in time is one column.
+            Some(span) if span.end > span.start => (span.end - span.start).max(1.0),
+            _ => 1.0,
+        };
+        let width = (label.w + 2.0 * padding).max(columns * step - 2.0 * padding);
+        Size::new(width, label.h + 2.0 * padding)
+    }
+
+    /// The row of a lane, or the last one for an event without a lane.
+    fn lane_index(lanes: &[IrLane], lane: &str) -> usize {
+        lanes
+            .iter()
+            .position(|candidate| candidate.id == lane)
+            .unwrap_or_else(|| lanes.len().saturating_sub(1))
+    }
+}
+
+impl LayoutEngine for LanesEngine {
+    fn layout(&self, _graph: &IrGraph, _opts: &LayoutOpts) -> LayoutGraph {
+        // A timeline engine has nothing to say about a graph: the dispatcher
+        // never sends one here.
+        LayoutGraph::empty()
+    }
+
+    fn layout_timeline(&self, timeline: &IrTimeline, opts: &LayoutOpts) -> LayoutGraph {
+        let scale = opts.spacing_scale;
+        let lane_height = LANE_HEIGHT * scale;
+        let step = TIME_STEP * scale;
+        let padding = LANE_PADDING;
+
+        // The widest lane label decides the left gutter, so the label of a
+        // lane never rides on top of its first event.
+        let gutter = timeline
+            .lanes
+            .iter()
+            .map(|lane| {
+                let text = lane.label.clone().unwrap_or_else(|| lane.id.clone());
+                self.metrics
+                    .measure(&text, &TextStyle::semibold(TOKENS.text_size))
+                    .w
+                    + 3.0 * padding
+            })
+            .fold(TIME_STEP * scale, f64::max);
+
+        let mut nodes: BTreeMap<String, NodeBox> = BTreeMap::new();
+        let mut events: Vec<&IrEvent> = timeline.events.iter().collect();
+        events.sort_by_key(|event| (event.order, event.id.clone()));
+
+        let mut last_right = gutter;
+        for event in events {
+            let row = Self::lane_index(&timeline.lanes, &event.lane);
+            let size = self.event_size(event, step, padding);
+            let left = gutter + (event.order.max(0) as f64) * step;
+            let right = left + size.w;
+            last_right = last_right.max(right);
+            nodes.insert(
+                event.id.clone(),
+                NodeBox {
+                    center: Point::new(
+                        left + size.w / 2.0,
+                        row as f64 * lane_height + lane_height / 2.0,
+                    ),
+                    size,
+                },
+            );
+        }
+
+        let width = last_right + padding;
+        let lane_count = timeline.lanes.len().max(1);
+        let groups: Vec<LayoutGroup> = timeline
+            .lanes
+            .iter()
+            .enumerate()
+            .map(|(index, lane)| LayoutGroup {
+                id: lane.id.clone(),
+                label: lane.label.clone(),
+                bbox: Rect::new(0.0, index as f64 * lane_height, width, lane_height),
+            })
+            .collect();
+        let bbox = Rect::new(0.0, 0.0, width, lane_count as f64 * lane_height);
+
+        LayoutGraph {
+            nodes,
+            edges: Vec::new(),
+            groups,
+            bbox,
         }
     }
 }

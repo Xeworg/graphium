@@ -39,7 +39,7 @@ Fuera de este corte (siguen en F2 pero son otro corte): export (RF10/10.1/10-bis
 | T2 | Motor `tree`: layout jerárquico propio (sin `dagre`), con tests de forma y determinismo | S2, S3 | inline | este PR — `TreeEngine`, `Layouts` (despacho por `layout_hint`), 8 tests en `tests/tree.rs`, 250 en verde |
 | T3 | Kind `tree`: schema de árbol de archivos/módulos, `to_ir`, golden y caso de error | S1, S3, S4 | inline | este PR — 5 tests en `gx-kinds`, golden `tree-src`, verificado en la ventana |
 | T4 | Kind `mindmap`: jerarquía de descomposición sobre el motor `tree` | S1, S3 | inline | este PR — contrato `topic`/`branches` con `emphasis`, 5 tests, golden `mindmap-feature` |
-| T5 | Motor `lanes`: carriles horizontales con orden de columnas | S2, S3 | inline | — |
+| T5 | Motor `lanes`: carriles horizontales con orden de columnas. Se parte en T5a (layout: `layout_timeline` en el trait, el door rutea `Ir::Timeline`, `LanesEngine`) y T5b (el renderer dibuja la timeline) | S2, S3 | inline | T5a — este PR: 7 tests en `tests/lanes.rs`, 267 en verde |
 | T6 | Kind `sequence`: actores y mensajes en orden temporal (IR `Timeline`) | S1, S3 | inline | — |
 | T7 | Kind `timeline` y kind `swimlane` sobre el motor `lanes` | S1, S3 | inline | — |
 | T8 | Kinds `layered` que reusan las shapes de hoy: `flowchart`, `state`, `dataflow` | S1, S3, S4 | inline | — |
