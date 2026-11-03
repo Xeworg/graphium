@@ -1,0 +1,189 @@
+/* Graphium plan styles.
+ *
+ * The grid is chrome of the frontend, never part of the SVG export
+ * (PRD §7.1). It is drawn with two CSS gradients, one per family of
+ * diagonal lines (±32°), so the thickness stays 1 screen pixel while the
+ * separation scales with the zoom (PRD §7.2, decision S23).
+ */
+
+:root {
+  --bg: #1b1b1b;
+  --grid-color: rgba(255, 255, 255, 0.14);
+  --grid-step: 31.26px; /* 59 px diagonal * sin(32°): the perpendicular step */
+  --grid-line: 1px;
+  --grid-opacity: 1;
+  --tx: 0px;
+  --ty: 0px;
+  --accent: #6ea8fe;
+  --text: #e9e9ec;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 14px;
+}
+
+.plan {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background-color: var(--bg);
+  cursor: grab;
+}
+
+.plan.dragging {
+  cursor: grabbing;
+}
+
+/* The grid: two repeating gradients, one per family of diagonal lines.
+ * The period (--grid-step) is the perpendicular step in screen pixels and
+ * grows with the zoom; the line thickness (--grid-line) stays 1px. */
+.plan::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--grid-opacity);
+  background-image:
+    repeating-linear-gradient(
+      -32deg,
+      transparent 0 calc(var(--grid-step) - var(--grid-line)),
+      var(--grid-color) 0 var(--grid-step)
+    ),
+    repeating-linear-gradient(
+      32deg,
+      transparent 0 calc(var(--grid-step) - var(--grid-line)),
+      var(--grid-color) 0 var(--grid-step)
+    );
+  background-position: calc(-1 * var(--tx)) calc(-1 * var(--ty));
+}
+
+.diagrams {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+/* One container per diagram. The camera transform lives here: the SVG
+ * inside keeps plan units and is never rescaled on its own (PRD §7.2). */
+.diagram {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.diagram > .content {
+  position: absolute;
+}
+
+.diagram svg {
+  display: block;
+  overflow: visible;
+}
+
+/* State 1: empty plan. */
+.empty {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.empty-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.empty-hint {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+.empty code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* State 3: error banner. */
+.banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #3a1d1d;
+  border-bottom: 1px solid #7a3434;
+  font-size: 13px;
+}
+
+.banner-body {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.banner-path {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  opacity: 0.8;
+}
+
+.banner-hint {
+  opacity: 0.8;
+}
+
+.banner-extra {
+  opacity: 0.7;
+}
+
+.banner-close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* State 2: render in flight. */
+.ghost {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 320px;
+  height: 180px;
+  border: 1px dashed rgba(255, 255, 255, 0.35);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  pointer-events: none;
+}

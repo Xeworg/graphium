@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: tests and gates
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the system dependencies (RNF2)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            file
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Build
+        run: cargo build --workspace
+
+      - name: Tests
+        run: cargo test --workspace
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # PRD §9.1: the dependency matrix is a gate, not a convention.
+      - name: Dependency gate (PRD §9.1)
+        run: |
+          set -euo pipefail
+          fail=0
+          check() {
+            crate="$1"; shift
+            for forbidden in "$@"; do
+              if cargo tree -p "$crate" --edges normal | grep -q "$forbidden"; then
+                echo "::error::$crate must not depend on $forbidden"
+                fail=1
+              fi
+            done
+          }
+          check gx-core gx-kinds gx-layout gx-render-svg gx-mcp gx-app
+          check gx-kinds gx-layout gx-render-svg gx-mcp gx-app
+          check gx-layout gx-kinds gx-render-svg gx-mcp gx-app
+          check gx-render-svg gx-layout gx-kinds gx-mcp gx-app
+          if grep -rn '"graph"' crates/gx-mcp/src | grep -v '^\s*//' ; then
+            echo "::error::gx-mcp must not match on kind names"
+            fail=1
+          fi
+          exit "$fail"
+
+      # RNF1-quater: the binary budget of 15 MB, measured on the release build.
+      - name: Binary budget (RNF1-quater)
+        run: |
+          cargo build --release --bin graphium
+          size=$(du -b target/release/graphium | cut -f1)
+          echo "binary size: $size bytes"
+          if [ "$size" -gt 15700000 ]; then
+            echo "::error::the binary is over the 15.7 MB budget"
+            exit 1
+          fi
+
+      # The layout capability matrix of dagre (PRD §8.4) runs with the
+      # ordinary test suite; the timing matrix RNF1-bis is measured with
+      # the ignored test.
+      - name: Layout capability matrix (dagre)
+        run: cargo test -p gx-layout -- --nocapture
+
+  matrix:
+    name: layout matrix RNF1-bis
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Measure RNF1-bis
+        run: |
+          cargo test --release -p gx-layout -- --ignored --nocapture | tee rnf1-bis.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rnf1-bis
+          path: rnf1-bis.txt
