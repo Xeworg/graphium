@@ -241,13 +241,16 @@ fn the_degraded_spacing_is_tighter() {
 
 #[test]
 fn an_empty_graph_has_an_empty_layout() {
-    let layout = engine().layout(&IrGraph {
-        direction: Direction::TB,
-        layout_hint: gx_core::ir::LayoutHint::Layered,
-        nodes: Vec::new(),
-        edges: Vec::new(),
-        groups: Vec::new(),
-    }, &LayoutOpts::default());
+    let layout = engine().layout(
+        &IrGraph {
+            direction: Direction::TB,
+            layout_hint: gx_core::ir::LayoutHint::Layered,
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            groups: Vec::new(),
+        },
+        &LayoutOpts::default(),
+    );
     assert!(layout.nodes.is_empty());
     assert!(layout.edges.is_empty());
 }

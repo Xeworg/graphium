@@ -439,9 +439,7 @@ pub fn extract_neighbourhood(
     let edges = graph
         .edges
         .iter()
-        .filter(|edge| {
-            reached.contains(edge.from.as_str()) && reached.contains(edge.to.as_str())
-        })
+        .filter(|edge| reached.contains(edge.from.as_str()) && reached.contains(edge.to.as_str()))
         .cloned()
         .collect();
     let groups = graph

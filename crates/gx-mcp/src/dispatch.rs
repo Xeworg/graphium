@@ -168,7 +168,6 @@ mod tests {
             .is_some_and(|kinds| !kinds.is_empty()));
     }
 
-
     /// PRD §7.3, S21: an agent that reaches the window owner through the
     /// socket gets the same answer as one that speaks stdio to it. Before
     /// this test the relay silently dropped `opts`, so `extract` and

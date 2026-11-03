@@ -161,14 +161,9 @@ fn the_golden_drawings_do_not_change() {
         }
 
         let expected = std::fs::read_to_string(&path).unwrap_or_else(|error| {
-            panic!(
-                "{name}: the golden is missing ({error}); regenerate it with UPDATE_GOLDEN=1"
-            )
+            panic!("{name}: the golden is missing ({error}); regenerate it with UPDATE_GOLDEN=1")
         });
-        assert!(
-            !expected.is_empty(),
-            "{name}: the golden file is empty"
-        );
+        assert!(!expected.is_empty(), "{name}: the golden file is empty");
         assert_eq!(
             hash,
             digest(&expected),
@@ -177,7 +172,10 @@ fn the_golden_drawings_do_not_change() {
             outcome.svg.len(),
             expected.len()
         );
-        assert_eq!(outcome.svg, expected, "{name}: the drawing changed byte by byte");
+        assert_eq!(
+            outcome.svg, expected,
+            "{name}: the drawing changed byte by byte"
+        );
     }
 }
 

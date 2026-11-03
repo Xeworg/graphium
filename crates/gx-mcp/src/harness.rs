@@ -230,11 +230,17 @@ mod tests {
             "layout_timeout",
         ] {
             assert!(render.contains(needle), "render_diagram lacks `{needle}`");
-            assert!(INSTRUCTIONS.contains(needle), "the instructions lack `{needle}`");
+            assert!(
+                INSTRUCTIONS.contains(needle),
+                "the instructions lack `{needle}`"
+            );
         }
         for future in ["opts.focus", "opts.replace_id", "opts.interactive"] {
             assert!(render.contains(future), "render_diagram lacks `{future}`");
-            assert!(INSTRUCTIONS.contains(future), "the instructions lack `{future}`");
+            assert!(
+                INSTRUCTIONS.contains(future),
+                "the instructions lack `{future}`"
+            );
         }
     }
 

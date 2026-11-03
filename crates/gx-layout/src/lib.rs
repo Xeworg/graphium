@@ -43,7 +43,6 @@ impl DagreEngine {
     pub fn new(metrics: Arc<dyn TextMetrics>) -> Self {
         Self { metrics }
     }
-
 }
 
 fn rank_dir(direction: Direction) -> RankDir {

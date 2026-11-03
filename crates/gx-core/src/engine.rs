@@ -170,27 +170,18 @@ fn measure_node(
             style
         }
     };
-    let label = metrics.measure(
-        &node.label,
-        &style(TextStyle::semibold(TOKENS.text_size)),
-    );
+    let label = metrics.measure(&node.label, &style(TextStyle::semibold(TOKENS.text_size)));
     let mut width = label.w;
     let mut height = label.h + 2.0 * TOKENS.node_padding;
 
     if !node.rows.is_empty() {
         // The badge of the key occupies its own column, and the note is drawn
         // against the right edge: the box has to fit badge + name + note.
-        let badge = metrics.measure(
-            "PK, FK",
-            &style(TextStyle::regular(TOKENS.text_size)),
-        );
+        let badge = metrics.measure("PK, FK", &style(TextStyle::regular(TOKENS.text_size)));
         let gap = TOKENS.node_padding;
         height += TOKENS.border_width;
         for row in &node.rows {
-            let name = metrics.measure(
-                &row.text,
-                &style(TextStyle::regular(TOKENS.text_size)),
-            );
+            let name = metrics.measure(&row.text, &style(TextStyle::regular(TOKENS.text_size)));
             let mut row_width = badge.w + gap + name.w;
             if let Some(note) = &row.note {
                 let measured_note =

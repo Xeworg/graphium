@@ -22,7 +22,10 @@ fn the_defaults_are_the_plano_preset() {
     let settings = Settings::default();
     assert_eq!(settings.background, "#1b1b1b");
     assert_eq!(settings.grid_color, "#ffffff");
-    assert!((settings.grid_opacity - 0.14).abs() < 1e-9, "el PRD dice 14%");
+    assert!(
+        (settings.grid_opacity - 0.14).abs() < 1e-9,
+        "el PRD dice 14%"
+    );
     assert!((settings.grid_diagonal - 59.0).abs() < 1e-9);
     assert!((settings.grid_angle_degrees - 45.0).abs() < 1e-9);
     assert!(settings.grid_visible);
@@ -82,7 +85,10 @@ fn a_broken_field_falls_back_to_its_default() {
     .expect("the file is written");
 
     let settings = Settings::load_from(&path);
-    assert_eq!(settings.background, "#1b1b1b", "a colour is #rrggbb or nothing");
+    assert_eq!(
+        settings.background, "#1b1b1b",
+        "a colour is #rrggbb or nothing"
+    );
     assert_eq!(settings.grid_opacity, 1.0, "the opacity clamps to 1");
     assert_eq!(settings.theme, "dark", "the theme is dark or light");
     // The fields that were fine keep their value.

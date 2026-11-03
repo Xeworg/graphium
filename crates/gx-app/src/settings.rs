@@ -60,9 +60,7 @@ impl Default for Settings {
 
 /// The three presets of F1 (PRD §8.5.2).
 pub mod presets {
-    use super::{
-        Settings, PLANO_BACKGROUND, PLANO_GRID, PLANO_GRID_OPACITY,
-    };
+    use super::{Settings, PLANO_BACKGROUND, PLANO_GRID, PLANO_GRID_OPACITY};
 
     /// The dark plan of the reference: dark background and a white grid.
     pub fn plano() -> Settings {
@@ -206,16 +204,10 @@ fn color_or(value: String, fallback: &str) -> String {
 }
 
 fn is_color(value: &str) -> bool {
-    value.len() == 7
-        && value.starts_with('#')
-        && value[1..].chars().all(|c| c.is_ascii_hexdigit())
+    value.len() == 7 && value.starts_with('#') && value[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn clamp_or(
-    value: f64,
-    range: &std::ops::RangeInclusive<f64>,
-    fallback: f64,
-) -> f64 {
+fn clamp_or(value: f64, range: &std::ops::RangeInclusive<f64>, fallback: f64) -> f64 {
     if value.is_finite() {
         value.clamp(*range.start(), *range.end())
     } else {

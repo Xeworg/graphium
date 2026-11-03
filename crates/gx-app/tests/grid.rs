@@ -170,10 +170,7 @@ fn the_tile_keeps_the_mesh_seamless_at_every_angle() {
             "the rectangular tile does not tile the rows at {degrees} degrees"
         );
         assert!(
-            is_a_multiple(
-                rectangle_height,
-                period_along_columns(DIAGONAL)
-            ),
+            is_a_multiple(rectangle_height, period_along_columns(DIAGONAL)),
             "the rectangular tile does not tile the columns at {degrees} degrees"
         );
 

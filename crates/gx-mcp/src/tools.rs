@@ -10,14 +10,15 @@
 //! the frontend confirmed the paint after two animation frames. Without a hook
 //! the diagram is rendered and stored but not painted.
 
-use std::sync::mpsc::{self, RecvTimeoutError};
 use std::collections::VecDeque;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use gx_core::error::{ErrorCode, ValidationError};
 use gx_core::render::{
-    Degradation, Extract, RenderMetrics, RenderOpts, DEFAULT_LAYOUT_TIMEOUT_MS, MAX_LAYOUT_TIMEOUT_MS,
+    Degradation, Extract, RenderMetrics, RenderOpts, DEFAULT_LAYOUT_TIMEOUT_MS,
+    MAX_LAYOUT_TIMEOUT_MS,
 };
 use serde::Serialize;
 
@@ -907,7 +908,6 @@ mod tests {
         )
     }
 
-
     /// PRD §7.3, S22 / RNF8: two renders lay out at a time and eight wait in
     /// arrival order. The ninth is refused instead of quietly piling up.
     #[test]
@@ -926,12 +926,7 @@ mod tests {
                 other => panic!("the room is not full yet: {other:?}"),
             }
         }
-        assert_eq!(
-            queue.try_acquire(),
-            Admission::Full {
-                depth: QUEUE_DEPTH
-            }
-        );
+        assert_eq!(queue.try_acquire(), Admission::Full { depth: QUEUE_DEPTH });
 
         // FIFO: the second ticket never overtakes the first.
         queue.release();
@@ -974,7 +969,8 @@ mod tests {
     /// PRD §7 RF20, S6: between 150 nodes and the hard limit the diagram is
     /// not rejected; the render reports the size in `warnings[]`.
     #[test]
-    fn a_big_diagram_renders_with_the_size_warning() {        let _guard = lock_renders_blocking();
+    fn a_big_diagram_renders_with_the_size_warning() {
+        let _guard = lock_renders_blocking();
 
         let response = render(&chain(160));
 
@@ -1052,7 +1048,10 @@ mod tests {
             "the warning names the step: {}",
             degraded.message
         );
-        let svg = painted.lock().expect("the recorder is not poisoned").clone();
+        let svg = painted
+            .lock()
+            .expect("the recorder is not poisoned")
+            .clone();
         assert!(
             !svg.contains("sigue"),
             "step 1 omits the edge labels: {svg}"
@@ -1090,7 +1089,11 @@ mod tests {
         assert_eq!(error_codes(&response), vec!["too_large"]);
         let error = &response.errors[0];
         assert!(
-            error.hint.as_deref().unwrap_or_default().contains("opts.extract"),
+            error
+                .hint
+                .as_deref()
+                .unwrap_or_default()
+                .contains("opts.extract"),
             "the hint points at extract: {error:?}"
         );
         let metrics = response.metrics.expect("the cost is reported");
@@ -1324,7 +1327,10 @@ mod tests {
         assert_eq!(metrics.nodes, 3, "the neighbourhood of n1 in a chain of 4");
         assert_eq!(metrics.edges, 2);
 
-        let svg = painted.lock().expect("the recorder is not poisoned").clone();
+        let svg = painted
+            .lock()
+            .expect("the recorder is not poisoned")
+            .clone();
         for inside in ["nodo 0", "nodo 1", "nodo 2"] {
             assert!(svg.contains(inside), "the subgraph paints {inside}: {svg}");
         }
@@ -1335,7 +1341,8 @@ mod tests {
             .record("d-0001")
             .expect("the diagram is stored")
             .document;
-        let stored: serde_json::Value = serde_json::from_str(&stored).expect("the document is JSON");
+        let stored: serde_json::Value =
+            serde_json::from_str(&stored).expect("the document is JSON");
         assert_eq!(
             stored["nodes"].as_array().expect("nodes is an array").len(),
             4,
@@ -1411,8 +1418,13 @@ mod tests {
         assert!(hint.contains("opts.extract"), "{error:?}");
 
         let metrics = response.metrics.expect("the elapsed time is reported");
-        let elapsed = metrics.elapsed_ms.expect("layout_timeout carries elapsed_ms");
-        assert!(elapsed >= 20, "the elapsed time is the real one: {metrics:?}");
+        let elapsed = metrics
+            .elapsed_ms
+            .expect("layout_timeout carries elapsed_ms");
+        assert!(
+            elapsed >= 20,
+            "the elapsed time is the real one: {metrics:?}"
+        );
         assert_eq!(metrics.nodes, 0);
         assert_eq!(metrics.edges, 0);
         assert_eq!(metrics.render_ms, 0);
@@ -1458,7 +1470,10 @@ mod tests {
         assert_eq!(response.extracted_from, None);
         let metrics = response.metrics.expect("metrics are reported");
         assert_eq!(metrics.nodes, 2);
-        assert_eq!(metrics.elapsed_ms, None, "a healthy render keeps the old shape");
+        assert_eq!(
+            metrics.elapsed_ms, None,
+            "a healthy render keeps the old shape"
+        );
         assert_eq!(diagram_store().list().len(), 1);
     }
 }
