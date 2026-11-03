@@ -413,3 +413,26 @@ fn the_close_button_hangs_from_a_visible_object() {
         "el contorno no puede cambiar el tamaño del objeto"
     );
 }
+
+/// El `×` de un objeto tiene que poder apretarse: si vive fuera del
+/// rectángulo del objeto, el puntero sale del `:hover` al ir hacia él y el
+/// botón se esconde justo antes del clic.
+#[test]
+fn the_close_button_lives_inside_its_object() {
+    let style = include_str!("../frontend/style.css");
+    let flat: String = style.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    let block = flat
+        .split(".diagram-close {")
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .expect("the close button has a rule of its own");
+    assert!(
+        !block.contains("top: -") && !block.contains("right: -"),
+        "el `×` no puede colgar fuera del objeto: {block}"
+    );
+    assert!(
+        block.contains("top: 4px") && block.contains("right: 4px"),
+        "el `×` se ancla dentro de la esquina del objeto: {block}"
+    );
+}

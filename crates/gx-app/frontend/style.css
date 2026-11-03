@@ -241,10 +241,14 @@ body {
   border-radius: 8px;
 }
 
+/* El `×` vive **dentro** del rectángulo de su objeto, contra la esquina. Si
+ * colgara afuera, el puntero tendría que salir del objeto para alcanzarlo y
+ * el botón se escondería justo cuando uno va a apretarlo. */
 .diagram-close {
   position: absolute;
-  top: -18px;
-  right: -18px;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
   width: 20px;
   height: 20px;
   display: flex;
