@@ -19,8 +19,10 @@ use std::sync::Arc;
 pub fn install_engines() -> Result<(), Box<dyn Error>> {
     let metrics: Arc<dyn gx_core::text::TextMetrics> =
         Arc::new(gx_render_svg::InterMetrics::new()?);
+    // The dispatcher picks the engine from the `layout_hint` of the kind, so a
+    // kind never names a motor (PRD §6, O7).
     let layout: Arc<dyn gx_core::layout::LayoutEngine> =
-        Arc::new(gx_layout::DagreEngine::new(metrics.clone()));
+        Arc::new(gx_layout::Layouts::new(metrics.clone()));
     let renderer: Arc<dyn gx_core::render::SvgRenderer> =
         Arc::new(gx_render_svg::SvgRenderer::new(metrics.clone()));
 
