@@ -30,6 +30,9 @@ const RANK_SEPARATION: f64 = 80.0;
 const RANK_SEPARATION_WITH_ROWS: f64 = 130.0;
 /// Separation between edges of the same rank.
 const EDGE_SEPARATION: f64 = 20.0;
+/// How far a detour runs from the tables it passes: it goes through the gap
+/// between ranks, never along the edge of a box.
+const DETOUR_CLEARANCE: f64 = 12.0;
 /// Margin around the drawing.
 const MARGIN: f64 = 10.0;
 
@@ -257,10 +260,11 @@ fn orthogonal_route(
         return None;
     }
 
-    // The two tables have to be neighbours: a Z route drawn between two
-    // tables with a third one in the middle would cross that box, and a
-    // relation that goes through a table is unreadable. In that case the
-    // routed polyline of the engine, which avoids the obstacles, applies.
+    // A Z between two tables with a third one in the middle would cross that
+    // box, and a relation that goes through a table is unreadable. There the
+    // route goes **around** the tables in between, still with right angles:
+    // the whole reason this function exists is that a diagonal leaves the
+    // reader guessing which row it belongs to.
     let (low, high) = if from.center.x < to.center.x {
         (from.center.x, to.center.x)
     } else {
@@ -269,9 +273,6 @@ fn orthogonal_route(
     let blocked = nodes.iter().any(|(id, other)| {
         id != &edge.from && id != &edge.to && other.center.x > low && other.center.x < high
     });
-    if blocked {
-        return None;
-    }
 
     let (start_x, end_x) = if right_to_left {
         (
@@ -290,6 +291,10 @@ fn orthogonal_route(
         return Some(vec![Point::new(start_x, from_y), Point::new(end_x, to_y)]);
     }
 
+    if blocked {
+        return detour_route(nodes, from, to, from_row, to_row, right_to_left);
+    }
+
     // The Z: out, turn at the middle of the gap, and in.
     let middle_x = (start_x + end_x) / 2.0;
     Some(vec![
@@ -298,6 +303,95 @@ fn orthogonal_route(
         Point::new(middle_x, to_y),
         Point::new(end_x, to_y),
     ])
+}
+
+/// The route that goes around the tables between two ranks.
+///
+/// It leaves the source horizontally into the gap, runs along it to a band
+/// above or below every table (whichever is shorter), crosses there, and
+/// comes back down into the target row. Every segment is horizontal or
+/// vertical and none of them touches a box, which is what a schema needs to
+/// stay readable.
+fn detour_route(
+    nodes: &BTreeMap<String, NodeBox>,
+    from: &NodeBox,
+    to: &NodeBox,
+    from_row: u32,
+    to_row: u32,
+    right_to_left: bool,
+) -> Option<Vec<Point>> {
+    let travel = if right_to_left { 1.0 } else { -1.0 };
+    let from_y = row_center(from, from_row);
+    let to_y = row_center(to, to_row);
+    let start_x = from.center.x + travel * from.size.w / 2.0;
+    let end_x = to.center.x - travel * to.size.w / 2.0;
+
+    // The channel is measured on the rank, not on the box: a sibling table
+    // can be wider than the one the relation leaves from.
+    let source_rank = rank_extreme_x(nodes, from.center.x, travel)?;
+    let target_rank = rank_extreme_x(nodes, to.center.x, -travel)?;
+    let channel_out = source_rank + travel * DETOUR_CLEARANCE;
+    let channel_in = target_rank - travel * DETOUR_CLEARANCE;
+
+    let top = nodes
+        .values()
+        .map(|placed| placed.center.y - placed.size.h / 2.0)
+        .fold(f64::INFINITY, f64::min)
+        - DETOUR_CLEARANCE;
+    let bottom = nodes
+        .values()
+        .map(|placed| placed.center.y + placed.size.h / 2.0)
+        .fold(f64::NEG_INFINITY, f64::max)
+        + DETOUR_CLEARANCE;
+
+    let over = (from_y - top).abs() + (to_y - top).abs();
+    let under = (bottom - from_y).abs() + (bottom - to_y).abs();
+    let band_y = if over <= under { top } else { bottom };
+
+    let points = vec![
+        Point::new(start_x, from_y),
+        Point::new(channel_out, from_y),
+        Point::new(channel_out, band_y),
+        Point::new(channel_in, band_y),
+        Point::new(channel_in, to_y),
+        Point::new(end_x, to_y),
+    ];
+    Some(without_repeats(points))
+}
+
+/// The extreme edge of the rank that owns `x`, in the direction of `sign`:
+/// the right edge of the widest box when `sign` is positive, the left edge of
+/// the leftmost one when it is negative.
+fn rank_extreme_x(nodes: &BTreeMap<String, NodeBox>, x: f64, sign: f64) -> Option<f64> {
+    let same_rank = |placed: &NodeBox| (placed.center.x - x).abs() < 0.5;
+    let edges = nodes
+        .values()
+        .filter(|placed| same_rank(placed))
+        .map(|placed| placed.center.x + sign * placed.size.w / 2.0);
+    if sign > 0.0 {
+        edges.fold(None, |acc: Option<f64>, edge| {
+            Some(acc.map_or(edge, |acc| acc.max(edge)))
+        })
+    } else {
+        edges.fold(None, |acc: Option<f64>, edge| {
+            Some(acc.map_or(edge, |acc| acc.min(edge)))
+        })
+    }
+}
+
+/// Drops the turns of zero length: a duplicated point is noise in the path
+/// data and in the golden files.
+fn without_repeats(points: Vec<Point>) -> Vec<Point> {
+    let mut kept: Vec<Point> = Vec::with_capacity(points.len());
+    for point in points {
+        let repeat = kept.last().is_some_and(|last: &Point| {
+            (last.x - point.x).abs() < 0.001 && (last.y - point.y).abs() < 0.001
+        });
+        if !repeat {
+            kept.push(point);
+        }
+    }
+    kept
 }
 
 /// The vertical center of a row inside a node, in the same coordinates the

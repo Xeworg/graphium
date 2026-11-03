@@ -239,6 +239,93 @@ fn the_degraded_spacing_is_tighter() {
     }
 }
 
+/// A relation that skips a table cannot cross it: it goes around, and it
+/// keeps the right angles. A diagonal there leaves the reader guessing which
+/// table the line belongs to and, worse, looks like it touches the one in the
+/// middle (PRD §7.3, L10).
+#[test]
+fn a_relation_that_skips_a_table_goes_around_it() {
+    fn table(id: &str) -> IrNode {
+        let mut node = IrNode::new(id, id);
+        node.size = gx_core::geom::Size::new(60.0, 30.0);
+        node.rows = vec![IrRow::new("id"), IrRow::new("user_id")];
+        node
+    }
+    fn relation(from: &str, to: &str, to_row: u32) -> IrEdge {
+        let mut edge = IrEdge::new(from, to);
+        edge.from_row = Some(0);
+        edge.to_row = Some(to_row);
+        edge.arrow = false;
+        edge
+    }
+
+    let graph = IrGraph {
+        direction: Direction::LR,
+        layout_hint: gx_core::ir::LayoutHint::Layered,
+        nodes: vec![table("users"), table("posts"), table("comments")],
+        edges: vec![
+            relation("users", "posts", 1),
+            relation("posts", "comments", 1),
+            // The relation of the schema that skips the table in the middle.
+            relation("users", "comments", 1),
+        ],
+        groups: Vec::new(),
+    };
+
+    let layout = DagreEngine::new(Arc::new(FakeMetrics)).layout(&graph, &LayoutOpts::default());
+    let route = layout
+        .edges
+        .iter()
+        .find(|edge| edge.from == "users" && edge.to == "comments")
+        .expect("the skipping relation is routed");
+
+    // Every segment is horizontal or vertical.
+    for pair in route.points.windows(2) {
+        let horizontal = (pair[0].y - pair[1].y).abs() < 0.001;
+        let vertical = (pair[0].x - pair[1].x).abs() < 0.001;
+        assert!(
+            horizontal || vertical,
+            "the skip route keeps the right angles: {:?}",
+            pair
+        );
+    }
+
+    // No segment crosses a table: the line does not go through a box.
+    for pair in route.points.windows(2) {
+        let (x0, x1) = (
+            pair[0].x.min(pair[1].x) - 0.5,
+            pair[0].x.max(pair[1].x) + 0.5,
+        );
+        let (y0, y1) = (
+            pair[0].y.min(pair[1].y) - 0.5,
+            pair[0].y.max(pair[1].y) + 0.5,
+        );
+        for (id, placed) in &layout.nodes {
+            let left = placed.center.x - placed.size.w / 2.0;
+            let right = placed.center.x + placed.size.w / 2.0;
+            let top = placed.center.y - placed.size.h / 2.0;
+            let bottom = placed.center.y + placed.size.h / 2.0;
+            let crosses = x0 < right && left < x1 && y0 < bottom && top < y1;
+            assert!(!crosses, "the route crosses the table `{id}`: {:?}", pair);
+        }
+    }
+
+    // The route leaves the band of the tables in the middle: it passes above
+    // or below it instead of through it.
+    let middle = &layout.nodes["posts"];
+    let middle_top = middle.center.y - middle.size.h / 2.0;
+    let middle_bottom = middle.center.y + middle.size.h / 2.0;
+    let passes_outside = route
+        .points
+        .iter()
+        .any(|point| point.y < middle_top || point.y > middle_bottom);
+    assert!(
+        passes_outside,
+        "the route has to leave the band of the middle table: {:?}",
+        route.points
+    );
+}
+
 #[test]
 fn an_empty_graph_has_an_empty_layout() {
     let layout = engine().layout(
