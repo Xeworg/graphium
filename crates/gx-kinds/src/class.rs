@@ -121,7 +121,7 @@ pub struct ClassKind;
 
 impl ClassKind {
     /// The relation of an edge, or the default one when it declares none.
-    fn relation_of<'a>(edge: &'a ClassEdge) -> &'a str {
+    fn relation_of(edge: &ClassEdge) -> &str {
         edge.relation.as_deref().unwrap_or(DEFAULT_RELATION)
     }
 
@@ -131,10 +131,10 @@ impl ClassKind {
         let mut parents: Vec<(&str, Vec<(usize, &str)>)> = Vec::new();
         for (index, edge) in input.edges.iter().enumerate() {
             let relation = Self::relation_of(edge);
-            let Some(relation) = RELATIONS.iter().find(|known| known.name == relation) else {
-                continue;
-            };
-            if !relation.is_a {
+            let is_a = RELATIONS
+                .iter()
+                .any(|known| known.name == relation && known.is_a);
+            if !is_a {
                 continue;
             }
             match parents.iter_mut().find(|(id, _)| *id == edge.from) {
@@ -160,9 +160,7 @@ impl ClassKind {
         parents: &[(&str, Vec<(usize, &str)>)],
         path: &mut Vec<String>,
     ) -> Option<(usize, Vec<String>)> {
-        let Some((_, list)) = parents.iter().find(|(id, _)| *id == node) else {
-            return None;
-        };
+        let (_, list) = parents.iter().find(|(id, _)| *id == node)?;
         for (index, parent) in list {
             if *parent == origin {
                 let mut cycle = vec![origin.to_string()];
