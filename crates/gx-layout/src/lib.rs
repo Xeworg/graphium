@@ -292,6 +292,22 @@ fn orthogonal_route(
         return None;
     }
 
+    // The two tables have to be neighbours: a Z route drawn between two
+    // tables with a third one in the middle would cross that box, and a
+    // relation that goes through a table is unreadable. In that case the
+    // routed polyline of the engine, which avoids the obstacles, applies.
+    let (low, high) = if from.center.x < to.center.x {
+        (from.center.x, to.center.x)
+    } else {
+        (to.center.x, from.center.x)
+    };
+    let blocked = nodes.iter().any(|(id, other)| {
+        id != &edge.from && id != &edge.to && other.center.x > low && other.center.x < high
+    });
+    if blocked {
+        return None;
+    }
+
     let (start_x, end_x) = if right_to_left {
         (
             from.center.x + from.size.w / 2.0,
