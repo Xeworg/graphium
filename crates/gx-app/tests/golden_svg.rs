@@ -32,11 +32,12 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 4] = [
+const CASES: [(&str, &str); 5] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
     ("er-posts", ER_POSTS),
+    ("tree-src", TREE_SRC),
 ];
 
 const MINIMAL: &str = r#"{
@@ -108,6 +109,20 @@ const ER_POSTS: &str = r#"{
       "to": { "table": "posts", "column": "user_id" },
       "cardinality": "1:N" }
   ]
+}"#;
+
+const TREE_SRC: &str = r#"{
+  "version": 1,
+  "kind": "tree",
+  "title": "src",
+  "root": { "name": "src", "children": [
+    { "name": "main.rs", "note": "48 líneas" },
+    { "name": "lib", "children": [
+      { "name": "mod.rs" },
+      { "name": "render.rs", "note": "312 líneas" },
+      { "name": "layout.rs" }
+    ] }
+  ] }
 }"#;
 
 fn install_engines() {

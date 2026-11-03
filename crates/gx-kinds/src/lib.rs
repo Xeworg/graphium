@@ -6,6 +6,7 @@
 
 pub mod er;
 pub mod graph;
+pub mod tree;
 
 use gx_core::kind::DiagramKind;
 
@@ -13,9 +14,14 @@ use gx_core::kind::DiagramKind;
 pub fn register_all() {
     graph::register();
     er::register();
+    tree::register();
 }
 
 /// The names of the kinds registered by this crate.
 pub fn kind_names() -> Vec<&'static str> {
-    vec![graph::GraphKind::KIND, er::ErKind::KIND]
+    vec![
+        graph::GraphKind::KIND,
+        er::ErKind::KIND,
+        tree::TreeKind::KIND,
+    ]
 }
