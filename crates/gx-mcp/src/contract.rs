@@ -389,6 +389,7 @@ fn engine_of(hint: gx_core::ir::LayoutHint) -> &'static str {
     match hint {
         gx_core::ir::LayoutHint::Layered => "layered",
         gx_core::ir::LayoutHint::Tree => "tree",
+        gx_core::ir::LayoutHint::Lanes => "lanes",
         gx_core::ir::LayoutHint::Sankey => "sankey",
         gx_core::ir::LayoutHint::Git => "git",
     }

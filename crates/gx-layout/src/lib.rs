@@ -402,6 +402,25 @@ fn row_center(placed: &NodeBox, row: u32) -> f64 {
     top + TOKENS.node_padding + line + line * (f64::from(row) + 0.5)
 }
 
+/// The bounding box of the placed nodes, in plan units.
+fn bounds_of(nodes: &BTreeMap<String, NodeBox>) -> Rect {
+    nodes
+        .values()
+        .fold(None, |acc: Option<Rect>, placed| {
+            let rect = Rect::new(
+                placed.center.x - placed.size.w / 2.0,
+                placed.center.y - placed.size.h / 2.0,
+                placed.size.w,
+                placed.size.h,
+            );
+            Some(match acc {
+                Some(current) => current.union(&rect),
+                None => rect,
+            })
+        })
+        .unwrap_or_default()
+}
+
 /// The smallest translation that brings the drawing to the origin.
 fn drawing_offset(
     nodes: &BTreeMap<String, NodeBox>,
@@ -716,6 +735,7 @@ impl LayoutEngine for Layouts {
     fn layout(&self, graph: &IrGraph, opts: &LayoutOpts) -> LayoutGraph {
         match graph.layout_hint {
             gx_core::ir::LayoutHint::Tree => self.tree.layout(graph, opts),
+            gx_core::ir::LayoutHint::Lanes => self.lanes.layout(graph, opts),
             _ => self.layered.layout(graph, opts),
         }
     }
@@ -731,6 +751,16 @@ const LANE_HEIGHT: f64 = 110.0;
 const TIME_STEP: f64 = 150.0;
 /// Padding inside a lane, in plan units.
 const LANE_PADDING: f64 = 16.0;
+/// Height of the header row of a sequence diagram, in plan units.
+const ACTOR_ROW_HEIGHT: f64 = 80.0;
+/// Vertical distance between two messages, in plan units.
+const MESSAGE_STEP: f64 = 90.0;
+/// Horizontal air between two actors, in plan units.
+const ACTOR_GAP: f64 = 70.0;
+/// Narrowest actor box, in plan units.
+const MIN_ACTOR_WIDTH: f64 = 90.0;
+/// How far a self message sticks out, in plan units.
+const LOOP_WIDTH: f64 = 70.0;
 
 /// The layout of a timeline: lanes as rows, events as columns (PRD §6).
 ///
@@ -774,10 +804,96 @@ impl LanesEngine {
 }
 
 impl LayoutEngine for LanesEngine {
-    fn layout(&self, _graph: &IrGraph, _opts: &LayoutOpts) -> LayoutGraph {
-        // A timeline engine has nothing to say about a graph: the dispatcher
-        // never sends one here.
-        LayoutGraph::empty()
+    /// The layout of a sequence diagram (PRD §6): the actors sit in a header
+    /// row, one per column, and every message is a horizontal arrow that goes
+    /// down the page in the order of the document.
+    ///
+    /// Es el mismo eje de tiempo que el de una timeline, con los actores en
+    /// lugar de los carriles: por eso lo resuelve el mismo motor y el mismo
+    /// despacho.
+    fn layout(&self, graph: &IrGraph, opts: &LayoutOpts) -> LayoutGraph {
+        let scale = opts.spacing_scale;
+        let step = MESSAGE_STEP * scale;
+        let header = ACTOR_ROW_HEIGHT * scale;
+
+        if graph.nodes.is_empty() {
+            return LayoutGraph::empty();
+        }
+
+        // The actors, in document order: they are the columns.
+        let mut nodes: BTreeMap<String, NodeBox> = BTreeMap::new();
+        let mut column_of: BTreeMap<&str, (f64, f64)> = BTreeMap::new();
+        let mut cursor = 0.0;
+        for actor in &graph.nodes {
+            let label = self
+                .metrics
+                .measure(&actor.label, &TextStyle::semibold(TOKENS.text_size));
+            let size = Size::new(
+                (label.w + 2.0 * LANE_PADDING).max(MIN_ACTOR_WIDTH),
+                label.h + 2.0 * LANE_PADDING,
+            );
+            let center_x = cursor + size.w / 2.0;
+            nodes.insert(
+                actor.id.clone(),
+                NodeBox {
+                    center: Point::new(center_x, header / 2.0),
+                    size,
+                },
+            );
+            column_of.insert(actor.id.as_str(), (center_x, size.w));
+            cursor += size.w + ACTOR_GAP * scale;
+        }
+
+        // The messages: one row each, in the order of the document, as a
+        // horizontal arrow between the two columns.
+        let mut edges: Vec<LayoutEdge> = Vec::new();
+        let mut row = 1.0;
+        for edge in &graph.edges {
+            let (Some(from), Some(to)) = (
+                column_of.get(edge.from.as_str()),
+                column_of.get(edge.to.as_str()),
+            ) else {
+                continue;
+            };
+            let y = header + row * step;
+            let points = if edge.from == edge.to {
+                // A message to itself: a small loop to the right of the actor.
+                let x = from.0 + from.1 / 2.0;
+                vec![
+                    Point::new(x, y),
+                    Point::new(x + LOOP_WIDTH, y),
+                    Point::new(x + LOOP_WIDTH, y + step / 2.0),
+                    Point::new(x, y + step / 2.0),
+                ]
+            } else {
+                vec![Point::new(from.0, y), Point::new(to.0, y)]
+            };
+            edges.push(LayoutEdge {
+                from: edge.from.clone(),
+                to: edge.to.clone(),
+                points,
+                label_at: edge
+                    .label
+                    .as_ref()
+                    .map(|_| Point::new((from.0 + to.0) / 2.0, y - step * 0.2)),
+            });
+            row += 1.0;
+        }
+
+        let bbox = bounds_of(&nodes);
+        let bbox = Rect::new(
+            bbox.x.min(0.0),
+            bbox.y.min(0.0),
+            bbox.w.max(cursor).max(1.0),
+            bbox.h.max(header + row * step),
+        );
+
+        LayoutGraph {
+            nodes,
+            edges,
+            groups: Vec::new(),
+            bbox,
+        }
     }
 
     fn layout_timeline(&self, timeline: &IrTimeline, opts: &LayoutOpts) -> LayoutGraph {

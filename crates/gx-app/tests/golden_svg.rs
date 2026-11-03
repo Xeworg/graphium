@@ -32,13 +32,14 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 6] = [
+const CASES: [(&str, &str); 7] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
     ("er-posts", ER_POSTS),
     ("tree-src", TREE_SRC),
     ("mindmap-feature", MINDMAP),
+    ("sequence-order", SEQUENCE),
 ];
 
 const MINIMAL: &str = r#"{
@@ -135,6 +136,23 @@ const MINDMAP: &str = r#"{
       { "topic": "tools" }, { "topic": "harness" } ] },
     { "topic": "Plano", "branches": [ { "topic": "cámara" }, { "topic": "culling" } ] }
   ] }
+}"#;
+
+const SEQUENCE: &str = r#"{
+  "version": 1,
+  "kind": "sequence",
+  "title": "pedido",
+  "participants": [
+    { "id": "cliente", "label": "Cliente" },
+    { "id": "api", "label": "API" },
+    { "id": "db", "label": "Base" }
+  ],
+  "messages": [
+    { "from": "cliente", "to": "api", "label": "POST /orders" },
+    { "from": "api", "to": "db", "label": "INSERT" },
+    { "from": "db", "to": "api", "label": "ok", "reply": true },
+    { "from": "api", "to": "cliente", "label": "201", "reply": true }
+  ]
 }"#;
 
 fn install_engines() {

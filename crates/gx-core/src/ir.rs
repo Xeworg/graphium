@@ -18,6 +18,8 @@ use crate::geom::Size;
 pub enum LayoutHint {
     Layered,
     Tree,
+    /// Actors as columns and messages in time order (PRD §6: `sequence`).
+    Lanes,
     Sankey,
     Git,
 }
