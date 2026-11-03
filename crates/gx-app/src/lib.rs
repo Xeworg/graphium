@@ -7,6 +7,7 @@
 pub mod app;
 pub mod camera;
 pub mod relay;
+pub mod settings;
 pub mod socket;
 
 use std::error::Error;

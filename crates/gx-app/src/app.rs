@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Listener, Manager, WindowEvent};
 
 use crate::camera::{self, CameraSnapshot};
+use crate::settings::Settings;
 use gx_core::geom::Size;
 
 /// How long the frontend has to confirm the paint (PRD §8.6.1, step 5).
@@ -30,6 +31,7 @@ pub struct PlanState {
     camera: Mutex<CameraSnapshot>,
     pending: Mutex<HashMap<String, Sender<bool>>>,
     ready: AtomicBool,
+    settings: Mutex<Settings>,
 }
 
 impl PlanState {
@@ -39,6 +41,16 @@ impl PlanState {
 
     pub fn set_camera(&self, camera: CameraSnapshot) {
         *self.camera.lock().expect("camera lock") = camera;
+    }
+
+    /// The settings of the plan the human chose (PRD §7.1 RF25).
+    pub fn settings(&self) -> Settings {
+        self.settings.lock().expect("settings lock").clone()
+    }
+
+    /// Replaces the settings: the panel changed something.
+    pub fn set_settings(&self, settings: Settings) {
+        *self.settings.lock().expect("settings lock") = settings;
     }
 
     /// Whether the frontend already announced itself (`graphium://ready`).
@@ -193,9 +205,32 @@ pub fn build(keep_alive: bool) -> (tauri::App<tauri::Wry>, Arc<PlanState>) {
             ack_state.resolve_ack(&payload.req_id, payload.ok);
         }
     });
+    // The settings live in `~/.graphium/settings.json` and belong to the
+    // human: the window reads them at start and writes them when the panel
+    // changes something (PRD §7.1 RF25, S19).
+    state.set_settings(Settings::load());
+
     let ready_state = Arc::clone(&state);
+    let ready_handle = handle.clone();
     handle.listen("graphium://ready", move |_event| {
         ready_state.set_ready();
+        let _ = ready_handle.emit("graphium://settings", ready_state.settings());
+    });
+
+    let settings_state = Arc::clone(&state);
+    let settings_handle = handle.clone();
+    handle.listen("settings-changed", move |event| {
+        let Ok(settings) = serde_json::from_str::<Settings>(event.payload()) else {
+            return;
+        };
+        if settings.save().is_err() {
+            return;
+        }
+        // What the file holds is what the panel shows: the sanitised value
+        // comes back, so a rejected field never leaves the UI lying.
+        let settings = Settings::load();
+        settings_state.set_settings(settings.clone());
+        let _ = settings_handle.emit("graphium://settings", settings);
     });
 
     (application, state)
