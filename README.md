@@ -20,7 +20,7 @@ agente ──JSON──▶ validación ──▶ IR ──▶ layout ──▶ S
 |---|---|---|
 | **F0** | Spike técnico: workspace, Tauri 2, `dagre`, renderer propio, ventana con grilla, socket single-instance, round-trip de render | cerrada |
 | **F1** | MVP: kinds `graph` y `er`, `validate_diagram`, `get_diagram_schema`, ciclo de vida de diagramas, harness del agente, degradación y presupuesto, `opts.extract`, cámara con fit-to-view, panel de ajustes con tema claro, golden SVG en CI | cerrada |
-| F2 | Formato completo: 10 kinds más, export, varios diagramas en el plano, panel lateral | pendiente |
+| **F2 (en curso)** | Formato completo. Hecho: **los 10 kinds del catálogo** (`flowchart`, `sequence`, `class`, `state`, `component`, `dataflow`, `tree`, `mindmap`, `timeline`, `swimlane`) con los motores `tree` y `lanes`, **varios diagramas en el plano**, panel lateral y culling. Falta: export (RF10/10.1/10-bis), clusters, `emphasis`, historial, `opts.replace_id` y `opts.interactive` | en curso |
 | F3 | Interactividad, click→evento, watch | pendiente |
 
 Decisiones y criterios de aceptación: [`docs/PRD.md`](docs/PRD.md).
