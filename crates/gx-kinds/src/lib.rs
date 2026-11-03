@@ -5,6 +5,7 @@
 //! (PRD §7, O7).
 
 pub mod class;
+pub mod dataflow;
 pub mod er;
 pub mod flow;
 pub mod flowchart;
@@ -12,6 +13,7 @@ pub mod graph;
 pub mod lanes;
 pub mod mindmap;
 pub mod sequence;
+pub mod state;
 pub mod swimlane;
 pub mod timeline;
 pub mod tree;
@@ -27,6 +29,8 @@ pub fn register_all() {
     sequence::register();
     flowchart::register();
     class::register();
+    state::register();
+    dataflow::register();
     timeline::register();
     swimlane::register();
 }
@@ -41,6 +45,8 @@ pub fn kind_names() -> Vec<&'static str> {
         sequence::SequenceKind::KIND,
         flowchart::FlowchartKind::KIND,
         class::ClassKind::KIND,
+        state::StateKind::KIND,
+        dataflow::DataflowKind::KIND,
         timeline::TimelineKind::KIND,
         swimlane::SwimlaneKind::KIND,
     ]

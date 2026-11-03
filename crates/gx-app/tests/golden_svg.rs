@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 11] = [
+const CASES: [(&str, &str); 13] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -43,6 +43,8 @@ const CASES: [(&str, &str); 11] = [
     ("timeline-roadmap", TIMELINE_ROADMAP),
     ("swimlane-soporte", SWIMLANE_SOPORTE),
     ("flowchart-approval", FLOWCHART_APPROVAL),
+    ("state-order", STATE_ORDER),
+    ("dataflow-etl", DATAFLOW_ETL),
     ("class-shop", CLASS_SHOP),
 ];
 
@@ -212,6 +214,45 @@ const FLOWCHART_APPROVAL: &str = r#"{
     { "from": "limite", "to": "auto", "label": "no" },
     { "from": "jefe", "to": "fin" },
     { "from": "auto", "to": "fin" }
+  ]
+}"#;
+
+const STATE_ORDER: &str = r#"{
+  "version": 1,
+  "kind": "state",
+  "title": "pedido",
+  "nodes": [
+    { "id": "nuevo", "label": "nuevo", "role": "initial" },
+    { "id": "pago", "label": "pago pendiente" },
+    { "id": "enviado", "label": "enviado" },
+    { "id": "cerrado", "label": "cerrado", "role": "final" }
+  ],
+  "edges": [
+    { "from": "nuevo", "to": "pago", "label": "crear" },
+    { "from": "pago", "to": "enviado", "label": "pagar" },
+    { "from": "pago", "to": "nuevo", "label": "timeout" },
+    { "from": "enviado", "to": "cerrado", "label": "entregar" }
+  ]
+}"#;
+
+const DATAFLOW_ETL: &str = r#"{
+  "version": 1,
+  "kind": "dataflow",
+  "title": "ETL de pedidos",
+  "nodes": [
+    { "id": "crm", "label": "CRM", "role": "external" },
+    { "id": "ingesta", "label": "ingesta", "role": "process" },
+    { "id": "crudo", "label": "pedidos crudos", "role": "store" },
+    { "id": "limpieza", "label": "limpieza", "role": "process" },
+    { "id": "curado", "label": "pedidos curados", "role": "store" },
+    { "id": "bi", "label": "tablero", "role": "external" }
+  ],
+  "edges": [
+    { "from": "crm", "to": "ingesta", "label": "pedidos" },
+    { "from": "ingesta", "to": "crudo", "label": "pedidos crudos" },
+    { "from": "crudo", "to": "limpieza", "label": "pedidos crudos" },
+    { "from": "limpieza", "to": "curado", "label": "pedidos curados" },
+    { "from": "curado", "to": "bi", "label": "pedidos curados" }
   ]
 }"#;
 

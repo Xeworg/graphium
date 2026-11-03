@@ -416,6 +416,20 @@ fn limits_of(limits: gx_core::kind::KindLimits) -> LimitsPayload {
 /// The minimal example of a kind (PRD §6.1).
 fn min_example_of(kind: &str) -> Value {
     match kind {
+        "dataflow" => serde_json::json!({
+            "version": 1,
+            "kind": "dataflow",
+            "title": "ETL",
+            "nodes": [
+                { "id": "crm", "label": "CRM", "role": "external" },
+                { "id": "ingesta", "label": "ingesta", "role": "process" },
+                { "id": "crudo", "label": "pedidos crudos", "role": "store" }
+            ],
+            "edges": [
+                { "from": "crm", "to": "ingesta", "label": "pedidos" },
+                { "from": "ingesta", "to": "crudo", "label": "pedidos crudos" }
+            ]
+        }),
         "er" => serde_json::json!({
             "version": 1,
             "kind": "er",
@@ -507,6 +521,20 @@ fn min_example_of(kind: &str) -> Value {
                 { "from": "limite", "to": "fin", "label": "sí" }
             ]
         }),
+        "state" => serde_json::json!({
+            "version": 1,
+            "kind": "state",
+            "title": "pedido",
+            "nodes": [
+                { "id": "nuevo", "label": "nuevo", "role": "initial" },
+                { "id": "pago", "label": "pago pendiente" },
+                { "id": "cerrado", "label": "cerrado", "role": "final" }
+            ],
+            "edges": [
+                { "from": "nuevo", "to": "pago", "label": "crear" },
+                { "from": "pago", "to": "cerrado", "label": "cancelar" }
+            ]
+        }),
         "swimlane" => serde_json::json!({
             "version": 1,
             "kind": "swimlane",
@@ -570,15 +598,24 @@ fn rules_of(kind: &str) -> Vec<String> {
                     .to_string(),
             );
             rules.push(
-                "`relation` decide la línea: `extends` (sólida, por defecto), `implements` (punteada), `composition` (sólida sin flecha), `dependency` (punteada)."
+                "`relation` decide la línea: `association` (sólida con flecha, por defecto), `extends` (sólida, se nombra), `implements` (punteada, se nombra), `composition` (sólida sin flecha), `dependency` (punteada)."
                     .to_string(),
             );
             rules.push(
                 "La herencia no puede tener ciclos: una clase no es su propio padre.".to_string(),
             );
             rules.push(
-                "Si la arista no lleva `label`, la línea se nombra con su relación.".to_string(),
+                "Si la arista no lleva `label`, la línea se nombra con su relación; la asociación no, porque no afirma nada."
+                    .to_string(),
             );
+        }
+        "dataflow" => {
+            rules.push(
+                "El `role` de un nodo decide su forma: `process` (redondeado, por defecto), `store` (cilindro), `external` (caja)."
+                    .to_string(),
+            );
+            rules.push("Un flujo no puede ir de un depósito a otro ni de una entidad externa a otra: en el medio va un proceso.".to_string());
+            rules.push("La etiqueta del flujo es el dato que viaja.".to_string());
         }
         "flowchart" => {
             rules.push(
@@ -587,6 +624,20 @@ fn rules_of(kind: &str) -> Vec<String> {
             );
             rules.push(
                 "La etiqueta de una arista es la condición del camino, por ejemplo `sí` / `no`."
+                    .to_string(),
+            );
+        }
+        "state" => {
+            rules.push(
+                "El `role` de un nodo decide su forma: `initial` (elipse), `state` (redondeado, por defecto), `final` (elipse)."
+                    .to_string(),
+            );
+            rules.push(
+                "Una máquina tiene **un solo** estado `initial`: dos entradas son dos máquinas."
+                    .to_string(),
+            );
+            rules.push(
+                "La etiqueta de una transición es el evento que la dispara, por ejemplo `pagar`."
                     .to_string(),
             );
         }

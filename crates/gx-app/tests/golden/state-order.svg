@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="0.00 0.00 129.63 458.50" width="129.63" height="458.50">
+<style>
+.bg{fill:rgba(27, 27, 27, 1.00)}
+.node-fill{fill:rgba(42, 42, 48, 1.00)}
+.node-stroke{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.node-text{fill:rgba(233, 233, 236, 1.00)}
+.edge-stroke{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.edge-text{fill:rgba(185, 185, 194, 1.00)}
+.accent{fill:rgba(110, 168, 254, 1.00);stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight{stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight-text{fill:rgba(110, 168, 254, 1.00)}
+.emphasis-muted{opacity:0.55}
+.lane-band{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.35;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.lane-label{fill:rgba(185, 185, 194, 1.00)}
+.lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
+.stroke-dashed{stroke-dasharray:6.00 4.00}
+.text{font-family:Inter, sans-serif}
+.arrow-normal{fill:rgba(138, 138, 150, 1.00)}
+.arrow-highlight{fill:rgba(110, 168, 254, 1.00)}
+.arrow-muted{fill:rgba(138, 138, 150, 1.00);opacity:0.55}
+</style>
+<defs>
+<marker id="arrow-normal" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
+<path class="arrow-normal" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00 Z"/>
+</marker>
+</defs>
+<g class="layer-edges">
+<polyline id="m-enviado-cerrado" class="edge-stroke" points="64.81,319.50 64.81,368.25 64.81,417.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="102.78" y="368.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">entregar</text>
+<polyline id="m-nuevo-pago" class="edge-stroke" points="76.70,41.50 104.64,90.25 76.70,139.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="131.87" y="90.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">crear</text>
+<polyline id="m-pago-enviado" class="edge-stroke" points="64.81,180.50 64.81,229.25 64.81,278.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="93.96" y="229.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">pagar</text>
+<polyline id="m-pago-nuevo" class="edge-stroke" points="52.92,139.00 24.99,90.25 52.92,41.50" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="59.81" y="90.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">timeout</text>
+</g>
+<g class="layer-nodes">
+<ellipse id="g-cerrado" class="node-fill node-stroke shape-ellipse" cx="64.81" cy="437.75" rx="38.43" ry="20.75"/>
+<text class="node-text text" x="64.81" y="437.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">cerrado</text>
+<rect id="g-enviado" class="node-fill node-stroke shape-rounded" x="25.92" y="278.00" width="77.79" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="64.81" y="298.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">enviado</text>
+<ellipse id="g-nuevo" class="node-fill node-stroke shape-ellipse" cx="64.81" cy="20.75" rx="32.82" ry="20.75"/>
+<text class="node-text text" x="64.81" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">nuevo</text>
+<rect id="g-pago" class="node-fill node-stroke shape-rounded" x="0.00" y="139.00" width="129.63" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="64.81" y="159.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">pago pendiente</text>
+</g>
+</svg>
