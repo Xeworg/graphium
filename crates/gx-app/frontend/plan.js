@@ -12,6 +12,13 @@ const ZOOM_MAX = 4.0;
 const ZOOM_STEP = 1.1;
 const CAMERA_THROTTLE_MS = 100;
 const SETTINGS_THROTTLE_MS = 100;
+// How long the camera travels until a diagram (PRD §7.2: an animated pan of
+// 250 ms, never a jump).
+const PAN_MS = 250;
+// The padding of the object of a diagram around its SVG (PRD §7.2). Rust
+// already applied it to `placement` and to the `bbox` of the state, so the
+// page only uses it to put the SVG one padding inside the object.
+const OBJECT_PADDING = 24;
 
 // The keys of `Settings` in Rust (`crates/gx-app/src/settings.rs`), in the
 // order the page sends them back. The panel reads and writes exactly these:
@@ -69,6 +76,12 @@ const bannerHint = document.getElementById("banner-hint");
 const bannerExtra = document.getElementById("banner-extra");
 const ghost = document.getElementById("ghost");
 const ghostText = document.getElementById("ghost-text");
+
+// The panel of the open diagrams (PRD §7 RF26, S1).
+const panel = document.getElementById("panel");
+const panelToggle = document.getElementById("panel-toggle");
+const panelList = document.getElementById("panel-list");
+const panelEmpty = document.getElementById("panel-empty");
 
 // The settings panel (PRD §7.1 RF25, S19).
 const settingsToggle = document.getElementById("settings-toggle");
@@ -236,6 +249,9 @@ plan.addEventListener(
   "wheel",
   (event) => {
     event.preventDefault();
+    // The human taking the wheel is the new owner of the view: a pan in
+    // flight stops where it is instead of fighting the zoom.
+    cancelPan();
     zoomAt(event.clientX, event.clientY, event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP);
   },
   { passive: false },
@@ -244,6 +260,8 @@ plan.addEventListener(
 let dragging = null;
 
 plan.addEventListener("pointerdown", (event) => {
+  // The same for the drag: the hand of the human wins over the animation.
+  cancelPan();
   dragging = { x: event.clientX, y: event.clientY, tx: camera.tx, ty: camera.ty };
   plan.classList.add("dragging");
   plan.setPointerCapture(event.pointerId);
@@ -286,6 +304,53 @@ function applyCameraIntent(intent) {
   camera.zoom = clampZoom(Number(intent.zoom || 1));
   applyCamera();
   notifyCamera();
+}
+
+/**
+ * The camera that puts `center` (a point of the plan) in the middle of the
+ * view, keeping the zoom the human chose (PRD §7.2, RF26).
+ */
+function cameraOn(center) {
+  return {
+    tx: viewport.w / 2 - center.x * camera.zoom,
+    ty: viewport.h / 2 - center.y * camera.zoom,
+  };
+}
+
+// The pan in flight, if there is one.
+let pan = null;
+
+/** Stops the pan in flight: the human took the plan with the hand. */
+function cancelPan() {
+  if (pan === null) {
+    return;
+  }
+  window.cancelAnimationFrame(pan.frame);
+  pan = null;
+}
+
+/**
+ * Pans the camera until `target` over `PAN_MS` (PRD §7.2: an animated pan of
+ * 250 ms, never a dry jump).
+ *
+ * The target carries the translation and nothing else: a pan that moved the
+ * scale would throw away the view the human chose.
+ */
+function panTo(target) {
+  cancelPan();
+  const from = { tx: camera.tx, ty: camera.ty };
+  const started = window.performance.now();
+  const step = (now) => {
+    const elapsed = Math.min(1, (now - started) / PAN_MS);
+    // Fast at the start, soft at the end: the eye follows the object.
+    const eased = 1 - Math.pow(1 - elapsed, 3);
+    camera.tx = from.tx + (target.tx - from.tx) * eased;
+    camera.ty = from.ty + (target.ty - from.ty) * eased;
+    applyCamera();
+    notifyCamera();
+    pan = elapsed < 1 ? { frame: window.requestAnimationFrame(step) } : null;
+  };
+  pan = { frame: window.requestAnimationFrame(step) };
 }
 
 // A window resize keeps the world point that was under the center of the
@@ -481,6 +546,133 @@ for (const button of presetButtons) {
   });
 }
 
+// --- Panel of open diagrams (PRD §7 RF26, RF28, S1, S3) -----------------
+
+// The diagram the human last chose in the panel. It is the only mark the
+// page keeps: whether a diagram is open is a fact of Rust, not of the panel.
+let selectedId = null;
+
+/**
+ * Asks Rust to close a diagram (PRD §7 RF28, S3).
+ *
+ * The page never closes anything by itself: the model lives in Rust, the id
+ * stays invalid and is never handed out again (RF28.1), and what comes back
+ * in `graphium://state` is what the plan keeps showing.
+ */
+function emitClose(diagramId) {
+  emit("graphium://close", { diagram_id: diagramId });
+}
+
+/** The moment of the last change, in the clock of the human. */
+function formatUpdated(value) {
+  const when = new Date(value);
+  if (Number.isNaN(when.getTime())) {
+    // A state without a readable date shows the raw value: the panel never
+    // invents a time for a diagram.
+    return String(value ?? "");
+  }
+  return when.toLocaleString("es", { dateStyle: "short", timeStyle: "short" });
+}
+
+/** One entry of the panel: title, kind, updated and its close button. */
+function panelItem(diagram) {
+  const item = document.createElement("li");
+  item.className = "panel-item";
+  item.classList.toggle("selected", diagram.diagram_id === selectedId);
+
+  const open = document.createElement("button");
+  open.type = "button";
+  open.className = "panel-item-open";
+  open.setAttribute("aria-current", diagram.diagram_id === selectedId ? "true" : "false");
+  open.title = `ir a ${diagram.title}`;
+  open.addEventListener("click", () => selectDiagram(diagram.diagram_id));
+
+  const title = document.createElement("span");
+  title.className = "panel-item-title";
+  title.textContent = diagram.title;
+
+  const meta = document.createElement("span");
+  meta.className = "panel-item-meta";
+
+  const kind = document.createElement("span");
+  kind.className = "panel-item-kind";
+  kind.textContent = diagram.kind;
+
+  const updated = document.createElement("span");
+  updated.className = "panel-item-updated";
+  updated.textContent = formatUpdated(diagram.updated_at);
+
+  meta.append(kind, updated);
+  open.append(title, meta);
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "panel-item-close";
+  close.textContent = "×";
+  close.setAttribute("aria-label", `cerrar ${diagram.title}`);
+  close.title = `cerrar ${diagram.title}`;
+  close.addEventListener("click", () => emitClose(diagram.diagram_id));
+
+  item.append(open, close);
+  return item;
+}
+
+/**
+ * Builds the list of open diagrams from the state Rust owns (PRD §8.6.1,
+ * S8). Nothing else feeds it: an entry the event does not carry does not
+ * exist, and the page never invents one.
+ */
+function renderPanel() {
+  panelList.replaceChildren(...state.diagrams.map(panelItem));
+  panelEmpty.classList.toggle("hidden", state.diagrams.length > 0);
+}
+
+/** Hides the panel or brings it back: one discreet button, no chrome lost. */
+function setDiagramPanelOpen(open) {
+  panel.classList.toggle("hidden", !open);
+  panelToggle.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+panelToggle.addEventListener("click", () => {
+  setDiagramPanelOpen(panel.classList.contains("hidden"));
+});
+
+/** The center of the object of a diagram, in plan units, from the state. */
+function objectCenter(diagram) {
+  const pos = diagram.pos;
+  const bbox = diagram.bbox;
+  if (!pos || !bbox) {
+    // A diagram without a place has no place to go yet: the page does not
+    // invent coordinates for it.
+    return null;
+  }
+  // `bbox` is already the object (the SVG plus its padding, PRD §7.2).
+  return { x: pos.x + bbox.w / 2, y: pos.y + bbox.h / 2 };
+}
+
+/**
+ * Moves the camera until a diagram, keeping the zoom (PRD §7 RF26): the view
+ * travels, the scale stays where the human left it.
+ */
+function focusDiagram(diagram) {
+  const center = objectCenter(diagram);
+  if (center === null) {
+    return;
+  }
+  panTo(cameraOn(center));
+}
+
+/** The human chose an entry: it is marked and the camera goes to it. */
+function selectDiagram(diagramId) {
+  const diagram = state.diagrams.find((entry) => entry.diagram_id === diagramId);
+  if (!diagram) {
+    return;
+  }
+  selectedId = diagramId;
+  renderPanel();
+  focusDiagram(diagram);
+}
+
 // --- Diagrams -----------------------------------------------------------
 
 function worldCenter() {
@@ -510,10 +702,14 @@ function insertDiagram(payload) {
   const width = Number.parseFloat(svg.getAttribute("width") || "0");
   const height = Number.parseFloat(svg.getAttribute("height") || "0");
   // Rust says where the diagram goes in plan units (PRD §7.2, `place`);
-  // without that intent it lands on the center of the view.
+  // without that intent it lands on the center of the view. `placement` is
+  // the corner of the **object**, so the SVG sits one padding inside it.
   const placement = payload.placement;
   const center = placement
-    ? { x: placement.x + width / 2, y: placement.y + height / 2 }
+    ? {
+        x: placement.x + (width + 2 * OBJECT_PADDING) / 2,
+        y: placement.y + (height + 2 * OBJECT_PADDING) / 2,
+      }
     : worldCenter();
 
   content.style.left = `${center.x - width / 2}px`;
@@ -521,21 +717,51 @@ function insertDiagram(payload) {
   content.appendChild(svg);
   container.appendChild(content);
 
+  // The `×` of the object (PRD §7 RF28, S3): it shows up when the pointer
+  // walks over the diagram. It sits in the padding ring of the object, so it
+  // never covers the drawing nor the arrows of the plan.
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "diagram-close";
+  close.textContent = "×";
+  close.setAttribute("aria-label", "cerrar el diagrama");
+  close.title = "cerrar el diagrama";
+  close.addEventListener("pointerdown", (event) => {
+    // The plan starts the drag of the camera on its own pointer down: the
+    // button is not the background, so it does not move the view.
+    event.stopPropagation();
+  });
+  close.addEventListener("click", (event) => {
+    event.stopPropagation();
+    emitClose(payload.diagram_id);
+  });
+  content.appendChild(close);
+
   // F2: a new diagram **sums** to the plan, it does not replace the one
   // that was there (PRD §11.1, S9). The plan is a canvas with room for
   // several objects, each one where Rust placed it.
-
+  //
+  // The first diagram of the plan frames the view; from the second on the
+  // camera pans until the new object and the zoom of the human is never
+  // touched (PRD §7.2, RF27). The answer is read before the new object
+  // lands, or the first one would count as the second.
+  const first = framesOnInsert();
   objects.set(payload.diagram_id, container);
   diagrams.appendChild(container);
   applyCamera();
-  // The view fits the new diagram (PRD §7.2, S17): a diagram that does not
-  // fit is cut by the window, and a cut diagram cannot be read.
-  applyCameraIntent(payload.camera);
   viewport = {
     w: plan.clientWidth || window.innerWidth,
     h: plan.clientHeight || window.innerHeight,
   };
   empty.classList.add("hidden");
+
+  if (first) {
+    // The view fits the new diagram (PRD §7.2, S17): a diagram that does not
+    // fit is cut by the window, and a cut diagram cannot be read.
+    applyCameraIntent(payload.camera);
+  } else if (placement) {
+    panTo(cameraOn(center));
+  }
 
   // The frontend answers after two animation frames: the SVG is painted
   // (PRD §8.6.1, step 4).
@@ -544,6 +770,35 @@ function insertDiagram(payload) {
       emit("render_ack", { req_id: payload.req_id, ok: true });
     });
   });
+}
+
+/**
+ * Whether this render is the first diagram of the plan.
+ *
+ * Only the first one is framed with the camera of the event: from the second
+ * on the plan pans until the new object and keeps the zoom (PRD §7.2, RF27).
+ */
+function framesOnInsert() {
+  return objects.size === 0;
+}
+
+/**
+ * Drops from the plan the objects Rust no longer lists (PRD §7 RF28): the
+ * state is the truth, so a closed diagram leaves the plan when the state says
+ * so and not when the page feels like it.
+ */
+function syncObjects() {
+  const open = new Set(state.diagrams.map((diagram) => diagram.diagram_id));
+  for (const [diagramId, element] of objects) {
+    if (open.has(diagramId)) {
+      continue;
+    }
+    element.remove();
+    objects.delete(diagramId);
+  }
+  if (selectedId !== null && !open.has(selectedId)) {
+    selectedId = null;
+  }
 }
 
 function showError(payload) {
@@ -587,6 +842,8 @@ listen("graphium://state", (event) => {
   // reads the state it receives.
   const diagrams = Array.isArray(event.payload) ? event.payload : [];
   state.diagrams = diagrams;
+  syncObjects();
+  renderPanel();
   empty.classList.toggle("hidden", diagrams.length > 0);
 });
 listen("graphium://pending", (event) => {

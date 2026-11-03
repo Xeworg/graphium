@@ -12,6 +12,29 @@
       <div id="diagrams" class="diagrams"></div>
     </div>
 
+    <!-- The panel of the open diagrams (PRD §7 RF26, RF28, S1). It is a
+         sibling of the plan, never a child: the wheel and the drag of the
+         camera listen on `#plan`, so the panel can never steal them. It is
+         built only from `graphium://state` (PRD §8.6.1, S8): the list below
+         is empty until Rust says what is open. -->
+    <button
+      id="panel-toggle"
+      class="panel-toggle"
+      type="button"
+      aria-label="mostrar u ocultar los diagramas abiertos"
+      aria-expanded="true"
+      aria-controls="panel"
+      title="diagramas abiertos"
+    >
+      ☰
+    </button>
+
+    <aside id="panel" class="panel" aria-label="diagramas abiertos">
+      <h2 class="panel-title">diagramas abiertos</h2>
+      <ul id="panel-list" class="panel-list"></ul>
+      <p id="panel-empty" class="panel-empty">sin diagramas abiertos</p>
+    </aside>
+
     <!-- State 1: empty plan. -->
     <div id="empty" class="empty">
       <p class="empty-title">esperando al agente…</p>

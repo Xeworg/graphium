@@ -227,6 +227,42 @@ body {
   overflow: visible;
 }
 
+/* The `×` of the object (PRD §7 RF28, S3): it shows up when the pointer walks
+ * over the diagram and never before, so the plan stays clean. It sits in the
+ * padding ring of the object, so it never covers the drawing. */
+.diagram-close {
+  position: absolute;
+  top: -18px;
+  right: -18px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.diagram:hover .diagram-close,
+.diagram-close:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.diagram-close:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* State 1: empty plan. */
 .empty {
   position: fixed;
@@ -266,9 +302,11 @@ body {
   align-items: flex-start;
   gap: 12px;
   padding: 10px 12px;
-  /* The banner reaches the gear in the top-right corner: it stops short of
-     it so its close button stays clickable. */
+  /* The banner reaches the gear in the top-right corner and the toggle of
+     the panel in the top-left one: it stops short of both, so their buttons
+     stay clickable and its own text stays readable. */
   padding-right: 56px;
+  padding-left: 52px;
   background: #3a1d1d;
   border-bottom: 1px solid #7a3434;
   font-size: 13px;
@@ -322,6 +360,160 @@ body {
   justify-content: center;
   opacity: 0.7;
   pointer-events: none;
+}
+
+/* The panel of the open diagrams (PRD §7 RF26, S1): the toggle in the
+ * top-left corner of the plan and the list it opens. Both are siblings of
+ * `#plan`, never children: the wheel and the drag of the camera listen on the
+ * plan, so the panel can never steal them. The colours come from the tokens
+ * of the theme, so the light theme reaches the panel like it reaches the
+ * drawings (RF22, S18). */
+.panel-toggle {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 30;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.panel-toggle:hover,
+.panel-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.panel {
+  position: fixed;
+  top: 52px;
+  left: 12px;
+  z-index: 30;
+  width: 232px;
+  max-height: calc(100vh - 76px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px var(--surface-shadow);
+  font-size: 13px;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.panel-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* A long list scrolls inside the panel instead of growing past the
+     window: twelve diagrams have to stay reachable. */
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* One entry: the open button of the diagram on the left, its close button on
+ * the right. The chosen one keeps the accent of the panel. */
+.panel-item {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.panel-item:hover {
+  border-color: var(--surface-border);
+}
+
+.panel-item.selected {
+  border-color: var(--accent);
+  background: var(--code-bg);
+}
+
+.panel-item-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 8px;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.panel-item.selected .panel-item-title {
+  color: var(--accent);
+}
+
+.panel-item-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.panel-item-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.panel-item-kind {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.panel-item-close {
+  padding: 0 8px;
+  font-size: 15px;
+  line-height: 1;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.panel-item-close:hover {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.panel-empty {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.6;
 }
 
 /* The settings of the plan (PRD §7.1 RF25, S19): the gear, top-right of the
@@ -510,7 +702,11 @@ body {
 .settings-close:focus-visible,
 .settings-preset:focus-visible,
 .settings-radio input:focus-visible,
-.settings-field input:focus-visible {
+.settings-field input:focus-visible,
+.panel-toggle:focus-visible,
+.panel-item-open:focus-visible,
+.panel-item-close:focus-visible,
+.diagram-close:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
