@@ -54,6 +54,11 @@ jobs:
       - name: Golden SVG and byte budget (O8, RNF1-ter)
         run: cargo test -p gx-app --test golden_svg -- --nocapture
 
+      # RNF10: doce diagramas de 300 nodos viven a la vez bajo el techo de
+      # 250 MB. Se mide en release porque en debug no significa nada.
+      - name: Memory ceiling (RNF10)
+        run: cargo test --release -p gx-app --test rnf10 -- --ignored --nocapture
+
       # PRD §9.1: the dependency matrix is a gate, not a convention.
       - name: Dependency gate (PRD §9.1)
         run: |
