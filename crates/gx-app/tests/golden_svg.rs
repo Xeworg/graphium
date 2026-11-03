@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 13] = [
+const CASES: [(&str, &str); 14] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -46,6 +46,7 @@ const CASES: [(&str, &str); 13] = [
     ("state-order", STATE_ORDER),
     ("dataflow-etl", DATAFLOW_ETL),
     ("class-shop", CLASS_SHOP),
+    ("component-api", COMPONENT_API),
 ];
 
 const MINIMAL: &str = r#"{
@@ -272,6 +273,28 @@ const CLASS_SHOP: &str = r#"{
     { "from": "Refund", "to": "Order", "relation": "extends" },
     { "from": "Order", "to": "Payable", "relation": "implements" },
     { "from": "Order", "to": "Money", "relation": "composition", "label": "total" }
+  ]
+}"#;
+
+const COMPONENT_API: &str = r#"{
+  "version": 1,
+  "kind": "component",
+  "title": "API de pedidos",
+  "nodes": [
+    { "id": "web", "label": "Web", "role": "container" },
+    { "id": "api", "label": "API" },
+    { "id": "db", "label": "Postgres", "role": "database" },
+    { "id": "pagos", "label": "Pagos", "role": "external" },
+    { "id": "jobs", "label": "worker de envíos" }
+  ],
+  "groups": [
+    { "id": "backend", "label": "Backend", "members": ["api", "db", "jobs"] }
+  ],
+  "edges": [
+    { "from": "web", "to": "api", "label": "HTTPS" },
+    { "from": "api", "to": "db", "label": "SQL" },
+    { "from": "api", "to": "pagos", "label": "cobro" },
+    { "from": "api", "to": "jobs", "label": "encola" }
   ]
 }"#;
 

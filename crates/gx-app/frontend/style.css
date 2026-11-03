@@ -95,6 +95,21 @@
   fill: none;
 }
 
+/* El contenedor de un grupo (un *boundary* de un diagrama de componentes): el
+ * recuadro punteado que dice qué piezas forman el mismo sistema, y su nombre
+ * arriba a la izquierda. */
+.graphium .group-box {
+  fill: var(--node-fill);
+  fill-opacity: 0.12;
+  stroke: var(--node-stroke);
+  stroke-width: 1px;
+  stroke-dasharray: 8 5;
+}
+
+.graphium .group-label {
+  fill: var(--edge-text);
+}
+
 /* La banda de un carril de timeline/swimlane: el fondo que dice en qué fila
  * está cada evento, y el nombre del carril en la canaleta de la izquierda. */
 .graphium .lane-band {

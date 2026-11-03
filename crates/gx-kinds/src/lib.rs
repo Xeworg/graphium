@@ -5,6 +5,7 @@
 //! (PRD §7, O7).
 
 pub mod class;
+pub mod component;
 pub mod dataflow;
 pub mod er;
 pub mod flow;
@@ -29,6 +30,7 @@ pub fn register_all() {
     sequence::register();
     flowchart::register();
     class::register();
+    component::register();
     state::register();
     dataflow::register();
     timeline::register();
@@ -45,6 +47,7 @@ pub fn kind_names() -> Vec<&'static str> {
         sequence::SequenceKind::KIND,
         flowchart::FlowchartKind::KIND,
         class::ClassKind::KIND,
+        component::ComponentKind::KIND,
         state::StateKind::KIND,
         dataflow::DataflowKind::KIND,
         timeline::TimelineKind::KIND,

@@ -38,6 +38,9 @@ const MUTED_OPACITY: f64 = 0.55;
 const LIFELINE_DASH: (f64, f64) = (4.0, 4.0);
 /// El punteado de una flecha declarada punteada.
 const DASH_PATTERN: (f64, f64) = (6.0, 4.0);
+/// El punteado del borde de un contenedor: dice "esto es una frontera", no una
+/// caja más del dibujo.
+const GROUP_DASH: (f64, f64) = (8.0, 5.0);
 
 /// The only `SvgRenderer` of Graphium (PRD §8.5).
 pub struct SvgRenderer {
@@ -82,6 +85,17 @@ impl SvgRendererContract for SvgRenderer {
             None => Vec::new(),
         };
         write_defs(&mut out, &routed);
+
+        // Los contenedores de un grafo van primero: son el fondo sobre el que
+        // se leen las cajas. Sin ellos un diagrama de componentes es una nube
+        // de cajas y no se ve qué piezas forman el mismo sistema.
+        if graph.is_some() {
+            out.push_str("<g class=\"layer-groups\">\n");
+            for group in ordered_groups(layout) {
+                write_group_box(&mut out, group);
+            }
+            out.push_str("</g>\n");
+        }
 
         // Las bandas de carril van primero: son el fondo sobre el que se leen
         // los eventos. Sin ellas un swimlane es una nube de cajas y no se ve
@@ -221,7 +235,7 @@ fn routed_edges<'a>(
 
 fn write_style(out: &mut String, palette: &Palette) {
     let border = fmt_num(TOKENS.border_width);
-    let rules: [(&str, String); 18] = [
+    let rules: [(&str, String); 20] = [
         (".bg", format!("fill:{}", palette.bg.css())),
         (".node-fill", format!("fill:{}", palette.node_fill.css())),
         (
@@ -257,6 +271,18 @@ fn write_style(out: &mut String, palette: &Palette) {
             ".emphasis-muted",
             format!("opacity:{}", fmt_num(MUTED_OPACITY)),
         ),
+        (
+            ".group-box",
+            format!(
+                "fill:{};fill-opacity:0.12;stroke:{};stroke-width:{};stroke-dasharray:{} {}",
+                palette.node_fill.css(),
+                palette.node_stroke.css(),
+                border,
+                fmt_num(GROUP_DASH.0),
+                fmt_num(GROUP_DASH.1),
+            ),
+        ),
+        (".group-label", format!("fill:{}", palette.edge_text.css())),
         (
             ".lane-band",
             format!(
@@ -786,6 +812,33 @@ fn write_centered_text(out: &mut String, classes: &str, label: &str, placed: &No
         ));
     }
     out.push_str("</text>\n");
+}
+
+/// Draws one group of a graph: its container and its name, top left.
+fn write_group_box(out: &mut String, group: &LayoutGroup) {
+    let id = escape_text(&format!("cluster-{}", group.id));
+    write_rect(
+        out,
+        &id,
+        "group-box",
+        &group.bbox,
+        Some(TOKENS.corner_radius),
+    );
+
+    let Some(label) = group
+        .label
+        .as_deref()
+        .filter(|label| !label.trim().is_empty())
+    else {
+        return;
+    };
+    out.push_str(&format!(
+        "<text class=\"group-label text\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"start\" dominant-baseline=\"central\">{}</text>\n",
+        fmt_num(group.bbox.x + TOKENS.node_padding),
+        fmt_num(group.bbox.y + TOKENS.text_size),
+        fmt_num(TOKENS.text_size),
+        escape_text(label),
+    ));
 }
 
 /// Draws one lane of a timeline: its band and its name in the left gutter.

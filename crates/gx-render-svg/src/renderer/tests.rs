@@ -430,6 +430,93 @@ fn a_timeline_ir_still_renders_a_valid_canvas() {
     assert!(element(&document, "script").is_empty());
 }
 
+/// Un grafo con grupos dibuja cada grupo como un contenedor: el recuadro va
+/// **detrás** de las cajas y las flechas, y su nombre arriba a la izquierda.
+/// Sin el contenedor, un diagrama de componentes es una nube de cajas y no se
+/// ve qué piezas forman el mismo sistema.
+#[test]
+fn a_graph_draws_each_group_as_a_container_with_its_name() {
+    let ir = Ir::Graph(IrGraph {
+        direction: Direction::TB,
+        layout_hint: LayoutHint::Layered,
+        nodes: vec![IrNode::new("api", "API"), IrNode::new("db", "Base")],
+        edges: vec![IrEdge::new("api", "db")],
+        groups: vec![gx_core::IrGroup {
+            id: "backend".to_string(),
+            label: Some("Backend".to_string()),
+            members: vec!["api".to_string(), "db".to_string()],
+        }],
+    });
+    let layout = LayoutGraph {
+        nodes: [
+            (
+                "api".to_string(),
+                NodeBox {
+                    center: Point::new(120.0, 120.0),
+                    size: Size::new(100.0, 44.0),
+                },
+            ),
+            (
+                "db".to_string(),
+                NodeBox {
+                    center: Point::new(120.0, 240.0),
+                    size: Size::new(100.0, 44.0),
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        edges: vec![fixture::routed(
+            "api",
+            "db",
+            &[(120.0, 142.0), (120.0, 218.0)],
+            None,
+        )],
+        groups: vec![group(
+            "backend",
+            Some("Backend"),
+            Rect::new(20.0, 60.0, 200.0, 250.0),
+        )],
+        bbox: Rect::new(0.0, 0.0, 240.0, 330.0),
+    };
+
+    let svg = render(&ir, &layout, &Palette::plano());
+    let document = document(&svg);
+
+    let boxes: Vec<_> = element(&document, "rect")
+        .into_iter()
+        .filter(|node| classes(*node) == "group-box")
+        .collect();
+    assert_eq!(boxes.len(), 1, "un contenedor por grupo");
+    assert_eq!(boxes[0].attribute("id"), Some("cluster-backend"));
+    assert_eq!(boxes[0].attribute("x"), Some("20.00"));
+    assert_eq!(boxes[0].attribute("width"), Some("200.00"));
+
+    let labels: Vec<_> = element(&document, "text")
+        .into_iter()
+        .filter(|node| classes(*node).contains("group-label"))
+        .collect();
+    assert_eq!(labels.len(), 1);
+    assert_eq!(labels[0].text(), Some("Backend"));
+    assert_eq!(labels[0].attribute("text-anchor"), Some("start"));
+
+    // Los contenedores van detrás: el SVG los escribe antes que las aristas y
+    // que las cajas.
+    let group_layer = svg.find("layer-groups").expect("capa de grupos");
+    let edge_layer = svg.find("layer-edges").expect("capa de aristas");
+    let node_layer = svg.find("layer-nodes").expect("capa de cajas");
+    assert!(
+        group_layer < edge_layer,
+        "los grupos van debajo de las flechas"
+    );
+    assert!(
+        group_layer < node_layer,
+        "los grupos van debajo de las cajas"
+    );
+
+    assert_eq!(svg, render(&ir, &layout, &Palette::plano()));
+}
+
 /// Un timeline se lee por sus bandas: la banda dice en qué carril está el
 /// evento y su nombre va en la canaleta de la izquierda. Sin banda, el dibujo
 /// es una nube de cajas sueltas.
