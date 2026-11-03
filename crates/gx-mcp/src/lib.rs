@@ -10,6 +10,7 @@
 //! takes stdout in exclusive mode and nothing in this crate writes to it
 //! (PRD §8.6.1, RNF7).
 
+pub mod contract;
 pub mod store;
 pub mod tools;
 
@@ -75,6 +76,44 @@ message, hint? }` with a stable `code`; `ok: true` returns the new \
 render_ms, svg_bytes }` and `rendered` telling whether the window confirmed \
 the paint. `opts` is accepted for forward compatibility and currently \
 ignored.";
+
+/// Description of the `validate_diagram` tool, written for the agent.
+const VALIDATE_DIAGRAM_DESCRIPTION: &str = "\
+Check a diagram document WITHOUT opening anything. Use it before \
+`render_diagram` when the document is long or the last render failed: it \
+runs the same validation and returns the same errors, but no window opens \
+and no diagram is drawn. The response is JSON: { ok, errors, warnings, \
+projected_svg_bytes, errors_truncated }. `ok: false` means the document is \
+wrong and `errors[]` carries `{ path, code, message, hint? }` with a stable \
+`code` and the JSON path of the problem; fix the path and call again. \
+`ok: true` means the document is valid and `projected_svg_bytes` says how \
+big the diagram would be.";
+
+/// Description of the `get_diagram_schema` tool, written for the agent.
+const GET_DIAGRAM_SCHEMA_DESCRIPTION: &str = "\
+The contract of a diagram kind. Call it without arguments to get the index \
+of the available kinds with their limits and a minimal example, or with \
+`kind` (for example \"graph\") to get its JSON Schema, the cross rules, the \
+valid shapes, the limits and an example. The schema is the same contract \
+that `render_diagram` validates against: read it before writing a \
+document, and use the `rules` to know what the schema cannot express.";
+
+/// Parameters of the `validate_diagram` tool (PRD §11).
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ValidateDiagramParams {
+    /// The complete diagram document, as a JSON object.
+    pub diagram: serde_json::Value,
+}
+
+/// Parameters of the `get_diagram_schema` tool (PRD §11).
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GetDiagramSchemaParams {
+    /// The kind to describe. Without it, the index of the kinds.
+    #[serde(default)]
+    pub kind: Option<String>,
+}
 
 /// Parameters of the `render_diagram` tool (PRD §11).
 #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
@@ -161,6 +200,55 @@ impl GraphiumServer {
             });
         }
 
+        let value = serde_json::to_value(&response).map_err(|error| {
+            ErrorData::internal_error(format!("cannot serialize the response: {error}"), None)
+        })?;
+        Ok(CallToolResult::structured(value))
+    }
+
+    #[tool(
+        name = "validate_diagram",
+        description = VALIDATE_DIAGRAM_DESCRIPTION,
+        annotations(
+            title = "Validate diagram",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn validate_diagram(
+        &self,
+        Parameters(params): Parameters<ValidateDiagramParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let document = serde_json::to_string(&params.diagram).map_err(|error| {
+            ErrorData::invalid_params(format!("`diagram` is not valid JSON: {error}"), None)
+        })?;
+
+        // The dry run is pure validation: no layout, no render, no window.
+        let response = contract::validate_diagram(&document);
+        let value = serde_json::to_value(&response).map_err(|error| {
+            ErrorData::internal_error(format!("cannot serialize the response: {error}"), None)
+        })?;
+        Ok(CallToolResult::structured(value))
+    }
+
+    #[tool(
+        name = "get_diagram_schema",
+        description = GET_DIAGRAM_SCHEMA_DESCRIPTION,
+        annotations(
+            title = "Get diagram schema",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn get_diagram_schema(
+        &self,
+        Parameters(params): Parameters<GetDiagramSchemaParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let response = contract::get_diagram_schema(params.kind.as_deref());
         let value = serde_json::to_value(&response).map_err(|error| {
             ErrorData::internal_error(format!("cannot serialize the response: {error}"), None)
         })?;

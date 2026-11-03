@@ -1,0 +1,64 @@
+# F1 — MVP de Graphium
+
+Feature ODD para el MVP (F1) del PRD v1.7 (`docs/PRD.md` §12). F1 cierra el
+ciclo de uso real: un agente pide un diagrama, lo ve en el plano, lo corrige
+sin abrir nada, lo consulta después de una compaction y lo exporta.
+
+Criterio de salida (PRD §12, verbatim): «H1, H2, H3, H6; snapshots deterministas; golden-SVG hash en CI; presupuestos de §7.3 y RNF1-quater medidos en CI.»
+
+F0 (`odd/tasks/f0-spike-tecnico.md`) quedó cerrado: el camino end-to-end
+funciona (JSON → schema → validate → IR → dagre → SVG → plano) y
+`render_diagram` devuelve `rendered: true`.
+
+## Specs
+
+- **S1** (PRD §7, RF3): «Tool MCP `get_diagram_schema(kind?)`: devuelve el JSON Schema (obligatorio `kind`, o índice de kinds disponibles con tamaño; nunca los 24 schemas inline).»
+- **S2** (PRD §11.1): «Sin `kind` → índice `{ ok, kinds: [{ kind, phase, engine, mermaid_export, limits, min_example, disponible }], supported_versions }`; el índice **nunca** incluye los schemas. Con `kind` → `{ ok, kind, schema, rules[], shapes[], required[], limits, examples[], supported_versions }`, donde `shapes[]` es el **subconjunto válido para ese kind** (no el enum global) y `rules[]` son las reglas cruzadas (refs, unicidad) escritas en texto. Kind desconocido → `ok: false, code: "unknown_kind"`, `available_kinds[]`, `hint` con la lista.»
+- **S3** (PRD §7, RF5): «Validación estricta con errores accionables: `ValidationError { path, code, message, hint? }`; `code` es un enum estable (`unknown_ref`, `duplicate_id`, `unknown_field`, `unsupported_version`, `too_large`, `invalid_enum`, `missing_field`, …); máx. 20 errores + `errors_truncated: true`. Campos desconocidos: **rechazados** (`unknown_field` con did-you-mean del campo más cercano). `version` no soportada → `unsupported_version` en `path: "version"` + `supported_versions` en la respuesta.»
+- **S4** (PRD §11): «`validate_diagram` | `diagram` | `{ ok, errors?, warnings?, projected_svg_bytes? }` — **dry-run**: nada se renderiza ni abre.»
+- **S5** (PRD §11.1, regla de oro): «Toda restricción expresable en JSON Schema (enums cerrados, `required`, mínimos/máximos, patrones) vive en el **schema**, no en `validate()`. `validate()` queda para reglas **cruzadas** (`unknown_ref`, `duplicate_id`, límites de tamaño). `validate_diagram` ejecuta **exactamente** el mismo pipeline que `render_diagram` (registry → schema → `validate()`), sin layout ni render.»
+- **S6** (PRD §7, RF20): «Política de tamaño: límite duro por kind (`graph`: 300 nodos / 600 edges) → error `too_large` con conteo recibido y máximo; warning no bloqueante > 150 nodos (`warnings[]` en la respuesta de la tool).»
+- **S7** (PRD §11.1): «El id es opaco, **monótono y nunca se reutiliza** (`d-0001`, `d-0002`, …): cerrar un diagrama lo **invalida**, no lo devuelve al pool. Toda tool que reciba un id inválido, cerrado o inexistente responde `ok: false, code: "unknown_diagram"` con `known_ids[]` y `hint: "el diagrama no está en el plano (quizá lo cerró el humano); usá list_diagrams()"`.»
+- **S8** (PRD §11.1): «Cada diagrama guarda `session_id` (socket peer). Por defecto `list_diagrams` y `clear_canvas` operan **solo sobre la sesión emisora**; `clear_canvas({ scope: "plano" })` borra todo el plano. `get_diagram`/`update_diagram`/`export_diagram` sobre un diagrama de otra sesión → `not_owner` con `hint: "ese diagrama pertenece a otra sesión MCP"`.»
+- **S9** (PRD §11.1): «El merge RFC 7386 se aplica sobre una **copia**, el resultado se valida con el mismo pipeline de `render_diagram` y **solo entonces** reemplaza el documento; si falla, el documento y el render previos quedan intactos y la respuesta es `{ ok: false, errors: [...], applied: false }`.»
+- **S10** (PRD §11): «`update_diagram` | `diagram_id`, `patch` (RFC 7386), `revision?` | `{ ok, errors?, applied: bool, revision }`»
+- **S11** (PRD §11): «`list_diagrams` | — | `{ ok, diagrams: [{ diagram_id, title, kind, updated_at, session_id }] }`», «`get_diagram` | `diagram_id` | `{ ok, diagram, revision }`» y «`clear_canvas` | `{ scope?: "sesion" \| "plano" }` | `{ ok, removed: n }`»
+- **S12** (PRD §7, RF19): «`graphium mcp-config [--client pi|claude|cursor|generic]` imprime el JSON de configuración listo para pegar; `QUICKSTART.md` de una página en el repo.»
+- **S13** (PRD §11): «Cada tool declara su descripción en el MCP ("que la ia por medio de un mcp entienda como se usa"). Resultados: sin schemas gigantes inline (RF3), errores con tope (RF5).»
+- **S14** (PRD §5, H3): «El agente manda un edge hacia un `id` inexistente. La tool responde `ok: false` con `errors: [{path: "edges[3].to", code: "unknown_ref", message: "unknown node id 'db2'", hint: "did you mean 'db'?"}]`. El agente corrige y reenvía (idealmente validado antes con `validate_diagram`, sin abrir nada).»
+- **S15** (PRD §5, H1): «El humano escribe *"mostrame cómo funciona la función `parse_config`"*. El agente analiza el código, valida en seco (`validate_diagram`), llama `render_diagram` con un `kind: "graph"`.»
+- **S16** (PRD §7, RF2): «Tool MCP `clear_canvas()`: elimina **todos los diagramas** del plano (no cierra la ventana ni mata la sesión MCP).»
+- **S17** (PRD §7, RF6): «La ventana es un **plano (canvas)**: fondo con grilla (§7.1), cámara con **zoom** (rueda) y **pan** (arrastrando el fondo), **fit-to-view** al enfocar un diagrama y estado vacío explícito ("esperando al agente…"). En F1 el plano abre un solo diagrama; los varios simultáneos llegan con RF26.»
+- **S18** (PRD §8.5.2): «El render recibe una `Palette` activa; **no** lee el filesystem, el entorno ni la hora.» y «Presets F1: `plano` (dark, `#1b1b1b` + grilla blanca 14%) · `claro` (light) · `sin grilla` (dark sin grilla).» y «El preset `claro` es un **tema real**, no un fondo blanco: nodos, labels y flechas mantienen contraste.»
+- **S19** (PRD §7.1, RF25): «Panel de ajustes en la ventana (engranaje) con: color de fondo, color de grilla, opacidad, separación, ángulo y mostrar/ocultar grilla. Se persiste en `~/.graphium/settings.json`; **el agente no cambia estos ajustes** (el color es decisión del humano). El tema claro/oscuro (RF22) se apoya en el mismo archivo.»
+- **S20** (PRD §7.3, RF20-bis): «**Entre el warning (> 150 nodos) y el límite duro, Graphium NO rechaza: degrada**, en este orden y sin preguntar: 1. omite los labels de las edges; 2. reduce el espaciado entre nodos al 70% del default; 3. emite el texto sin kerning fino; 4. si el SVG resultante excede **2 MB**, corta y responde `ok: false, code: "too_large", svg_bytes` con `hint: "usá opts.extract: {around, depth}"`.» y «Lo que se degradó se reporta en `warnings[]` con `code: "degraded"` y el paso aplicado.»
+- **S21** (PRD §7.3, RF20-bis): «**`opts.extract: {around, depth?}` entra en F1** (default `depth: 1`, tope 300 nodos en el subgrafo): el subgrafo conserva el `diagram_id` del padre y se marca `extracted_from: "<id>@<depth>"`.» y «Todo layout tiene deadline `opts.layout_timeout_ms` (default 2000 ms, techo 10 000 ms); al vencer responde `ok: false, code: "layout_timeout", metrics: { elapsed_ms }` y **el plano queda intacto**.»
+- **S22** (PRD §7.3, RNF8): «Los renders se encolan en una cola FIFO de profundidad **8** por proceso; con la cola llena la tool responde `ok: false, code: "busy", queue_depth, retry_after_ms`. El layout corre como máximo **2 en paralelo** (`spawn_blocking`).»
+- **S23** (PRD §7.2): «`fit-to-view` usa 32 px de margen y **clampa en zoom 0.4**: por debajo no se achica más.» y «Al redimensionar la ventana se conserva el punto de mundo que estaba bajo el centro del viewport; **no** se refitea.»
+- **S24** (PRD §8.5.1): «**Fuera del pipeline determinista** (nunca comparados por hash): cámara (pan/zoom), grilla y sus colores, panel lateral, banner de error, geometría de ventana, `--dump-last` y **PNG**.» y «O8 se verifica en **Linux x86_64** hasta que existan builds de macOS/Windows.»
+- **S25** (PRD §7, RNF1-ter): «Un SVG de `graph` pesa como máximo `900 B × nodos + 350 B × edges + 40 KB` de cabecera (300n/600e ≤ 520 KB).»
+- **S26** (PRD §6.1, H2): el kind `er` — «{ "version": 1, "kind": "er", "title": "Schema — posts", "tables": [ { "name": "users", "columns": [ { "name": "id", "type": "uuid", "key": "pk" } ] } ], "relations": [ { "from": { "table": "users", "column": "id" }, "to": { "table": "posts", "column": "user_id" }, "cardinality": "1:N" } ] }» — y «En el plano aparece el ER con las tablas como cajas de columnas.»
+- **S27** (PRD §7, RF4): «Kinds `graph` y `er` operativos.»
+- **S28** (PRD §14, criterio 3): «**Determinismo (O8):** mismo JSON → SVG idéntico byte a byte (workflow golden-SVG en CI).»
+- **S29** (PRD §12, F1, salida): «H1, H2, H3, H6; snapshots deterministas; golden-SVG hash en CI; presupuestos de §7.3 y RNF1-quater medidos en CI.»
+- **S30** (PRD §8.6.1): «`graphium mcp-config [--client ...]` imprime `{"command": "<ruta absoluta del binario>", "args": ["--stdio"]}`.» — en F1 el flag `--client` elige el formato del JSON de configuración (pi / claude / cursor / generic).
+
+## Tasks
+
+| ID | Tarea | Specs | Ruta | Commit |
+|---|---|---|---|---|
+| T1 | Feature doc de F1 + mirror + lista de tareas | S1-S30 | inline | este commit |
+| T2 | `validate_diagram` (dry-run, mismo pipeline que `render_diagram`) + `get_diagram_schema` (índice y schema por kind) + tope de 20 errores + did-you-mean de campos | S1, S2, S3, S4, S5, S25 | inline | `feat(gx-mcp): validate_diagram y get_diagram_schema` |
+| T3 | `list_diagrams`, `get_diagram`, `clear_canvas` y `update_diagram` (RFC 7386 transaccional) con revisión monótona, alcance de sesión y ciclo de vida del `diagram_id` | S7, S8, S9, S10, S11, S16 | inline | `feat(gx-mcp): list, get, clear y update transaccional` |
+| T4 | **El harness del agente**: instrucciones del servidor MCP (cuándo usar cada tool y cuándo no), descripciones de cada tool, `mcp-config --client` y `docs/QUICKSTART.md` para agentes | S12, S13, S14, S15 | inline | `feat(gx-mcp): harness de instrucciones para el agente` |
+| T5 | Kind `er` completo: schema (`schemars`), reglas cruzadas, traducción a la IR y render de las tablas como cajas de columnas | S26, S27 | inline | `feat(gx-kinds): kind er con schema y traducción a la IR` |
+| T6 | RF20-bis: escalera de degradación (4 pasos), `opts.extract`, deadline de layout y cola FIFO de profundidad 8 con `busy` | S6, S20, S21, S22 | inline | `feat(gx-mcp): degradación, extract y cola de renders` |
+| T7 | RF22/RF24/RF25: tema `claro` real, panel de ajustes en la ventana y persistencia en `~/.graphium/settings.json` | S18, S19 | inline | `feat(gx-app): panel de ajustes y tema claro` |
+| T8 | §7.2: `fit-to-view` con clamp en 0.4, `opts.focus`, conservar el centro al redimensionar y los estados de la ventana | S17, S23 | inline | `feat(gx-app): fit-to-view y foco de diagrama` |
+| T9 | Golden-SVG con hash en CI + presupuestos de §7.3 y RNF1-quater medidos + el budget de bytes del SVG (RNF1-ter) | S24, S25, S28, S29 | inline | `ci: golden-SVG y presupuestos medidos` |
+
+## Log
+
+- **L1** (2026-11-03, arranque de F1): el usuario pidió seguir con el trabajo tras cerrar F0 y dejar el MCP para más adelante: «por ahora continuemos un poco mas luego ya agregamos el mcp ya que este requeire usar todo un harneses para que el agente sepa cuando usarlo y cuando no».
+- **L2** (2026-11-03, decisión de secuencia): el MCP no se activa todavía. El harness que el usuario menciona es una tarea de F1 (T4), no un extra: las instrucciones del servidor MCP, las descripciones de cada tool y el QUICKSTART para agentes.
+- **L3** (2026-11-03, decisiones de ingeniería de T2): `validate_diagram` reutiliza el mismo pipeline que `render_diagram` (registry → schema → `validate()`) sin layout ni render, como manda la regla de oro; los errores se cortan en 20 con `errors_truncated`; el did-you-mean de campo desconocido se calcula con distancia de Levenshtein sobre los nombres de campo del schema.
