@@ -26,6 +26,7 @@ const ghostText = document.getElementById("ghost-text");
 
 const camera = { tx: 0, ty: 0, zoom: 1 };
 const objects = new Map(); // diagram_id -> element
+const state = { diagrams: [] }; // the state Rust owns (PRD §8.6.1)
 let cameraTimer = null;
 
 // --- Tauri bridge -------------------------------------------------------
@@ -250,6 +251,13 @@ listen("graphium://ready", () => {});
 listen("graphium://render", (event) => {
   hidePending();
   insertDiagram(event.payload);
+});
+listen("graphium://state", (event) => {
+  // The model of the diagrams lives in Rust (PRD §8.6.1): the frontend only
+  // reads the state it receives.
+  const diagrams = Array.isArray(event.payload) ? event.payload : [];
+  state.diagrams = diagrams;
+  empty.classList.toggle("hidden", diagrams.length > 0);
 });
 listen("graphium://pending", (event) => {
   showPending(event.payload || {});

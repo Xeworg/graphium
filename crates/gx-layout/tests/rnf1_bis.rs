@@ -70,17 +70,29 @@ fn the_four_cases_are_deterministic() {
 #[test]
 #[ignore = "measurement: run it in release"]
 fn the_matrix_is_measured() {
-    println!("case                              nodes   edges      ms");
+    // The PRD asks for a p95, not a single run: every case is measured
+    // several times and the percentile is reported.
+    const RUNS: usize = 10;
+
+    println!("case                              nodes   edges   p95 ms   max ms");
     for case in rnf1_bis_cases() {
-        let started = Instant::now();
-        let layout = engine().layout(&case.graph);
-        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+        let mut samples = Vec::with_capacity(RUNS);
+        for _ in 0..RUNS {
+            let started = Instant::now();
+            let layout = engine().layout(&case.graph);
+            let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+            assert_eq!(layout.nodes.len(), case.graph.nodes.len());
+            samples.push(elapsed);
+        }
+        samples.sort_by(|left, right| left.partial_cmp(right).expect("no NaN"));
+        let p95 = samples[((RUNS as f64 * 0.95).ceil() as usize).min(RUNS) - 1];
         println!(
-            "{:<32} {:>5} {:>7} {:>9.1}",
+            "{:<32} {:>5} {:>7} {:>7.1} {:>7.1}",
             case.name,
-            layout.nodes.len(),
-            layout.edges.len(),
-            elapsed
+            case.graph.nodes.len(),
+            case.graph.edges.len(),
+            p95,
+            samples[RUNS - 1]
         );
     }
 }

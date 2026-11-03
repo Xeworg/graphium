@@ -36,6 +36,10 @@ pub struct RenderResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rendered_kind: Option<String>,
     pub rendered: bool,
+    /// Why the diagram was not painted: `headless`, `no_window`,
+    /// `ui_timeout` or `ui_error` (PRD §8.6.1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metrics: Option<Metrics>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -116,10 +120,47 @@ pub struct RenderHookPayload {
     pub metrics: Metrics,
 }
 
+/// The outcome of the paint in the window (PRD §8.6.1).
+///
+/// The reasons of a `rendered: false` are stable: the agent branches on
+/// them, so they never change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderStatus {
+    /// The window confirmed the paint.
+    Painted,
+    /// There is no display: the process works headless.
+    Headless,
+    /// There is no window to paint in.
+    NoWindow,
+    /// The window did not answer within the timeout.
+    Timeout,
+    /// The window refused the render or failed.
+    Error,
+}
+
+impl RenderStatus {
+    /// The stable reason of the status, `None` when the diagram was painted.
+    pub fn reason(&self) -> Option<&'static str> {
+        match self {
+            RenderStatus::Painted => None,
+            RenderStatus::Headless => Some("headless"),
+            RenderStatus::NoWindow => Some("no_window"),
+            RenderStatus::Timeout => Some("ui_timeout"),
+            RenderStatus::Error => Some("ui_error"),
+        }
+    }
+
+    /// Whether the diagram reached the screen.
+    pub fn painted(&self) -> bool {
+        matches!(self, RenderStatus::Painted)
+    }
+}
+
 /// The callback that paints a diagram in the window.
 ///
-/// Returning `true` means the window confirmed the paint (`render_ack`).
-pub type RenderHook = Arc<dyn Fn(&RenderHookPayload) -> bool + Send + Sync>;
+/// The status is what the window knows: only it can tell a timeout from a
+/// refusal or from the absence of a display.
+pub type RenderHook = Arc<dyn Fn(&RenderHookPayload) -> RenderStatus + Send + Sync>;
 
 fn render_hook_slot() -> &'static RwLock<Option<RenderHook>> {
     static SLOT: OnceLock<RwLock<Option<RenderHook>>> = OnceLock::new();
@@ -162,6 +203,7 @@ pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
                 diagram_id: None,
                 rendered_kind: None,
                 rendered: false,
+                reason: None,
                 metrics: None,
                 errors: errors.iter().map(ErrorPayload::from).collect(),
                 warnings: Vec::new(),
@@ -200,7 +242,7 @@ pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
     );
 
     let mut warnings = Vec::new();
-    let rendered = match installed_hook() {
+    let status = match installed_hook() {
         Some(hook) => hook(&RenderHookPayload {
             diagram_id: diagram_id.clone(),
             kind: kind.clone(),
@@ -214,15 +256,24 @@ pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
                 "no_window",
                 "the diagram was rendered and stored but not painted: no window hook is installed",
             ));
-            false
+            RenderStatus::NoWindow
         }
     };
+    if !status.painted() {
+        if let Some(reason) = status.reason() {
+            warnings.push(Warning::new(
+                reason,
+                format!("the diagram was rendered and stored but not painted: {reason}"),
+            ));
+        }
+    }
 
     RenderResponse {
         ok: true,
         diagram_id: Some(diagram_id),
         rendered_kind: Some(kind),
-        rendered,
+        rendered: status.painted(),
+        reason: status.reason().map(str::to_string),
         metrics: Some(metrics),
         errors: Vec::new(),
         warnings,
@@ -233,7 +284,9 @@ pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use super::{render_diagram, set_render_hook, RenderHook, RenderRequest, RenderResponse};
+    use super::{
+        render_diagram, set_render_hook, RenderHook, RenderRequest, RenderResponse, RenderStatus,
+    };
     use crate::store::diagram_store;
     use crate::test_support::{lock_renders_blocking, MINIMAL};
 
@@ -359,7 +412,7 @@ mod tests {
                     payload.width,
                     payload.height,
                 ));
-            true
+            RenderStatus::Painted
         });
         set_render_hook(Some(hook));
 
@@ -367,6 +420,7 @@ mod tests {
 
         assert!(response.ok);
         assert!(response.rendered);
+        assert_eq!(response.reason, None);
         assert!(response.warnings.is_empty(), "{:?}", response.warnings);
         let seen = seen.lock().expect("the recorder is not poisoned");
         assert_eq!(seen.len(), 1);
@@ -383,12 +437,39 @@ mod tests {
     fn a_rejected_paint_keeps_the_diagram_unrendered() {
         let _guard = lock_renders_blocking();
 
-        set_render_hook(Some(Arc::new(|_payload| false)));
+        set_render_hook(Some(Arc::new(|_payload| RenderStatus::Error)));
         let response = render(MINIMAL);
         set_render_hook(None);
 
         assert!(response.ok);
         assert!(!response.rendered);
         assert_eq!(response.diagram_id.as_deref(), Some("d-0001"));
+        assert_eq!(response.reason.as_deref(), Some("ui_error"));
+    }
+
+    /// The reasons of a render that did not reach the screen are stable:
+    /// the agent branches on them (PRD §8.6.1).
+    #[test]
+    fn every_reason_of_an_unpainted_render_is_stable() {
+        let _guard = lock_renders_blocking();
+
+        for (status, reason) in [
+            (RenderStatus::Headless, "headless"),
+            (RenderStatus::NoWindow, "no_window"),
+            (RenderStatus::Timeout, "ui_timeout"),
+            (RenderStatus::Error, "ui_error"),
+        ] {
+            set_render_hook(Some(Arc::new(move |_payload| status)));
+            let response = render(MINIMAL);
+            set_render_hook(None);
+
+            assert!(!response.rendered, "{reason}");
+            assert_eq!(response.reason.as_deref(), Some(reason));
+            assert!(
+                response.warnings.iter().any(|w| w.code == reason),
+                "the warning has to carry the reason: {:?}",
+                response.warnings
+            );
+        }
     }
 }

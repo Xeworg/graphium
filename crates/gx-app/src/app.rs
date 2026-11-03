@@ -33,7 +33,9 @@ impl PlanState {
         *self.camera.lock().expect("camera lock") = camera;
     }
 
-    fn register_ack(&self, req_id: &str) -> std::sync::mpsc::Receiver<bool> {
+    /// Registers a pending render and returns the channel that the
+    /// acknowledgement of the frontend will answer.
+    pub fn register_ack(&self, req_id: &str) -> std::sync::mpsc::Receiver<bool> {
         let (sender, receiver) = channel();
         self.pending
             .lock()
@@ -42,7 +44,8 @@ impl PlanState {
         receiver
     }
 
-    fn resolve_ack(&self, req_id: &str, ok: bool) {
+    /// Resolves a pending render with the answer of the frontend.
+    pub fn resolve_ack(&self, req_id: &str, ok: bool) {
         if let Some(sender) = self.pending.lock().expect("pending lock").remove(req_id) {
             let _ = sender.send(ok);
         }
@@ -54,6 +57,16 @@ struct RenderEvent {
     req_id: String,
     diagram_id: String,
     svg: String,
+}
+
+/// One diagram of the state that Rust owns (PRD §8.6.1, S22).
+#[derive(Debug, Clone, Serialize)]
+struct StateEntry {
+    diagram_id: String,
+    title: String,
+    kind: String,
+    updated_at: String,
+    session_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -129,11 +142,17 @@ pub fn build(keep_alive: bool) -> (tauri::App<tauri::Wry>, Arc<PlanState>) {
 /// frontend to confirm it.
 pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
     let hook: gx_mcp::tools::RenderHook = Arc::new(move |payload| {
+        // Without a display the process works headless: the diagram is
+        // rendered and stored, but nothing is painted (PRD §8.6).
+        if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
+            return gx_mcp::tools::RenderStatus::Headless;
+        }
+
         let req_id = format!("req-{}", REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed));
         let receiver = state.register_ack(&req_id);
 
         let Some(window) = handle.get_webview_window("main") else {
-            return false;
+            return gx_mcp::tools::RenderStatus::NoWindow;
         };
         let _ = window.show();
         let _ = window.unminimize();
@@ -148,7 +167,7 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
             svg: payload.svg.clone(),
         };
         if window.emit("graphium://render", event).is_err() {
-            return false;
+            return gx_mcp::tools::RenderStatus::Error;
         }
 
         let acknowledged = receiver
@@ -156,8 +175,25 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
             .unwrap_or(false);
         if !acknowledged {
             state.pending.lock().expect("pending lock").remove(&req_id);
+            return gx_mcp::tools::RenderStatus::Timeout;
         }
-        acknowledged
+
+        // The model of the diagrams lives in Rust (PRD §8.6.1, S22): the
+        // frontend rebuilds its panel from this event.
+        let diagrams: Vec<StateEntry> = gx_mcp::store::diagram_store()
+            .list()
+            .into_iter()
+            .map(|summary| StateEntry {
+                diagram_id: summary.diagram_id,
+                title: summary.title,
+                kind: summary.kind,
+                updated_at: summary.updated_at,
+                session_id: summary.session_id,
+            })
+            .collect();
+        let _ = window.emit("graphium://state", diagrams);
+
+        gx_mcp::tools::RenderStatus::Painted
     });
     gx_mcp::tools::set_render_hook(Some(hook));
 }

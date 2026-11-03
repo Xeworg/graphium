@@ -66,6 +66,11 @@ pub fn probe(path: &Path) -> Instance {
         Ok(_) => Instance::Forwarder,
         Err(_) => {
             let _ = take_over(path);
+            // The owner died and left its socket behind (PRD RNF9).
+            eprintln!(
+                "graphium: owner_takeover: el socket {:?} estaba huérfano",
+                path
+            );
             Instance::TookOver
         }
     }

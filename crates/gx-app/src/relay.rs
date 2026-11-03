@@ -6,7 +6,8 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 
@@ -109,15 +110,42 @@ fn error_response(id: Value, code: i64, message: &str) -> String {
     .to_string()
 }
 
+/// The maximum number of MCP sessions a single owner serves (PRD RNF9).
+pub const MAX_SESSIONS: usize = 8;
+
 /// Serves the socket until the process ends: one thread per connection.
 pub fn serve(listener: UnixListener) {
+    let sessions = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
+        // The ninth session is refused with `too_many_sessions` (PRD RNF9).
+        if sessions.fetch_add(1, Ordering::SeqCst) >= MAX_SESSIONS {
+            sessions.fetch_sub(1, Ordering::SeqCst);
+            refuse(stream);
+            continue;
+        }
+        let counter = Arc::clone(&sessions);
         std::thread::spawn(move || {
             let session_id = forwarded_session_id();
             serve_connection(stream, &session_id);
+            counter.fetch_sub(1, Ordering::SeqCst);
         });
     }
+}
+
+/// Answers a session that exceeds the quota and closes it.
+fn refuse(mut stream: UnixStream) {
+    let error = json!({
+        "jsonrpc": "2.0",
+        "id": Value::Null,
+        "error": {
+            "code": -32000,
+            "message": "too_many_sessions",
+            "data": { "code": "too_many_sessions", "limit": MAX_SESSIONS }
+        }
+    });
+    let _ = writeln!(stream, "{error}");
+    let _ = stream.flush();
 }
 
 fn serve_connection(stream: UnixStream, session_id: &str) {
