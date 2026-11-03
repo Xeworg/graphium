@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 7] = [
+const CASES: [(&str, &str); 9] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -40,6 +40,8 @@ const CASES: [(&str, &str); 7] = [
     ("tree-src", TREE_SRC),
     ("mindmap-feature", MINDMAP),
     ("sequence-order", SEQUENCE),
+    ("timeline-roadmap", TIMELINE_ROADMAP),
+    ("swimlane-soporte", SWIMLANE_SOPORTE),
 ];
 
 const MINIMAL: &str = r#"{
@@ -153,6 +155,39 @@ const SEQUENCE: &str = r#"{
     { "from": "db", "to": "api", "label": "ok", "reply": true },
     { "from": "api", "to": "api", "label": "reintento", "reply": true },
     { "from": "api", "to": "cliente", "label": "201", "reply": true }
+  ]
+}"#;
+
+const TIMELINE_ROADMAP: &str = r#"{
+  "version": 1,
+  "kind": "timeline",
+  "title": "Roadmap 2026",
+  "lanes": [
+    { "id": "q1", "label": "Q1" },
+    { "id": "q2", "label": "Q2" }
+  ],
+  "events": [
+    { "label": "spike F0", "lane": "q1" },
+    { "label": "MVP", "lane": "q1", "end": 2 },
+    { "label": "los 10 kinds", "lane": "q2" },
+    { "label": "export", "lane": "q2", "end": 4 }
+  ]
+}"#;
+
+const SWIMLANE_SOPORTE: &str = r#"{
+  "version": 1,
+  "kind": "swimlane",
+  "title": "Soporte — pedido trabado",
+  "lanes": [
+    { "id": "cliente", "label": "Cliente" },
+    { "id": "soporte", "label": "Soporte" },
+    { "id": "logistica", "label": "Logística" }
+  ],
+  "steps": [
+    { "label": "reclama el pedido", "lane": "cliente" },
+    { "label": "abre el ticket", "lane": "soporte" },
+    { "label": "consulta el envío", "lane": "logistica" },
+    { "label": "responde", "lane": "soporte" }
   ]
 }"#;
 
