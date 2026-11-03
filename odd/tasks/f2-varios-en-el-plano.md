@@ -35,10 +35,12 @@ memoria de F2: «RSS < 250 MB con 12 diagramas de 300 nodos».
 | T2 | Store de N diagramas: posición y bbox por diagrama, cierre que invalida el id, tope 12 con `too_many_diagrams`, `list` solo de abiertos | S3, S4, S7, S8, S9 | inline | `a458d91` — 4 tests en `store.rs`, 215 en verde |
 | T3 | Colocación y cascada puras en Rust: centro de la vista, padding 24, solape ±24, offset `(48, 48)` hasta 8, columna nueva | S1, S2, S5 | inline | `1a1656f` — 6 tests en `placement.rs`, 221 en verde |
 | T4 | `render_diagram` suma al plano; `graphium://state` con `pos` y `bbox` | S8, S9, S7 | inline | `e065aed` — 4 tests nuevos, 225 en verde |
-| T5 | Panel lateral: lista, selección que desplaza la cámara, cierre por ítem y `×` sobre el objeto, pan animado de 250 ms | S1, S2, S3, S5 | inline | — |
+| T5 | Panel lateral: lista, selección que desplaza la cámara, cierre por ítem y `×` sobre el objeto, pan animado de 250 ms. Incluye: el zoom deja de cambiar cuando el plano ya tiene diagramas | S1, S2, S3, S5 | worker | — |
 | T6 | `opts.focus: {id, depth?}`: encuadra el nodo y su vecindad | S2 | inline | — |
 | T7 | Culling: 3 SVGs como máximo en el DOM y recuadros con título; RNF10 medido con 12 diagramas | S6, S10 | inline | — |
 
 ## Log
 
 - **L1** (2026-11-03, arranque de F2): el humano eligió el corte «varios diagramas en el plano + panel lateral» entre las cuatro opciones de F2. Motivo declarado en la pregunta: es la promesa central del plano (decisión v1.5 del PRD) y hoy el producto abre un diagrama por vez.
+
+- **L2** (2026-11-03, verificación de T4 y un ajuste de la cámara): con tres diagramas en el plano se ve el efecto de T8 — cada render encuadraba el diagrama nuevo, así que el zoom del humano se reajustaba en cada inserción y los otros objetos se achicaban. El PRD pide «pan hasta el diagrama nuevo» **conservando** el zoom (§7.2), así que el encuadre queda para el **primer** diagrama del plano y para cuando el humano elige un ítem; a partir del segundo, la cámara hace pan hasta el objeto nuevo sin tocar el zoom. Entra en T5.
