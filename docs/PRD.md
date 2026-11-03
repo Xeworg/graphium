@@ -194,10 +194,11 @@ Ni `gx-mcp` ni `gx-app` cambian (O7). Esfuerzo típico: **1 jornada** si reusa s
 
 La ventana no es "un diagrama": es un **plano** por el que el humano se desplaza, con los diagramas colocados encima como objetos. El fondo es una **grilla** tipo plano de dibujo.
 
-- **RF24 — Fondo con grilla (F1).** Grilla de dos familias de líneas diagonales, 1 px, sobre un color base. Defaults tomados de la referencia visual: base `#1b1b1b`, línea `#ffffff` a 14% de opacidad, **separación 59 px**, **ángulo 32°**. Presets: `plano` (oscuro, el de la referencia), `claro`, `sin grilla`.
-  - **Geometría de la celda.** Las dos familias se desvían **32° de la vertical** (en CSS, gradientes a `58deg` y `122deg`), así que las líneas son empinadas y las celdas son **rombos verticales**, no rombos chatos. Cada familia tiene el **mismo paso perpendicular** —31.26 px, `59 · sin(32°)`—, por lo que **todas las celdas son congruentes**: rombos de lados iguales, con la diagonal mayor (vertical) de **59 px** y la menor (horizontal) de 37 px.
+- **RF24 — Fondo con grilla (F1).** Grilla de dos familias de líneas diagonales, 1 px, sobre un color base. Defaults tomados de la referencia visual: base `#1b1b1b`, línea `#ffffff` a 14% de opacidad, **separación 59 px**, **ángulo 45°**. Presets: `plano` (oscuro, el de la referencia), `claro`, `sin grilla`.
+  - **Geometría de la celda.** Las dos familias se desvían **45° de la vertical** (en CSS, gradientes a `45deg` y `135deg`), de modo que las celdas son **rombos con las dos diagonales iguales de 59 px**: un cuadrado girado, que se lee como rombo y no como una retícula rayada. Cada familia tiene el **mismo paso perpendicular** —41.72 px, `59 · sin(45°)`—, por lo que **todas las celdas son congruentes**.
   - **Continuidad.** La retícula es un enrejado rígido: la fase de cada familia es el desplazamiento de cámara proyectado sobre **su propia normal**, nunca un offset único para las dos. Con un offset compartido, las familias se desfasan al mover la cámara y las celdas dejan de ser iguales (verificado: 784 píxeles fuera de fase con offset único contra 94 con la fase por familia).
-  - **Separación 59 px = diagonal mayor del rombo**, no paso entre líneas: el paso perpendicular real es 31.26 px y queda derivado de ella.
+  - **Separación 59 px = diagonal del rombo**, no paso entre líneas: el paso perpendicular real es 41.72 px y queda derivado de ella.
+  - **El ángulo es un parámetro**: `--grid-angle` (con `--grid-sin` y `--grid-cos` derivados por el frontend) para que RF25 deje al humano cambiarlo sin tocar la hoja de estilos.
 - **RF25 — El usuario controla los colores (F1).** Panel de ajustes en la ventana (engranaje) con: color de fondo, color de grilla, opacidad, separación, ángulo y mostrar/ocultar grilla. Se persiste en `~/.graphium/settings.json`; **el agente no cambia estos ajustes** (el color es decisión del humano). El tema claro/oscuro (RF22) se apoya en el mismo archivo.
 - **RF26 — Varios diagramas en el plano (F2).** Cada diagrama abierto es un objeto con posición. Panel lateral izquierdo con la lista de abiertos (título, kind, actualizado) y botón de cerrar por ítem; al elegir un ítem, la **cámara se desplaza hasta ese diagrama**.
 - **RF27 — Colocación y foco (F2).** Un diagrama nuevo aparece **en el centro de la vista actual**; si ya hay otro diagrama ahí, se separa en cascada hasta encontrar hueco — **nunca se superponen**. Al crearse con el programa abierto, la cámara hace **pan hasta el diagrama nuevo**. `opts.focus: {id, depth?}` centra un nodo y opcionalmente su vecindad (depth N, default 1).
@@ -223,7 +224,7 @@ La ventana no es "un diagrama": es un **plano** por el que el humano se desplaza
 - Si su rectángulo se solapa con otro (±24 px), **cascada** con offset `(48, 48)` px hasta 8 pasos; al agotarse, columna nueva a la derecha del bounding box global + 48 px.
 - Si el destino queda fuera del viewport → **pan animado de 250 ms** hasta él.
 - `fit-to-view` usa 32 px de margen y **clampa en zoom 0.4**: por debajo no se achica más (la degradación y `extract` resuelven el resto).
-- La separación de grilla (59 px, la diagonal mayor del rombo) es del **espacio del plano** y **escala con el zoom**; el paso perpendicular entre líneas escala con ella (31.26 px × zoom) y el grosor de línea se fija en 1 px de pantalla.
+- La separación de grilla (59 px, la diagonal del rombo) es del **espacio del plano** y **escala con el zoom**; el paso perpendicular entre líneas escala con ella (41.72 px × zoom) y el grosor de línea se fija en 1 px de pantalla.
 
 **Estados visibles de la ventana.**
 1. **Vacío** — «esperando al agente…» + la línea `graphium mcp-config` para el primer uso. Solo cuando no hay renders en curso ni diagramas abiertos.
@@ -603,7 +604,7 @@ F0 no construye el producto: **cierra decisiones**. Se resuelven en este orden p
 7. **[producto]** Fuente embebida: familia, peso y ejes — **Inter 400/600** (OFL, `include_bytes!`, subset Latin-1 + Latin Ext-A).
 8. **[producto]** Tokens visuales: **14 px**, padding **12**, radio **6**, borde **1 px**, interlineado **1.25** (§8.5).
 9. **[ingeniería]** Origen del `LayoutGraph`: centros de nodo o top-left, normalizado a `(0,0)` antes de entrar al render.
-10. **[producto]** Grilla: CSS gradient o canvas, qué mide «separación 59 px» (paso entre líneas o diagonal) y cómo escala con el zoom (§7.2). **Resuelto (2026-11-03): CSS gradient; la separación es la diagonal mayor del rombo; las líneas se desvían 32° de la vertical.**
+10. **[producto]** Grilla: CSS gradient o canvas, qué mide «separación 59 px» (paso entre líneas o diagonal) y cómo escala con el zoom (§7.2). **Resuelto (2026-11-03): CSS gradient; la separación es la diagonal del rombo; las líneas se desvían 45° de la vertical, de modo que las dos diagonales de la celda miden lo mismo.**
 11. **[producto]** Propiedad de la cámara: confirmar que el frontend es dueño de `view` y Rust solo guarda `CameraSnapshot` (§7.2).
 12. **[ingeniería]** Protocolo del socket single-instance: framing, permisos `0600`, socket huérfano (takeover) y auth entre procesos (§8.6, RNF9).
 13. **[ingeniería]** Razones de `rendered: false` disponibles en F0: `headless` · `no_window` · `ui_timeout` · `ui_error` (§8.6.1).
@@ -690,7 +691,7 @@ Tres revisores IA (producto/UX, arquitectura, contrato MCP) auditaron v1.3. Inco
 | 8 | Sin arrastre de objetos: pan, zoom, enfocar y cerrar solamente. | *"Solo cerrar y enfocar"* |
 | 9 | La grilla es chrome del frontend: los exports salen limpios y el determinismo O8 no se ve afectado. | Coherencia con §8.5 y RF10 |
 
-*La imagen de referencia se usó solo para extraer el fondo y la grilla (base `#1b1b1b`, línea `#ffffff` 14%, separación 59 px, líneas a 32° de la vertical); el diagrama de ejemplo de esa imagen no se toma como contenido ni como modelo de kinds.*
+*La imagen de referencia se usó solo para extraer el fondo y la grilla (base `#1b1b1b`, línea `#ffffff` 14%, separación 59 px, líneas a 45° de la vertical); el diagrama de ejemplo de esa imagen no se toma como contenido ni como modelo de kinds.*
 
 ## 18. Cambios v1.6 (2026-11-03, usuario)
 

@@ -7,11 +7,11 @@
 use std::f64::consts::PI;
 
 /// The deviation of the lines from the vertical (RF24).
-const ANGLE_DEGREES: f64 = 32.0;
-/// The major diagonal of the rhombus: the measure the human sees (RF24).
+const ANGLE_DEGREES: f64 = 45.0;
+/// The diagonal of the rhombus: the measure the human sees (RF24).
 const DIAGONAL: f64 = 59.0;
 /// The perpendicular step between two lines of the same family.
-const STEP: f64 = 31.26;
+const STEP: f64 = 41.72;
 
 fn sin_degrees(degrees: f64) -> f64 {
     (degrees * PI / 180.0).sin()
@@ -33,7 +33,7 @@ fn the_perpendicular_step_follows_the_major_diagonal() {
 #[test]
 fn the_cell_is_a_rhombus_with_equal_sides() {
     // The sides of the cell: the step over the sine of the angle between
-    // the two families (64 degrees).
+    // the two families (90 degrees at 45).
     let side = STEP / sin_degrees(2.0 * ANGLE_DEGREES);
     // The diagonals of the cell.
     let major = 2.0 * side * cos_degrees(ANGLE_DEGREES);
@@ -44,26 +44,28 @@ fn the_cell_is_a_rhombus_with_equal_sides() {
         "the major diagonal is {major:.2}, the PRD says {DIAGONAL}"
     );
     assert!(
-        (minor - 37.0).abs() < 0.5,
-        "the minor diagonal is {minor:.2}, the report says 37"
+        (minor - DIAGONAL).abs() < 0.5,
+        "the minor diagonal is {minor:.2}: at 45 degrees both diagonals of \
+         the cell have to measure the same"
     );
-    // A rhombus is taller than wide: that is what the human asked for.
-    assert!(major > minor, "the cell must be a tall rhombus");
+    // A rhombus with equal diagonals is a square turned on its corner: the
+    // cells read as diamonds, not as stripes.
+    assert!((major - minor).abs() < 0.5);
 }
 
 #[test]
 fn the_stylesheet_uses_the_same_numbers() {
     let css = include_str!("../frontend/style.css");
     assert!(
-        css.contains("--grid-angle: 32deg"),
+        css.contains("--grid-angle: 45deg"),
         "the stylesheet must declare the angle of RF24"
     );
     assert!(
         css.contains("--grid-diagonal: 59px"),
-        "the stylesheet must declare the major diagonal of RF24"
+        "the stylesheet must declare the diagonal of RF24"
     );
     assert!(
-        css.contains("--grid-step: 31.26px"),
+        css.contains("--grid-step: 41.72px"),
         "the stylesheet must declare the perpendicular step"
     );
     // The phase is computed per family, never with a shared offset.
@@ -89,11 +91,11 @@ fn the_prd_states_the_same_geometry() {
         "RF24 keeps the separation"
     );
     assert!(
-        prd.contains("32° de la vertical"),
+        prd.contains("45° de la vertical"),
         "RF24 states the deviation from the vertical"
     );
     assert!(
-        prd.contains("31.26 px"),
+        prd.contains("41.72 px"),
         "RF24 states the perpendicular step derived from the diagonal"
     );
 }
@@ -102,7 +104,7 @@ fn the_prd_states_the_same_geometry() {
 fn the_frontend_keeps_the_sine_and_the_cosine_in_sync() {
     let js = include_str!("../frontend/plan.js");
     assert!(
-        js.contains("GRID_ANGLE_DEGREES = 32"),
+        js.contains("GRID_ANGLE_DEGREES = 45"),
         "the frontend owns the angle of the grid"
     );
     assert!(

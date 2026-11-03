@@ -15,23 +15,79 @@
 :root {
   --bg: #1b1b1b;
   --grid-color: rgba(255, 255, 255, 0.14);
-  /* The deviation of the lines from the vertical (RF24: 32 degrees). */
-  --grid-angle: 32deg;
-  /* The major diagonal of the rhombus: the measure the human sees. */
+  /* The deviation of the lines from the vertical (RF24: 45 degrees). */
+  --grid-angle: 45deg;
+  /* The diagonal of the rhombus: the measure the human sees. At 45 degrees
+     both diagonals of the cell measure the same, so the cell is a rhombus
+     with equal sides and equal diagonals. */
   --grid-diagonal: 59px;
   /* sin and cos of the deviation. The frontend keeps them in sync with
      --grid-angle, so RF25 can change the angle without touching the CSS. */
-  --grid-sin: 0.5299;
-  --grid-cos: 0.848;
+  --grid-sin: 0.7071;
+  --grid-cos: 0.7071;
   /* The perpendicular step between two lines of the same family:
      diagonal * sin(angle). */
-  --grid-step: 31.26px;
+  --grid-step: 41.72px;
   --grid-line: 1px;
   --grid-opacity: 1;
   --tx: 0px;
   --ty: 0px;
   --accent: #6ea8fe;
   --text: #e9e9ec;
+
+  /* Palette of the plan (PRD §8.5.2). The SVG carries the same tokens as
+     CSS classes; in the canvas the colors come from here, not from the
+     inline <style> of the SVG: the CSP of the app forbids inline styles,
+     and the theme is the human's decision (RF22, RF25). */
+  --node-fill: #2a2a30;
+  --node-stroke: #4d4d57;
+  --node-text: #e9e9ec;
+  --edge-stroke: #8a8a96;
+  --edge-text: #b9b9c2;
+}
+
+/* The `claro` preset is a real theme, not a white background (PRD §8.5.2). */
+[data-theme="claro"] {
+  --bg: #f7f7f8;
+  --grid-color: rgba(0, 0, 0, 0.09);
+  --node-fill: #ffffff;
+  --node-stroke: #c7c7cf;
+  --node-text: #1b1b1f;
+  --edge-stroke: #6f6f7a;
+  --edge-text: #4a4a54;
+  --accent: #2f6fd0;
+  --text: #1b1b1f;
+}
+
+/* The tokens of the diagram, applied over the classes of the SVG.
+ * These rules win over the inline <style> of the SVG (and they are the
+ * only ones that apply in the app, where the CSP forbids inline styles). */
+.graphium .node-fill {
+  fill: var(--node-fill);
+}
+
+.graphium .node-stroke {
+  stroke: var(--node-stroke);
+  stroke-width: 1px;
+}
+
+.graphium .node-text {
+  fill: var(--node-text);
+}
+
+.graphium .edge-stroke {
+  stroke: var(--edge-stroke);
+  stroke-width: 1px;
+  fill: none;
+}
+
+.graphium .edge-text {
+  fill: var(--edge-text);
+}
+
+.graphium .accent {
+  fill: var(--accent);
+  stroke: var(--accent);
 }
 
 * {

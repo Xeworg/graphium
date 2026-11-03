@@ -4,9 +4,8 @@
 // frontend applies them. Rust keeps only a copy (CameraSnapshot) that the
 // frontend pushes with the `camera-changed` event.
 
-const GRID_STEP_PLAN = 31.26; // 59 px diagonal * sin(32°): the perpendicular step.
-const GRID_DIAGONAL_PLAN = 59; // The major diagonal of the rhombus.
-const GRID_ANGLE_DEGREES = 32; // The deviation of the lines from the vertical.
+const GRID_DIAGONAL_PLAN = 59; // The diagonal of the rhombus.
+const GRID_ANGLE_DEGREES = 45; // The deviation of the lines from the vertical.
 const GRID_HIDE_ZOOM = 0.3; // Below this zoom the grid fades out.
 const ZOOM_MIN = 0.05;
 const ZOOM_MAX = 4.0;
@@ -84,9 +83,14 @@ function applyCamera() {
   // vertical (RF24, RF25): sin and cos travel to the CSS so the angle can
   // change without touching the stylesheet.
   const radians = (GRID_ANGLE_DEGREES * Math.PI) / 180;
-  plan.style.setProperty("--grid-sin", String(Math.sin(radians).toFixed(4)));
-  plan.style.setProperty("--grid-cos", String(Math.cos(radians).toFixed(4)));
-  plan.style.setProperty("--grid-step", `${GRID_STEP_PLAN * camera.zoom}px`);
+  const sine = Math.sin(radians);
+  plan.style.setProperty("--grid-sin", sine.toFixed(4));
+  plan.style.setProperty("--grid-cos", Math.cos(radians).toFixed(4));
+  // The perpendicular step follows the diagonal and the angle.
+  plan.style.setProperty(
+    "--grid-step",
+    `${(GRID_DIAGONAL_PLAN * sine * camera.zoom).toFixed(2)}px`,
+  );
 
   plan.style.setProperty("--grid-opacity", camera.zoom < GRID_HIDE_ZOOM ? "0" : "1");
 
