@@ -91,6 +91,9 @@ function applyCamera() {
     "--grid-step",
     `${(GRID_DIAGONAL_PLAN * sine * camera.zoom).toFixed(2)}px`,
   );
+  // The tile of the mesh scales with the camera, so it keeps being a
+  // period of the pattern at any zoom.
+  plan.style.setProperty("--zoom", String(camera.zoom));
 
   plan.style.setProperty("--grid-opacity", camera.zoom < GRID_HIDE_ZOOM ? "0" : "1");
 

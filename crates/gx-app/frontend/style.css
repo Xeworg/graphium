@@ -32,6 +32,9 @@
   --grid-opacity: 1;
   --tx: 0px;
   --ty: 0px;
+  /* The zoom of the camera: the tile of the grid scales with it, so the
+     tile keeps being a period of the pattern at any zoom. */
+  --zoom: 1;
   --accent: #6ea8fe;
   --text: #e9e9ec;
 
@@ -143,13 +146,14 @@ body {
       transparent 0 calc(var(--grid-step) - var(--grid-line)),
       var(--grid-color) 0 var(--grid-step)
     );
-  /* The tile is one cell of the mesh (the diagonal of the rhombus). The
-     gradient repeats inside the tile, so the tile has to be a multiple of
-     the period of the pattern: with the tile at the size of the viewport
-     the neighbours do not match and the mesh breaks into strips while the
-     camera moves. */
+  /* The tile is one cell of the mesh (the diagonal of the rhombus) and it
+     scales with the camera. The gradient repeats inside the tile, so the
+     tile has to be a multiple of the period of the pattern: with the tile
+     at the size of the viewport the neighbours do not match and the mesh
+     breaks into strips while the camera moves, and a tile that does not
+     scale breaks the same way when the camera zooms out. */
   background-size:
-    var(--grid-diagonal) var(--grid-diagonal);
+    calc(var(--grid-diagonal) * var(--zoom)) calc(var(--grid-diagonal) * var(--zoom));
   background-position:
     calc(var(--grid-cos) * var(--shift-a)) calc(-1 * var(--grid-sin) * var(--shift-a)),
     calc(var(--grid-cos) * var(--shift-b)) calc(var(--grid-sin) * var(--shift-b));

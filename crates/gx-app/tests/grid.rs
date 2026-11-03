@@ -70,10 +70,13 @@ fn the_stylesheet_uses_the_same_numbers() {
     );
     // The tile has to be a multiple of the period of the pattern: with the
     // tile at the size of the viewport the mesh breaks into strips while
-    // the camera moves.
+    // the camera moves, and a tile that does not scale breaks the same way
+    // when the camera zooms out.
     assert!(
-        css.contains("background-size:\n    var(--grid-diagonal) var(--grid-diagonal);"),
-        "the tile of the grid must be one cell of the mesh"
+        css.contains(
+            "calc(var(--grid-diagonal) * var(--zoom)) calc(var(--grid-diagonal) * var(--zoom))"
+        ),
+        "the tile of the grid must be one cell of the mesh, scaled with the camera"
     );
     // The phase is computed per family, never with a shared offset.
     assert!(
@@ -121,5 +124,9 @@ fn the_frontend_keeps_the_sine_and_the_cosine_in_sync() {
     assert!(
         js.contains("--grid-cos"),
         "the frontend has to publish the cosine to the stylesheet"
+    );
+    assert!(
+        js.contains("--zoom"),
+        "the frontend has to publish the zoom: the tile of the grid scales with it"
     );
 }
