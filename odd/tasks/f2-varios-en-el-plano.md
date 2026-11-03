@@ -37,7 +37,7 @@ memoria de F2: «RSS < 250 MB con 12 diagramas de 300 nodos».
 | T4 | `render_diagram` suma al plano; `graphium://state` con `pos` y `bbox` | S8, S9, S7 | inline | `e065aed` — 4 tests nuevos, 225 en verde |
 | T5 | Panel lateral: lista, selección que desplaza la cámara, cierre por ítem y `×` sobre el objeto, pan animado de 250 ms. Incluye: el zoom deja de cambiar cuando el plano ya tiene diagramas | S1, S2, S3, S5 | inline (Rust) + worker (frontend) | `a84e2a0` (cierre en Rust) · `af575e6` (panel y gestos) — 231 tests en verde |
 | T6 | `opts.focus: {id, depth?}`: encuadra el nodo y su vecindad | S2 | inline | `6af977e` — 4 tests nuevos (2 en `tools.rs`, 2 en `lib.rs`), verificado en la ventana |
-| T7 | Culling: 3 SVGs como máximo en el DOM y recuadros con título; RNF10 medido con 12 diagramas | S6, S10 | inline | — |
+| T7 | Culling: 3 SVGs como máximo en el DOM y recuadros con título; RNF10 medido con 12 diagramas | S6, S10 | inline (RNF10) + worker (culling) | `3a4103e` (RNF10: RSS 15.0 MB con 12×300) · culling en curso |
 
 ## Log
 
