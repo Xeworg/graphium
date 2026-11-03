@@ -29,7 +29,9 @@ const NODES: usize = 300;
 fn install_engines() {
     let metrics: Arc<dyn TextMetrics> =
         Arc::new(gx_render_svg::InterMetrics::new().expect("fonts"));
-    let layout: Arc<dyn LayoutEngine> = Arc::new(gx_layout::DagreEngine::new(metrics.clone()));
+    // El despachador, no un motor suelto: la medición tiene que ser la del
+    // producto, que elige el motor por `layout_hint`.
+    let layout: Arc<dyn LayoutEngine> = Arc::new(gx_layout::Layouts::new(metrics.clone()));
     let renderer: Arc<dyn SvgRenderer> = Arc::new(gx_render_svg::SvgRenderer::new(metrics.clone()));
     gx_core::engine::install(gx_core::engine::Engines {
         layout,

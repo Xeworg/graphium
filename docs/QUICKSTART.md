@@ -3,7 +3,9 @@
 Graphium dibuja diagramas: la IA manda el JSON por MCP y la ventana los
 coloca sobre un plano con grilla.
 
-Esta es la guía de F0 (spike técnico). El MVP completo llega en F1.
+F0 (spike técnico) y F1 (MVP) están cerradas, y el catálogo de F2 está
+completo: **12 kinds**. Un diagrama es un documento JSON con su `kind`; el
+agente lo manda por MCP y la ventana lo pone en el plano.
 
 ## 1. Compilar
 
