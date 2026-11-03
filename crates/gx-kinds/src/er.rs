@@ -339,7 +339,9 @@ impl DiagramKind for ErKind {
                             to_max: gx_core::ir::CardinalityMax::Many,
                         }),
                 );
-                edge.label = relation.cardinality.clone();
+                // The crow's foot already says the cardinality: a label on
+                // top of it repeats the same data and adds noise.
+                edge.label = None;
                 edge
             })
             .collect();

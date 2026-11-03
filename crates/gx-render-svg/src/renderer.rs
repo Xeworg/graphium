@@ -340,10 +340,9 @@ fn write_node(out: &mut String, node: &IrNode, placed: &NodeBox) {
 ///
 /// The legs of the foot are wide and short: a narrow fan reads as an
 /// arrowhead, which is the one thing a crow's foot must not look like.
-const CROW_FOOT: f64 = 16.0;
-/// How far back from the table the legs of the foot spread.
-const CROW_FOOT_LENGTH: f64 = 0.5;
-/// How wide the legs of the foot open.
+const CROW_FOOT: f64 = 22.0;
+
+/// How wide the single stroke of the "one" side opens.
 const CROW_FOOT_SPREAD: f64 = 0.85;
 
 /// Horizontal space reserved for the `PK` / `FK` badge of a row.
@@ -423,24 +422,25 @@ fn write_crow_foot(
     };
     match max {
         gx_core::ir::CardinalityMax::Many => {
-            // The crow's foot: three legs that fan out from the edge of the
-            // table, so the symbol reads as "many" and not as an arrowhead.
-            let apex = at;
-            let leg = back(CROW_FOOT * CROW_FOOT_LENGTH);
-            let spread = CROW_FOOT * CROW_FOOT_SPREAD;
+            // The crow's foot opens TOWARDS the table: the ankle sits away
+            // from it and the three toes touch its edge. Opening away from
+            // the table draws an arrowhead, which is the opposite meaning.
+            let ankle = back(CROW_FOOT);
+            let toe = |spread: f64| side(at, spread);
             let stroke = |to: gx_core::Point| {
                 format!(
                     "M {} {} L {} {} ",
-                    fmt_num(apex.x),
-                    fmt_num(apex.y),
+                    fmt_num(ankle.x),
+                    fmt_num(ankle.y),
                     fmt_num(to.x),
                     fmt_num(to.y)
                 )
             };
+            let spread = CROW_FOOT * 0.62;
             let mut path = String::new();
-            path.push_str(&stroke(leg));
-            path.push_str(&stroke(side(leg, spread)));
-            path.push_str(&stroke(side(leg, -spread)));
+            path.push_str(&stroke(at));
+            path.push_str(&stroke(toe(spread)));
+            path.push_str(&stroke(toe(-spread)));
             out.push_str(&format!(
                 "<path class=\"{classes}\" d=\"{}\"/>\n",
                 path.trim_end()
@@ -463,7 +463,7 @@ fn write_crow_foot(
     }
 
     if bound == gx_core::ir::CardinalityBound::Optional {
-        let center = back(CROW_FOOT * 1.5);
+        let center = back(CROW_FOOT * 1.45);
         out.push_str(&format!(
             "<circle class=\"{classes}\" cx=\"{}\" cy=\"{}\" r=\"{}\"/>\n",
             fmt_num(center.x),
