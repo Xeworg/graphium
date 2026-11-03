@@ -230,6 +230,17 @@ body {
 /* The `×` of the object (PRD §7 RF28, S3): it shows up when the pointer walks
  * over the diagram and never before, so the plan stays clean. It sits in the
  * padding ring of the object, so it never covers the drawing. */
+/* El contorno del objeto aparece al pasar el puntero: el `×` cuelga de la
+ * esquina de su objeto, y sin el contorno parece flotar en el vacío cuando la
+ * esquina del rectángulo no tiene tinta (un árbol es ancho abajo, no arriba).
+ * El contorno no ocupa lugar: `outline` no entra en el layout. */
+.diagram:hover > .content,
+.diagram:focus-within > .content {
+  outline: 1px dashed var(--hairline);
+  outline-offset: 0;
+  border-radius: 8px;
+}
+
 .diagram-close {
   position: absolute;
   top: -18px;

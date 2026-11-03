@@ -389,3 +389,27 @@ fn the_panel_is_a_sibling_of_the_plan_and_reads_in_both_themes() {
         "the `×` appears when the pointer walks over the object"
     );
 }
+
+/// El `×` de un objeto cuelga de su esquina: sin un contorno visible, cuando
+/// la esquina del rectángulo no tiene tinta (un árbol es ancho abajo, no
+/// arriba) el botón parece flotar solo. Al pasar el puntero se ve el objeto.
+#[test]
+fn the_close_button_hangs_from_a_visible_object() {
+    let style = include_str!("../frontend/style.css");
+    let flat: String = style.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    assert!(
+        flat.contains(".diagram:hover > .content, .diagram:focus-within > .content {"),
+        "el objeto tiene que mostrar su contorno al pasar el puntero"
+    );
+    assert!(
+        flat.contains("outline: 1px dashed var(--hairline);"),
+        "el contorno se dibuja con el token del tema, no con un color suelto"
+    );
+    // `outline` no entra en el layout: el objeto no cambia de tamaño al pasar
+    // el puntero.
+    assert!(
+        !flat.contains(".diagram:hover > .content, .diagram:focus-within > .content { border:"),
+        "el contorno no puede cambiar el tamaño del objeto"
+    );
+}
