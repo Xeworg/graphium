@@ -416,6 +416,23 @@ fn limits_of(limits: gx_core::kind::KindLimits) -> LimitsPayload {
 /// The minimal example of a kind (PRD §6.1).
 fn min_example_of(kind: &str) -> Value {
     match kind {
+        "component" => serde_json::json!({
+            "version": 1,
+            "kind": "component",
+            "title": "API de pedidos",
+            "nodes": [
+                { "id": "web", "label": "Web", "role": "container" },
+                { "id": "api", "label": "API" },
+                { "id": "db", "label": "Postgres", "role": "database" }
+            ],
+            "groups": [
+                { "id": "backend", "label": "Backend", "members": ["api", "db"] }
+            ],
+            "edges": [
+                { "from": "web", "to": "api", "label": "HTTPS" },
+                { "from": "api", "to": "db", "label": "SQL" }
+            ]
+        }),
         "dataflow" => serde_json::json!({
             "version": 1,
             "kind": "dataflow",
@@ -606,6 +623,20 @@ fn rules_of(kind: &str) -> Vec<String> {
             );
             rules.push(
                 "Si la arista no lleva `label`, la línea se nombra con su relación; la asociación no, porque no afirma nada."
+                    .to_string(),
+            );
+        }
+        "component" => {
+            rules.push(
+                "El `role` de un nodo decide su forma: `container` (caja), `component` (redondeado, por defecto), `database` (cilindro), `external` (caja punteada)."
+                    .to_string(),
+            );
+            rules.push(
+                "Cada `groups[].members` referencia nodos declarados, y **una pieza vive en una sola frontera**."
+                    .to_string(),
+            );
+            rules.push(
+                "La etiqueta de la arista es el protocolo o la llamada (`HTTPS`, `SQL`)."
                     .to_string(),
             );
         }

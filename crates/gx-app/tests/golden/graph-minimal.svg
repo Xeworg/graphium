@@ -10,6 +10,8 @@
 .emphasis-highlight{stroke:rgba(110, 168, 254, 1.00)}
 .emphasis-highlight-text{fill:rgba(110, 168, 254, 1.00)}
 .emphasis-muted{opacity:0.55}
+.group-box{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.12;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:8.00 5.00}
+.group-label{fill:rgba(185, 185, 194, 1.00)}
 .lane-band{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.35;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
 .lane-label{fill:rgba(185, 185, 194, 1.00)}
 .lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
@@ -24,6 +26,8 @@
 <path class="arrow-normal" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00 Z"/>
 </marker>
 </defs>
+<g class="layer-groups">
+</g>
 <g class="layer-edges">
 <polyline id="m-parse-fail" class="edge-stroke" points="69.25,163.00 28.65,203.00 28.65,243.00" marker-end="url(#arrow-normal)"/>
 <polyline id="m-parse-ok" class="edge-stroke" points="111.38,163.00 151.98,203.00 151.98,243.00" marker-end="url(#arrow-normal)"/>

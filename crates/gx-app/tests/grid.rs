@@ -215,6 +215,7 @@ fn every_painted_class_of_the_drawing_has_a_rule_in_the_canvas() {
         include_str!("golden/swimlane-soporte.svg"),
         include_str!("golden/flowchart-approval.svg"),
         include_str!("golden/class-shop.svg"),
+        include_str!("golden/component-api.svg"),
         include_str!("golden/state-order.svg"),
         include_str!("golden/dataflow-etl.svg"),
     ];
