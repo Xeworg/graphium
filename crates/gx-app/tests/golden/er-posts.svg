@@ -10,6 +10,7 @@
 .emphasis-highlight{stroke:rgba(110, 168, 254, 1.00)}
 .emphasis-highlight-text{fill:rgba(110, 168, 254, 1.00)}
 .emphasis-muted{opacity:0.55}
+.lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
 .stroke-dashed{stroke-dasharray:6.00 4.00}
 .text{font-family:Inter, sans-serif}
 .arrow-normal{fill:rgba(138, 138, 150, 1.00)}

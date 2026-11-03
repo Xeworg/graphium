@@ -28,7 +28,9 @@ const MINIMAL: &str = r#"{
 fn install_engines() {
     let metrics: Arc<dyn TextMetrics> =
         Arc::new(gx_render_svg::InterMetrics::new().expect("fonts"));
-    let layout: Arc<dyn LayoutEngine> = Arc::new(gx_layout::DagreEngine::new(metrics.clone()));
+    // El despachador, no un motor suelto: el golden tiene que ser el dibujo
+    // que el producto produce, y el producto elige el motor por `layout_hint`.
+    let layout: Arc<dyn LayoutEngine> = Arc::new(gx_layout::Layouts::new(metrics.clone()));
     let renderer: Arc<dyn SvgRenderer> = Arc::new(gx_render_svg::SvgRenderer::new(metrics.clone()));
     gx_core::engine::install(gx_core::engine::Engines {
         layout,

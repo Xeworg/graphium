@@ -194,3 +194,72 @@ fn the_drawing_starts_at_the_origin() {
         layout.bbox
     );
 }
+
+/// El mensaje que un actor se manda a sí mismo sale y vuelve a **su línea de
+/// vida**, no al borde de su caja: si arrancara en el borde, el lazo quedaría
+/// flotando al costado de la vertical y no se leería.
+#[test]
+fn a_self_message_leaves_and_returns_to_its_lifeline() {
+    let timeline = timeline(
+        vec![lane("api", "API")],
+        vec![
+            event("pide", "api", "pide", 0),
+            event("reintento", "api", "reintento", 1),
+        ],
+    );
+
+    // Una timeline no rutea aristas: el lazo es cosa del grafo de secuencia.
+    let layout = engine().layout_timeline(&timeline, &LayoutOpts::default());
+    assert!(
+        layout.edges.is_empty(),
+        "una timeline no dibuja el lazo: {:?}",
+        layout.edges
+    );
+
+    let graph = sequence_graph();
+    let layout = engine().layout(&graph, &LayoutOpts::default());
+    let route = layout
+        .edges
+        .iter()
+        .find(|edge| edge.from == "api" && edge.to == "api")
+        .expect("el lazo del actor");
+
+    assert_eq!(route.points.len(), 4, "el lazo tiene cuatro tramos");
+    let lifeline = layout.nodes["api"].center.x;
+    assert!(
+        (route.points[0].x - lifeline).abs() < 1e-6,
+        "el lazo sale de la línea de vida: {} vs {lifeline}",
+        route.points[0].x
+    );
+    assert!(
+        (route.points[3].x - lifeline).abs() < 1e-6,
+        "y vuelve a ella: {}",
+        route.points[3].x
+    );
+    assert!(route.points[1].x > lifeline, "sale hacia un costado");
+    // El nombre va sobre el tramo de arriba del lazo, no sobre la vertical.
+    let label = route.label_at.expect("el lazo lleva su nombre");
+    assert!(
+        label.x > lifeline,
+        "el nombre no se apoya en la línea de vida"
+    );
+    assert!(label.y < route.points[0].y, "y va arriba del lazo");
+}
+
+/// Un grafo de secuencia con dos actores y un mensaje a sí mismo.
+fn sequence_graph() -> gx_core::ir::IrGraph {
+    use gx_core::ir::{IrEdge, IrGraph, IrNode, LayoutHint};
+    let mut api = IrNode::new("api", "API");
+    api.size = Size::new(90.0, 40.0);
+    let mut cliente = IrNode::new("cliente", "Cliente");
+    cliente.size = Size::new(90.0, 40.0);
+    let mut loop_edge = IrEdge::new("api", "api");
+    loop_edge.label = Some("reintento".to_string());
+    IrGraph {
+        direction: gx_core::ir::Direction::TB,
+        layout_hint: LayoutHint::Lanes,
+        nodes: vec![cliente, api],
+        edges: vec![IrEdge::new("cliente", "api"), loop_edge],
+        groups: Vec::new(),
+    }
+}

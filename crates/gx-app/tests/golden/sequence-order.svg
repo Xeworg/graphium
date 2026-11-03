@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="0.00 0.00 71.57 319.50" width="71.57" height="319.50">
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="0.00 0.00 480.00 620.00" width="480.00" height="620.00">
 <style>
 .bg{fill:rgba(27, 27, 27, 1.00)}
 .node-fill{fill:rgba(42, 42, 48, 1.00)}
@@ -10,6 +10,7 @@
 .emphasis-highlight{stroke:rgba(110, 168, 254, 1.00)}
 .emphasis-highlight-text{fill:rgba(110, 168, 254, 1.00)}
 .emphasis-muted{opacity:0.55}
+.lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
 .stroke-dashed{stroke-dasharray:6.00 4.00}
 .text{font-family:Inter, sans-serif}
 .arrow-normal{fill:rgba(138, 138, 150, 1.00)}
@@ -21,22 +22,29 @@
 <path class="arrow-normal" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00 Z"/>
 </marker>
 </defs>
+<g class="layer-lifelines">
+<line class="lifeline" x1="205.00" y1="64.75" x2="205.00" y2="620.00"/>
+<line class="lifeline" x1="45.00" y1="64.75" x2="45.00" y2="620.00"/>
+<line class="lifeline" x1="365.00" y1="64.75" x2="365.00" y2="620.00"/>
+</g>
 <g class="layer-edges">
-<polyline id="m-api-cliente" class="edge-stroke stroke-dashed" points="27.86,139.00 9.25,90.25 27.86,41.50" marker-end="url(#arrow-normal)"/>
-<text class="edge-text text" x="30.79" y="90.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">201</text>
-<polyline id="m-api-db" class="edge-stroke" points="42.66,180.50 58.82,229.25 42.66,278.00" marker-end="url(#arrow-normal)"/>
-<text class="edge-text text" x="93.70" y="229.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">INSERT</text>
-<polyline id="m-cliente-api" class="edge-stroke" points="43.71,41.50 62.32,90.25 43.71,139.00" marker-end="url(#arrow-normal)"/>
-<text class="edge-text text" x="117.02" y="90.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">POST /orders</text>
-<polyline id="m-db-api" class="edge-stroke stroke-dashed" points="28.91,278.00 12.75,229.25 28.91,180.50" marker-end="url(#arrow-normal)"/>
-<text class="edge-text text" x="30.79" y="229.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">ok</text>
+<polyline id="m-api-api" class="edge-stroke stroke-dashed" points="205.00,440.00 275.00,440.00 275.00,485.00 205.00,485.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="240.00" y="426.50" font-size="14.00" text-anchor="middle" dominant-baseline="central">reintento</text>
+<polyline id="m-api-cliente" class="edge-stroke stroke-dashed" points="205.00,530.00 45.00,530.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="125.00" y="512.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">201</text>
+<polyline id="m-api-db" class="edge-stroke" points="205.00,260.00 365.00,260.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="285.00" y="242.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">INSERT</text>
+<polyline id="m-cliente-api" class="edge-stroke" points="45.00,170.00 205.00,170.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="125.00" y="152.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">POST /orders</text>
+<polyline id="m-db-api" class="edge-stroke stroke-dashed" points="365.00,350.00 205.00,350.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="285.00" y="332.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">ok</text>
 </g>
 <g class="layer-nodes">
-<rect id="g-api" class="node-fill node-stroke shape-rounded" x="12.24" y="139.00" width="47.09" height="41.50" rx="6.00" ry="6.00"/>
-<text class="node-text text" x="35.79" y="159.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">API</text>
-<rect id="g-cliente" class="node-fill node-stroke shape-rounded" x="0.00" y="0.00" width="71.57" height="41.50" rx="6.00" ry="6.00"/>
-<text class="node-text text" x="35.79" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Cliente</text>
-<rect id="g-db" class="node-fill node-stroke shape-rounded" x="7.17" y="278.00" width="57.24" height="41.50" rx="6.00" ry="6.00"/>
-<text class="node-text text" x="35.79" y="298.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Base</text>
+<rect id="g-api" class="node-fill node-stroke shape-rounded" x="160.00" y="15.25" width="90.00" height="49.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="205.00" y="40.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">API</text>
+<rect id="g-cliente" class="node-fill node-stroke shape-rounded" x="0.00" y="15.25" width="90.00" height="49.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="45.00" y="40.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">Cliente</text>
+<rect id="g-db" class="node-fill node-stroke shape-rounded" x="320.00" y="15.25" width="90.00" height="49.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="365.00" y="40.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">Base</text>
 </g>
 </svg>

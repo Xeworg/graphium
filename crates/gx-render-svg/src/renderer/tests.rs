@@ -507,3 +507,73 @@ fn the_crow_foot_opens_towards_the_table() {
     // The ankle is back from the table, never past it.
     assert!(foot.contains("M 178.00"), "the ankle sits away: {foot}");
 }
+
+/// Un diagrama de secuencia sin líneas de vida se lee desarmado: cada flecha
+/// flota y no se ve a qué actor pertenece. Las líneas van del borde inferior
+/// de cada actor al fondo del dibujo, y no aparecen en un grafo por capas.
+#[test]
+fn a_sequence_keeps_a_lifeline_under_every_actor() {
+    use gx_core::ir::LayoutHint;
+
+    let mut sequence = crate::test_support::graph(
+        vec![
+            crate::test_support::node("cliente", "Cliente"),
+            crate::test_support::node("api", "API"),
+        ],
+        vec![crate::test_support::labeled_edge(
+            "cliente",
+            "api",
+            "POST /orders",
+        )],
+    );
+    if let gx_core::ir::Ir::Graph(graph) = &mut sequence {
+        graph.layout_hint = LayoutHint::Lanes;
+    }
+    let layout = crate::test_support::layout(
+        &[
+            (
+                "cliente",
+                gx_core::geom::Point::new(60.0, 30.0),
+                gx_core::geom::Size::new(90.0, 40.0),
+            ),
+            (
+                "api",
+                gx_core::geom::Point::new(240.0, 30.0),
+                gx_core::geom::Size::new(90.0, 40.0),
+            ),
+        ],
+        vec![crate::test_support::routed(
+            "cliente",
+            "api",
+            &[(60.0, 120.0), (240.0, 120.0)],
+            Some((150.0, 100.0)),
+        )],
+        gx_core::geom::Rect::new(0.0, 0.0, 300.0, 220.0),
+    );
+
+    let svg = render(&sequence, &layout, &Palette::plano());
+
+    assert_eq!(
+        svg.matches("<line class=\"lifeline\"").count(),
+        2,
+        "una línea de vida por actor: {svg}"
+    );
+    assert!(
+        svg.contains(".lifeline{"),
+        "la regla del tema viaja en el SVG"
+    );
+
+    // Un grafo por capas no lleva líneas de vida: no son parte de su dibujo.
+    let layered = crate::test_support::graph(
+        vec![
+            crate::test_support::node("a", "A"),
+            crate::test_support::node("b", "B"),
+        ],
+        vec![crate::test_support::labeled_edge("a", "b", "sigue")],
+    );
+    let svg = render(&layered, &layout, &Palette::plano());
+    assert!(
+        !svg.contains("<line class=\"lifeline\""),
+        "capas no lleva líneas de vida: {svg}"
+    );
+}
