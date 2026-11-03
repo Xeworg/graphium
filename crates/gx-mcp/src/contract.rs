@@ -435,6 +435,60 @@ fn min_example_of(kind: &str) -> Value {
                 }
             ]
         }),
+        "tree" => serde_json::json!({
+            "version": 1,
+            "kind": "tree",
+            "title": "src",
+            "root": {
+                "name": "src",
+                "children": [
+                    { "name": "main.rs" },
+                    { "name": "lib", "children": [ { "name": "mod.rs" } ] }
+                ]
+            }
+        }),
+        "mindmap" => serde_json::json!({
+            "version": 1,
+            "kind": "mindmap",
+            "title": "Graphium",
+            "root": {
+                "topic": "Graphium",
+                "branches": [ { "topic": "MCP" }, { "topic": "Plano" } ]
+            }
+        }),
+        "sequence" => serde_json::json!({
+            "version": 1,
+            "kind": "sequence",
+            "title": "pedido",
+            "participants": [
+                { "id": "cliente", "label": "Cliente" },
+                { "id": "api", "label": "API" }
+            ],
+            "messages": [
+                { "from": "cliente", "to": "api", "label": "POST /orders" },
+                { "from": "api", "to": "cliente", "label": "201", "reply": true }
+            ]
+        }),
+        "timeline" => serde_json::json!({
+            "version": 1,
+            "kind": "timeline",
+            "title": "Roadmap",
+            "lanes": [ { "id": "q1", "label": "Q1" } ],
+            "events": [
+                { "label": "v1.0", "lane": "q1" },
+                { "label": "v1.1", "lane": "q1" }
+            ]
+        }),
+        "swimlane" => serde_json::json!({
+            "version": 1,
+            "kind": "swimlane",
+            "title": "soporte",
+            "lanes": [ { "id": "cliente" }, { "id": "soporte" } ],
+            "steps": [
+                { "label": "reclama", "lane": "cliente" },
+                { "label": "responde", "lane": "soporte" }
+            ]
+        }),
         _ => serde_json::json!({
             "version": 1,
             "kind": "graph",
@@ -467,6 +521,27 @@ fn rules_of(kind: &str) -> Vec<String> {
         "er" => {
             rules.push("Cada tabla tiene un `name` único dentro del diagrama.".to_string());
             rules.push("Cada relación referencia tablas y columnas declaradas.".to_string());
+        }
+        "timeline" => {
+            rules.push(
+                "Cada `id` de carril es único, y `order` decide la columna: el array de eventos puede venir desordenado."
+                    .to_string(),
+            );
+            rules.push(
+                "Si el documento declara `lanes`, cada evento dice su `lane` y referencia uno declarado."
+                    .to_string(),
+            );
+            rules.push(
+                "Un evento con `end` es un tramo y `end` tiene que ser posterior a `order`."
+                    .to_string(),
+            );
+        }
+        "swimlane" => {
+            rules.push("Un proceso necesita al menos un carril y al menos un paso.".to_string());
+            rules.push(
+                "Cada paso referencia con `lane` un carril declarado, y el orden de `steps` es el orden del proceso."
+                    .to_string(),
+            );
         }
         _ => {}
     }
@@ -1078,6 +1153,26 @@ mod tests {
         assert!(shapes.contains(&"rounded".to_string()));
         assert!(!shapes.is_empty());
         assert_eq!(response.required.unwrap(), vec!["version", "kind"]);
+    }
+
+    /// El índice de kinds le da al agente un ejemplo mínimo de cada kind: si
+    /// el ejemplo declara otro `kind`, el agente escribe un documento que el
+    /// registro rechaza y el catálogo miente.
+    #[test]
+    fn every_kind_has_a_minimal_example_of_its_own() {
+        gx_kinds::register_all();
+        for kind in gx_core::kind::kind_names() {
+            let example = super::min_example_of(kind);
+            assert_eq!(
+                example.get("kind").and_then(|value| value.as_str()),
+                Some(kind),
+                "el ejemplo mínimo de `{kind}` declara otro kind: {example}"
+            );
+            assert_eq!(
+                example.get("version").and_then(|value| value.as_u64()),
+                Some(1)
+            );
+        }
     }
 
     #[test]
