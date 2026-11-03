@@ -51,11 +51,9 @@ pub fn serve_stdio() -> Result<(), Box<dyn std::error::Error>> {
     let worker = std::thread::Builder::new()
         .name("gx-mcp-stdio".to_string())
         .spawn(run_stdio_service)?;
-    worker
-        .join()
-        .map_err(|_| -> Box<dyn std::error::Error> {
-            "the gx-mcp stdio thread panicked".into()
-        })??;
+    worker.join().map_err(|_| -> Box<dyn std::error::Error> {
+        "the gx-mcp stdio thread panicked".into()
+    })??;
     Ok(())
 }
 
@@ -254,7 +252,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_tool_renders_and_reports_opts_as_a_warning() {
-        let _guard = lock_renders();
+        let _guard = lock_renders().await;
         let server = GraphiumServer::new();
         let diagram = serde_json::from_str(MINIMAL).expect("the example is JSON");
 
@@ -306,7 +304,7 @@ mod tests {
     async fn the_service_answers_json_rpc_over_the_transport() {
         use tokio::io::{AsyncWriteExt, BufReader};
 
-        let _guard = lock_renders();
+        let _guard = lock_renders().await;
         let (client, server) = tokio::io::duplex(64 * 1024);
         let (server_read, server_write) = tokio::io::split(server);
         let (client_read, mut client_write) = tokio::io::split(client);

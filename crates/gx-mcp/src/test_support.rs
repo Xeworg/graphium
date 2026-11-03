@@ -4,7 +4,7 @@
 //! `gx-render-svg`, Tauri, webkit and the webview (PRD §9.1): the render path
 //! runs through the single engine door with injected stubs.
 
-use std::sync::{Arc, Mutex, MutexGuard, Once};
+use std::sync::{Arc, Once};
 
 use gx_core::engine::{install, Engines};
 use gx_core::geom::{Point, Rect, Size};
@@ -78,7 +78,10 @@ impl TextMetrics for StubMetrics {
     fn measure(&self, text: &str, style: &TextStyle) -> Size {
         let lines = text.lines().count().max(1) as f64;
         let width = text.chars().count() as f64 * style.size * 0.5;
-        Size::new(width.max(style.size), lines * style.size * style.line_height)
+        Size::new(
+            width.max(style.size),
+            lines * style.size * style.line_height,
+        )
     }
 }
 
@@ -116,16 +119,30 @@ fn install_stub_engines() {
     });
 }
 
-static RENDER_LOCK: Mutex<()> = Mutex::new(());
+/// Serializes the tests that render into the global diagram store.
+///
+/// The lock is a `tokio` mutex on purpose: the async tests hold it across
+/// `await` points and a blocking mutex would tie up the executor.
+static RENDER_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Serializes the tests that render into the global diagram store and starts
-/// them from an empty store, with stub engines and no window sink.
-pub(crate) fn lock_renders() -> MutexGuard<'static, ()> {
-    let guard = RENDER_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+/// Prepares the global state the render path touches: an empty store, no
+/// window sink and the stub engines.
+fn prepare() {
     diagram_store().reset_for_tests();
     tools::set_render_hook(None);
     install_stub_engines();
+}
+
+/// Serializes the tests that render, for the async tests.
+pub(crate) async fn lock_renders() -> tokio::sync::MutexGuard<'static, ()> {
+    let guard = RENDER_LOCK.lock().await;
+    prepare();
+    guard
+}
+
+/// Serializes the tests that render, for the synchronous tests.
+pub(crate) fn lock_renders_blocking() -> tokio::sync::MutexGuard<'static, ()> {
+    let guard = RENDER_LOCK.blocking_lock();
+    prepare();
     guard
 }

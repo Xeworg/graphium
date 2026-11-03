@@ -216,7 +216,11 @@ mod tests {
 
         assert_eq!(inserted.updated_at.len(), 20, "{}", inserted.updated_at);
         assert_eq!(inserted.updated_at.as_bytes()[10], b'T');
-        assert!(inserted.updated_at.ends_with('Z'), "{}", inserted.updated_at);
+        assert!(
+            inserted.updated_at.ends_with('Z'),
+            "{}",
+            inserted.updated_at
+        );
     }
 
     #[test]

@@ -235,7 +235,7 @@ mod tests {
 
     use super::{render_diagram, set_render_hook, RenderHook, RenderRequest, RenderResponse};
     use crate::store::diagram_store;
-    use crate::test_support::{lock_renders, MINIMAL};
+    use crate::test_support::{lock_renders_blocking, MINIMAL};
 
     fn render(document: &str) -> RenderResponse {
         render_diagram(&RenderRequest {
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn renders_the_minimal_example_of_the_prd() {
-        let _guard = lock_renders();
+        let _guard = lock_renders_blocking();
 
         let response = render(MINIMAL);
 
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn ids_are_monotonic_across_renders() {
-        let _guard = lock_renders();
+        let _guard = lock_renders_blocking();
 
         let first = render(MINIMAL);
         let second = render(MINIMAL);
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn invalid_json_is_reported() {
-        let _guard = lock_renders();
+        let _guard = lock_renders_blocking();
 
         let response = render("{ \"version\": 1, ");
 
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn an_unknown_kind_is_reported() {
-        let _guard = lock_renders();
+        let _guard = lock_renders_blocking();
 
         let response = render(r#"{ "version": 1, "kind": "er" }"#);
 
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn an_unknown_field_is_reported() {
-        let _guard = lock_renders();
+        let _guard = lock_renders_blocking();
 
         let response = render(
             r#"{
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn the_render_hook_confirms_the_paint() {
-        let _guard = lock_renders();
+        let _guard = lock_renders_blocking();
 
         let seen = Arc::new(Mutex::new(Vec::new()));
         let recorder = Arc::clone(&seen);
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn a_rejected_paint_keeps_the_diagram_unrendered() {
-        let _guard = lock_renders();
+        let _guard = lock_renders_blocking();
 
         set_render_hook(Some(Arc::new(|_payload| false)));
         let response = render(MINIMAL);
