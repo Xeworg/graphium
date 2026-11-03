@@ -15,6 +15,9 @@ pub struct TextStyle {
     pub weight: u16,
     /// Line height multiplier.
     pub line_height: f64,
+    /// Whether the fine kerning of the pair is applied. The third step of
+    /// the degradation ladder turns it off (PRD §7.3).
+    pub kerning: bool,
 }
 
 impl TextStyle {
@@ -23,6 +26,7 @@ impl TextStyle {
             size,
             weight,
             line_height,
+            kerning: true,
         }
     }
 
@@ -32,6 +36,14 @@ impl TextStyle {
 
     pub const fn semibold(size: f64) -> Self {
         Self::new(size, 600, 1.25)
+    }
+
+    /// The same style, measured without fine kerning.
+    pub const fn without_kerning(self) -> Self {
+        Self {
+            kerning: false,
+            ..self
+        }
     }
 }
 

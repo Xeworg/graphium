@@ -114,6 +114,9 @@ pub struct RenderOpts {
     pub direction: Option<Direction>,
     /// Deadline of the layout phase, in milliseconds (PRD §7.3).
     pub layout_timeout_ms: u64,
+    /// How much of the drawing is degraded to enter the budget of
+    /// PRD §7.3. The caller walks the ladder; the door only obeys.
+    pub degradation: Degradation,
 }
 
 impl Default for RenderOpts {
@@ -122,7 +125,76 @@ impl Default for RenderOpts {
             theme: Theme::Dark,
             direction: None,
             layout_timeout_ms: 2000,
+            degradation: Degradation::NONE,
         }
+    }
+}
+
+/// The spacing of the second step of the ladder: 70% of the default
+/// (PRD §7.3).
+pub const DEGRADED_SPACING_SCALE: f64 = 0.7;
+
+/// The degradation ladder of PRD §7.3, in order and without asking.
+///
+/// Each level adds one step to the previous one: the caller picks the level
+/// it needs, and the drawing is never degraded more than asked.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Degradation {
+    /// Step 1: the labels of the edges are not drawn.
+    pub omit_edge_labels: bool,
+    /// Step 2: the separations between nodes are multiplied by this.
+    pub spacing_scale: f64,
+    /// Step 3: the text is measured without fine kerning.
+    pub no_fine_kerning: bool,
+}
+
+impl Degradation {
+    /// No degradation at all.
+    pub const NONE: Self = Self {
+        omit_edge_labels: false,
+        spacing_scale: 1.0,
+        no_fine_kerning: false,
+    };
+
+    /// Step 1 only.
+    pub const fn step_one() -> Self {
+        Self {
+            omit_edge_labels: true,
+            ..Self::NONE
+        }
+    }
+
+    /// Steps 1 and 2.
+    pub const fn step_two() -> Self {
+        Self {
+            omit_edge_labels: true,
+            spacing_scale: DEGRADED_SPACING_SCALE,
+            no_fine_kerning: false,
+        }
+    }
+
+    /// Steps 1, 2 and 3.
+    pub const fn step_three() -> Self {
+        Self {
+            omit_edge_labels: true,
+            spacing_scale: DEGRADED_SPACING_SCALE,
+            no_fine_kerning: true,
+        }
+    }
+
+    /// The steps that are on, in order: `1`, `2`, `3`.
+    pub fn steps(&self) -> Vec<u8> {
+        let mut steps = Vec::new();
+        if self.omit_edge_labels {
+            steps.push(1);
+        }
+        if self.spacing_scale < 1.0 {
+            steps.push(2);
+        }
+        if self.no_fine_kerning {
+            steps.push(3);
+        }
+        steps
     }
 }
 

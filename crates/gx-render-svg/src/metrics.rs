@@ -96,14 +96,28 @@ fn parse_face(weight: Weight) -> Result<Face<'static>, MetricsError> {
 }
 
 /// Advance width of one line, in plan units.
-fn line_width(face: &Face<'static>, line: &str, size: f64) -> f64 {
+///
+/// With `kerning` off the `kern` feature of the shaping is disabled: the
+/// third step of the degradation ladder (PRD §7.3) measures the text without
+/// the fine adjustment between pairs, which is the cheapest way to make the
+/// drawing smaller without hiding anything.
+fn line_width(face: &Face<'static>, line: &str, size: f64, kerning: bool) -> f64 {
     if line.is_empty() {
         return 0.0;
     }
     let mut buffer = UnicodeBuffer::new();
     buffer.push_str(line);
     buffer.guess_segment_properties();
-    let glyphs = rustybuzz::shape(face, &[], buffer);
+    let features = if kerning {
+        Vec::new()
+    } else {
+        vec![rustybuzz::Feature::new(
+            rustybuzz::ttf_parser::Tag::from_bytes(b"kern"),
+            0,
+            ..,
+        )]
+    };
+    let glyphs = rustybuzz::shape(face, &features, buffer);
     let advance: i32 = glyphs
         .glyph_positions()
         .iter()
@@ -119,7 +133,7 @@ impl TextMetrics for InterMetrics {
         let mut lines = 0u32;
         for line in text.lines() {
             lines += 1;
-            width = width.max(line_width(face, line, style.size));
+            width = width.max(line_width(face, line, style.size, style.kerning));
         }
         let height = f64::from(lines) * style.size * style.line_height;
         Size::new(width, height)
@@ -178,6 +192,37 @@ mod tests {
         assert!(
             pair < apart,
             "AV ({pair}) must be narrower than A + V ({apart})"
+        );
+    }
+
+    /// The third step of the degradation ladder (PRD §7.3): turning the fine
+    /// kerning off never makes a text narrower, and it does widen at least one
+    /// of the pairs where the embedded face kerns.
+    #[test]
+    fn text_without_kerning_is_not_narrower() {
+        let metrics = metrics();
+        let kerned_style = TextStyle::regular(TOKENS.text_size);
+        let unkerned_style = kerned_style.without_kerning();
+
+        let mut tightened = 0;
+        for pair in ["AV", "Ta", "To", "Yo", "VA"] {
+            let kerned = metrics.measure(pair, &kerned_style).w;
+            let unkerned = metrics.measure(pair, &unkerned_style).w;
+            assert!(
+                kerned.is_finite() && unkerned.is_finite(),
+                "{pair}: kerning {kerned}, without kerning {unkerned}"
+            );
+            assert!(
+                unkerned >= kerned,
+                "{pair}: without kerning {unkerned} must not be narrower than {kerned}"
+            );
+            if unkerned > kerned {
+                tightened += 1;
+            }
+        }
+        assert!(
+            tightened > 0,
+            "the third step must widen at least one kerned pair, or nothing is degraded"
         );
     }
 

@@ -13,7 +13,7 @@
 use std::sync::{Arc, OnceLock, RwLock};
 
 use gx_core::error::ValidationError;
-use gx_core::render::{RenderMetrics, RenderOpts};
+use gx_core::render::{Degradation, RenderMetrics, RenderOpts};
 use serde::Serialize;
 
 use crate::store::diagram_store;
@@ -185,21 +185,64 @@ fn installed_hook() -> Option<RenderHook> {
 pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
     crate::bootstrap();
 
-    let outcome = match gx_core::engine::render_json(&request.document, &RenderOpts::default()) {
+    let mut outcome = match render_with(&request.document, Degradation::NONE) {
         Ok(outcome) => outcome,
-        Err(errors) => {
-            return RenderResponse {
-                ok: false,
-                diagram_id: None,
-                rendered_kind: None,
-                rendered: false,
-                reason: None,
-                metrics: None,
-                errors: errors.iter().map(ErrorPayload::from).collect(),
-                warnings: Vec::new(),
-            };
-        }
+        Err(errors) => return rejected(errors),
     };
+
+    // The degradation ladder (PRD §7.3, S20): past the warning line the
+    // diagram is not rejected, it is degraded. Step 1 always applies above
+    // the line; the later steps are only paid when the SVG is still past the
+    // budget, so a big but healthy diagram degrades once and no more.
+    let mut applied = Vec::new();
+    if outcome.metrics.nodes > WARNING_NODES {
+        match render_with(&request.document, Degradation::step_one()) {
+            Ok(degraded) => {
+                outcome = degraded;
+                applied.push(1u8);
+            }
+            Err(errors) => return rejected(errors),
+        }
+        for (step, degradation) in [
+            (2u8, Degradation::step_two()),
+            (3, Degradation::step_three()),
+        ] {
+            if outcome.metrics.svg_bytes <= SVG_BUDGET_BYTES {
+                break;
+            }
+            match render_with(&request.document, degradation) {
+                Ok(degraded) => {
+                    outcome = degraded;
+                    applied.push(step);
+                }
+                Err(errors) => return rejected(errors),
+            }
+        }
+    }
+
+    // Step 4: even the last step could not enter the budget. The render
+    // cuts and says how to continue instead of painting two megabytes.
+    if outcome.metrics.svg_bytes > SVG_BUDGET_BYTES {
+        let metrics = Metrics::from(outcome.metrics);
+        return RenderResponse {
+            ok: false,
+            diagram_id: None,
+            rendered_kind: None,
+            rendered: false,
+            reason: None,
+            metrics: Some(metrics),
+            errors: vec![ErrorPayload {
+                path: "diagram".to_string(),
+                code: "too_large".to_string(),
+                message: format!(
+                    "el SVG resultante tiene {} bytes y el presupuesto es {}",
+                    metrics.svg_bytes, SVG_BUDGET_BYTES
+                ),
+                hint: Some("usá opts.extract: {around, depth}".to_string()),
+            }],
+            warnings: Vec::new(),
+        };
+    }
 
     // The document is valid JSON from here on: the door just accepted it.
     let document: serde_json::Value =
@@ -228,6 +271,23 @@ pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
         ),
         None => Vec::new(),
     };
+    if !applied.is_empty() {
+        warnings.push(Warning::new(
+            "degraded",
+            format!(
+                "el diagrama se degradó para entrar en el presupuesto: {}",
+                applied
+                    .iter()
+                    .map(|step| match step {
+                        1 => "paso 1 (labels de aristas omitidos)",
+                        2 => "paso 2 (espaciado al 70%)",
+                        _ => "paso 3 (texto sin kerning fino)",
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ));
+    }
     // Bounding box of the layout: the size of the diagram in plan units.
     let width = outcome.bbox.w;
     let height = outcome.bbox.h;
@@ -286,12 +346,48 @@ pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
     }
 }
 
+/// The number of nodes above which a render is warned and degraded
+/// (PRD §7.3, S6 and S20).
+pub const WARNING_NODES: usize = 150;
+/// The budget of bytes of a painted SVG: past it the render cuts
+/// (PRD §7.3, S20 step 4).
+pub const SVG_BUDGET_BYTES: usize = 2 * 1024 * 1024;
+
+/// Renders a document with a given level of the degradation ladder.
+fn render_with(
+    document: &str,
+    degradation: Degradation,
+) -> Result<gx_core::render::RenderOutcome, Vec<gx_core::error::ValidationError>> {
+    gx_core::engine::render_json(
+        document,
+        &RenderOpts {
+            degradation,
+            ..RenderOpts::default()
+        },
+    )
+}
+
+/// The response of a document the door rejected.
+fn rejected(errors: Vec<gx_core::error::ValidationError>) -> RenderResponse {
+    RenderResponse {
+        ok: false,
+        diagram_id: None,
+        rendered_kind: None,
+        rendered: false,
+        reason: None,
+        metrics: None,
+        errors: errors.iter().map(ErrorPayload::from).collect(),
+        warnings: Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{
         render_diagram, set_render_hook, RenderHook, RenderRequest, RenderResponse, RenderStatus,
+        SVG_BUDGET_BYTES,
     };
     use crate::store::diagram_store;
     use crate::test_support::{lock_renders_blocking, MINIMAL};
@@ -325,7 +421,12 @@ mod tests {
             .map(|i| format!(r#"{{ "id": "n{i}", "label": "nodo {i}" }}"#))
             .collect();
         let edges: Vec<String> = (0..nodes.len().saturating_sub(1))
-            .map(|i| format!(r#"{{ "from": "n{i}", "to": "n{}" }}"#, i + 1))
+            .map(|i| {
+                format!(
+                    r#"{{ "from": "n{i}", "to": "n{}", "label": "sigue" }}"#,
+                    i + 1
+                )
+            })
             .collect();
         format!(
             r#"{{ "version": 1, "kind": "graph", "title": "cadena",
@@ -338,8 +439,7 @@ mod tests {
     /// PRD §7 RF20, S6: between 150 nodes and the hard limit the diagram is
     /// not rejected; the render reports the size in `warnings[]`.
     #[test]
-    fn a_big_diagram_renders_with_the_size_warning() {
-        let _guard = lock_renders_blocking();
+    fn a_big_diagram_renders_with_the_size_warning() {        let _guard = lock_renders_blocking();
 
         let response = render(&chain(160));
 
@@ -388,6 +488,84 @@ mod tests {
         assert!(
             !codes.contains(&"too_many_nodes".to_string()),
             "150 nodes are exactly the line: {codes:?}"
+        );
+    }
+
+    /// PRD §7.3, S20 step 1: past the warning line the edge labels go first,
+    /// and the render says which step it applied.
+    #[test]
+    fn a_big_diagram_is_degraded_and_the_warning_names_the_step() {
+        let _guard = lock_renders_blocking();
+
+        let painted = Arc::new(Mutex::new(String::new()));
+        let recorder = Arc::clone(&painted);
+        set_render_hook(Some(Arc::new(move |payload| {
+            *recorder.lock().expect("the recorder is not poisoned") = payload.svg.clone();
+            RenderStatus::Painted
+        })));
+
+        let response = render(&chain(160));
+
+        assert!(response.ok, "{:?}", response.errors);
+        let degraded = response
+            .warnings
+            .iter()
+            .find(|warning| warning.code == "degraded")
+            .expect("the degradation is reported");
+        assert!(
+            degraded.message.contains("paso 1"),
+            "the warning names the step: {}",
+            degraded.message
+        );
+        let svg = painted.lock().expect("the recorder is not poisoned").clone();
+        assert!(
+            !svg.contains("sigue"),
+            "step 1 omits the edge labels: {svg}"
+        );
+
+        set_render_hook(None);
+    }
+
+    /// A small diagram pays nothing: the ladder only starts above the
+    /// warning line (PRD §7.3).
+    #[test]
+    fn a_small_diagram_is_not_degraded() {
+        let _guard = lock_renders_blocking();
+
+        let response = render(MINIMAL);
+
+        let codes = warning_codes(&response);
+        assert!(
+            !codes.contains(&"degraded".to_string()),
+            "a two-node diagram is drawn whole: {codes:?}"
+        );
+    }
+
+    /// PRD §7.3, S20 step 4: when even the last step leaves the SVG past the
+    /// budget, the render cuts and says how to continue instead of painting
+    /// two megabytes.
+    #[test]
+    fn an_oversized_diagram_is_cut_with_the_budget_and_the_hint() {
+        let _guard = lock_renders_blocking();
+        crate::test_support::set_oversize(true);
+
+        let response = render(&chain(160));
+
+        assert!(!response.ok, "{response:?}");
+        assert_eq!(error_codes(&response), vec!["too_large"]);
+        let error = &response.errors[0];
+        assert!(
+            error.hint.as_deref().unwrap_or_default().contains("opts.extract"),
+            "the hint points at extract: {error:?}"
+        );
+        let metrics = response.metrics.expect("the cost is reported");
+        assert!(
+            metrics.svg_bytes as usize > SVG_BUDGET_BYTES,
+            "the response names the size: {metrics:?}"
+        );
+        assert!(
+            diagram_store().list().is_empty(),
+            "a cut diagram never reaches the plane"
         );
     }
 

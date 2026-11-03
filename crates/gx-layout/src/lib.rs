@@ -14,7 +14,7 @@ use dagre::graph::{Graph, GraphOptions};
 use dagre::{layout, EdgeLabel, LayoutOptions, NodeLabel, RankDir, Ranker};
 use gx_core::geom::{Point, Rect, Size};
 use gx_core::ir::{Direction, IrGraph};
-use gx_core::layout::{LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, NodeBox};
+use gx_core::layout::{LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, LayoutOpts, NodeBox};
 use gx_core::text::{TextMetrics, TextStyle};
 use gx_core::tokens::TOKENS;
 
@@ -44,44 +44,6 @@ impl DagreEngine {
         Self { metrics }
     }
 
-    /// The size of the box of a node: the label, padded, plus its rows.
-    ///
-    /// The rows are the columns of a table (PRD §6.1): the box has to be tall
-    /// enough to hold them, or the drawing would overlap the text.
-    fn node_size(&self, node: &gx_core::ir::IrNode) -> Size {
-        let label = self
-            .metrics
-            .measure(&node.label, &TextStyle::semibold(TOKENS.text_size));
-        let mut width = label.w;
-        let mut height = label.h + 2.0 * TOKENS.node_padding;
-
-        if !node.rows.is_empty() {
-            // The badge of the key occupies its own column and the note is
-            // drawn against the right edge: badge + name + note have to fit.
-            let badge = self
-                .metrics
-                .measure("PK, FK", &TextStyle::regular(TOKENS.text_size));
-            let gap = TOKENS.node_padding;
-            height += TOKENS.border_width;
-            for row in &node.rows {
-                let name = self
-                    .metrics
-                    .measure(&row.text, &TextStyle::regular(TOKENS.text_size));
-                let mut row_width = badge.w + gap + name.w;
-                if let Some(note) = &row.note {
-                    let measured_note = self
-                        .metrics
-                        .measure(note, &TextStyle::regular(TOKENS.text_size));
-                    row_width += gap + measured_note.w;
-                }
-                width = width.max(row_width);
-                height += name.h;
-            }
-            height += TOKENS.node_padding;
-        }
-
-        Size::new(width + 2.0 * TOKENS.node_padding, height)
-    }
 }
 
 fn rank_dir(direction: Direction) -> RankDir {
@@ -94,7 +56,7 @@ fn rank_dir(direction: Direction) -> RankDir {
 }
 
 impl LayoutEngine for DagreEngine {
-    fn layout(&self, graph: &IrGraph) -> LayoutGraph {
+    fn layout(&self, graph: &IrGraph, opts: &LayoutOpts) -> LayoutGraph {
         let mut dagre: Graph<NodeLabel, EdgeLabel> = Graph::with_options(GraphOptions {
             directed: true,
             multigraph: true,
@@ -102,7 +64,10 @@ impl LayoutEngine for DagreEngine {
         });
 
         for node in &graph.nodes {
-            let size = self.node_size(node);
+            // The size is the one the door measured (PRD §8.4.1): measuring
+            // again here gave two sources of truth for the same box, and
+            // they drifted apart when the degradation changed the text.
+            let size = node.size;
             dagre.set_node(
                 node.id.clone(),
                 Some(NodeLabel {
@@ -143,15 +108,16 @@ impl LayoutEngine for DagreEngine {
         }
 
         let has_rows = graph.nodes.iter().any(|node| !node.rows.is_empty());
+        let scale = opts.spacing_scale;
         let options = LayoutOptions {
             rankdir: rank_dir(graph.direction),
-            nodesep: NODE_SEPARATION,
+            nodesep: NODE_SEPARATION * scale,
             ranksep: if has_rows {
-                RANK_SEPARATION_WITH_ROWS
+                RANK_SEPARATION_WITH_ROWS * scale
             } else {
-                RANK_SEPARATION
+                RANK_SEPARATION * scale
             },
-            edgesep: EDGE_SEPARATION,
+            edgesep: EDGE_SEPARATION * scale,
             marginx: MARGIN,
             marginy: MARGIN,
             ranker: Ranker::NetworkSimplex,

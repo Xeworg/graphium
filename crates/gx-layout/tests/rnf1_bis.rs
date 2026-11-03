@@ -10,7 +10,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use gx_core::layout::LayoutEngine;
+use gx_core::layout::{LayoutEngine, LayoutOpts};
 use gx_core::text::{TextMetrics, TextStyle};
 use gx_layout::{matrix::rnf1_bis_cases, DagreEngine};
 
@@ -35,7 +35,7 @@ fn engine() -> DagreEngine {
 #[test]
 fn the_four_cases_lay_out_without_failures() {
     for case in rnf1_bis_cases() {
-        let layout = engine().layout(&case.graph);
+        let layout = engine().layout(&case.graph, &LayoutOpts::default());
         assert_eq!(
             layout.nodes.len(),
             case.graph.nodes.len(),
@@ -54,8 +54,8 @@ fn the_four_cases_lay_out_without_failures() {
 #[test]
 fn the_four_cases_are_deterministic() {
     for case in rnf1_bis_cases() {
-        let first = engine().layout(&case.graph);
-        let second = engine().layout(&case.graph);
+        let first = engine().layout(&case.graph, &LayoutOpts::default());
+        let second = engine().layout(&case.graph, &LayoutOpts::default());
         assert_eq!(first.nodes, second.nodes, "{}: nodes", case.name);
         assert_eq!(first.edges, second.edges, "{}: edges", case.name);
         assert_eq!(first.bbox, second.bbox, "{}: bbox", case.name);
@@ -79,7 +79,7 @@ fn the_matrix_is_measured() {
         let mut samples = Vec::with_capacity(RUNS);
         for _ in 0..RUNS {
             let started = Instant::now();
-            let layout = engine().layout(&case.graph);
+            let layout = engine().layout(&case.graph, &LayoutOpts::default());
             let elapsed = started.elapsed().as_secs_f64() * 1000.0;
             assert_eq!(layout.nodes.len(), case.graph.nodes.len());
             samples.push(elapsed);
