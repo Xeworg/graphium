@@ -118,21 +118,31 @@ pub fn render_json(src: &str, opts: &RenderOpts) -> Result<RenderOutcome, Vec<Va
         }
     }
 
-    let graph = ir.graph().ok_or_else(|| {
-        vec![ValidationError::without_hint(
-            "",
-            ErrorCode::InvalidValue,
-            "el kind no produce un grafo",
-        )]
-    })?;
-
-    check_limits(kind.limits(), graph)?;
-
-    let layout_started = Instant::now();
     let layout_opts = LayoutOpts {
         spacing_scale: opts.degradation.spacing_scale,
     };
-    let layout = engines.layout.layout(graph, &layout_opts);
+
+    // The two IRs of the PRD: a graph goes to the graph layout, a timeline to
+    // the lanes one (PRD §6: 13 kinds share `IrGraph`, 6 use `IrTimeline`).
+    let layout_started = Instant::now();
+    let (layout, node_count, edge_count) = match &ir {
+        Ir::Graph(graph) => {
+            check_limits(kind.limits(), graph)?;
+            (
+                engines.layout.layout(graph, &layout_opts),
+                graph.nodes.len(),
+                graph.edges.len(),
+            )
+        }
+        Ir::Timeline(timeline) => {
+            check_timeline_limits(kind.limits(), timeline)?;
+            (
+                engines.layout.layout_timeline(timeline, &layout_opts),
+                timeline.events.len(),
+                0,
+            )
+        }
+    };
     let layout_ms = layout_started.elapsed().as_millis() as u64;
 
     let palette = Palette::for_theme(opts.theme);
@@ -146,8 +156,8 @@ pub fn render_json(src: &str, opts: &RenderOpts) -> Result<RenderOutcome, Vec<Va
         bbox: layout.bbox,
         layout,
         metrics: RenderMetrics {
-            nodes: graph.nodes.len(),
-            edges: graph.edges.len(),
+            nodes: node_count,
+            edges: edge_count,
             layout_ms,
             render_ms,
             svg_bytes,
@@ -195,6 +205,43 @@ fn measure_node(
     }
 
     Size::new(width + 2.0 * TOKENS.node_padding, height)
+}
+
+/// Enforces the limits of a timeline: lanes and events (PRD §7.3).
+fn check_timeline_limits(
+    limits: KindLimits,
+    timeline: &crate::ir::IrTimeline,
+) -> Result<(), Vec<ValidationError>> {
+    let mut errors = Vec::new();
+    if limits.max_lanes > 0 && timeline.lanes.len() > limits.max_lanes {
+        errors.push(ValidationError::new(
+            "lanes",
+            ErrorCode::TooLarge,
+            format!(
+                "{} carriles superan el límite de {}",
+                timeline.lanes.len(),
+                limits.max_lanes
+            ),
+            Some("agrupá los eventos en menos carriles".to_string()),
+        ));
+    }
+    if limits.max_events > 0 && timeline.events.len() > limits.max_events {
+        errors.push(ValidationError::new(
+            "events",
+            ErrorCode::TooLarge,
+            format!(
+                "{} eventos superan el límite de {}",
+                timeline.events.len(),
+                limits.max_events
+            ),
+            Some("partí el diagrama en varios".to_string()),
+        ));
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 /// Enforces the limits declared by the kind (PRD §7.3).
