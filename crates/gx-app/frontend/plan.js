@@ -521,14 +521,9 @@ function insertDiagram(payload) {
   content.appendChild(svg);
   container.appendChild(content);
 
-  // Capacity 1 for now: a new diagram replaces the previous one
-  // (PRD §11.1, F1 capacity 1).
-  for (const [id, element] of objects) {
-    if (id !== payload.diagram_id) {
-      element.remove();
-      objects.delete(id);
-    }
-  }
+  // F2: a new diagram **sums** to the plan, it does not replace the one
+  // that was there (PRD §11.1, S9). The plan is a canvas with room for
+  // several objects, each one where Rust placed it.
 
   objects.set(payload.diagram_id, container);
   diagrams.appendChild(container);

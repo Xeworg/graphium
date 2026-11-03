@@ -528,6 +528,35 @@ pub fn render_diagram_with(request: &RenderRequest, opts: &RenderOptions) -> Ren
     let height = outcome.bbox.h;
 
     let store = diagram_store();
+    // The plan holds a dozen diagrams (PRD §11.1, RF13). A render that would
+    // not fit is refused **before** anything is stored or painted, so the
+    // plane stays exactly as the human left it.
+    if store.is_full() {
+        return RenderResponse {
+            ok: false,
+            diagram_id: None,
+            rendered_kind: None,
+            rendered: false,
+            reason: None,
+            metrics: Some(metrics),
+            extracted_from: None,
+            queue_depth: None,
+            retry_after_ms: None,
+            errors: vec![ErrorPayload {
+                path: "diagram".to_string(),
+                code: "too_many_diagrams".to_string(),
+                message: format!(
+                    "el plano ya tiene {} diagramas abiertos y el tope es {}",
+                    store.open_count(),
+                    crate::store::MAX_OPEN_DIAGRAMS
+                ),
+                hint: Some(
+                    "cerrá un diagrama desde el panel lateral y volvé a intentar".to_string(),
+                ),
+            }],
+            warnings: Vec::new(),
+        };
+    }
     let diagram_id = store.next_id();
     // The document is kept normalized: `get_diagram` returns exactly this.
     let document = serde_json::to_string(
@@ -964,6 +993,60 @@ mod tests {
 
         assert!(response.ok, "{:?}", response.errors);
         assert_eq!(render_queue().counters(), (0, 0));
+    }
+
+    /// PRD §11.1 (S9): en F2 un render **suma** al plano. Hasta F1 el
+    /// frontend reemplazaba el objeto anterior; el modelo ya no pierde el
+    /// primero cuando llega el segundo.
+    #[test]
+    fn a_render_sums_to_the_plane_instead_of_replacing() {
+        let _guard = lock_renders_blocking();
+
+        let first = render(MINIMAL);
+        let second = render(MINIMAL);
+
+        assert!(first.ok && second.ok, "{first:?} {second:?}");
+        assert_ne!(first.diagram_id, second.diagram_id);
+        let listed = diagram_store().list();
+        assert_eq!(listed.len(), 2, "los dos siguen en el plano: {listed:?}");
+        assert_eq!(diagram_store().open_count(), 2);
+    }
+
+    /// PRD §11.1 (RF13, S7): el plano tiene tope. El decimotercero se rechaza
+    /// con su código y **no** se guarda ni se pinta.
+    #[test]
+    fn the_plane_refuses_the_thirteenth_diagram() {
+        let _guard = lock_renders_blocking();
+
+        for _ in 0..crate::store::MAX_OPEN_DIAGRAMS {
+            let response = render(MINIMAL);
+            assert!(response.ok, "{:?}", response.errors);
+        }
+        assert!(diagram_store().is_full());
+
+        let response = render(MINIMAL);
+
+        assert!(!response.ok, "{response:?}");
+        assert_eq!(error_codes(&response), vec!["too_many_diagrams"]);
+        assert!(
+            response.errors[0].hint.is_some(),
+            "el error dice cómo liberar un slot"
+        );
+        assert_eq!(
+            diagram_store().open_count(),
+            crate::store::MAX_OPEN_DIAGRAMS,
+            "el plano queda como estaba"
+        );
+
+        // Cerrar uno libera el slot y el siguiente render entra.
+        let first = diagram_store().list()[0].diagram_id.clone();
+        assert!(diagram_store().close(&first));
+        let response = render(MINIMAL);
+        assert!(response.ok, "{:?}", response.errors);
+        assert_eq!(
+            diagram_store().open_count(),
+            crate::store::MAX_OPEN_DIAGRAMS
+        );
     }
 
     /// PRD §7 RF20, S6: between 150 nodes and the hard limit the diagram is

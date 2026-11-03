@@ -138,6 +138,12 @@ struct StateEntry {
     kind: String,
     updated_at: String,
     session_id: String,
+    /// Top-left corner of the object on the plan, in plan units (PRD §7.2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pos: Option<gx_core::geom::Point>,
+    /// Size of the object, padding included (PRD §7.2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bbox: Option<gx_core::geom::Size>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -270,13 +276,34 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
         // view fits it: a diagram that does not fit is cut by the window,
         // and a cut diagram cannot be read (PRD §7.2, S17 and S23).
         let viewport = viewport_of(&window);
+        // The objects already on the plan, so a new one never lands on top of
+        // another (PRD §7.2, RF27).
+        let occupied: Vec<gx_core::geom::Rect> = gx_mcp::store::diagram_store()
+            .list()
+            .into_iter()
+            .filter(|summary| summary.diagram_id != payload.diagram_id)
+            .filter_map(|summary| match (summary.pos, summary.bbox) {
+                (Some(pos), Some(bbox)) => {
+                    Some(gx_core::geom::Rect::new(pos.x, pos.y, bbox.w, bbox.h))
+                }
+                _ => None,
+            })
+            .collect();
         let placement = viewport.map(|viewport| {
-            camera::place(
+            camera::place_with_cascade(
                 Size::new(payload.width, payload.height),
                 &state.camera(),
                 viewport,
+                &occupied,
             )
         });
+        if let Some(rect) = placement {
+            gx_mcp::store::diagram_store().place(
+                &payload.diagram_id,
+                gx_core::geom::Point::new(rect.x, rect.y),
+                gx_core::geom::Size::new(rect.w, rect.h),
+            );
+        }
         let fit = match (placement, viewport) {
             (Some(rect), Some(viewport)) => Some(camera::fit(rect, viewport)),
             _ => None,
@@ -314,6 +341,8 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
                 kind: summary.kind,
                 updated_at: summary.updated_at,
                 session_id: summary.session_id,
+                pos: summary.pos,
+                bbox: summary.bbox,
             })
             .collect();
         let _ = window.emit("graphium://state", diagrams);
@@ -321,4 +350,53 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
         gx_mcp::tools::RenderStatus::Painted
     });
     gx_mcp::tools::set_render_hook(Some(hook));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StateEntry;
+
+    /// PRD §8.6.1: el panel lateral se construye **solo** desde este evento,
+    /// así que tiene que traer dónde está cada objeto y cuánto mide. Sin eso
+    /// el panel no puede listar ni encuadrar.
+    #[test]
+    fn the_state_of_the_plan_carries_where_each_diagram_is() {
+        let entry = StateEntry {
+            diagram_id: "d-0001".to_string(),
+            title: "schema".to_string(),
+            kind: "er".to_string(),
+            updated_at: "2026-11-03T12:00:00Z".to_string(),
+            session_id: "stdio".to_string(),
+            pos: Some(gx_core::geom::Point::new(120.0, -40.0)),
+            bbox: Some(gx_core::geom::Size::new(320.0, 180.0)),
+        };
+
+        let json = serde_json::to_value(&entry).expect("the state serializes");
+
+        assert_eq!(json["diagram_id"], "d-0001");
+        assert_eq!(json["pos"]["x"], 120.0);
+        assert_eq!(json["pos"]["y"], -40.0);
+        assert_eq!(json["bbox"]["w"], 320.0);
+        assert_eq!(json["bbox"]["h"], 180.0);
+    }
+
+    /// Un diagrama que todavía no tiene sitio no inventa coordenadas: el
+    /// campo no aparece, en vez de aparecer en cero.
+    #[test]
+    fn a_diagram_without_a_place_omits_the_geometry() {
+        let entry = StateEntry {
+            diagram_id: "d-0002".to_string(),
+            title: "sin colocar".to_string(),
+            kind: "graph".to_string(),
+            updated_at: "2026-11-03T12:00:00Z".to_string(),
+            session_id: "stdio".to_string(),
+            pos: None,
+            bbox: None,
+        };
+
+        let json = serde_json::to_value(&entry).expect("the state serializes");
+
+        assert!(json.get("pos").is_none(), "{json}");
+        assert!(json.get("bbox").is_none(), "{json}");
+    }
 }
