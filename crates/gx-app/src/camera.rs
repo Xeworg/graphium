@@ -14,6 +14,12 @@ pub const FIT_MARGIN: f64 = 32.0;
 pub const FIT_MIN_ZOOM: f64 = 0.4;
 /// The ceiling of the fit: an insertion never goes above 100% (PRD §7.2).
 pub const FIT_MAX_ZOOM: f64 = 1.0;
+/// The padding of the object of a diagram around its SVG (PRD §7.2).
+pub const OBJECT_PADDING: f64 = 24.0;
+/// The offset of one step of the cascade (PRD §7.2).
+pub const CASCADE_OFFSET: f64 = 48.0;
+/// How many cascade steps before the plan opens a new column (PRD §7.2).
+pub const CASCADE_STEPS: usize = 8;
 
 /// Copy of the frontend camera, in screen pixels and zoom factor.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -47,6 +53,72 @@ pub fn place(size: Size, camera: &CameraSnapshot, viewport: Size) -> Rect {
         center.y - size.h / 2.0,
         size.w,
         size.h,
+    )
+}
+
+/// The size of the object of a diagram: its SVG plus the padding the PRD
+/// gives it on every side (PRD §7.2).
+pub fn object_size(svg: Size) -> Size {
+    Size::new(svg.w + 2.0 * OBJECT_PADDING, svg.h + 2.0 * OBJECT_PADDING)
+}
+
+/// Where a diagram of `svg` goes without landing on top of another one.
+///
+/// It starts on the center of the view (RF27) and, while a step of the
+/// cascade lands within the tolerance of an occupied rectangle, moves
+/// `(48, 48)`. After [`CASCADE_STEPS`] steps the spot is still taken, so the
+/// plan opens a column to the right of everything (PRD §7.2).
+pub fn place_with_cascade(
+    svg: Size,
+    camera: &CameraSnapshot,
+    viewport: Size,
+    occupied: &[Rect],
+) -> Rect {
+    let size = object_size(svg);
+    let mut rect = place(size, camera, viewport);
+
+    for _ in 0..=CASCADE_STEPS {
+        if !lands_on_another(rect, occupied) {
+            return rect;
+        }
+        rect = Rect::new(
+            rect.x + CASCADE_OFFSET,
+            rect.y + CASCADE_OFFSET,
+            rect.w,
+            rect.h,
+        );
+    }
+
+    // The cascade ran out: a new column, aligned with the top of everything.
+    let right = occupied
+        .iter()
+        .map(|other| other.max_x())
+        .fold(f64::NEG_INFINITY, f64::max);
+    let top = occupied
+        .iter()
+        .map(|other| other.min_y())
+        .fold(f64::INFINITY, f64::min);
+    Rect::new(right + CASCADE_OFFSET, top, rect.w, rect.h)
+}
+
+/// Whether `rect` lands within the tolerance of an occupied rectangle.
+///
+/// The tolerance is the padding of the object: two diagrams that are closer
+/// than that read as one, so they count as overlapping (PRD §7.2).
+fn lands_on_another(rect: Rect, occupied: &[Rect]) -> bool {
+    occupied
+        .iter()
+        .any(|other| inflated(rect).overlaps(&inflated(*other)))
+}
+
+/// The rectangle grown by the tolerance of the PRD on every side: two
+/// diagrams closer than that read as one.
+fn inflated(rect: Rect) -> Rect {
+    Rect::new(
+        rect.x - OBJECT_PADDING,
+        rect.y - OBJECT_PADDING,
+        rect.w + 2.0 * OBJECT_PADDING,
+        rect.h + 2.0 * OBJECT_PADDING,
     )
 }
 

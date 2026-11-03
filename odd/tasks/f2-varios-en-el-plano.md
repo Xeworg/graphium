@@ -33,7 +33,7 @@ memoria de F2: «RSS < 250 MB con 12 diagramas de 300 nodos».
 |---|---|---|---|---|
 | T1 | Feature doc de F2 (este corte) + mirror + lista de tareas | S1-S10 | inline | este commit |
 | T2 | Store de N diagramas: posición y bbox por diagrama, cierre que invalida el id, tope 12 con `too_many_diagrams`, `list` solo de abiertos | S3, S4, S7, S8, S9 | inline | `a458d91` — 4 tests en `store.rs`, 215 en verde |
-| T3 | Colocación y cascada puras en Rust: centro de la vista, padding 24, solape ±24, offset `(48, 48)` hasta 8, columna nueva | S1, S2, S5 | inline | — |
+| T3 | Colocación y cascada puras en Rust: centro de la vista, padding 24, solape ±24, offset `(48, 48)` hasta 8, columna nueva | S1, S2, S5 | inline | `1a1656f` — 6 tests en `placement.rs`, 221 en verde |
 | T4 | `render_diagram` suma al plano; `graphium://state` con `pos` y `bbox` | S8, S9 | inline | — |
 | T5 | Panel lateral: lista, selección que desplaza la cámara, cierre por ítem y `×` sobre el objeto, pan animado de 250 ms | S1, S2, S3, S5 | inline | — |
 | T6 | `opts.focus: {id, depth?}`: encuadra el nodo y su vecindad | S2 | inline | — |
