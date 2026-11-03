@@ -20,3 +20,8 @@ tokio = { workspace = true }
 
 [build-dependencies]
 tauri-build = { workspace = true }
+
+# The binary of the product is `graphium` (PRD §8.6.1), not the crate name.
+[[bin]]
+name = "graphium"
+path = "src/main.rs"

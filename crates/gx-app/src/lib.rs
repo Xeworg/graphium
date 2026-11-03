@@ -59,8 +59,8 @@ pub fn run_stdio() -> Result<(), Box<dyn Error>> {
     let listener = bind_socket(&path)?;
     std::thread::spawn(move || relay::serve(listener));
 
-    let application = app::build(true);
-    app::install_render_hook(application.handle().clone());
+    let (application, state) = app::build(true);
+    app::install_render_hook(application.handle().clone(), state);
 
     // The stdio transport lives in its own thread with its own runtime, so
     // the blocking read of stdin stays out of the window loop (PRD §8.6.1).
@@ -79,7 +79,7 @@ pub fn run_solo_ui() -> Result<(), Box<dyn Error>> {
     install_engines()?;
     gx_kinds::register_all();
 
-    let application = app::build(false);
+    let (application, _state) = app::build(false);
     application.run(|_, _| {});
     Ok(())
 }
