@@ -19,8 +19,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use gx_core::{
-    fmt_num, Emphasis, Ir, IrEdge, IrGraph, IrNode, LayoutEdge, LayoutGraph, NodeBox, Palette,
-    Rect, Shape, Style, SvgRenderer as SvgRendererContract, TextMetrics, TOKENS,
+    fmt_num, Emphasis, Ir, IrEdge, IrGraph, IrNode, LayoutEdge, LayoutGraph, LayoutHint, NodeBox,
+    Palette, Rect, Shape, Style, SvgRenderer as SvgRendererContract, TextMetrics, TOKENS,
 };
 
 use crate::escape::escape_text;
@@ -32,6 +32,10 @@ const ARROW_LENGTH: f64 = 10.0;
 /// Opacity of a muted node or edge.
 const MUTED_OPACITY: f64 = 0.55;
 /// Dash pattern of a dashed node border or edge, in plan units.
+/// El punteado de una línea de vida: más corto que el de una flecha, para que
+/// no compita con los mensajes.
+const LIFELINE_DASH: (f64, f64) = (4.0, 4.0);
+/// El punteado de una flecha declarada punteada.
 const DASH_PATTERN: (f64, f64) = (6.0, 4.0);
 
 /// The only `SvgRenderer` of Graphium (PRD §8.5).
@@ -76,6 +80,28 @@ impl SvgRendererContract for SvgRenderer {
             None => Vec::new(),
         };
         write_defs(&mut out, &routed);
+
+        // Un diagrama de secuencia sin líneas de vida se lee desarmado: cada
+        // flecha flota y no se ve a qué columna pertenece. Se dibujan del
+        // borde inferior del actor hasta el fondo del dibujo, y van antes de
+        // las aristas para que las flechas queden encima (PRD §6, `sequence`).
+        if let Some(graph) = graph {
+            if graph.layout_hint == LayoutHint::Lanes {
+                out.push_str("<g class=\"layer-lifelines\">\n");
+                for node in ordered_nodes(graph) {
+                    if let Some(placed) = layout.nodes.get(&node.id) {
+                        out.push_str(&format!(
+                            "<line class=\"lifeline\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>\n",
+                            fmt_num(placed.center.x),
+                            fmt_num(placed.center.y + placed.size.h / 2.0),
+                            fmt_num(placed.center.x),
+                            fmt_num(canvas.max_y()),
+                        ));
+                    }
+                }
+                out.push_str("</g>\n");
+            }
+        }
 
         out.push_str("<g class=\"layer-edges\">\n");
         for (edge, route) in &routed {
@@ -161,7 +187,7 @@ fn routed_edges<'a>(
 
 fn write_style(out: &mut String, palette: &Palette) {
     let border = fmt_num(TOKENS.border_width);
-    let rules: [(&str, String); 15] = [
+    let rules: [(&str, String); 16] = [
         (".bg", format!("fill:{}", palette.bg.css())),
         (".node-fill", format!("fill:{}", palette.node_fill.css())),
         (
@@ -196,6 +222,15 @@ fn write_style(out: &mut String, palette: &Palette) {
         (
             ".emphasis-muted",
             format!("opacity:{}", fmt_num(MUTED_OPACITY)),
+        ),
+        (
+            ".lifeline",
+            format!(
+                "stroke:{};stroke-width:{border};stroke-dasharray:{} {};fill:none",
+                palette.node_stroke.css(),
+                fmt_num(LIFELINE_DASH.0),
+                fmt_num(LIFELINE_DASH.1),
+            ),
         ),
         (
             ".stroke-dashed",
