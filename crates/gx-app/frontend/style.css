@@ -143,6 +143,13 @@ body {
       transparent 0 calc(var(--grid-step) - var(--grid-line)),
       var(--grid-color) 0 var(--grid-step)
     );
+  /* The tile is one cell of the mesh (the diagonal of the rhombus). The
+     gradient repeats inside the tile, so the tile has to be a multiple of
+     the period of the pattern: with the tile at the size of the viewport
+     the neighbours do not match and the mesh breaks into strips while the
+     camera moves. */
+  background-size:
+    var(--grid-diagonal) var(--grid-diagonal);
   background-position:
     calc(var(--grid-cos) * var(--shift-a)) calc(-1 * var(--grid-sin) * var(--shift-a)),
     calc(var(--grid-cos) * var(--shift-b)) calc(var(--grid-sin) * var(--shift-b));

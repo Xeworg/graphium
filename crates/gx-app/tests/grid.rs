@@ -68,6 +68,13 @@ fn the_stylesheet_uses_the_same_numbers() {
         css.contains("--grid-step: 41.72px"),
         "the stylesheet must declare the perpendicular step"
     );
+    // The tile has to be a multiple of the period of the pattern: with the
+    // tile at the size of the viewport the mesh breaks into strips while
+    // the camera moves.
+    assert!(
+        css.contains("background-size:\n    var(--grid-diagonal) var(--grid-diagonal);"),
+        "the tile of the grid must be one cell of the mesh"
+    );
     // The phase is computed per family, never with a shared offset.
     assert!(
         css.contains("--shift-a: calc(var(--grid-cos) * var(--tx) - var(--grid-sin) * var(--ty))"),
