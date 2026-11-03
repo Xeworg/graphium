@@ -1,0 +1,279 @@
+/* Graphium plan styles.
+ *
+ * The grid is chrome of the frontend, never part of the SVG export
+ * (PRD §7.1). It is drawn with two CSS gradients, one per family of
+ * diagonal lines, so the thickness stays 1 screen pixel while the
+ * separation scales with the zoom (PRD §7.2, decision S23).
+ *
+ * Geometry of the cells: the two families deviate 32 degrees from the
+ * vertical (58 and 122 degrees in CSS), so the lines are steep and the
+ * cells are tall rhombi. Every family has the same perpendicular step, so
+ * all the cells are congruent: the rhombi have equal sides and their major
+ * (vertical) diagonal measures 59 px.
+ */
+
+:root {
+  --bg: #1b1b1b;
+  --grid-color: rgba(255, 255, 255, 0.14);
+  /* The deviation of the lines from the vertical (RF24: 45 degrees). */
+  --grid-angle: 45deg;
+  /* The diagonal of the rhombus: the measure the human sees. At 45 degrees
+     both diagonals of the cell measure the same, so the cell is a rhombus
+     with equal sides and equal diagonals. */
+  --grid-diagonal: 59px;
+  /* sin and cos of the deviation. The frontend keeps them in sync with
+     --grid-angle, so RF25 can change the angle without touching the CSS. */
+  --grid-sin: 0.7071;
+  --grid-cos: 0.7071;
+  /* The perpendicular step between two lines of the same family:
+     diagonal * sin(angle). */
+  --grid-step: 41.72px;
+  --grid-line: 1px;
+  --grid-opacity: 1;
+  --tx: 0px;
+  --ty: 0px;
+  /* The zoom of the camera: the tile of the grid scales with it, so the
+     tile keeps being a period of the pattern at any zoom. */
+  --zoom: 1;
+  --accent: #6ea8fe;
+  --text: #e9e9ec;
+
+  /* Palette of the plan (PRD §8.5.2). The SVG carries the same tokens as
+     CSS classes; in the canvas the colors come from here, not from the
+     inline <style> of the SVG: the CSP of the app forbids inline styles,
+     and the theme is the human's decision (RF22, RF25). */
+  --node-fill: #2a2a30;
+  --node-stroke: #4d4d57;
+  --node-text: #e9e9ec;
+  --edge-stroke: #8a8a96;
+  --edge-text: #b9b9c2;
+}
+
+/* The `claro` preset is a real theme, not a white background (PRD §8.5.2). */
+[data-theme="claro"] {
+  --bg: #f7f7f8;
+  --grid-color: rgba(0, 0, 0, 0.09);
+  --node-fill: #ffffff;
+  --node-stroke: #c7c7cf;
+  --node-text: #1b1b1f;
+  --edge-stroke: #6f6f7a;
+  --edge-text: #4a4a54;
+  --accent: #2f6fd0;
+  --text: #1b1b1f;
+}
+
+/* The tokens of the diagram, applied over the classes of the SVG.
+ * These rules win over the inline <style> of the SVG (and they are the
+ * only ones that apply in the app, where the CSP forbids inline styles). */
+.graphium .node-fill {
+  fill: var(--node-fill);
+}
+
+.graphium .node-stroke {
+  stroke: var(--node-stroke);
+  stroke-width: 1px;
+}
+
+.graphium .node-text {
+  fill: var(--node-text);
+}
+
+.graphium .edge-stroke {
+  stroke: var(--edge-stroke);
+  stroke-width: 1px;
+  fill: none;
+}
+
+.graphium .edge-text {
+  fill: var(--edge-text);
+}
+
+.graphium .accent {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 14px;
+}
+
+.plan {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background-color: var(--bg);
+  cursor: grab;
+  /* Phase of every family: the pan projected on the normal of that family.
+     A single offset for both families would make them drift apart while
+     the camera moves, and the cells would stop being congruent. */
+  --shift-a: calc(var(--grid-cos) * var(--tx) - var(--grid-sin) * var(--ty));
+  --shift-b: calc(var(--grid-cos) * var(--tx) + var(--grid-sin) * var(--ty));
+}
+
+.plan.dragging {
+  cursor: grabbing;
+}
+
+/* The grid: two repeating gradients, one per family of diagonal lines.
+ * The period (--grid-step) is the perpendicular step in screen pixels and
+ * grows with the zoom; the line thickness (--grid-line) stays 1px. */
+.plan::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--grid-opacity);
+  background-image:
+    repeating-linear-gradient(
+      calc(90deg - var(--grid-angle)),
+      transparent 0 calc(var(--grid-step) - var(--grid-line)),
+      var(--grid-color) 0 var(--grid-step)
+    ),
+    repeating-linear-gradient(
+      calc(90deg + var(--grid-angle)),
+      transparent 0 calc(var(--grid-step) - var(--grid-line)),
+      var(--grid-color) 0 var(--grid-step)
+    );
+  /* The tile is one cell of the mesh (the diagonal of the rhombus) and it
+     scales with the camera. The gradient repeats inside the tile, so the
+     tile has to be a multiple of the period of the pattern: with the tile
+     at the size of the viewport the neighbours do not match and the mesh
+     breaks into strips while the camera moves, and a tile that does not
+     scale breaks the same way when the camera zooms out. */
+  background-size:
+    calc(var(--grid-diagonal) * var(--zoom)) calc(var(--grid-diagonal) * var(--zoom));
+  background-position:
+    calc(var(--grid-cos) * var(--shift-a)) calc(-1 * var(--grid-sin) * var(--shift-a)),
+    calc(var(--grid-cos) * var(--shift-b)) calc(var(--grid-sin) * var(--shift-b));
+}
+
+.diagrams {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+/* One container per diagram. The camera transform lives here: the SVG
+ * inside keeps plan units and is never rescaled on its own (PRD §7.2). */
+.diagram {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.diagram > .content {
+  position: absolute;
+}
+
+.diagram svg {
+  display: block;
+  overflow: visible;
+}
+
+/* State 1: empty plan. */
+.empty {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.empty-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.empty-hint {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+.empty code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* State 3: error banner. */
+.banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #3a1d1d;
+  border-bottom: 1px solid #7a3434;
+  font-size: 13px;
+}
+
+.banner-body {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.banner-path {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  opacity: 0.8;
+}
+
+.banner-hint {
+  opacity: 0.8;
+}
+
+.banner-extra {
+  opacity: 0.7;
+}
+
+.banner-close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* State 2: render in flight. */
+.ghost {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 320px;
+  height: 180px;
+  border: 1px dashed rgba(255, 255, 255, 0.35);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  pointer-events: none;
+}

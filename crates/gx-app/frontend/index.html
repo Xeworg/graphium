@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Graphium</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- The plan: an infinite surface with a grid. The camera lives here. -->
+    <div id="plan" class="plan">
+      <div id="diagrams" class="diagrams"></div>
+    </div>
+
+    <!-- State 1: empty plan. -->
+    <div id="empty" class="empty">
+      <p class="empty-title">esperando al agente…</p>
+      <p class="empty-hint">conectá un cliente MCP y corré <code>graphium mcp-config</code></p>
+    </div>
+
+    <!-- State 3: error banner. -->
+    <div id="banner" class="banner hidden" role="alert">
+      <div class="banner-body">
+        <span id="banner-path" class="banner-path"></span>
+        <span id="banner-message" class="banner-message"></span>
+        <span id="banner-hint" class="banner-hint"></span>
+        <span id="banner-extra" class="banner-extra"></span>
+      </div>
+      <button id="banner-close" class="banner-close" type="button" aria-label="cerrar">×</button>
+    </div>
+
+    <!-- State 2: a render in flight. -->
+    <div id="ghost" class="ghost hidden">
+      <span id="ghost-text">calculando layout…</span>
+    </div>
+
+    <script src="plan.js"></script>
+  </body>
+</html>

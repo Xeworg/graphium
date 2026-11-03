@@ -1,0 +1,12 @@
+[package]
+name = "gx-layout"
+description = "Layout engines behind Graphium traits (dagre)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+gx-core = { workspace = true }
+dagre = { workspace = true }

@@ -1,0 +1,27 @@
+[package]
+name = "gx-app"
+description = "Graphium Tauri application: the infinite plan"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+gx-core = { workspace = true }
+gx-kinds = { workspace = true }
+gx-layout = { workspace = true }
+gx-render-svg = { workspace = true }
+gx-mcp = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tauri = { workspace = true }
+tokio = { workspace = true }
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+# The binary of the product is `graphium` (PRD §8.6.1), not the crate name.
+[[bin]]
+name = "graphium"
+path = "src/main.rs"
