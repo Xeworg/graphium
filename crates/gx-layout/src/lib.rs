@@ -857,8 +857,11 @@ impl LayoutEngine for LanesEngine {
             };
             let y = header + row * step;
             let points = if edge.from == edge.to {
-                // A message to itself: a small loop to the right of the actor.
-                let x = from.0 + from.1 / 2.0;
+                // Un mensaje a sí mismo: un lazo que **sale y vuelve a la
+                // línea de vida del actor**, no a su borde. Si arrancara en el
+                // borde, el lazo quedaría flotando al costado de la vertical y
+                // no se leería como algo que el actor se dice a sí mismo.
+                let x = from.0;
                 vec![
                     Point::new(x, y),
                     Point::new(x + LOOP_WIDTH, y),
@@ -872,10 +875,15 @@ impl LayoutEngine for LanesEngine {
                 from: edge.from.clone(),
                 to: edge.to.clone(),
                 points,
-                label_at: edge
-                    .label
-                    .as_ref()
-                    .map(|_| Point::new((from.0 + to.0) / 2.0, y - step * 0.2)),
+                label_at: edge.label.as_ref().map(|_| {
+                    if edge.from == edge.to {
+                        // El nombre del lazo va sobre su tramo de arriba y
+                        // centrado en el lazo, no encima de la línea de vida.
+                        Point::new(from.0 + LOOP_WIDTH / 2.0, y - step * 0.15)
+                    } else {
+                        Point::new((from.0 + to.0) / 2.0, y - step * 0.2)
+                    }
+                }),
             });
             row += 1.0;
         }

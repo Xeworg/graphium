@@ -151,6 +151,7 @@ const SEQUENCE: &str = r#"{
     { "from": "cliente", "to": "api", "label": "POST /orders" },
     { "from": "api", "to": "db", "label": "INSERT" },
     { "from": "db", "to": "api", "label": "ok", "reply": true },
+    { "from": "api", "to": "api", "label": "reintento", "reply": true },
     { "from": "api", "to": "cliente", "label": "201", "reply": true }
   ]
 }"#;
