@@ -72,7 +72,24 @@ THE PLAN. Diagrams stay on the plan until the human closes them or \
 out what is there and what its document was, which is what you need after a \
 context compaction: call `list_diagrams` before assuming an id. The plan belongs \
 to the human: the colors and the grid are their settings, not yours, and a \
-diagram that is not on the screen is still on the plan.";
+diagram that is not on the screen is still on the plan.
+
+EXPORTING. `export_diagram` takes the diagram out of the window. Two ways, and \
+they are not interchangeable. `format: \"svg\"` with `opts.inline: true` returns \
+the SVG as text in `content` and touches no disk: use it when the human wants \
+to paste the diagram in a README, an issue or a message. With `opts.path` \
+(relative to the exports root, `~/.graphium/exports/` unless configured) the \
+file is written instead: `svg` for a file they will edit or scale, `png` for one \
+they will look at. `png` requires `path`, because it is bytes; `scale` doubles \
+the pixels for a retina README, and `max_px` is the ceiling. `inline` and `path` \
+together are an error, never one winning silently. An existing file is not \
+replaced unless you send `opts.overwrite: true`, and absolute paths, `..` and \
+symlinks are refused with `export_path_outside_root`: the root is the only \
+place Graphium writes, and a refused export writes nothing. Exporting \
+never changes the plan: no diagram is opened, closed or re-rendered, so asking \
+for an export is always safe. Past 1 MB of inline text the answer is \
+`too_large` with `size_bytes`: send `path` or narrow the diagram with \
+`opts.extract`.";
 
 /// The description of a tool, written for the agent.
 ///
@@ -137,6 +154,22 @@ key. The merge is transactional: the result is validated with the same pipeline 
 the render and only then replaces the document, so a bad patch leaves the diagram \
 untouched and returns `applied: false` with the errors. Send the `revision` you \
 read, so a stale write is rejected with `stale_revision`. The `kind` cannot change."
+        }
+        "export_diagram" => {
+            "\
+Take the diagram out of the window, as text or as a file. With `format: \"svg\"` \
+and `opts.inline: true` the SVG comes back in `content` and nothing is written: \
+that is the path for pasting it in a README or a message. With `opts.path` the \
+file lands inside the exports root (`~/.graphium/exports/` unless configured): \
+relative, no `..`, no symlinks — an absolute path or an escape answers \
+`export_path_outside_root` and writes nothing. `svg` and `png` both accept \
+`path`; `png` REQUIRES it, because it is bytes. An existing file is replaced \
+only with `opts.overwrite: true`; without it the answer is `export_exists` and \
+the old bytes stay. `diagram_id` is optional: without it the tool exports the \
+only open diagram of the session and answers `ambiguous_diagram` when there are \
+several. `opts.scale` (default 1.0, ceiling 3.0) and `opts.max_px` (default \
+16 Mpx, ceiling 64 Mpx) govern the PNG; inline SVG is capped at 1 MB. Exporting \
+never changes the plan."
         }
         "clear_canvas" => {
             "\
@@ -217,6 +250,27 @@ mod tests {
             let text = description(tool);
             assert!(text.len() > 120, "{tool} needs a real description");
             assert_ne!(text, description("nope"), "{tool} is a fallback");
+        }
+    }
+
+    /// S1-S5: the agent learns how an export travels and what it costs,
+    /// without reading any other document.
+    #[test]
+    fn the_harness_teaches_the_two_ways_of_exporting() {
+        for expected in [
+            "EXPORTING",
+            "inline",
+            "opts.path",
+            "png` requires `path",
+            "export_path_outside_root",
+            "overwrite",
+            "too_large",
+            "never changes the plan",
+        ] {
+            assert!(
+                INSTRUCTIONS.contains(expected),
+                "the harness has to say `{expected}`"
+            );
         }
     }
 
