@@ -830,8 +830,12 @@ fn only_the_export_paints_the_canvas() {
 
     let palette = Palette::plano();
     let engine = engine();
-    let exported =
-        engine.render_export(&fixture::fixture_ir(), &fixture::fixture_layout(), &palette);
+    let exported = SvgRendererContract::render_export(
+        &engine,
+        &fixture::fixture_ir(),
+        &fixture::fixture_layout(),
+        &palette,
+    );
 
     let document = Document::parse(&exported).expect("the exported svg parses");
     let root = document.root_element();
@@ -860,4 +864,27 @@ fn only_the_export_paints_the_canvas() {
         .collect::<Vec<_>>()
         .join("\n");
     assert_eq!(without_background, plan);
+}
+
+/// S7 (PRD §8.5.2): el door llega al renderer por un `dyn SvgRenderer` (es el
+/// tipo que guarda `gx_core::engine::Engines`). Un método inherente con el
+/// mismo nombre gana solo en la llamada concreta: por la puerta el export
+/// saldría sin fondo. La prueba es la llamada a través del trait object.
+#[test]
+fn the_export_background_arrives_through_the_trait_object() {
+    let engine: Arc<dyn SvgRendererContract> = Arc::new(engine());
+    let palette = Palette::plano();
+
+    let exported =
+        engine.render_export(&fixture::fixture_ir(), &fixture::fixture_layout(), &palette);
+    let plan = engine.render(&fixture::fixture_ir(), &fixture::fixture_layout(), &palette);
+
+    assert!(
+        exported.contains("<rect class=\"bg\""),
+        "el export a través del trait pinta el lienzo: {exported}"
+    );
+    assert!(
+        !plan.contains("<rect class=\"bg\""),
+        "el plano sigue saliendo sin fondo: {plan}"
+    );
 }

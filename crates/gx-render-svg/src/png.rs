@@ -120,7 +120,7 @@ mod tests {
     use std::sync::Arc;
 
     use gx_core::export::{RasterError, RasterOptions, Rasterizer};
-    use gx_core::Palette;
+    use gx_core::{Palette, SvgRenderer as SvgRendererContract};
     use resvg::tiny_skia;
 
     use super::ResvgRasterizer;
@@ -129,9 +129,13 @@ mod tests {
     use crate::SvgRenderer;
 
     /// The exported SVG of the fixture diagram, painted with the plan palette.
+    ///
+    /// Goes through the trait on purpose: the export background is a trait
+    /// method, and a `dyn SvgRenderer` call is what the engine makes.
     fn exported_svg() -> String {
         let metrics = InterMetrics::new().expect("the embedded Inter faces parse");
-        SvgRenderer::new(Arc::new(metrics)).render_export(
+        SvgRendererContract::render_export(
+            &SvgRenderer::new(Arc::new(metrics)),
             &fixture::fixture_ir(),
             &fixture::fixture_layout(),
             &Palette::plano(),

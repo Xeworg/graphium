@@ -59,20 +59,6 @@ impl SvgRenderer {
         Arc::clone(&self.metrics)
     }
 
-    /// The drawing as a **self-contained** document: the same SVG the plan
-    /// paints, plus the canvas rectangle in the palette colour (PRD §8.5.2,
-    /// S7).
-    ///
-    /// The plan leaves the object transparent on purpose — the diagram floats
-    /// over the grid — but an exported file is pasted somewhere else, and a
-    /// light text over a transparent background is invisible when the reader
-    /// has a white page. The rectangle uses the `.bg` rule the style block
-    /// already carries, so the export shares the palette instead of inventing
-    /// one.
-    pub fn render_export(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> String {
-        self.render_with(ir, layout, palette, true)
-    }
-
     fn render_with(
         &self,
         ir: &Ir,
@@ -191,6 +177,24 @@ impl SvgRenderer {
 impl SvgRendererContract for SvgRenderer {
     fn render(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> String {
         self.render_with(ir, layout, palette, false)
+    }
+
+    /// The drawing as a **self-contained** document: the same SVG the plan
+    /// paints, plus the canvas rectangle in the palette colour (PRD §8.5.2,
+    /// S7).
+    ///
+    /// The plan leaves the object transparent on purpose — the diagram floats
+    /// over the grid — but an exported file is pasted somewhere else, and a
+    /// light text over a transparent background is invisible when the reader
+    /// has a white page. The rectangle uses the `.bg` rule the style block
+    /// already carries, so the export shares the palette instead of inventing
+    /// one.
+    ///
+    /// It lives in the trait impl on purpose: the door reaches the renderer
+    /// through a `dyn SvgRenderer`, so an inherent method of the same name
+    /// would shadow nothing and never run.
+    fn render_export(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> String {
+        self.render_with(ir, layout, palette, true)
     }
 }
 
