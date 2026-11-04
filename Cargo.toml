@@ -31,6 +31,11 @@ tokio = { version = "1.45.1", features = ["rt-multi-thread", "rt", "macros", "io
 rmcp = { version = "3.8.0", default-features = false, features = ["server", "transport-io", "macros"] }
 dagre = "=0.1.2"
 rustybuzz = "0.20.1"
+# PNG export (PRD §8.5): rasterizes our own SVG. `system-fonts` is off on
+# purpose — the drawing uses the embedded Inter, not the fonts of the machine
+# (feature doc `f2-export.md`, L6) — and `memmap-fonts`/`raster-images` are off
+# because nothing here reads fonts or images from disk or from the document.
+resvg = { version = "0.45.1", default-features = false, features = ["text"] }
 tauri = { version = "2.12.5", features = [] }
 tauri-build = { version = "2.7.4", features = [] }
 

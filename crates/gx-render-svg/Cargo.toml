@@ -7,10 +7,17 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# The PNG rasterizer (PRD §8.5): `resvg` is the only dependency that the
+# product does not need to draw on screen, so it travels behind a feature and
+# only the app turns it on (RNF1-quater: the binary budget).
+png = ["dep:resvg"]
+
 [dependencies]
 gx-core = { workspace = true }
 rustybuzz = { workspace = true }
 serde_json = { workspace = true }
+resvg = { workspace = true, optional = true }
 
 [dev-dependencies]
 roxmltree = "0.21.2"

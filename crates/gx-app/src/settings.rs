@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use gx_core::render::Theme;
+
 /// Background of the `plano` preset: the dark of the reference capture.
 const PLANO_BACKGROUND: &str = "#1b1b1b";
 /// Colour of the grid of the `plano` preset.
@@ -165,6 +167,18 @@ impl Settings {
         }
     }
 
+    /// The theme of the plan as the renderer understands it.
+    ///
+    /// `sanitised()` already reduced the field to `dark` or `light`, so this is
+    /// a mapping and never a validation (PRD §8.5.2 RF22).
+    pub fn theme(&self) -> Theme {
+        if self.theme == "light" {
+            Theme::Light
+        } else {
+            Theme::Dark
+        }
+    }
+
     /// Writes the settings where the next start will read them.
     pub fn save(&self) -> io::Result<()> {
         let path = Self::path().ok_or_else(|| {
@@ -218,6 +232,15 @@ fn clamp_or(value: f64, range: &std::ops::RangeInclusive<f64>, fallback: f64) ->
 #[cfg(test)]
 mod tests {
     use super::{preset, Settings};
+    use gx_core::render::Theme;
+
+    /// L7 (`f2-export.md`): el tema del plano es el que pinta el export. El
+    /// campo ya está saneado, así que el mapeo es total: nada queda sin tema.
+    #[test]
+    fn the_settings_carry_the_theme_of_the_export() {
+        assert_eq!(Settings::default().theme(), Theme::Dark);
+        assert_eq!(preset("claro").expect("claro").theme(), Theme::Light);
+    }
 
     #[test]
     fn a_colour_is_six_hex_digits_after_the_hash() {

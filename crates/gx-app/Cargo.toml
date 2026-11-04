@@ -11,7 +11,7 @@ repository.workspace = true
 gx-core = { workspace = true }
 gx-kinds = { workspace = true }
 gx-layout = { workspace = true }
-gx-render-svg = { workspace = true }
+gx-render-svg = { workspace = true, features = ["png"] }
 gx-mcp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
