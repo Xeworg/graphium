@@ -29,29 +29,29 @@ primer tag (el tag sigue siendo decisión del humano).
 
 - T1 (S1, S3): `install.sh` — modo repo (compila release, instala
   `~/.local/bin/graphium`) y modo standalone pipeado (baja el tarball del
-  release y verifica SHA256SUMS); `--help`. [commit: 46af0 Pending]
+  release y verifica SHA256SUMS); `--help`. [commit: 10dfa20]
 - T2 (S2, S6): `install.sh agent` — detecta los hosts Pi presentes (pi y
   gentle-shell), muestra el estado de la extensión en cada uno (versión
   instalada o «no instalada») y deja elegir cuáles instalar o actualizar:
   interactivo en una tty, `--env <name>` / `--all` sin tty. Funciona en modo
   repo y en modo release (la extensión viaja como asset del release).
-  [commit: 46af0 Pending]
+  [commit: 10dfa20]
 - T3 (S4, S6): `install.sh update` — consulta `releases/latest`, compara con
   la versión instalada y reinstala solo si hay una versión nueva; después
   refresca la extensión en cada agente que ya la tiene instalada. Antes del
   primer tag responde con un mensaje claro. `install` sobre una versión vieja
-  anuncia la actualización. [commit: 46af0 Pending]
+  anuncia la actualización. [commit: 10dfa20]
 - T4 (S1, S6): `install.sh uninstall` — saca el binario y la extensión de
   cada agente que la tiene; los datos (`~/.graphium`) se conservan.
-  [commit: 46af0 Pending]
+  [commit: 10dfa20]
 - T5 (S5): `scripts/package-release.sh` + `.github/workflows/release.yml`
   (trigger `v*`): gates + build x86_64/aarch64 + publish con binarios,
-  extensión, `install.sh` y SHA256SUMS. [commit: 46af0 Pending]
+  extensión, `install.sh` y SHA256SUMS. [commit: pendiente]
 - T6 (S1-S4): suite de tests del instalador (`scripts/test-installer.sh` +
   `tests/installer/`) contra HOME de scratch; el CI de release la corre.
-  [commit: 46af0 Pending]
+  [commit: pendiente]
 - T7 (S1-S4): docs (README raíz y README de la extensión) y verificación
-  local completa. [commit: 46af0 Pending]
+  local completa. [commit: 10dfa20]
 
 ## Log
 
