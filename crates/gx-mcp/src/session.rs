@@ -13,6 +13,13 @@
 //! process says (parent name and `cwd`). [`resolve`] is a pure function of the
 //! three, so the matrix is tested without touching the environment; the
 //! adapters at the bottom read the real sources.
+//!
+//! The **key** of a session is the id its client declared, else the id of its
+//! transport (D4). A client that declares `GRAPHIUM_SESSION` keeps one record
+//! and one set of diagrams across transports, so `/mcp reconnect` or a client
+//! restart does not lose the plan; the grace applies to the transport that
+//! closed, not to the session: while another transport holds the same declared
+//! session, the session stays active.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -250,10 +257,22 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
     }
 }
 
-/// The sessions of the owner process.
+/// The sessions of the owner process, with the transports that hold them.
 #[derive(Debug, Default)]
 pub struct SessionRegistry {
-    sessions: Mutex<BTreeMap<String, SessionRecord>>,
+    sessions: Mutex<Sessions>,
+}
+
+/// The state of the registry, under its one lock.
+#[derive(Debug, Default)]
+struct Sessions {
+    /// The sessions, by key: the id the client declared, else the id of the
+    /// transport (D4).
+    records: BTreeMap<String, SessionRecord>,
+    /// Which session each transport is holding. A declared session can be
+    /// held by two transports at once, and closing one of them is not the end
+    /// of the session (D4).
+    transports: BTreeMap<String, String>,
 }
 
 impl SessionRegistry {
@@ -261,12 +280,30 @@ impl SessionRegistry {
         Self::default()
     }
 
-    /// Registers a session, or refreshes it when the same id reconnects.
+    /// Registers the session of a transport, or refreshes it when the same
+    /// session arrives again (D4).
     ///
-    /// A reconnect keeps the diagrams and a label the agent set; it clears
-    /// the grace, because the transport is back (D4).
-    pub fn connect(&self, id: &str, identity: &ResolvedIdentity) -> SessionRecord {
-        insert_or_refresh(&mut self.lock(), id, identity)
+    /// The key is the id the client declared, else the id of the transport
+    /// (`session_key`): the same declared id arriving on a second transport
+    /// recovers the record it had instead of opening a second one. A reconnect
+    /// keeps the diagrams and a label the agent set, and clears the grace,
+    /// because the session is back.
+    pub fn connect(&self, transport_id: &str, identity: &ResolvedIdentity) -> SessionRecord {
+        let key = session_key(transport_id, identity);
+        let mut sessions = self.lock();
+        let record = insert_or_refresh(&mut sessions.records, &key, identity);
+        hold(&mut sessions, transport_id, &key, SystemTime::now());
+        record
+    }
+
+    /// Registers the owner's own stdio transport under its cerco.
+    ///
+    /// The key of this transport is `stdio` and not the id its client declares
+    /// (PRD §11.1): the tools of the owner answer with that string, and it is
+    /// the one transport that cannot come back — it ends with the process — so
+    /// no declared id has a reconnect to recover there.
+    fn connect_own_transport(&self, id: &str, identity: &ResolvedIdentity) -> SessionRecord {
+        insert_or_refresh(&mut self.lock().records, id, identity)
     }
 
     /// Registers a session only when there is room for it (D6).
@@ -277,29 +314,38 @@ impl SessionRegistry {
     /// slot it frees is exactly what makes `too_many_sessions` about live
     /// work instead of about history.
     ///
-    /// A reconnect of a registered id always lands: it refreshes the session
-    /// that was already there instead of opening a new one.
-    pub fn admit(&self, id: &str, identity: &ResolvedIdentity, limit: usize) -> SessionAdmission {
+    /// A reconnect of a registered session always lands: it refreshes the
+    /// record that was already there instead of opening a new one, and a second
+    /// transport of a declared session spends no slot of its own.
+    pub fn admit(
+        &self,
+        transport_id: &str,
+        identity: &ResolvedIdentity,
+        limit: usize,
+    ) -> SessionAdmission {
+        let key = session_key(transport_id, identity);
         let mut sessions = self.lock();
-        if !sessions.contains_key(id) {
-            let open = active_count(&sessions);
+        if !sessions.records.contains_key(&key) {
+            let open = active_count(&sessions.records);
             if open >= limit {
                 return SessionAdmission::Refused { open };
             }
         }
-        SessionAdmission::Accepted(insert_or_refresh(&mut sessions, id, identity))
+        let record = insert_or_refresh(&mut sessions.records, &key, identity);
+        hold(&mut sessions, transport_id, &key, SystemTime::now());
+        SessionAdmission::Accepted(record)
     }
 
     /// How many sessions are active: the number the quota spends (D6).
     pub fn active_count(&self) -> usize {
-        active_count(&self.lock())
+        active_count(&self.lock().records)
     }
 
     /// Sets the label of a session; an empty label goes back to the
     /// automatic name (D2).
     pub fn set_label(&self, id: &str, label: &str) -> Option<SessionRecord> {
         let mut sessions = self.lock();
-        let record = sessions.get_mut(id)?;
+        let record = sessions.records.get_mut(id)?;
         record.label = match non_empty(Some(label)) {
             Some(label) => label.to_string(),
             None => auto_label(record.family, record.project.as_deref(), &record.id),
@@ -310,7 +356,7 @@ impl SessionRegistry {
     /// Notes that a diagram belongs to a session. Idempotent.
     pub fn note_diagram(&self, id: &str, diagram_id: &str) -> bool {
         let mut sessions = self.lock();
-        let Some(record) = sessions.get_mut(id) else {
+        let Some(record) = sessions.records.get_mut(id) else {
             return false;
         };
         if !record.diagram_ids.iter().any(|known| known == diagram_id) {
@@ -322,21 +368,29 @@ impl SessionRegistry {
     /// Forgets a diagram of a session. Idempotent.
     pub fn forget_diagram(&self, id: &str, diagram_id: &str) -> bool {
         let mut sessions = self.lock();
-        let Some(record) = sessions.get_mut(id) else {
+        let Some(record) = sessions.records.get_mut(id) else {
             return false;
         };
         record.diagram_ids.retain(|known| known != diagram_id);
         true
     }
 
-    /// Moves a session to the grace state until `now + SESSION_GRACE` (D4).
+    /// Puts the session of `id` into the grace of D4 until `now + SESSION_GRACE`.
+    ///
+    /// `id` is the transport that closed, or the key of the session when the
+    /// caller has no transport to name. The session only goes into grace when
+    /// no other transport of the same declared session is still holding it:
+    /// what ended is a connection, not the session.
     pub fn begin_grace(&self, id: &str, now: SystemTime) -> Option<SessionRecord> {
         let mut sessions = self.lock();
-        let record = sessions.get_mut(id)?;
-        record.state = SessionState::InGrace;
-        record.grace_deadline = Some(now + SESSION_GRACE);
-        record.last_seen = now;
-        Some(record.clone())
+        let key = sessions
+            .transports
+            .remove(id)
+            .unwrap_or_else(|| id.to_string());
+        if !sessions.transports.values().any(|held| held == &key) {
+            begin_grace_in(&mut sessions, &key, now);
+        }
+        sessions.records.get(&key).cloned()
     }
 
     /// The ids of the sessions whose grace ended at `now`, in order.
@@ -344,39 +398,93 @@ impl SessionRegistry {
     /// The registry only reports them: [`drain_expired`] is the one that ends
     /// them.
     pub fn expired(&self, now: SystemTime) -> Vec<String> {
-        expired_ids(&self.lock(), now)
+        expired_ids(&self.lock().records, now)
     }
 
     /// Ends every session whose grace finished at `now` and returns their
     /// ids, in order (D4).
     ///
     /// Removing is the ending: the session leaves the registry, so the id is
-    /// free and its slot is back. It is one step under one lock, so a
-    /// reconnect cannot slip between the check and the deletion.
+    /// free and its slot is back, and no transport points at it any more. It
+    /// is one step under one lock, so a reconnect cannot slip between the
+    /// check and the deletion.
     pub fn drain_expired(&self, now: SystemTime) -> Vec<String> {
         let mut sessions = self.lock();
-        let ended = expired_ids(&sessions, now);
+        let ended = expired_ids(&sessions.records, now);
         for id in &ended {
-            sessions.remove(id);
+            sessions.records.remove(id);
+            sessions.transports.retain(|_, held| held != id);
         }
         ended
     }
 
     /// One session, if it is registered.
     pub fn get(&self, id: &str) -> Option<SessionRecord> {
-        self.lock().get(id).cloned()
+        self.lock().records.get(id).cloned()
     }
 
     /// Every session, in a deterministic order.
     pub fn list(&self) -> Vec<SessionRecord> {
-        self.lock().values().cloned().collect()
+        self.lock().records.values().cloned().collect()
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, SessionRecord>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Sessions> {
         self.sessions
             .lock()
             .expect("the session registry is not poisoned")
     }
+}
+
+/// The key a session is registered under (D4): the id its client declared,
+/// else the id of its transport.
+///
+/// This is the one place the key is chosen, so `connect` and `admit` cannot
+/// disagree about which record a transport lands on: a client that declares
+/// `GRAPHIUM_SESSION` keeps its session, and one that declares nothing keeps
+/// the id of the connection it came in through.
+fn session_key(transport_id: &str, identity: &ResolvedIdentity) -> String {
+    identity
+        .id
+        .clone()
+        .unwrap_or_else(|| transport_id.to_string())
+}
+
+/// Binds a transport to the session it holds, letting go of the key it held
+/// before (D4).
+///
+/// A client that declares its id after its connection was admitted moves from
+/// the key of its transport to the key of its declared id. Nothing is lost: the
+/// registration it leaves behind has no diagrams — it never said who it was — so
+/// it is dropped instead of going into grace, where it would be a second, empty
+/// session in the selector. If it did draw before declaring, the grace keeps its
+/// diagrams as D4 says.
+fn hold(sessions: &mut Sessions, transport_id: &str, key: &str, now: SystemTime) {
+    let previous = sessions
+        .transports
+        .insert(transport_id.to_string(), key.to_string());
+    let Some(previous) = previous else { return };
+    if previous == key || sessions.transports.values().any(|held| held == &previous) {
+        return;
+    }
+    let undrawn = sessions
+        .records
+        .get(&previous)
+        .is_some_and(|record| record.diagram_ids.is_empty());
+    if undrawn {
+        sessions.records.remove(&previous);
+    } else {
+        begin_grace_in(sessions, &previous, now);
+    }
+}
+
+/// Moves one session of the map into the grace of D4.
+fn begin_grace_in(sessions: &mut Sessions, key: &str, now: SystemTime) {
+    let Some(record) = sessions.records.get_mut(key) else {
+        return;
+    };
+    record.state = SessionState::InGrace;
+    record.grace_deadline = Some(now + SESSION_GRACE);
+    record.last_seen = now;
 }
 
 /// Registers a session in the map, or refreshes the one with the same id.
@@ -527,11 +635,11 @@ pub fn current_identity() -> ResolvedIdentity {
     )
 }
 
-/// Registers the session of a transport in the process registry and returns
-/// its resolved identity.
+/// Registers the session of the owner's own stdio transport and returns the
+/// identity it was registered with.
 pub fn register_transport_session(id: &str) -> ResolvedIdentity {
     let identity = current_identity();
-    session_registry().connect(id, &identity);
+    session_registry().connect_own_transport(id, &identity);
     identity
 }
 
@@ -780,7 +888,12 @@ mod tests {
         assert_eq!(record.diagram_ids, vec!["d-0001", "d-0002"]);
 
         // Two sessions list in a deterministic order, not in insertion order.
-        registry.connect("a-session", &identity);
+        let undeclared = resolve(
+            &declared(Some("opencode"), None, None),
+            &ClientFingerprint::default(),
+            &ProcessFingerprint::default(),
+        );
+        registry.connect("a-session", &undeclared);
         let ids: Vec<String> = registry.list().into_iter().map(|s| s.id).collect();
         assert_eq!(ids, vec!["a-session", "pi-4824"]);
 
@@ -850,7 +963,14 @@ mod tests {
         );
 
         registry.connect("pi-1", &identity);
-        registry.connect("claude-1", &identity);
+        // The session next door declares no id, so its key is its transport id
+        // — with a declared id it would be the same session as `pi-1` (D4).
+        let neighbour = resolve(
+            &declared(Some("claude"), None, Some("/work/graphium")),
+            &ClientFingerprint::default(),
+            &ProcessFingerprint::default(),
+        );
+        registry.connect("claude-1", &neighbour);
         insert_diagram(&store, "d-0001", "pi-1");
         insert_diagram(&store, "d-0002", "claude-1");
 
@@ -926,6 +1046,164 @@ mod tests {
         assert!(store.record("d-0001").is_some(), "the diagram stays");
         assert_eq!(store.list_for_session("pi-4824").len(), 1);
         assert!(registry.get("pi-4824").is_some());
+    }
+
+    /// D4/S4: the key of a session is the id its client declared, so two
+    /// transports that declare the same one are one session with one set of
+    /// diagrams; the first to close does not end it.
+    #[test]
+    fn two_transports_of_one_declared_session_share_one_record_and_its_diagrams() {
+        let registry = SessionRegistry::new();
+        let store = crate::store::DiagramStore::new();
+        let identity = resolve(
+            &declared(Some("pi"), Some("pi-4824"), Some("/work/graphium")),
+            &ClientFingerprint::default(),
+            &ProcessFingerprint::default(),
+        );
+
+        let first = registry.connect("sock-1", &identity);
+        let diagram = insert_diagram(&store, "d-0001", &first.id);
+        assert!(registry.note_diagram(&first.id, &diagram));
+
+        let second = registry.connect("sock-2", &identity);
+        assert_eq!(
+            registry.list().len(),
+            1,
+            "one record for one declared session, not one per transport"
+        );
+        assert_eq!(second.id, first.id, "the declared id is the key");
+        assert_eq!(
+            second.diagram_ids,
+            vec![diagram.clone()],
+            "both transports see the diagrams of the session"
+        );
+        assert_eq!(store.list_for_session(&second.id).len(), 1);
+        assert_eq!(
+            registry.active_count(),
+            1,
+            "the quota counts the session once, not once per transport"
+        );
+
+        // The first transport closes: the second still holds the session, so
+        // it stays active (D4).
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(6_000_000);
+        let held = registry.begin_grace("sock-1", now).expect("the session");
+        assert_eq!(held.state, SessionState::Active);
+        assert_eq!(held.grace_deadline, None);
+        assert_eq!(held.diagram_ids, vec![diagram.clone()]);
+
+        // The last transport closes: now the grace starts, with the diagrams.
+        let closed = registry.begin_grace("sock-2", now).expect("the session");
+        assert_eq!(closed.state, SessionState::InGrace);
+        assert_eq!(closed.diagram_ids, vec![diagram]);
+    }
+
+    /// D4/S4: the transport closes and the session waits in grace with its
+    /// diagrams; a reconnect that declares the same id recovers the record,
+    /// so the deadline has nothing to delete.
+    #[test]
+    fn a_reconnect_with_the_declared_id_recovers_the_session_and_its_diagrams() {
+        let registry = SessionRegistry::new();
+        let store = crate::store::DiagramStore::new();
+        let identity = resolve(
+            &declared(Some("pi"), Some("pi-4824"), Some("/work/graphium")),
+            &ClientFingerprint::default(),
+            &ProcessFingerprint::default(),
+        );
+
+        let first = registry.connect("sock-1", &identity);
+        let diagram = insert_diagram(&store, "d-0001", &first.id);
+        assert!(registry.note_diagram(&first.id, &diagram));
+
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(5_000_000);
+        let closed = registry.begin_grace("sock-1", now).expect("the session");
+        assert_eq!(closed.state, SessionState::InGrace);
+        assert_eq!(closed.diagram_ids, vec![diagram.clone()]);
+
+        // The client reconnects on another socket and declares the same id.
+        let reconnected = registry.connect("sock-2", &identity);
+        assert_eq!(
+            reconnected.diagram_ids,
+            vec![diagram.clone()],
+            "the reconnect must recover the diagrams of the declared session"
+        );
+        assert_eq!(reconnected.id, first.id, "the declared id is the key");
+        assert_eq!(reconnected.state, SessionState::Active);
+        assert_eq!(reconnected.grace_deadline, None);
+
+        // The session came back: the deadline has nothing to end.
+        assert!(end_expired_sessions(
+            &registry,
+            &store,
+            now + SESSION_GRACE + Duration::from_secs(600)
+        )
+        .is_empty());
+        assert!(
+            store.record(&diagram).is_some(),
+            "the diagram survives the deadline because the session came back"
+        );
+        assert_eq!(registry.list().len(), 1, "one session, not two");
+    }
+
+    /// D4/S2: a session with nothing declared keeps its transport id as key
+    /// and dies after the grace with its diagrams; the diagrams of the session
+    /// next door survive (D3).
+    #[test]
+    fn a_session_without_a_declared_id_dies_after_the_grace_with_its_diagrams() {
+        let registry = SessionRegistry::new();
+        let store = crate::store::DiagramStore::new();
+        // Nothing declared: the protocol only names the family (D1).
+        let undeclared = resolve(
+            &Declared::default(),
+            &client(Some("opencode"), None),
+            &process(Some("opencode"), None),
+        );
+        let named = resolve(
+            &declared(Some("pi"), Some("pi-1"), Some("/work/graphium")),
+            &ClientFingerprint::default(),
+            &ProcessFingerprint::default(),
+        );
+
+        let unknown = registry.connect("sock-7", &undeclared);
+        assert_eq!(
+            unknown.id, "sock-7",
+            "without a declared id the transport id is the key"
+        );
+        let ephemeral = insert_diagram(&store, "d-0001", &unknown.id);
+        assert!(registry.note_diagram(&unknown.id, &ephemeral));
+
+        let neighbour = registry.connect("sock-8", &named);
+        let kept = insert_diagram(&store, "d-0002", &neighbour.id);
+        assert!(registry.note_diagram(&neighbour.id, &kept));
+
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(7_000_000);
+        registry.begin_grace("sock-7", now).expect("the session");
+
+        // Inside the grace the diagrams are still there.
+        assert!(end_expired_sessions(
+            &registry,
+            &store,
+            now + SESSION_GRACE - Duration::from_millis(1)
+        )
+        .is_empty());
+        assert!(store.record(&ephemeral).is_some());
+
+        // Past the deadline the session ends and its diagrams go with it.
+        assert_eq!(
+            end_expired_sessions(
+                &registry,
+                &store,
+                now + SESSION_GRACE + Duration::from_millis(1)
+            ),
+            vec!["sock-7".to_string()]
+        );
+        assert!(store.record(&ephemeral).is_none());
+        assert!(registry.get("sock-7").is_none());
+
+        // The session next door keeps its record and its diagram.
+        assert!(store.record(&kept).is_some());
+        assert_eq!(store.list_for_session(&neighbour.id).len(), 1);
+        assert!(registry.get(&neighbour.id).is_some());
     }
 
     /// D6: the quota is spent by the active sessions, the owner's stdio one
@@ -1004,6 +1282,28 @@ mod tests {
             store.list_for_session(&id).is_empty(),
             "and deleted its diagrams"
         );
+    }
+
+    /// PRESERVE: the owner's own stdio transport is keyed by `stdio` and never
+    /// by the id its client declares, so the cerco of a local call (PRD §11.1)
+    /// and the diagrams the panel lists keep that string.
+    #[test]
+    fn the_owner_stdio_session_keeps_the_stdio_key_when_its_client_declares_one() {
+        let identity = register_transport_session(STDIO_SESSION_ID);
+
+        let record = session_registry()
+            .get(STDIO_SESSION_ID)
+            .expect("the owner's stdio session is registered");
+        assert_eq!(record.id, STDIO_SESSION_ID);
+        assert_eq!(record.family, identity.family);
+        assert_eq!(record.state, SessionState::Active);
+        if let Some(declared) = identity.id.as_deref() {
+            assert_ne!(declared, STDIO_SESSION_ID);
+            assert!(
+                session_registry().get(declared).is_none(),
+                "the declared id does not become a session of the owner"
+            );
+        }
     }
 
     /// The wire-in: a transport that registers lands in the process registry

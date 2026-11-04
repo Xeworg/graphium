@@ -9,6 +9,11 @@
 //! it spends one place of `MAX_SESSIONS` together with the stdio session of
 //! the owner, and when its transport closes it goes into the grace of D4
 //! instead of erasing the diagrams of the agent that may reconnect.
+//!
+//! The **key** of that session is the id the client declares, else the id of
+//! the connection ([`gx_mcp::session`], D4): a client that reconnects and
+//! declares the same `GRAPHIUM_SESSION` lands on its own record and its own
+//! diagrams, on whichever socket it arrives.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -24,7 +29,11 @@ use serde_json::{json, Value};
 /// Counter used to build the session id of a forwarded connection.
 static CONNECTION_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// The session id of a forwarded connection.
+/// The transport id of a forwarded connection: `sock-<pid>-<n>`.
+///
+/// It names the connection, not the session: the key of the session is the id
+/// its client declares, and this one is only the key of a client that declares
+/// nothing (D4).
 pub fn forwarded_session_id() -> String {
     let counter = CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("sock-{}-{}", std::process::id(), counter)
@@ -148,21 +157,24 @@ pub fn serve(listener: UnixListener) {
 /// The session registers before the first answer, so it spends one place of
 /// `MAX_SESSIONS` together with the owner's stdio session; past the quota the
 /// connection is refused with `too_many_sessions` and the number of open
-/// sessions. When the client closes the stream the session does not vanish:
-/// it goes into the grace of D4, which is what keeps its diagrams alive for a
-/// reconnect.
-pub fn serve_session(stream: UnixStream, session_id: &str, registry: &SessionRegistry) {
+/// sessions. The connection begins under its transport id and moves to the key
+/// its client declares as soon as the identity arrives, so the tools of this
+/// connection stamp their diagrams with that key. When the client closes the
+/// stream the session does not vanish: it goes into the grace of D4 — unless
+/// another transport of the same declared session is still holding it —, which
+/// is what keeps its diagrams alive for a reconnect.
+pub fn serve_session(stream: UnixStream, transport_id: &str, registry: &SessionRegistry) {
     let mut identity = WireIdentity::default();
-    match registry.admit(session_id, &identity.resolved(), MAX_SESSIONS) {
-        SessionAdmission::Accepted(_) => {}
+    let mut key = match registry.admit(transport_id, &identity.resolved(), MAX_SESSIONS) {
+        SessionAdmission::Accepted(record) => record.id,
         SessionAdmission::Refused { open } => {
             refuse(stream, open);
             return;
         }
-    }
+    };
 
-    serve_connection(stream, session_id, registry, &mut identity);
-    registry.begin_grace(session_id, SystemTime::now());
+    serve_connection(stream, transport_id, &mut key, registry, &mut identity);
+    registry.begin_grace(transport_id, SystemTime::now());
 }
 
 /// What the owner knows about the identity of a connection, level by level
@@ -212,7 +224,8 @@ fn refuse(mut stream: UnixStream, open: usize) {
 
 fn serve_connection(
     stream: UnixStream,
-    session_id: &str,
+    transport_id: &str,
+    session_key: &mut String,
     registry: &SessionRegistry,
     identity: &mut WireIdentity,
 ) {
@@ -227,19 +240,20 @@ fn serve_connection(
             continue;
         }
         // The identity of the client arrives on the wire, in the two levels
-        // that reach this side of the socket. Refreshing the same id does not
-        // open a second session, so no level consumes a place of the quota.
+        // that reach this side of the socket. Refreshing the same session does
+        // not open a second one, so no level consumes a place of the quota;
+        // the declared id moves the connection onto the key of the session.
         if let Some((declared, process)) = declared_of_line(&line) {
             identity.declared = declared;
             identity.process = process;
-            registry.connect(session_id, &identity.resolved());
+            *session_key = registry.connect(transport_id, &identity.resolved()).id;
             continue;
         }
         if let Some(client) = client_info_of_line(&line) {
             identity.client = client;
-            registry.connect(session_id, &identity.resolved());
+            *session_key = registry.connect(transport_id, &identity.resolved()).id;
         }
-        let response = handle_request(&line, session_id);
+        let response = handle_request(&line, session_key.as_str());
         if response.is_empty() {
             continue;
         }
@@ -573,15 +587,76 @@ mod tests {
         });
     }
 
+    /// T3/S4: a declared id is the key of its connection, so the tools of
+    /// that connection scope their diagrams with it and a reconnect on
+    /// another socket finds them instead of starting over.
+    #[test]
+    fn a_declared_id_is_the_key_of_the_connection() {
+        let registry = SessionRegistry::new();
+        let declared_id = format!("pi-declared-{}", std::process::id());
+        let store = gx_mcp::store::diagram_store();
+        let diagram = store
+            .insert(
+                store.next_id(),
+                "t".to_string(),
+                "graph".to_string(),
+                declared_id.clone(),
+                "{}".to_string(),
+            )
+            .diagram_id;
+
+        std::thread::scope(|scope| {
+            let mut client = open_session(scope, &registry, "sock-1".to_string());
+            client.send(&format!(
+                r#"{{"jsonrpc":"2.0","method":"{IDENTITY_METHOD}","params":{{"client":"pi","session":"{declared_id}","project":"/work/graphium"}}}}"#
+            ));
+            client.send(
+                r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_diagrams","arguments":{}}}"#,
+            );
+            let answer: Value = serde_json::from_str(&client.receive()).expect("json");
+            let listed = answer["result"]["structuredContent"]["diagrams"]
+                .as_array()
+                .expect("the tool answers with its diagrams");
+            assert_eq!(
+                listed.len(),
+                1,
+                "the connection scopes its diagrams with the declared id: {answer}"
+            );
+            assert_eq!(listed[0]["diagram_id"], diagram);
+            assert_eq!(listed[0]["session_id"], declared_id.as_str());
+        });
+
+        // One session, keyed by the declared id: the transport id it began
+        // with is not a session of its own.
+        assert_eq!(
+            registry.list().len(),
+            1,
+            "one record for one declared session"
+        );
+        let record = registry
+            .get(&declared_id)
+            .expect("the declared id is the key");
+        assert_eq!(record.family, SessionFamily::Pi);
+        assert!(
+            registry.get("sock-1").is_none(),
+            "the transport id is not a session any more"
+        );
+        store.clear_session(&declared_id);
+    }
+
     /// T1-bis/D1: an accepted socket is a session, and its identity arrives on
     /// the wire: the declared level wins over `clientInfo`.
+    ///
+    /// The declared id is the key of the session (D4), so the record moves from
+    /// its transport id to `pi-4824`: there is one session, not two.
     #[test]
     fn an_accepted_socket_registers_with_the_identity_its_client_declares() {
         let registry = SessionRegistry::new();
         std::thread::scope(|scope| {
             let mut client = open_session(scope, &registry, "sock-1".to_string());
 
-            // Level 2: the `clientInfo` of the handshake.
+            // Level 2: the `clientInfo` of the handshake, with nothing
+            // declared yet, so the key is the transport id.
             client.send(
                 r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"claude-ai","version":"2.0.0"}}}"#,
             );
@@ -593,7 +668,8 @@ mod tests {
             assert_eq!(record.client_version.as_deref(), Some("2.0.0"));
             assert_eq!(record.state, SessionState::Active);
 
-            // Level 1: what the forwarder declared.
+            // Level 1: what the forwarder declared. The declared id is the key
+            // of the session now, so the record lands on it.
             client.send(&format!(
                 r#"{{"jsonrpc":"2.0","method":"{IDENTITY_METHOD}","params":{{"client":"pi","session":"pi-4824","project":"/work/graphium","parent":"node","cwd":"/work/graphium"}}}}"#
             ));
@@ -601,7 +677,7 @@ mod tests {
             let answer = client.receive();
             assert!(answer.contains("graphium"), "{answer}");
 
-            let record = registry.get("sock-1").expect("the same session");
+            let record = registry.get("pi-4824").expect("the same session");
             assert_eq!(record.family, SessionFamily::Pi);
             assert_eq!(record.project.as_deref(), Some("/work/graphium"));
             assert_eq!(
@@ -612,6 +688,11 @@ mod tests {
                 record.label.starts_with("Pi · graphium · "),
                 "{}",
                 record.label
+            );
+            assert_eq!(registry.list().len(), 1, "one session, not two");
+            assert!(
+                registry.get("sock-1").is_none(),
+                "the transport id was a key, not a session of its own"
             );
         });
     }
