@@ -61,7 +61,6 @@ implementa.
   vuelo, exit 0; socket sucio detectado por `connect()`. [commit: pendiente]
 - T6 (S1-S8): verificación en vivo (dos sesiones, cerrar ventana, quit) y
   docs (PRD RF30/RF31, README). [commit: pendiente]
-
 ## Log
 
 - L1: «bien mientras esto se va compiando, ya puedo cerrar la ventana sin
@@ -83,3 +82,10 @@ implementa.
   ventana se mantendra vivo en la bandeja, si una ia envia un diagrama la
   ventana se muestra con el diagrama» — afina S3: el click del tray también
   muestra la ventana; cerrarla deja el proceso vivo en la bandeja.
+- L6: verificación en vivo (2026-11-04): daemon spawnado por forwarder,
+  render crea la ventana con el diagrama (`rendered: true`), `graphium quit`
+  sale limpio; el mismo escenario con ventana creada sale limpio también.
+  Un primer zombie no se reprodujo: en esa corrida el dueño **viejo** (binario
+  pre-f5 de la sesión de Pi, mismo socket) seguía vivo y el archivo del
+  socket fue borrado a mano — dos oyentes en el mismo camino. Queda como
+  punto de observación: nadie debe borrar el socket con un dueño vivo.
