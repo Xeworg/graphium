@@ -2,7 +2,7 @@
 
 **Visualizador de diagramas con motor propio, controlado por agentes de IA vía MCP**
 
-- **Estado:** v1.7 — catálogo de **24 kinds** (5 motores de layout) + ventana como **plano (canvas) con grilla** + **escalabilidad documentada con números** (§7.3) + backlog P1/P2 de la revisión por pares (§19)
+- **Estado:** v1.8 — catálogo de **24 kinds** (5 motores de layout) + ventana como **plano (canvas) con grilla** + **escalabilidad documentada con números** (§7.3) + backlog P1/P2 de la revisión por pares (§19) + **export `svg`/`png` sin Mermaid** (§21)
 - **Fecha:** 2026-11-03
 - **Owner:** Usuario + agente (Pi / el Gentleman)
 - **Repo:** `/home/xeworg/Proyectos/Graphium`
@@ -70,7 +70,7 @@ El humano pide *"diagrama la base de datos"*. El agente inspecciona el schema/mi
 El agente manda un edge hacia un `id` inexistente. La tool responde `ok: false` con `errors: [{path: "edges[3].to", code: "unknown_ref", message: "unknown node id 'db2'", hint: "did you mean 'db'?"}]`. El agente corrige y reenvía (idealmente validado antes con `validate_diagram`, sin abrir nada).
 
 **H4 — Exportación inline (F2):**
-El humano pide pegar el diagrama en el README del repo. El agente llama `export_diagram(format: "markdown", inline: true)` y recibe el texto (bloque mermaid embebido en markdown) por el canal MCP — sin escribir un archivo. Para archivo: `export_diagram(format: "svg", path: "arquitectura.svg")` escribe solo dentro de la raíz de exportes autorizada.
+El humano pide pegar el diagrama en el README del repo. El agente llama `export_diagram(format: "svg", inline: true)` y recibe el texto (el SVG) por el canal MCP — sin escribir un archivo. Para archivo: `export_diagram(format: "svg", path: "arquitectura.svg")` escribe solo dentro de la raíz de exportes autorizada.
 
 **H5 — Recuperación tras compaction (F2):**
 El agente perdió el `diagram_id` de una sesión larga. Llama `list_diagrams()`, ve los diagramas abiertos en el plano con títulos y kinds, y sigue con `update_diagram` sobre el id correcto.
@@ -269,10 +269,10 @@ El producto escala con reglas, no con buena voluntad. Esta sección fija los pre
 
 - **RF8.** Kinds `sequence`, `class`, `state`, `component`.
 - **RF9.** Tool `update_diagram(diagram_id, patch)`: **RFC 7386 (JSON Merge Patch)** sobre el documento fuente; arrays (`nodes`, `edges`, `groups`, tablas) se reemplazan completos — merge por id no existe; reglas documentadas en el schema.
-- **RF10.** Tool `export_diagram(diagram_id?, format, opts)`:
-  - `inline: true` → devuelve texto por MCP: `markdown` (bloque mermaid dentro de markdown), `mermaid` (DSL puro), `svg`. **Cero acceso a disco.** Camino primario para pegar en READMEs.
+- **RF10.** Tool `export_diagram(diagram_id?, format, opts)`, con `format: "svg" | "png"`:
+  - `inline: true` → devuelve **texto por MCP**: el SVG. **Cero acceso a disco.** Camino primario para pegar donde haga falta.
   - `path: <relativo>` → escribe SOLO dentro de la raíz de exportes (`~/.graphium/exports/` o configurada): rechaza `..`, absolutos y symlinks; `png` rasteriza con `resvg`; sobrescribir exige `opts.overwrite: true`.
-  - Nota de identidad: Mermaid aparece **solo como formato de export de texto** para interoperar con GitHub — nunca como motor (O6 se mantiene).
+  - Nota de alcance (§21): **Mermaid y markdown salieron del alcance**, con RF10.1 (matriz de export por kind). No se genera DSL ajeno; el motor sigue siendo propio (**O6** — Mermaid nunca fue motor, así que O6 no cambia).
 - **RF11.** Tool `list_diagrams()`: diagramas abiertos en el plano con `{diagram_id, title, kind, updated_at}`.
 - **RF12.** Tool `get_diagram(diagram_id)`: devuelve el JSON fuente — recuperación post-compaction (O9).
 - **RF13.** *(sustituido por RF26/RF27 — modelo plano)* Varios diagramas simultáneos en el plano: tope configurable (default 12) con error claro `too_many_diagrams`; **sin barra de pestañas**.
@@ -383,7 +383,7 @@ Esto cierra R6: la métrica Rust es la misma que declara el SVG porque hay **una
 - **Texto y shaping:** fuente OFL embebida (`include_bytes!`); medición y shaping con **rustybuzz** (kerning, ligaduras, clusters, bidi) — la métrica Rust es la misma que declara el SVG, con soporte no-Latín desde el diseño. F3: opción de emitir texto como paths en SVG standalone exportado (portabilidad absoluta, sin fuentes del sistema).
 - **Reglas mecánicas de determinismo:** floats serializados con precisión fija (2 decimales, redondeo half-even); **sin `HashMap` en el pipeline** (BTreeMap/índices ordenados); orden estable por `id` en toda iteración; nada de reloj, random ni hilos con orden observable.
 - **Salida:** string SVG con clases CSS (temas/hover sin regenerar), shapes (box, rounded, cylinder, diamond, ellipse, note), flechas, labels.
-- **Export:** `svg` = el string; `png` = `resvg`; `mermaid`/`markdown` = traducción IR→DSL de texto (interoperabilidad GitHub, no motor).
+- **Export:** `svg` = el string; `png` = `resvg`, ambos con la paleta resuelta. Sin DSL ajeno: Mermaid/markdown están fuera del alcance (§21).
 - **Fuente y tokens visuales (congelados en F0):** **Inter 400/600** (OFL, embebida, subset Latin-1 + Latin Ext-A, ~1.2 MB) · texto **14 px** · padding de nodo **12 px** · radio de esquina **6 px** · grosor de borde **1 px** · interlineado **1.25**. Estos valores quedan congelados porque los golden-SVG los comparan byte a byte: cambiarlos es un commit que actualiza todos los hashes.
 
 ### 8.5.1 Forma canónica y superficie no determinista
@@ -445,7 +445,7 @@ graphium/
 │   ├── gx-core/                # IR, ValidationError (path+code+hint), trait DiagramKind, registry.
 │   ├── gx-kinds/               # Un módulo por kind: schema serde (deny_unknown) + validate + to_ir.
 │   ├── gx-layout/              # ⭐ LayoutEngine trait + DagreEngine (pin + capability tests) + TimelineEngine.
-│   ├── gx-render-svg/          # ⭐ SVG propio: rustybuzz + fuente embebida; feature "png" (resvg); export mermaid/markdown.
+│   ├── gx-render-svg/          # ⭐ SVG propio: rustybuzz + fuente embebida; feature "png" (resvg).
 │   ├── gx-mcp/                 # rmcp: tools, errores RFC-7386, validación, list/get. Testeable in-process.
 │   └── gx-app/                 # Tauri: ventana, single-instance socket, eventos. Cáscara delgada.
 │       └── frontend/           # JS vanilla: canvas+grilla + zoom/pan + panel lateral + insertar SVG + estados vacío-error. Cero librerías.
@@ -563,7 +563,7 @@ Común a todos los `kind`: `version`, `kind`, `title`, `emphasis?` (heredable), 
 | `clear_canvas` | `{ scope?: "sesion" \| "plano" }` | `{ ok, removed: n }` |
 | `list_diagrams` | — | `{ ok, diagrams: [{diagram_id, title, kind, updated_at, session_id}] }` |
 | `get_diagram` | `diagram_id` | `{ ok, diagram, revision }` |
-| `export_diagram` | `diagram_id?`, `format: "markdown"\|"mermaid"\|"svg"\|"png"`, `opts: { inline?: bool, path?: string, overwrite?: bool, scale?: number, max_px?: number }` | inline → `{ ok, content }`; archivo → `{ ok, path }` (solo raíz autorizada) |
+| `export_diagram` | `diagram_id?`, `format: "svg"\|"png"`, `opts: { inline?: bool, path?: string, overwrite?: bool, scale?: number, max_px?: number }` | inline → `{ ok, content }`; archivo → `{ ok, path }` (solo raíz autorizada) |
 | `get_diagram_schema` | `kind?` (opcional) | sin `kind` → índice de kinds (§11.1); con `kind` → schema + `rules[]`/`shapes[]`/`limits`/`examples[]` + `supported_versions` |
 | `get_events` | `{ since?, limit? }` | `{ ok, events: [...], next_cursor }` — F3 |
 
@@ -571,7 +571,7 @@ Cada tool declara su descripción en el MCP ("que la ia por medio de un mcp enti
 
 ### 11.1 Catálogo de kinds, códigos de error y alcance de sesión
 
-- **`get_diagram_schema(kind?)`** — el parámetro es **opcional**. Sin `kind` → índice `{ ok, kinds: [{ kind, phase, engine, mermaid_export, limits, min_example, disponible }], supported_versions }`; el índice **nunca** incluye los schemas. Con `kind` → `{ ok, kind, schema, rules[], shapes[], required[], limits, examples[], supported_versions }`, donde `shapes[]` es el **subconjunto válido para ese kind** (no el enum global) y `rules[]` son las reglas cruzadas (refs, unicidad) escritas en texto. Kind desconocido → `ok: false, code: "unknown_kind"`, `available_kinds[]`, `hint` con la lista.
+- **`get_diagram_schema(kind?)`** — el parámetro es **opcional**. Sin `kind` → índice `{ ok, kinds: [{ kind, phase, engine, limits, min_example, disponible }], supported_versions }`; el índice **nunca** incluye los schemas. Con `kind` → `{ ok, kind, schema, rules[], shapes[], required[], limits, examples[], supported_versions }`, donde `shapes[]` es el **subconjunto válido para ese kind** (no el enum global) y `rules[]` son las reglas cruzadas (refs, unicidad) escritas en texto. Kind desconocido → `ok: false, code: "unknown_kind"`, `available_kinds[]`, `hint` con la lista.
 - **Regla de oro.** Toda restricción expresable en JSON Schema (enums cerrados, `required`, mínimos/máximos, patrones) vive en el **schema**, no en `validate()`. `validate()` queda para reglas **cruzadas** (`unknown_ref`, `duplicate_id`, límites de tamaño). `validate_diagram` ejecuta **exactamente** el mismo pipeline que `render_diagram` (registry → schema → `validate()`), sin layout ni render.
 - **Códigos de error estables** (se agregan al enum de RF5): `unknown_kind`, `unknown_diagram`, `diagram_closed`, `too_many_diagrams`, `too_many_sessions`, `not_owner`, `ambiguous_diagram`, `busy`, `owner_unavailable`, `layout_timeout`, `export_timeout`, `export_unsupported_kind`, `export_path_outside_root`, `export_exists`, `disk_quota_exceeded`, `invalid_patch`, `kind_change_not_allowed`, `stale_revision`, `deprecated_kind`.
 - **Ciclo de vida de `diagram_id` (RF28.1).** El id es opaco, **monótono y nunca se reutiliza** (`d-0001`, `d-0002`, …): cerrar un diagrama lo **invalida**, no lo devuelve al pool (lo que se libera es el slot del plano, no el identificador). Toda tool que reciba un id inválido, cerrado o inexistente responde `ok: false, code: "unknown_diagram"` con `known_ids[]` y `hint: "el diagrama no está en el plano (quizá lo cerró el humano); usá list_diagrams()"`. Cerrar **no borra** el documento fuente: queda en memoria hasta que se cierre la ventana o se llame `clear_canvas`; `list_diagrams` devuelve solo los abiertos. `export_diagram` sin `diagram_id`: si hay exactamente 1 abierto en la sesión → ese; si hay 0 → `unknown_diagram`; si hay ≥ 2 → `ambiguous_diagram` con `candidates[]`.
@@ -580,7 +580,7 @@ Cada tool declara su descripción en el MCP ("que la ia por medio de un mcp enti
 - **`update_diagram` es transaccional (RF9.1).** El merge RFC 7386 se aplica sobre una **copia**, el resultado se valida con el mismo pipeline de `render_diagram` y **solo entonces** reemplaza el documento; si falla, el documento y el render previos quedan intactos y la respuesta es `{ ok: false, errors: [...], applied: false }`. Casos: `patch.kind` distinto del actual → `kind_change_not_allowed` · `null` sobre `version`, `kind`, `title` o sobre el array principal del kind (`nodes`/`tables`/…) → `missing_field` (RFC 7386 borra la clave) · patch que no es un objeto JSON → `invalid_patch`. Cada diagrama lleva una `revision` monótona: `render_diagram`, `get_diagram` y `update_diagram` la devuelven, y un patch con `revision` vieja → `stale_revision` con la `revision` actual.
 - **`opts` de `render_diagram`:** `{ focus?: {id, depth?}, extract?: {around, depth?}, replace_id?: string, interactive?: bool }` — `extract` en F1 (RF20-bis), `interactive` en F3.
 - **Entrega de eventos (F3, RF18).** Con `interactive: true`, los clicks y hovers se acumulan en una cola **por sesión** y se leen con `get_events({ since?, limit? })` → `{ ok, events: [{cursor, diagram_id, node_id, type, at}], next_cursor }` (lectura por *pull*, máx. 100 eventos por llamada). Sin `interactive`, la cola no crece.
-- **Matriz de export por kind (RF10.1).** Cada kind declara `mermaid_export: "nativa" | "con_pérdida" | "no_soportada"`. **Nativa:** `graph`/`flowchart` → `flowchart`, `er` → `erDiagram`, `sequence` → `sequenceDiagram`, `class` → `classDiagram`, `state` → `stateDiagram`, `gantt` → `gantt`, `gitgraph` → `gitGraph`, `journey` → `journey`, `sankey` → `sankey-beta`, `timeline` → `timeline`, `mindmap` → `mindmap`. **Con pérdida:** se exporta y la respuesta trae `warnings: [{code: "export_lossy"}]`. **No soportada** (`neural`, `trust`, `network`, `api`, `deployment`, `dataflow`, `tree`, `orgchart`, `component`, `block`): `export_unsupported_kind` con `hint: "exportá en svg o png"`. `svg` y `png` valen para los 24 kinds; `png` **solo** con `path:`.
+- **Matriz de export por kind (RF10.1) — retirada (§21).** Sin Mermaid no hay dialecto que un kind declare, así que el índice de `get_diagram_schema` no lleva `mermaid_export`: un índice que anuncia una capacidad que la tool no puede entregar es una mentira que el agente no tiene cómo verificar. `svg` y `png` valen para todos los kinds que renderizan, y `png` **solo** con `path:`.
 
 ## 12. Roadmap
 
@@ -588,7 +588,7 @@ Cada tool declara su descripción en el MCP ("que la ia por medio de un mcp enti
 |---|---|---|
 | **F0 — Spike técnico** | Workspace + Tauri 2 + rmcp + mini motor end-to-end (layout trivial → SVG nuestro → ventana-plano con grilla) + **matriz de capacidades de `dagre` por test** + single-instance socket básico + **runtime tokio y render round-trip** (§8.6.1) + **frozen de fuente y tokens** (§8.5). | Desde Pi: pido un diagrama → la ventana abre con el SVG de nuestro código sobre el plano; dagre: go/no-go documentado; **matriz RNF1-bis medida**. |
 | **F1 — MVP** | RF1–RF7, RF19–RF20, **RF20-bis** (presupuesto + escalera de degradación), RF22 (tema `claro` real), RF23 (`opts.extract`), RF24–RF25, **§7.2** (cámara, geometría, estados), §7.3 y §11.1: `graph`+`er`, validación con codes/hints/deny, `validate_diagram`, `mcp-config` + QUICKSTART, **ventana = plano con grilla + ajustes de color**, fit-to-view, estados vacío/error, **RNF1-bis**, **RNF1-ter**, **RNF8** (cola), **RNF9** (owner), **RNF1-quater** (presupuesto de binario), **`revision` monótona**. | H1, H2, H3, H6; snapshots deterministas; golden-SVG hash en CI; presupuestos de §7.3 y RNF1-quater medidos en CI. |
-| **F2 — Formato completo** | RF8–RF16, **RF9.1** (update transaccional), **RF10.1** (matriz de export), **RF10-bis** (límites de export), RF26–RF28, **RNF10** (cota de memoria), **RF29** (ciclo de vida del catálogo: techo 32 kinds), **§11.1** (alcance de sesión): **10 kinds** (flowchart, sequence, class, state, component, dataflow, tree, mindmap, timeline, swimlane), engines `lanes` + `tree`, clusters, RFC 7386 transaccional, export completo (inline + sandbox + matriz), **varios diagramas en el plano + panel lateral + cierre por ítem**, list/get, emphasis, historial. | H4, H5; suite completa de validación/layout/render; RSS < 250 MB con 12 diagramas de 300 nodos. |
+| **F2 — Formato completo** | RF8–RF16, **RF9.1** (update transaccional), **RF10-bis** (límites de export), RF26–RF28, **RNF10** (cota de memoria), **RF29** (ciclo de vida del catálogo: techo 32 kinds), **§11.1** (alcance de sesión): **10 kinds** (flowchart, sequence, class, state, component, dataflow, tree, mindmap, timeline, swimlane), engines `lanes` + `tree`, clusters, RFC 7386 transaccional, export `svg`/`png` (inline + sandbox), **varios diagramas en el plano + panel lateral + cierre por ítem**, list/get, emphasis, historial. | H4, H5; suite completa de validación/layout/render; RSS < 250 MB con 12 diagramas de 300 nodos. |
 | **F3 — Interactividad y alcance** | RF17–RF18, RF21: **12 kinds** (block, api, trust, activity, journey, deployment, network, gantt, gitgraph, sankey, orgchart, neural), engines `sankey` + `git`, **`get_events`** + click→evento (RF18), watch (RF21), texto-a-path opcional (§8.5). | Spike click→tool; cola de eventos por sesión sin pérdida en 100 eventos. |
 
 ### 12.1 F0 — decisiones y orden de trabajo
@@ -636,7 +636,7 @@ F0 no construye el producto: **cierra decisiones**. Se resuelven en este orden p
 4. Binario único; `--version`, `--help` y `mcp-config` correctos.
 5. Render de 50 nodos < 1 s en hardware normal.
 6. **(O7)** Kind stub de prueba tocando solo `gx-kinds` — compila y renderiza sin cambios en `gx-mcp`/`gx-app`.
-7. Sin Mermaid-motor ni librerías JS de diagramas (`cargo tree` gate en CI; Mermaid solo como export de texto F2+).
+7. Sin Mermaid-motor ni librerías JS de diagramas (`cargo tree` gate en CI). Mermaid como formato de export también está fuera del alcance (§21).
 8. **(O10)** Un humano con cliente MCP limpio llega a H1 solo con QUICKSTART.md y `mcp-config`.
 9. Cerrar la ventana con sesión MCP viva no rompe la siguiente tool call (reabre).
 10. Grafos > 300 nodos → `too_large` con conteo claro; nunca ventana congelada.
@@ -734,3 +734,13 @@ Una revisión de **4 agentes** (3 *gap reviews* — producto/UX, arquitectura y 
 | 6 | Quedan **10 hallazgos P1/P2** en backlog (§19) con su propuesta | P1/P2 de los reviews |
 
 *Próximo paso: F0 — spike técnico. Requiere tu "arrancá".*
+
+## 21. Cambios v1.8 (2026-11-03, usuario)
+
+| # | Cambio | Origen |
+|---|---|---|
+| 1 | **Mermaid y markdown salen del alcance del export**: `export_diagram` queda con `format: "svg" \| "png"`. No se genera DSL ajeno ni bloque mermaid embebido, así que `inline` devuelve el SVG y nada más | «había pedido que mermaid no» → «Sacar Mermaid del corte» |
+| 2 | **RF10.1 (matriz de export por kind) queda retirada**: sin Mermaid no hay dialecto que un kind declare, y el índice de `get_diagram_schema` deja de llevar `mermaid_export` (prometía una capacidad que el producto no tiene) | Consecuencia de 1 |
+| 3 | **O6 no cambia**: Mermaid nunca fue motor, así que sacar el formato de texto no toca la decisión de motor propio. Lo que se pierde es la interoperabilidad con GitHub, y el backlog la puede recuperar si algún día se pide | Consecuencia de 1 |
+
+*Próximo paso: corte F2 de export (`odd/tasks/f2-export.md`).*

@@ -258,12 +258,16 @@ pub struct SchemaResponse {
 }
 
 /// One entry of the index of kinds.
+///
+/// The entry promises what the product has: no `mermaid_export`, because
+/// Mermaid is out of the export scope (feature doc `f2-export.md`, L2) and an
+/// index that announces a capability the tool cannot deliver is a lie the
+/// agent has no way to check.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct KindIndexEntry {
     pub kind: String,
     pub phase: String,
     pub engine: String,
-    pub mermaid_export: String,
     pub limits: LimitsPayload,
     pub min_example: Value,
     pub disponible: bool,
@@ -290,7 +294,6 @@ pub fn get_diagram_schema(kind: Option<&str>) -> SchemaResponse {
                 kind: handler.kind().to_string(),
                 phase: phase_of(handler.kind()),
                 engine: engine_of(handler.layout_hint()).to_string(),
-                mermaid_export: mermaid_export_of(handler.kind()).to_string(),
                 limits: limits_of(handler.limits()),
                 min_example: min_example_of(handler.kind()),
                 disponible: true,
@@ -392,15 +395,6 @@ fn engine_of(hint: gx_core::ir::LayoutHint) -> &'static str {
         gx_core::ir::LayoutHint::Lanes => "lanes",
         gx_core::ir::LayoutHint::Sankey => "sankey",
         gx_core::ir::LayoutHint::Git => "git",
-    }
-}
-
-/// Whether the kind exports to mermaid and with what loss (PRD §11.1).
-fn mermaid_export_of(kind: &str) -> &'static str {
-    match kind {
-        "graph" | "flowchart" | "er" | "sequence" | "class" | "state" | "gantt" | "gitgraph"
-        | "journey" | "sankey" | "timeline" | "mindmap" => "nativa",
-        _ => "no_soportada",
     }
 }
 
@@ -1268,10 +1262,31 @@ mod tests {
             .expect("graph");
         assert_eq!(graph.phase, "F1");
         assert_eq!(graph.engine, "layered");
-        assert_eq!(graph.mermaid_export, "nativa");
         assert_eq!(graph.limits.max_nodes, 300);
         assert_eq!(graph.limits.max_edges, 600);
         assert!(graph.min_example.get("kind").is_some());
+
+        // The entry promises exactly the fields the product has: an index that
+        // announces an export format the tool cannot deliver lies to the agent.
+        let serialized = serde_json::to_value(graph).expect("the entry is serialized");
+        let mut keys: Vec<String> = serialized
+            .as_object()
+            .expect("the entry is an object")
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            [
+                "disponible",
+                "engine",
+                "kind",
+                "limits",
+                "min_example",
+                "phase",
+            ]
+        );
     }
 
     #[test]
