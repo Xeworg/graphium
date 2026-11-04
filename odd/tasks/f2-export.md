@@ -51,7 +51,7 @@ Consecuencias, todas aplicadas:
 | T3 | El índice de kinds deja de prometer `mermaid_export`; el PRD queda coherente (v1.8, §21) | S6 | inline | `881dd73` |
 | T4 | `png` con `resvg`: rasteriza el SVG con la paleta resuelta, con `opts.scale` y `opts.max_px`; **medición del presupuesto de binario** (RNF1-quater: 6 760 912 de 15 700 000) | S2, S7, S10, S11 | inline | este PR |
 | T5 | Tool `export_diagram`: `svg` inline (tope de 1 MB, deadline de 5 s), `svg`/`png` a archivo (sandbox, `opts.overwrite`, cuota de la raíz), `diagram_id` opcional (`unknown_diagram` / `ambiguous_diagram` / `not_owner`) | S1, S2, S3, S4, S5 | inline | este PR |
-| T6 | Cierre: descripción de la tool para el agente, relay, `README`/`QUICKSTART`, suite completa en verde, clippy y fmt limpios | S3, S5 | inline | PR de T6 |
+| T6 | Cierre: descripción de la tool para el agente, relay, `README`/`QUICKSTART`, suite completa en verde, clippy y fmt limpios | S3, S5 | inline | **pendiente** (rama `feature/f2-export-t6`, sin empezar) |
 
 ## Log
 
