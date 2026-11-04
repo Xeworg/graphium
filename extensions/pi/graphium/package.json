@@ -1,0 +1,10 @@
+{
+  "name": "@xeworg/graphium-pi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Graphium for Pi: registra el servidor MCP y agrega /graphium",
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

@@ -31,13 +31,19 @@ El binario imprime su propia configuración:
 {"command": "/ruta/absoluta/al/graphium", "args": ["--stdio"]}
 ```
 
-Copiar ese JSON en la configuración MCP del cliente. En Pi, el bloque es:
+Copiar ese JSON en la configuración MCP del cliente.
 
-```toml
-[mcp_servers.graphium]
-command = "/ruta/absoluta/al/graphium"
-args = ["--stdio"]
+En **Pi** no hace falta nada de eso: la extensión de
+[`extensions/pi/graphium`](../extensions/pi/graphium/README.md) encuentra el
+binario, registra el servidor por vos y agrega `/graphium` (estado) y
+`/graphium open` (abrir el plano):
+
+```bash
+ln -s "$PWD/extensions/pi/graphium" ~/.pi/agent/extensions/graphium
 ```
+
+Ojo: `graphium mcp-config --client pi` imprime **TOML**, pero Pi lee
+`~/.pi/agent/mcp.json` en JSON. Con la extensión ese archivo no se toca.
 
 ## 3. Pedir un diagrama
 
