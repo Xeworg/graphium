@@ -27,6 +27,7 @@ function stubPi() {
   return {
     registered,
     commands,
+    handlers,
     registerMcpServer(name, config) {
       registered.set(name, config);
     },
@@ -64,11 +65,27 @@ check("findBinary returns null when there is nothing to find", () => {
   const previousPath = process.env.PATH;
   delete process.env.GRAPHIUM_BIN;
   process.env.PATH = "";
+  const empty = mkdtempSync(join(tmpdir(), "graphium-none-"));
   try {
-    assert.equal(findBinary(mkdtempSync(join(tmpdir(), "graphium-none-"))), null);
+    // Both the cwd and the place the extension lives, or the walk up from here
+    // would find this very checkout and the test would pass for the wrong reason.
+    assert.equal(findBinary(empty, empty), null);
   } finally {
     if (previous !== undefined) process.env.GRAPHIUM_BIN = previous;
     process.env.PATH = previousPath;
+  }
+});
+
+check("findBinary finds the checkout from the extension itself, not the cwd", () => {
+  const previous = process.env.GRAPHIUM_BIN;
+  delete process.env.GRAPHIUM_BIN;
+  try {
+    const outside = mkdtempSync(join(tmpdir(), "graphium-otro-"));
+    const found = findBinary(outside);
+    assert.ok(found && found.includes("graphium"), `found: ${found}`);
+    assert.ok(found.includes("target/"), `sale del checkout, no del cwd: ${found}`);
+  } finally {
+    if (previous !== undefined) process.env.GRAPHIUM_BIN = previous;
   }
 });
 
@@ -101,21 +118,14 @@ check("formatBytes reads like a human", () => {
 });
 
 check("the factory registers the MCP server and the /graphium command", () => {
-  const previous = process.env.GRAPHIUM_BIN;
-  process.env.GRAPHIUM_BIN = process.execPath;
-  try {
-    const pi = stubPi();
-    graphium(pi);
-    const server = pi.registered.get("graphium");
-    assert.ok(server, "the server is registered");
-    assert.equal(server.command, process.execPath);
-    assert.deepEqual(server.args, ["--stdio"]);
-    assert.ok(pi.commands.has("graphium"), "the command is registered");
-    assert.equal(pi.commands.get("graphium").description.includes("open"), true);
-  } finally {
-    if (previous === undefined) delete process.env.GRAPHIUM_BIN;
-    else process.env.GRAPHIUM_BIN = previous;
-  }
+  const pi = stubPi();
+  graphium(pi, process.execPath);
+  const server = pi.registered.get("graphium");
+  assert.ok(server, "the server is registered");
+  assert.equal(server.command, process.execPath);
+  assert.deepEqual(server.args, ["--stdio"]);
+  assert.ok(pi.commands.has("graphium"), "the command is registered");
+  assert.equal(pi.commands.get("graphium").description.includes("open"), true);
 });
 
 check("the status names the binary, the MCP server and the exports root", () => {
@@ -130,34 +140,23 @@ check("the status names the binary, the MCP server and the exports root", () => 
 
 check("without a binary the command says what to do instead of throwing", async () => {
   const pi = stubPi();
-  const previous = process.env.GRAPHIUM_BIN;
-  const previousPath = process.env.PATH;
-  delete process.env.GRAPHIUM_BIN;
-  process.env.PATH = "";
-  try {
-    const cwd = process.cwd();
-    process.chdir(mkdtempSync(join(tmpdir(), "graphium-nobin-")));
-    try {
-      graphium(pi);
-      assert.ok(pi.commands.has("graphium"), "the command still exists");
-      assert.equal(pi.registered.size, 0, "no server is registered without a binary");
-      const notices = [];
-      const ctx = { ui: { notify: (text) => notices.push(text) } };
-      await pi.commands.get("graphium").handler("open", ctx);
-      assert.match(notices.join("\n"), /no encontré el binario/);
-    } finally {
-      process.chdir(cwd);
-    }
-  } finally {
-    if (previous !== undefined) process.env.GRAPHIUM_BIN = previous;
-    process.env.PATH = previousPath;
-  }
+  graphium(pi, null);
+  assert.ok(pi.commands.has("graphium"), "the command still exists");
+  assert.equal(pi.registered.size, 0, "no server is registered without a binary");
+  assert.ok(pi.handlers.has("session_start"), "the human is told once, at start");
+
+  const notices = [];
+  const ctx = { ui: { notify: (text) => notices.push(text) } };
+  await pi.commands.get("graphium").handler("open", ctx);
+  assert.match(notices.join("\n"), /no encontré el binario/);
+
+  const status = statusLines(pi, null).join("\n");
+  assert.match(status, /no encontrado/);
+  assert.match(status, /sin binario no hay servidor/);
 });
 
 check("a rejected registration does not throw: the command reports it", async () => {
-  const previous = process.env.GRAPHIUM_BIN;
-  process.env.GRAPHIUM_BIN = process.execPath;
-  try {
+  {
     const notices = [];
     const handlers = new Map();
     const pi = {
@@ -172,13 +171,10 @@ check("a rejected registration does not throw: the command reports it", async ()
         return [];
       },
     };
-    graphium(pi);
+    graphium(pi, process.execPath);
     assert.ok(handlers.has("session_start"), "an error handler is installed");
     await handlers.get("session_start")({}, { ui: { notify: (text) => notices.push(text) } });
     assert.match(notices.join("\n"), /no se pudo registrar/);
-  } finally {
-    if (previous === undefined) delete process.env.GRAPHIUM_BIN;
-    else process.env.GRAPHIUM_BIN = previous;
   }
 });
 
