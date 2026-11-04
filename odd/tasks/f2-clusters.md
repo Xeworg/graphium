@@ -44,10 +44,10 @@ Todas con `path` + `code`, sobre el helper compartido:
 | ID | Qué | Specs | Ruta | Commit |
 |---|---|---|---|---|
 | T1 | Validación y layout del anidamiento: `validate_groups` compartido en `gx-kinds/groups.rs`, `DagreEngine` encadena `set_parent` grupo→grupo, `LayoutGroup` gana `depth` | S1, S3, S5, S10 | inline | `976b191` |
-| T2 | Render anidado: cajas ordenadas por profundidad (externa detrás), etiqueta sangrada por profundidad, `drawing_bbox` incluye la caja externa | S1, S3 | inline | pending |
+| T2 | Render anidado: cajas ordenadas por profundidad (externa detrás), etiqueta sangrada por profundidad | S1, S3 | inline | `b971937` |
 | T3 | `groups` en `kind: "graph"` (el ejemplo del PRD): schema, parseo, validación por el helper, `xs-graphium-since`/version sin subir | S2, S5, S8 | inline | pending |
 | T4 | `groups` en `flow`, `state`, `class` y `dataflow` con la misma forma y el mismo helper | S2, S5, S8 | inline | pending |
-| T5 | `component` pasa su validación de grupos al helper compartido y acepta anidamiento | S1, S5, S10 | inline | pending |
+| T5 | `component` pasa su validación de grupos al helper compartido y acepta anidamiento | S1, S5, S10 | inline | `976b191` |
 | T6 | Docs y evidencia: secciones de kind del PRD, `rules_of`/`min_example_of` en `contract.rs`, texto de `harness.rs`, golden de un cluster anidado, caso RNF1-bis, suite + clippy + fmt | S1, S4, S6, S7, S8 | inline | pending |
 | T7 | Cierre: rama `feature/f2-clusters`, commits por unidad de trabajo, PR con cuerpo, merge sin tag | — | parent | pending |
 
@@ -64,8 +64,9 @@ PR y merge, sin tags), pero el PR se lee por slices, cada uno con su commit:
 - **Slice 1 — el motor anida:** este documento (`3a07f95`) + T1 (`976b191`).
   Es el corte que no cambia ningún kind nuevo: sólo la validación compartida y
   el layout.
-- **Slice 2 — se dibuja:** T2 (render por profundidad) + T5 (`component` por el
-  helper compartido).
+- **Slice 2 — se dibuja:** T2 (`b971937`, render por profundidad). T5
+  (`976b191`) entró con el slice 1: `component` ya valida por el helper
+  compartido y acepta un grupo dentro de otro.
 - **Slice 3 — los kinds lo exponen:** T3 + T4 (`groups` en `graph`, `flow`,
   `state`, `class`, `dataflow`) y T6 (docs, goldens, gates).
 

@@ -11,6 +11,8 @@ use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use crate::groups::{to_ir_groups, validate_groups, Group};
+
 /// Contract version supported by this build (PRD §10.1).
 pub const SUPPORTED_VERSION: u32 = 1;
 
@@ -68,6 +70,9 @@ pub struct GraphInput {
     pub nodes: Vec<GraphNode>,
     #[serde(default)]
     pub edges: Vec<GraphEdge>,
+    /// The groups of nodes, which nest: a member is a node or another group.
+    #[serde(default)]
+    pub groups: Vec<Group>,
 }
 
 /// The `graph` kind.
@@ -151,6 +156,9 @@ impl DiagramKind for GraphKind {
             }
         }
 
+        let node_ids: Vec<&str> = input.nodes.iter().map(|node| node.id.as_str()).collect();
+        errors.extend(validate_groups(&node_ids, &input.groups));
+
         if errors.is_empty() {
             Ok(())
         } else {
@@ -204,7 +212,7 @@ impl DiagramKind for GraphKind {
             layout_hint: Self::LAYOUT_HINT,
             nodes,
             edges,
-            groups: Vec::new(),
+            groups: to_ir_groups(&input.groups),
         })
     }
 
@@ -255,6 +263,80 @@ mod tests {
         assert_eq!(graph.nodes[0].id, "read");
         assert_eq!(graph.nodes[0].label, "read file");
         assert_eq!(graph.edges[0].label.as_deref(), Some("utf-8"));
+    }
+
+    /// El ejemplo del PRD para `graph` trae `groups`: el campo existe y llega a
+    /// la IR (PRD §9, RF15).
+    #[test]
+    fn the_groups_of_the_prd_example_reach_the_ir() {
+        let document = serde_json::json!({
+            "version": 1,
+            "kind": "graph",
+            "title": "parse_config() — flujo",
+            "nodes": [
+                { "id": "cli", "label": "CLI arg" },
+                { "id": "read", "label": "read file" }
+            ],
+            "edges": [ { "from": "cli", "to": "read" } ],
+            "groups": [ { "id": "io", "label": "I/O", "members": ["read"] } ]
+        });
+        let input: GraphInput =
+            serde_json::from_value(document).expect("el ejemplo del PRD parsea");
+        GraphKind
+            .validate(&input)
+            .expect("el ejemplo del PRD es valido");
+
+        let ir = GraphKind.to_ir(&input);
+        let graph = ir.graph().expect("graph ir");
+        assert_eq!(graph.groups.len(), 1);
+        assert_eq!(graph.groups[0].id, "io");
+        assert_eq!(graph.groups[0].label.as_deref(), Some("I/O"));
+        assert_eq!(graph.groups[0].members, vec!["read"]);
+    }
+
+    /// Un grupo dentro de otro tambien pasa por el kind `graph` (RF15).
+    #[test]
+    fn nested_groups_reach_the_ir() {
+        let document = serde_json::json!({
+            "version": 1,
+            "kind": "graph",
+            "nodes": [ { "id": "read" } ],
+            "groups": [
+                { "id": "io", "label": "I/O", "members": ["disk"] },
+                { "id": "disk", "members": ["read"] }
+            ]
+        });
+        let input: GraphInput = serde_json::from_value(document).expect("parsea");
+        GraphKind.validate(&input).expect("anida");
+
+        let ir = GraphKind.to_ir(&input);
+        let graph = ir.graph().expect("graph ir");
+        assert_eq!(graph.groups.len(), 2);
+        assert_eq!(graph.groups[0].members, vec!["disk"]);
+        assert_eq!(graph.groups[1].members, vec!["read"]);
+    }
+
+    /// Un miembro que no existe se reporta y el documento no pasa.
+    #[test]
+    fn a_group_member_that_does_not_exist_is_rejected() {
+        let document = serde_json::json!({
+            "version": 1,
+            "kind": "graph",
+            "nodes": [ { "id": "read" } ],
+            "groups": [ { "id": "io", "members": ["fantasma"] } ]
+        });
+        let input: GraphInput = serde_json::from_value(document).expect("parsea");
+
+        let errors = GraphKind
+            .validate(&input)
+            .expect_err("el miembro no existe");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.code == ErrorCode::UnknownRef
+                    && error.path == "groups[0].members[0]"),
+            "{errors:?}"
+        );
     }
 
     #[test]

@@ -12,6 +12,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::flow::{to_graph, validate_flow, validate_header, FlowEdge, FlowNode, Role};
+use crate::groups::{to_ir_groups, validate_groups, Group};
 
 /// Contract version supported by this build (PRD §10.1).
 pub const SUPPORTED_VERSION: u32 = 1;
@@ -48,6 +49,9 @@ pub struct FlowchartInput {
     /// The arrows that join them, with the condition they carry.
     #[serde(default)]
     pub edges: Vec<FlowEdge>,
+    /// The groups of nodes, which nest: a member is a node or another group.
+    #[serde(default)]
+    pub groups: Vec<Group>,
 }
 
 /// The `flowchart` kind.
@@ -81,6 +85,9 @@ impl DiagramKind for FlowchartKind {
             DEFAULT_ROLE,
         ));
 
+        let node_ids: Vec<&str> = input.nodes.iter().map(|node| node.id.as_str()).collect();
+        errors.extend(validate_groups(&node_ids, &input.groups));
+
         if errors.is_empty() {
             Ok(())
         } else {
@@ -89,14 +96,16 @@ impl DiagramKind for FlowchartKind {
     }
 
     fn to_ir(&self, input: &Self::Input) -> Ir {
-        Ir::Graph(to_graph(
+        let mut graph = to_graph(
             &input.nodes,
             &input.edges,
             &ROLES,
             DEFAULT_ROLE,
             input.direction,
             Self::LAYOUT_HINT,
-        ))
+        );
+        graph.groups = to_ir_groups(&input.groups);
+        Ir::Graph(graph)
     }
 }
 
@@ -114,6 +123,53 @@ mod tests {
 
     fn input(json: &str) -> FlowchartInput {
         serde_json::from_str(json).expect("the document parses")
+    }
+
+    /// RF15: `groups` existe en `flowchart` y anida: un miembro es un nodo o
+    /// otro grupo, y el documento no cambia de version.
+    #[test]
+    fn the_groups_of_a_diagram_reach_the_ir() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "flowchart",
+                 "nodes": [ { "id": "read" } ],
+                 "groups": [
+                   { "id": "io", "label": "I/O", "members": ["disk"] },
+                   { "id": "disk", "members": ["read"] } ] }"#,
+        );
+
+        FlowchartKind
+            .validate(&parsed)
+            .expect("un grupo puede contener otro grupo");
+
+        let Ir::Graph(graph) = FlowchartKind.to_ir(&parsed) else {
+            panic!("un diagrama de `flowchart` es un grafo");
+        };
+        assert_eq!(graph.groups.len(), 2);
+        assert_eq!(graph.groups[0].id, "io");
+        assert_eq!(graph.groups[0].label.as_deref(), Some("I/O"));
+        assert_eq!(graph.groups[0].members, vec!["disk"]);
+        assert_eq!(graph.groups[1].members, vec!["read"]);
+    }
+
+    /// Un miembro que no existe se reporta antes de dibujar.
+    #[test]
+    fn a_group_member_that_does_not_exist_is_rejected() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "flowchart",
+                 "nodes": [ { "id": "read" } ],
+                 "groups": [ { "id": "io", "members": ["fantasma"] } ] }"#,
+        );
+
+        let errors = FlowchartKind
+            .validate(&parsed)
+            .expect_err("el miembro no existe");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.code == ErrorCode::UnknownRef
+                    && error.path == "groups[0].members[0]"),
+            "{errors:?}"
+        );
     }
 
     const APPROVAL: &str = r#"{
