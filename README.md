@@ -25,6 +25,7 @@ agente ──JSON──▶ validación ──▶ IR ──▶ layout ──▶ S
 
 Decisiones y criterios de aceptación: [`docs/PRD.md`](docs/PRD.md).
 Trabajo por tarea, con specs y evidencia: [`odd/tasks/`](odd/tasks/).
+Integraciones propias de los clientes (Pi primero): [`extensions/`](extensions/README.md).
 
 ## Compilar
 
