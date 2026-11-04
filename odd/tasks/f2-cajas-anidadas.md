@@ -16,6 +16,15 @@ puede moverse es `component-nested`, y suite + clippy + fmt verdes.
 - **S2** (PRD §7 RNF1-bis, verbatim): «**RNF1-bis — Matriz de layout (F0 la produce, F1 la gatea).** Se mide con 4 casos fijos por motor, no con un número suelto: `100n/150e` sin grupos · `100n/400e` sin grupos · `100n/150e` + 8 clusters · `300n/600e` sin grupos. Objetivo p95 en la máquina de referencia del CI (Linux x86_64, 4 vCPU, 8 GB, SSD): **< 500 ms** para los tres primeros y **< 1.5 s** para el de 300 nodos, con `DagreEngine` en frío (no hay caché de layout, por diseño determinista).»
 - **S3** (defecto, verbatim de `odd/tasks/f2-clusters.md`, T8): «los clusters anidados con aristas que cruzan grupos pierden posiciones de nodo en `dagre` a escala. Reproducción: el caso RNF1-bis `100n/150e + 8 clusters` con un grupo externo que contiene a los 8 coloca **82 de 100** nodos (`n2`, `n6`, `n17`, …); sin el grupo externo coloca 100/100; sin aristas, 96 nodos en 8 clusters anidados se colocan 96/96.»
 - **S4** (causa raíz, verificada leyendo `dagre` 0.1.2): `build_layer_matrix` (`layout/util.rs:155-181`) escribe `layers[rank][order] = v` **sin buscar hueco libre**; dos nodos de la misma capa con el mismo `order` colisionan y el que se escribe después borra al otro. `position_y`/`position_x` (`layout/position/mod.rs:58,71`) sólo escriben coordenadas para los nodos presentes en esa matriz, y `translate_graph` ignora los `None`. Los `order` duplicados aparecen porque los nodos compuestos entran en las listas de cada capa que abarcan (`layout/order/mod.rs:60-79`, activo recién cuando un grupo anida) y `do_resolve_conflicts` (`layout/order/resolve_conflicts.rs:91-95,122`) descarta los que quedan dentro de un ciclo de restricciones. Es un defecto de dagre.js, no del port: issue #236 abierto desde 2018-03-22 y PR #429 cerrado sin mergear.
+- **S4-bis** (matiz medido en T1, que corrige la lectura ingenua de S4): el
+  sitio de la pérdida es `build_layer_matrix`, pero su rastro **no** se ve en
+  las etiquetas devueltas. En el caso de reproducción, sólo 4 de los 18 nodos
+  sin posición comparten `(rank, order)` con un nodo colocado en el resultado
+  final; los otros 14 fueron pisados por nodos temporales (dummies de aristas y
+  de borde) que se crean en los pasos 12/14 y se borran en 20/21 de
+  `layout/mod.rs`. Consecuencia de diseño: **el detector es el invariante de S7**
+  (nodos colocados contra nodos de la IR), no un escaneo de `(rank, order)`
+  duplicados, que sólo atrapa al 22 % de los casos.
 - **S5** (decisión de este corte — a `dagre` sólo los clusters hoja): se registran como nodos compuestos únicamente los grupos cuyos miembros son **nodos**; los miembros de cualquier grupo siguen colgando de su cluster hoja. Es la topología que la matriz ya mide en 100/100.
 - **S6** (decisión de este corte — cajas ancestro locales): la caja de un grupo que contiene otros grupos se calcula en `gx-layout` como la **unión de las cajas de sus miembros + padding**, de adentro hacia afuera, sin depender de `dagre`. Determinista: misma entrada, mismos bytes.
 - **S7** (decisión de este corte — nunca un dibujo incompleto): si después de `layout()` la cantidad de nodos colocados es menor que la de la IR, se reintenta con `compound: false` y se calculan **todas** las cajas localmente. `LayoutGraph` no puede omitir un nodo de la IR en silencio.
@@ -55,3 +64,8 @@ eso es el motor, no `gx-layout`.
   casos de matriz (arquitectura).
 - **L3** (decisión del humano, 2026-11-04): «si dale» a A′, con T1 de
   diagnóstico empírico primero y sin tocar la dependencia.
+- **L4** (T1, número medido): reproducción confirmada — 18 de 100 nodos sin
+  posición con el grupo externo, 100/100 sin él, 96/96 anidando sin aristas; 4
+  celdas `(rank, order)` duplicadas en el resultado y 4 de 18 nodos explicados
+  por ellas, el resto por dummies transitorios. El árbol quedó limpio y
+  `cargo test -p gx-layout` en verde.
