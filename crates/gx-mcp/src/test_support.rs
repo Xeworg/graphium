@@ -7,6 +7,7 @@
 use std::sync::{Arc, Once};
 
 use gx_core::engine::{install, Engines};
+use gx_core::export::{RasterError, RasterImage, RasterOptions, Rasterizer};
 use gx_core::geom::{Point, Rect, Size};
 use gx_core::ir::{Ir, IrGraph};
 use gx_core::layout::{LayoutEdge, LayoutEngine, LayoutGraph, NodeBox};
@@ -139,6 +140,70 @@ impl SvgRenderer for StubRenderer {
         }
         svg
     }
+
+    /// The export drawing: the plan drawing plus the `class="bg"` rectangle
+    /// the real renderer paints (PRD §8.5.2, S7). The marker is the same one
+    /// `gx-render-svg` uses, so the engine door can be checked without a
+    /// dependency on it (PRD §9.1).
+    fn render_export(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> String {
+        let svg = self.render(ir, layout, palette);
+        match svg.find('>') {
+            Some(open) => {
+                let mut exported = svg[..=open].to_string();
+                exported.push_str("<rect class=\"bg\"/>");
+                exported.push_str(&svg[open + 1..]);
+                exported
+            }
+            None => svg,
+        }
+    }
+}
+
+/// The bytes the fake rasterizer returns for any SVG.
+///
+/// Deterministic on purpose: the PNG is outside the deterministic pipeline
+/// (PRD §8.5.1, S10), so no test compares the bytes of a real `resvg` run.
+pub(crate) const FAKE_PNG: &[u8] = b"\x89PNG\r\n\x1a\nrasterizador-falso";
+
+/// The size the fake rasterizer reports for any SVG.
+pub(crate) const FAKE_PNG_WIDTH: u32 = 320;
+pub(crate) const FAKE_PNG_HEIGHT: u32 = 180;
+
+/// The options the fake rasterizer saw in its last call.
+static LAST_RASTER_OPTIONS: std::sync::Mutex<Option<RasterOptions>> = std::sync::Mutex::new(None);
+
+/// A rasterizer stub: deterministic bytes and the size the test expects.
+///
+/// `gx-mcp` cannot depend on `gx-render-svg` (PRD §9.1), so the tests of the
+/// export install this through the same seam `gx-app` uses.
+struct FakeRasterizer;
+
+impl Rasterizer for FakeRasterizer {
+    fn rasterize(&self, _svg: &str, options: &RasterOptions) -> Result<RasterImage, RasterError> {
+        *LAST_RASTER_OPTIONS
+            .lock()
+            .expect("the raster options slot is not poisoned") = Some(*options);
+        Ok(RasterImage {
+            png: FAKE_PNG.to_vec(),
+            width: FAKE_PNG_WIDTH,
+            height: FAKE_PNG_HEIGHT,
+        })
+    }
+}
+
+/// Installs the fake rasterizer in the process-wide seam (PRD §7 RF10-bis).
+///
+/// The tests share one process, so the seam only goes from empty to installed:
+/// the "no rasterizer installed" branch cannot be tested here.
+pub(crate) fn install_fake_rasterizer() {
+    gx_core::export::install_rasterizer(Arc::new(FakeRasterizer));
+}
+
+/// The options the fake rasterizer saw in its last call.
+pub(crate) fn last_raster_options() -> Option<RasterOptions> {
+    *LAST_RASTER_OPTIONS
+        .lock()
+        .expect("the raster options slot is not poisoned")
 }
 
 fn install_stub_engines() {

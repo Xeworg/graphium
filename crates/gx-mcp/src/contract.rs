@@ -965,7 +965,7 @@ fn merge_patch(target: &mut Value, patch: &Value) {
 }
 
 /// The error of a diagram that is not on the plan (PRD §11.1).
-fn unknown_diagram(diagram_id: &str, known_ids: &[String]) -> ErrorPayload {
+pub(crate) fn unknown_diagram(diagram_id: &str, known_ids: &[String]) -> ErrorPayload {
     ErrorPayload {
         path: "diagram_id".to_string(),
         code: ErrorCode::UnknownDiagram.as_str().to_string(),
@@ -980,7 +980,7 @@ fn unknown_diagram(diagram_id: &str, known_ids: &[String]) -> ErrorPayload {
 }
 
 /// The error of a diagram of another session (PRD §11.1).
-fn not_owner(diagram_id: &str) -> ErrorPayload {
+pub(crate) fn not_owner(diagram_id: &str) -> ErrorPayload {
     ErrorPayload {
         path: "diagram_id".to_string(),
         code: ErrorCode::NotOwner.as_str().to_string(),
