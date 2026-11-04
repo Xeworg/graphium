@@ -6,7 +6,7 @@
 
 use gx_core::geom::Point;
 use gx_core::ir::{Direction, IrEdge, IrGraph, IrGroup, IrNode, IrRow};
-use gx_core::layout::{LayoutEngine, LayoutGraph, LayoutOpts};
+use gx_core::layout::{LayoutEngine, LayoutGraph, LayoutGroup, LayoutOpts};
 use gx_core::render::DEGRADED_SPACING_SCALE;
 use gx_layout::DagreEngine;
 use std::sync::Arc;
@@ -160,6 +160,167 @@ fn nested_clusters_carry_their_depth_and_contain_each_other() {
         inner.bbox.x <= placed.center.x && placed.center.x <= inner.bbox.max_x(),
         "el miembro vive dentro del grupo interno"
     );
+}
+
+/// Tres niveles de anidamiento: `outer` contiene al nodo `top` y al grupo
+/// `middle`, `middle` contiene a `inner` y `inner` contiene a los nodos `a` y
+/// `b`. `c` y `d` quedan afuera de todo grupo.
+///
+/// S5: a `dagre` sólo llegan los clusters hoja. S6: la caja de un grupo que
+/// contiene a otro se calcula en el layout como la unión de las cajas de sus
+/// miembros más el padding, de adentro hacia afuera.
+fn three_level_nest() -> IrGraph {
+    let mut graph = graph(Direction::TB);
+    graph.nodes.push(node("top", "Top"));
+    graph.groups.push(IrGroup {
+        id: "outer".to_string(),
+        label: Some("outer".to_string()),
+        members: vec!["top".to_string(), "middle".to_string()],
+    });
+    graph.groups.push(IrGroup {
+        id: "middle".to_string(),
+        label: Some("middle".to_string()),
+        members: vec!["inner".to_string()],
+    });
+    graph.groups.push(IrGroup {
+        id: "inner".to_string(),
+        label: Some("inner".to_string()),
+        members: vec!["a".to_string(), "b".to_string()],
+    });
+    graph
+}
+
+fn group_of<'a>(layout: &'a LayoutGraph, id: &str) -> &'a LayoutGroup {
+    layout
+        .groups
+        .iter()
+        .find(|group| group.id == id)
+        .unwrap_or_else(|| panic!("el grupo `{id}` no se coloca"))
+}
+
+fn node_box(layout: &LayoutGraph, id: &str) -> gx_core::geom::Rect {
+    let placed = layout
+        .nodes
+        .get(id)
+        .unwrap_or_else(|| panic!("el nodo `{id}` no se coloca"));
+    gx_core::geom::Rect::new(
+        placed.center.x - placed.size.w / 2.0,
+        placed.center.y - placed.size.h / 2.0,
+        placed.size.w,
+        placed.size.h,
+    )
+}
+
+fn assert_contains(outer: &gx_core::geom::Rect, inner: &gx_core::geom::Rect, message: &str) {
+    assert!(
+        outer.min_x() <= inner.min_x()
+            && outer.min_y() <= inner.min_y()
+            && outer.max_x() >= inner.max_x()
+            && outer.max_y() >= inner.max_y(),
+        "{message}: {outer:?} no contiene a {inner:?}"
+    );
+}
+
+/// S5/S6: con tres niveles todos los nodos se colocan, la profundidad de cada
+/// grupo sale de la IR y cada caja contiene la de adentro.
+#[test]
+fn a_three_level_nest_places_every_node_and_nests_its_boxes() {
+    let graph = three_level_nest();
+    let layout = engine().layout(&graph, &LayoutOpts::default());
+
+    assert_eq!(
+        layout.nodes.len(),
+        graph.nodes.len(),
+        "el anidamiento no puede perder nodos"
+    );
+
+    let outer = group_of(&layout, "outer");
+    let middle = group_of(&layout, "middle");
+    let inner = group_of(&layout, "inner");
+    assert_eq!(outer.depth, 0);
+    assert_eq!(middle.depth, 1);
+    assert_eq!(inner.depth, 2);
+
+    assert_contains(
+        &outer.bbox,
+        &middle.bbox,
+        "la caja externa no contiene a la del medio",
+    );
+    assert_contains(
+        &middle.bbox,
+        &inner.bbox,
+        "la del medio no contiene a la interna",
+    );
+
+    for member in ["a", "b"] {
+        assert_contains(
+            &inner.bbox,
+            &node_box(&layout, member),
+            "el grupo interno no contiene a su miembro",
+        );
+    }
+    let top = node_box(&layout, "top");
+    assert_contains(
+        &outer.bbox,
+        &top,
+        "la caja externa no contiene al nodo que cuelga de ella",
+    );
+
+    // El nombre de la caja se escribe arriba, sobre `y = bbox.y + text_size`,
+    // así que el borde de arriba se expande más que el de abajo: la línea del
+    // nombre tiene que entrar en la caja sin pisar al primer miembro.
+    let members = middle.bbox.union(&top);
+    let above = members.min_y() - outer.bbox.min_y();
+    let below = outer.bbox.max_y() - members.max_y();
+    assert!(
+        above > below,
+        "el borde de arriba deja lugar al nombre: {above} vs {below}"
+    );
+}
+
+/// S6: la caja local es determinista. La misma entrada, dos veces, da los
+/// mismos valores: es lo que hace comparables los bytes del SVG.
+#[test]
+fn the_same_nest_lays_out_the_same_way_twice() {
+    let graph = three_level_nest();
+
+    let first = engine().layout(&graph, &LayoutOpts::default());
+    let second = engine().layout(&graph, &LayoutOpts::default());
+
+    assert_eq!(first.nodes, second.nodes);
+    assert_eq!(first.edges, second.edges);
+    assert_eq!(first.groups, second.groups);
+    assert_eq!(first.bbox, second.bbox);
+}
+
+/// Una arista que no une dos nodos declarados no puede voltear el motor:
+/// `dagre` hace panick en su network simplex cuando un extremo es un grupo o un
+/// id que no existe. La puerta de los kinds ya rechaza ese documento; el motor
+/// igual no se cae, ignora la arista y coloca todo.
+#[test]
+fn an_edge_that_names_a_group_or_an_unknown_id_is_ignored() {
+    let mut graph = graph(Direction::TB);
+    graph.groups.push(IrGroup {
+        id: "cluster".to_string(),
+        label: Some("cluster".to_string()),
+        members: vec!["a".to_string(), "b".to_string()],
+    });
+    graph.edges.push(IrEdge::new("a", "cluster"));
+    graph.edges.push(IrEdge::new("cluster", "b"));
+    graph.edges.push(IrEdge::new("c", "fantasma"));
+
+    let layout = engine().layout(&graph, &LayoutOpts::default());
+
+    assert_eq!(layout.nodes.len(), graph.nodes.len());
+    for routed in &layout.edges {
+        assert!(
+            graph.nodes.iter().any(|node| node.id == routed.from)
+                && graph.nodes.iter().any(|node| node.id == routed.to),
+            "la arista envenenada no se rutea: {routed:?}"
+        );
+    }
+    // The three original edges are routed; the three poisoned ones are not.
+    assert_eq!(layout.edges.len(), 3);
 }
 
 #[test]
