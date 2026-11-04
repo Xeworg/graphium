@@ -39,13 +39,27 @@ las sesiones stdio.
 
 | ID | Qué | Specs | Ruta | Commit |
 |---|---|---|---|---|
-| T1 | Registro de sesiones en el dueño: `SessionRecord { id, family, client, version, project, label, state, diagram_ids }`, resolución de identidad (env → `clientInfo` → proceso) y ciclo `activa`/`en gracia`/`cerrada` | S4, S6, D1, D4 | inline | pending |
+| T1 | Registro de sesiones en el dueño: `SessionRecord`, resolución de identidad (env → `clientInfo` → proceso) y ciclo `activa`/`en gracia`; el transporte **stdio** se registra | S4, S6, D1, D4 | worker | `374d08b` |
+| T1-bis | Registrar también cada conexión de **socket** como sesión: el relay y los ids `sock-<pid>-<n>` viven en `crates/gx-app/src/relay.rs`, no en `gx-mcp` (corrección de ruta a L4) | S4, D1 | worker | pending |
 | T2 | `register_session({ label? })` que devuelve la sesión propia, y `session` en las respuestas de `render_diagram`/`list_diagrams` para que el agente sepa con qué nombre lo ven | S3, D2 | inline | pending |
-| T3 | Fin de sesión: borrar sus diagramas al vencer la gracia, y conteo real de sesiones (stdio + sockets) con `too_many_sessions` | S2, S7, D4, D6 | inline | pending |
+| T3 | Fin de sesión: borrar sus diagramas al vencer la gracia, y conteo real de sesiones (stdio + sockets) con `too_many_sessions`. Incluye T1-bis | S2, S7, D4, D6 | worker | pending |
 | T4 | Interfaz: selector lateral (familia con icono/color, etiqueta, proyecto, estado, contador), opción «todas», badge por diagrama, aviso cuando desaparece la sesión que estabas mirando | S1, S3, D3, D5 | inline | pending |
 | T5 | PRD: **RF30** nueva (sesiones visibles y aisladas), reescritura de §11.1 «Alcance de sesión» y de RNF9, nota en §12 | S6, S7, S8 | inline | pending |
-| T6 | Extensión de Pi: registrar con `env` de identidad y re-registrar en `session_start` si cambió `PI_SESSION_ID`; verificar con `verify.mjs` y el loader real | S4, D1 | inline | pending |
+| T6 | Extensión de Pi: registrar con `env` de identidad y re-registrar si cambia el id de sesión; `verify.mjs` en 17 checks | S4, D1 | worker | `4df7703` |
 | T7 | Cierre: rama `feature/f3-sesiones`, PR con cuerpo, merge sin tag | — | parent | pending |
+
+## Slices de revisión
+
+Cuatro unidades de trabajo, cada una en su commit y con los tests y la doc del
+mismo comportamiento al lado:
+
+1. **Plan y contrato**: este documento (`0fef937`) y el PRD con RF30 (`52e4906`).
+2. **Identidad**: registro de sesiones en el dueño (`374d08b`) y `env` de la
+   extensión de Pi (`4df7703`).
+3. **Conteo y fin de sesión**: T1-bis + T3 (relay, borrado con gracia,
+   `too_many_sessions`).
+4. **Superficie y vista**: T2 (`register_session` y la sesión en las respuestas)
+   y T4 (selector).
 
 ## Evidencia esperada
 
@@ -59,4 +73,5 @@ las sesiones stdio.
 - **L1** (el humano, verbatim): «no, tendriamos que adaptar la interfaz a multiples sesiones para que los agentes no toquen el proyecto de otro agente, y los datos que ocupemos deberiamos manejarlos por la extension, o por las llamadas al mcp hay que ver que es mejor»; «por ahora sera mejor que se borren, lo complejo aca sera detectar cuando el mcp sigue en uso por otro programa que no sea pi ya no solo debemos reconocer la sesion si no de que tipo de agente proviene, opencode, pi, claude. etc»; «lo de las sesiones seria como tener en la interfaz un selector de sesiones»; «ahora explicame como haremos para cerrar el programa ya que ahora dependeremos de que se cierre la ultima sesion, el software inicia con la sesion de un agente, luego termimina con la sesion del ultimo agente»; «tomare la recomendacion».
 - **L2** (decisión de arquitectura, 2026-11-04): los datos de sesión los posee el **dueño** (MCP), la extensión solo aporta identidad por `env`, y la interfaz lee del dueño. Razones: cobertura de todos los clientes MCP sin código por agente, un solo escritor del estado, y el estado vive en el mismo proceso que dibuja. Una extensión que guardara estado obligaría a una implementación por agente y a dos escritores que se desincronizan.
 - **L3** (orden, 2026-11-04): el selector **no necesita** el daemon — el dueño ya recibe varias sesiones por socket (hasta 8) —, así que va primero y solo; el background (vida del proceso, tray, ventana, sesión `ui`) es el corte siguiente.
-- **L4** (estado hoy, verificado en código): `session_id` es la constante `"stdio"` en el proceso dueño (`crates/gx-mcp/src/lib.rs:272-283`) y `sock-<pid>-<n>` para cada conexión reenviada (`relay.rs:16-20`); `MAX_SESSIONS` sólo cuenta sockets (`relay.rs:117`); `not_owner` existe y se emite (`contract.rs:805,856`); `owner_unavailable` y `diagram_closed` son variantes muertas.
+- **L4** (estado hoy, verificado en código): `session_id` es la constante `"stdio"` en el proceso dueño (`crates/gx-mcp/src/lib.rs:272-283`) y `sock-<pid>-<n>` para cada conexión reenviada; **el relay, esos ids y `MAX_SESSIONS` viven en `crates/gx-app/src/relay.rs:16-20,117`**, no en `gx-mcp` (corregido en T1); `not_owner` existe y se emite (`contract.rs:805,856`); `owner_unavailable` y `diagram_closed` son variantes muertas.
+- **L5** (T1 y T6, medido): `cargo test -p gx-mcp --lib` 106 en verde y `node extensions/pi/graphium/verify.mjs` en 17 checks. La extensión lee `ctx.sessionManager.getSessionId()` (`dist/core/session-manager.d.ts:178,246`) y usa `PI_SESSION_ID` solo como respaldo, porque esa variable existe en los subprocesos de bash/powershell, no en la extensión; los valores `env` del registro MCP son plantillas `${…}`. Decisión del worker sobre la identidad: familia y versión salen **del mismo nivel** (una familia declarada no se mezcla con una versión de protocolo).
