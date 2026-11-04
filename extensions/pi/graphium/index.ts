@@ -10,6 +10,11 @@
  * is, where the exports land and what is already there; `/graphium open` opens
  * the plan without asking the agent for a diagram.
  *
+ * What it declares: the identity of the session it runs in, through the `env`
+ * of the registration, so Graphium shows `Pi` as the agent family and keeps the
+ * same session across a reconnect (f3 S4/D1). The identity is self-declared and
+ * is not a security boundary: the fence is still `not_owner` in the owner.
+ *
  * Rules this file follows (Pi extension docs):
  * - nothing long-lived starts in the factory: finding the binary is a `stat`,
  *   the version is read inside the command that needs it;
@@ -22,7 +27,11 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 
 /** The name of the MCP server, as `/mcp` shows it. */
 const SERVER = "graphium";
@@ -32,6 +41,10 @@ const EXPLICIT = "GRAPHIUM_BIN";
 
 /** How many exported files the status lists. */
 const RECENT_EXPORTS = 3;
+
+/** What the server offers, in a sentence: `/mcp` and the system prompt read it. */
+const DESCRIPTION =
+  "Graphium: dibuja diagramas en una ventana sobre un plano y los exporta a SVG o PNG";
 
 /** The directory this extension lives in, wherever Pi resolved it from. */
 function here(): string {
@@ -165,6 +178,75 @@ export function openPlan(binary: string): string {
   }
 }
 
+/** What the extension can read about the session it is running in. */
+export interface IdentityInput {
+  /** The session id a Pi context exposed, when there is one. */
+  sessionId?: string | null;
+  /** The project directory the event or the context provided. */
+  cwd?: string | null;
+}
+
+/** The string, or `null`: a blank value is not an identity. */
+function notEmpty(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+/**
+ * The `env` the MCP server is registered with: the identity Graphium shows in
+ * its session selector (f3 S4/D1).
+ *
+ * `GRAPHIUM_CLIENT` and `GRAPHIUM_PROJECT` are always there; `GRAPHIUM_SESSION`
+ * only when an id is known. A missing id is left out, never invented: a session
+ * shown under the wrong name is worse for the human than one without a name.
+ *
+ * Pure on purpose, `env` included, so the three cases (id, no id, changed id)
+ * are testable without Pi.
+ */
+export function identityEnv(
+  identity: IdentityInput = {},
+  env: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+  const session = notEmpty(identity.sessionId) ?? notEmpty(env.PI_SESSION_ID);
+  const built: Record<string, string> = {
+    GRAPHIUM_CLIENT: "pi",
+    GRAPHIUM_PROJECT: notEmpty(identity.cwd) ?? process.cwd(),
+  };
+  if (session) {
+    built.GRAPHIUM_SESSION = session;
+  }
+  return built;
+}
+
+/**
+ * The session id a Pi context exposes, or `null`.
+ *
+ * `ExtensionContext.sessionManager` is a `ReadonlySessionManager`, and
+ * `getSessionId()` is the id `/resume` and the session file use. Every read is
+ * guarded because a context goes stale when the session is replaced.
+ */
+export function sessionIdOf(ctx: ExtensionContext | null | undefined): string | null {
+  try {
+    return notEmpty(ctx?.sessionManager?.getSessionId());
+  } catch {
+    return null;
+  }
+}
+
+/** The working directory a Pi context exposes, or `null`. */
+export function cwdOf(ctx: ExtensionContext | null | undefined): string | null {
+  try {
+    return notEmpty(ctx?.cwd);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether two identities say the same thing, key by key. */
+function sameIdentity(left: Record<string, string>, right: Record<string, string>): boolean {
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length && keys.every((key) => left[key] === right[key]);
+}
+
 /** The lines `/graphium` prints. */
 export function statusLines(pi: Pick<ExtensionAPI, "getMcpServers">, binary: string | null): string[] {
   const root = exportsRoot();
@@ -197,37 +279,83 @@ export default function graphium(
   pi: ExtensionAPI,
   binary: string | null = findBinary(),
 ) {
+  /** The `env` the current registration carries; `null` until one works. */
+  let registered: Record<string, string> | null = null;
+  /** Why the first registration failed, so the human hears it once, at start. */
+  let failure: Error | null = null;
+
+  const register = (identity: Record<string, string>): void => {
+    if (!binary) return;
+    pi.registerMcpServer(SERVER, {
+      command: binary,
+      args: ["--stdio"],
+      env: identity,
+      description: DESCRIPTION,
+    });
+    registered = identity;
+  };
+
   if (binary) {
     // Registering here is what the docs call "while the extension loads": the
     // session connects it at start, and a `mcp.json` entry with the same name
     // still wins, so the human keeps the last word.
     //
+    // The identity is as complete as the process knows it and no more: Pi has
+    // no session while extensions load, so `session_start` finishes the job.
+    //
     // A registration that throws (an invalid config, another extension owning
     // the MCP transport) must not take the session down: `/graphium` says
     // what happened, because a factory has no UI to say it with.
     try {
-      pi.registerMcpServer(SERVER, {
-        command: binary,
-        args: ["--stdio"],
-        description:
-          "Graphium: dibuja diagramas en una ventana sobre un plano y los exporta a SVG o PNG",
-      });
+      register(identityEnv());
     } catch (error) {
-      pi.on("session_start", async (_event, ctx) => {
-        ctx.ui.notify(
-          `Graphium: el servidor MCP no se pudo registrar (${(error as Error).message})`,
-          "info",
-        );
-      });
+      registered = null;
+      failure = error as Error;
     }
-  } else {
-    pi.on("session_start", async (_event, ctx) => {
+  }
+
+  pi.on("session_start", async (_event, ctx) => {
+    if (!binary) {
       ctx.ui.notify(
         `Graphium: no encontré el binario. Definí ${EXPLICIT} o compilá con \`cargo build --release\`.`,
         "info",
       );
-    });
-  }
+      return;
+    }
+    if (failure) {
+      ctx.ui.notify(
+        `Graphium: el servidor MCP no se pudo registrar (${failure.message})`,
+        "info",
+      );
+      return;
+    }
+
+    // A new session in the same Pi process must reach Graphium under its own
+    // name, or it would inherit the diagrams of the one before it. The check is
+    // against what was registered, so an unchanged session is left alone.
+    const wanted = identityEnv({ sessionId: sessionIdOf(ctx), cwd: cwdOf(ctx) });
+    if (registered && sameIdentity(registered, wanted)) {
+      return;
+    }
+    try {
+      if (registered) {
+        pi.unregisterMcpServer(SERVER);
+        registered = null;
+      }
+      register(wanted);
+    } catch (error) {
+      // Never throw out of the handler: a new identity is worth reporting, but
+      // not worth taking the session down for.
+      try {
+        ctx.ui.notify(
+          `Graphium: el servidor MCP no se pudo registrar (${(error as Error).message})`,
+          "info",
+        );
+      } catch {
+        // No UI left to say it with.
+      }
+    }
+  });
 
   pi.registerCommand("graphium", {
     description:

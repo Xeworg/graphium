@@ -11,6 +11,14 @@ binario, registra el servidor MCP para la sesión y agrega el comando
   `export_diagram` y el resto de las tools disponibles, sin `mcp.json`. Un
   `mcp.json` con una entrada `graphium` sigue ganando: el humano tiene la última
   palabra.
+- **Declara quién es la sesión.** En el `env` del registro pasa
+  `GRAPHIUM_CLIENT=pi`, `GRAPHIUM_PROJECT` (el directorio de trabajo) y
+  `GRAPHIUM_SESSION` (el id de la sesión de Pi, cuando se puede leer). Gracias a
+  eso la ventana muestra la sesión como «Pi», la distingue de otro agente, y
+  sigue siendo la misma después de reconectar. Si el id cambia —otra sesión en
+  el mismo Pi— la extensión vuelve a registrar el servidor con la identidad
+  nueva; si no se puede leer ningún id, el `env` va sin `GRAPHIUM_SESSION` y no
+  se inventa ninguno.
 - **`/graphium`** muestra dónde está el binario, qué versión es, si el MCP quedó
   registrado, cuál es la raíz de exportes y los últimos archivos exportados.
 - **`/graphium open`** abre la ventana del plano sin pedirle un diagrama al

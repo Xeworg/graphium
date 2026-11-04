@@ -14,6 +14,7 @@ pub mod contract;
 pub mod dispatch;
 pub mod export;
 pub mod harness;
+pub mod session;
 pub mod store;
 pub mod tools;
 
@@ -270,7 +271,7 @@ pub struct GraphiumServer {
 impl GraphiumServer {
     /// A server for the stdio session started by [`serve_stdio`].
     pub fn new() -> Self {
-        Self::with_session_id("stdio")
+        Self::with_session_id(session::STDIO_SESSION_ID)
     }
 
     /// A server whose diagrams are tagged with `session_id` (PRD §11.1).
@@ -527,6 +528,12 @@ fn structured<T: serde::Serialize>(response: T) -> Result<CallToolResult, ErrorD
 
 /// Builds the runtime, serves stdio and waits for EOF.
 fn run_stdio_service() -> Result<(), String> {
+    // The stdio session of the owner is a visible session too (feature
+    // `f3-sesiones`, D1/D4): it registers with what the client declared and
+    // what the process says. The tools keep answering with `session_id:
+    // "stdio"`, so this changes nothing they return.
+    session::register_transport_session(session::STDIO_SESSION_ID);
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -804,6 +811,33 @@ mod tests {
             crate::store::diagram_store().list().is_empty(),
             "a malformed option never reaches the plane"
         );
+    }
+
+    /// PRESERVE: the stdio server keeps tagging its diagrams with
+    /// `session_id: "stdio"` (PRD §11.1). The session registry describes the
+    /// session; it does not move the cerco.
+    #[tokio::test]
+    async fn the_stdio_server_still_tags_its_diagrams_with_stdio() {
+        let _guard = lock_renders().await;
+        let server = GraphiumServer::new();
+        let diagram = serde_json::from_str(MINIMAL).expect("the example is JSON");
+
+        server
+            .render_diagram(Parameters(RenderDiagramParams {
+                diagram,
+                opts: None,
+            }))
+            .await
+            .expect("a valid document never fails the tool");
+
+        let listed = server
+            .list_diagrams()
+            .await
+            .expect("list_diagrams never fails")
+            .structured_content
+            .expect("structured content");
+        assert_eq!(listed["ok"], true, "{listed}");
+        assert_eq!(listed["diagrams"][0]["session_id"], "stdio", "{listed}");
     }
 
     /// Reads one line and decodes it as JSON-RPC: anything else on the wire is

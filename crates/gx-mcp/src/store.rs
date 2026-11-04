@@ -95,6 +95,11 @@ impl DiagramStore {
             .lock()
             .expect("the diagram store is not poisoned")
             .insert(summary.diagram_id.clone(), record);
+        // The session learns which diagrams it has without scanning the store
+        // (D4): this is where a diagram starts existing, so every path that
+        // creates one — a tool of either transport, a restored plan — is
+        // covered.
+        crate::session::session_registry().note_diagram(&summary.session_id, &summary.diagram_id);
         summary
     }
 
@@ -168,19 +173,28 @@ impl DiagramStore {
     /// Takes a diagram out of the plan without deleting its document.
     ///
     /// Closing frees the slot, never the identifier: the id stays invalid for
-    /// the tools and is never handed out again (PRD §11.1, RF28).
+    /// the tools and is never handed out again (PRD §11.1, RF28). It also takes
+    /// the diagram out of the list of its session (D4): what the session holds
+    /// is what is on the plan.
     pub fn close(&self, diagram_id: &str) -> bool {
-        let mut documents = self
-            .documents
-            .lock()
-            .expect("the diagram store is not poisoned");
-        match documents.get_mut(diagram_id) {
-            Some(record) if record.open => {
-                record.open = false;
-                true
+        let session_id = {
+            let mut documents = self
+                .documents
+                .lock()
+                .expect("the diagram store is not poisoned");
+            match documents.get_mut(diagram_id) {
+                Some(record) if record.open => {
+                    record.open = false;
+                    Some(record.summary.session_id.clone())
+                }
+                _ => None,
             }
-            _ => false,
-        }
+        };
+        let Some(session_id) = session_id else {
+            return false;
+        };
+        crate::session::session_registry().forget_diagram(&session_id, diagram_id);
+        true
     }
 
     /// Every diagram of one session, ordered by `diagram_id` (PRD §11.1).
@@ -223,25 +237,55 @@ impl DiagramStore {
     }
 
     /// Removes every diagram of one session and returns how many were removed.
+    ///
+    /// The session forgets them too (D4): a cleared canvas holds no diagram.
     pub fn clear_session(&self, session_id: &str) -> usize {
-        let mut documents = self
-            .documents
-            .lock()
-            .expect("the diagram store is not poisoned");
-        let before = documents.len();
-        documents.retain(|_, record| record.summary.session_id != session_id);
-        before - documents.len()
+        let removed: Vec<String> = {
+            let mut documents = self
+                .documents
+                .lock()
+                .expect("the diagram store is not poisoned");
+            let removed: Vec<String> = documents
+                .iter()
+                .filter(|(_, record)| record.summary.session_id == session_id)
+                .map(|(diagram_id, _)| diagram_id.clone())
+                .collect();
+            documents.retain(|_, record| record.summary.session_id != session_id);
+            removed
+        };
+        let registry = crate::session::session_registry();
+        for diagram_id in &removed {
+            registry.forget_diagram(session_id, diagram_id);
+        }
+        removed.len()
     }
 
     /// Removes every diagram of the plan and returns how many were removed.
+    ///
+    /// Every session forgets the ones that were its own (D4).
     pub fn clear_all(&self) -> usize {
-        let mut documents = self
-            .documents
-            .lock()
-            .expect("the diagram store is not poisoned");
-        let before = documents.len();
-        documents.clear();
-        before
+        let removed: Vec<(String, String)> = {
+            let mut documents = self
+                .documents
+                .lock()
+                .expect("the diagram store is not poisoned");
+            let removed: Vec<(String, String)> = documents
+                .values()
+                .map(|record| {
+                    (
+                        record.summary.session_id.clone(),
+                        record.summary.diagram_id.clone(),
+                    )
+                })
+                .collect();
+            documents.clear();
+            removed
+        };
+        let registry = crate::session::session_registry();
+        for (session_id, diagram_id) in &removed {
+            registry.forget_diagram(session_id, diagram_id);
+        }
+        removed.len()
     }
 
     /// Empties the store for a test. Test-only: in production nothing recycles
@@ -260,9 +304,22 @@ impl DiagramStore {
 pub const MAX_OPEN_DIAGRAMS: usize = 12;
 
 /// The single store of the process.
+///
+/// Reading the store is also the cheap tick of the end of session (D4, S2):
+/// every path that touches the plan — the tools of both transports and the
+/// state the panel reads — passes through here, so a session whose grace
+/// finished is deleted with its diagrams on the next call, without a thread
+/// per session and without a timer. The check is a lock and a scan of the
+/// sessions, and it does nothing while no grace has run out.
 pub fn diagram_store() -> &'static DiagramStore {
     static STORE: OnceLock<DiagramStore> = OnceLock::new();
-    STORE.get_or_init(DiagramStore::new)
+    let store = STORE.get_or_init(DiagramStore::new);
+    crate::session::end_expired_sessions(
+        crate::session::session_registry(),
+        store,
+        SystemTime::now(),
+    );
+    store
 }
 
 /// `d-0001` style id from its number.
@@ -435,6 +492,73 @@ mod tests {
         store.close("d-0003");
         assert!(!store.is_full());
         assert_eq!(store.next_id(), "d-0013");
+    }
+
+    /// D4: the session learns which diagrams it has where they start and stop
+    /// existing, without scanning the store: the store notes the insert and
+    /// forgets the close.
+    #[test]
+    fn the_store_notes_and_forgets_the_diagrams_of_a_session() {
+        let registry = crate::session::session_registry();
+        let key = format!("store-note-{}", std::process::id());
+        let identity = crate::session::resolve(
+            &crate::session::Declared {
+                client: Some("pi".to_string()),
+                session: Some(key.clone()),
+                project: None,
+            },
+            &crate::session::ClientFingerprint::default(),
+            &crate::session::ProcessFingerprint::default(),
+        );
+        let key = registry.connect("store-note-transport", &identity).id;
+
+        let store = DiagramStore::new();
+        store.insert(
+            "d-9001".to_string(),
+            "t".to_string(),
+            "graph".to_string(),
+            key.clone(),
+            "{}".to_string(),
+        );
+        assert_eq!(
+            registry
+                .get(&key)
+                .expect("the session is registered")
+                .diagram_ids,
+            vec!["d-9001".to_string()],
+            "a diagram on the plan is a diagram of its session"
+        );
+
+        assert!(store.close("d-9001"));
+        assert!(
+            registry
+                .get(&key)
+                .expect("the session is registered")
+                .diagram_ids
+                .is_empty(),
+            "a closed diagram is not one of the diagrams of the session"
+        );
+
+        store.insert(
+            "d-9002".to_string(),
+            "t".to_string(),
+            "graph".to_string(),
+            key.clone(),
+            "{}".to_string(),
+        );
+        assert_eq!(
+            store.clear_session(&key),
+            2,
+            "the closed diagram is still in memory and goes too"
+        );
+        assert!(
+            registry
+                .get(&key)
+                .expect("the session is registered")
+                .diagram_ids
+                .is_empty(),
+            "a cleared canvas leaves no diagram of the session behind"
+        );
     }
 
     /// PRD §7.2 y §8.6.1: el estado que el panel consume lleva dónde está
