@@ -664,6 +664,7 @@ fn group(id: &str, label: Option<&str>, bbox: Rect) -> gx_core::LayoutGroup {
         id: id.to_string(),
         label: label.map(str::to_string),
         bbox,
+        depth: 0,
     }
 }
 

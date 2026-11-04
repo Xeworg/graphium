@@ -115,6 +115,53 @@ fn clusters_appear_as_groups_that_contain_their_members() {
     }
 }
 
+/// RF15: los grupos anidan. El layout dice la profundidad de cada uno (la caja
+/// externa se dibuja primero) y la caja externa contiene a la interna.
+#[test]
+fn nested_clusters_carry_their_depth_and_contain_each_other() {
+    let mut graph = graph(Direction::TB);
+    graph.groups.push(IrGroup {
+        id: "outer".to_string(),
+        label: Some("outer".to_string()),
+        members: vec!["inner".to_string()],
+    });
+    graph.groups.push(IrGroup {
+        id: "inner".to_string(),
+        label: Some("inner".to_string()),
+        members: vec!["a".to_string(), "b".to_string()],
+    });
+
+    let layout = engine().layout(&graph, &LayoutOpts::default());
+    let outer = layout
+        .groups
+        .iter()
+        .find(|group| group.id == "outer")
+        .expect("el grupo externo se coloca");
+    let inner = layout
+        .groups
+        .iter()
+        .find(|group| group.id == "inner")
+        .expect("el grupo interno se coloca");
+
+    assert_eq!(outer.depth, 0);
+    assert_eq!(inner.depth, 1);
+
+    assert!(
+        outer.bbox.x <= inner.bbox.x && outer.bbox.y <= inner.bbox.y,
+        "la caja externa arranca antes: {outer:?} {inner:?}"
+    );
+    assert!(
+        outer.bbox.max_x() >= inner.bbox.max_x() && outer.bbox.max_y() >= inner.bbox.max_y(),
+        "la caja externa termina después: {outer:?} {inner:?}"
+    );
+
+    let placed = layout.nodes.get("a").expect("el miembro se coloca");
+    assert!(
+        inner.bbox.x <= placed.center.x && placed.center.x <= inner.bbox.max_x(),
+        "el miembro vive dentro del grupo interno"
+    );
+}
+
 #[test]
 fn an_edge_with_a_label_gets_a_label_position() {
     let mut graph = graph(Direction::TB);

@@ -81,12 +81,15 @@ impl LayoutEngine for DagreEngine {
             );
         }
 
-        // Clusters: a compound parent node with the members below it.
+        // Clusters: a compound parent node with the members below it. Every
+        // group is registered first, because a group can be a member of another
+        // one (PRD §7 RF15) and the engine needs both ends to exist before it
+        // links them.
         for group in &graph.groups {
             dagre.set_node(group.id.clone(), Some(NodeLabel::default()));
-            for member in &group.members {
-                dagre.set_parent(member, Some(group.id.as_str()));
-            }
+        }
+        for (parent, member) in group_parents(graph) {
+            dagre.set_parent(member, Some(parent));
         }
 
         for (index, edge) in graph.edges.iter().enumerate() {
@@ -180,6 +183,7 @@ impl LayoutEngine for DagreEngine {
             });
         }
 
+        let depths = group_depths(graph);
         let mut groups = Vec::new();
         for group in &graph.groups {
             let Some(label) = dagre.node(group.id.as_str()) else {
@@ -197,6 +201,7 @@ impl LayoutEngine for DagreEngine {
                     label.width,
                     label.height,
                 ),
+                depth: depths.get(group.id.as_str()).copied().unwrap_or(0),
             });
         }
 
@@ -230,6 +235,82 @@ impl LayoutEngine for DagreEngine {
             bbox,
         }
     }
+}
+
+/// The parent of each group, read from the members that name another group.
+///
+/// A member that would close a cycle is skipped: the kind door rejects cycles,
+/// and the engine still cannot hang or panic if one arrives anyway.
+fn group_parents(graph: &IrGraph) -> Vec<(&str, &str)> {
+    let node_ids: BTreeSet<&str> = graph.nodes.iter().map(|node| node.id.as_str()).collect();
+    let group_ids: BTreeSet<&str> = graph.groups.iter().map(|group| group.id.as_str()).collect();
+    let mut owner: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut parents: Vec<(&str, &str)> = Vec::new();
+
+    for group in &graph.groups {
+        for member in &group.members {
+            let member = member.as_str();
+            let is_group = group_ids.contains(member);
+            // An unknown member is the door's business; the engine skips it.
+            if !is_group && !node_ids.contains(member) {
+                continue;
+            }
+            // One parent per member: the first group that claims it wins.
+            if owner.contains_key(member) {
+                continue;
+            }
+            if is_group
+                && (member == group.id.as_str() || reaches(&owner, group.id.as_str(), member))
+            {
+                continue;
+            }
+            owner.insert(member, group.id.as_str());
+            parents.push((group.id.as_str(), member));
+        }
+    }
+
+    parents
+}
+
+/// How many groups contain each group (PRD §7 RF15): `0` is an outermost box.
+fn group_depths(graph: &IrGraph) -> BTreeMap<&str, usize> {
+    let parent_of: BTreeMap<&str, &str> = group_parents(graph)
+        .into_iter()
+        .map(|(parent, member)| (member, parent))
+        .collect();
+
+    let mut depths: BTreeMap<&str, usize> = BTreeMap::new();
+    for group in &graph.groups {
+        let mut depth = 0;
+        let mut cursor = parent_of.get(group.id.as_str()).copied();
+        while let Some(current) = cursor {
+            depth += 1;
+            if depth > graph.groups.len() {
+                break;
+            }
+            cursor = parent_of.get(current).copied();
+        }
+        depths.insert(group.id.as_str(), depth);
+    }
+
+    depths
+}
+
+/// Whether walking up the parents of `start` arrives at `target`.
+fn reaches(parents: &BTreeMap<&str, &str>, start: &str, target: &str) -> bool {
+    let mut cursor = Some(start);
+    let mut steps = 0;
+    while let Some(current) = cursor {
+        if current == target {
+            return true;
+        }
+        if steps > parents.len() {
+            return true;
+        }
+        cursor = parents.get(current).copied();
+        steps += 1;
+    }
+    false
 }
 
 /// An orthogonal route between two rows, when the tables sit side by side.
@@ -957,6 +1038,7 @@ impl LayoutEngine for LanesEngine {
                 id: lane.id.clone(),
                 label: lane.label.clone(),
                 bbox: Rect::new(0.0, index as f64 * lane_height, width, lane_height),
+                depth: 0,
             })
             .collect();
         let bbox = Rect::new(0.0, 0.0, width, lane_count as f64 * lane_height);

@@ -10,8 +10,8 @@
 //! documento la pone en dos, son dos arquitecturas superpuestas y el dibujo no
 //! puede decir cuál vale.
 
-use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Ir, IrGraph, IrGroup, LayoutHint, Shape, Style};
+use gx_core::error::ValidationError;
+use gx_core::ir::{Direction, Ir, IrGraph, LayoutHint, Shape, Style};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -19,6 +19,7 @@ use serde::Deserialize;
 use crate::flow::{
     to_graph, validate_header, validate_nodes, validate_refs, FlowEdge, FlowNode, Role,
 };
+use crate::groups::{to_ir_groups, validate_groups};
 
 /// Contract version supported by this build (PRD §10.1).
 pub const SUPPORTED_VERSION: u32 = 1;
@@ -37,18 +38,10 @@ pub const ROLES: [Role; 4] = [
 /// El rol que se dibuja punteado: lo que no es de este sistema.
 pub const EXTERNAL_ROLE: &str = "external";
 
-/// A boundary: the system or subsystem the pieces belong to.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Boundary {
-    /// Unique identifier of the boundary inside the diagram.
-    pub id: String,
-    /// Name the boundary shows. Defaults to the id.
-    #[serde(default)]
-    pub label: Option<String>,
-    /// Ids of the nodes that belong to it.
-    pub members: Vec<String>,
-}
+/// A boundary: the system or subsystem the pieces belong to. It is the shared
+/// group of PRD §7 RF15, so a boundary nests inside another one like any other
+/// group.
+pub use crate::groups::Group as Boundary;
 
 /// The JSON contract of the `component` kind.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -111,67 +104,8 @@ impl DiagramKind for ComponentKind {
             .collect();
         errors.extend(validate_refs(&pairs, &input.nodes));
 
-        let mut seen_groups: Vec<&str> = Vec::new();
-        // The boundary each node already belongs to, so a second claim is
-        // reported with the name of both.
-        let mut owner: Vec<(&str, &str)> = Vec::new();
-        for (index, group) in input.groups.iter().enumerate() {
-            if group.id.trim().is_empty() {
-                errors.push(ValidationError::new(
-                    format!("groups[{index}].id"),
-                    ErrorCode::InvalidValue,
-                    "el id del grupo no puede estar vacío",
-                    None,
-                ));
-            }
-            if seen_groups.contains(&group.id.as_str()) {
-                errors.push(ValidationError::new(
-                    format!("groups[{index}].id"),
-                    ErrorCode::DuplicateId,
-                    format!("grupo repetido: `{}`", group.id),
-                    Some("los ids de grupo deben ser únicos".to_string()),
-                ));
-            }
-            seen_groups.push(group.id.as_str());
-
-            if group.members.is_empty() {
-                errors.push(ValidationError::new(
-                    format!("groups[{index}].members"),
-                    ErrorCode::MissingField,
-                    "un grupo necesita al menos un miembro",
-                    Some(
-                        "agregá los `id` de las piezas que forman la frontera, o quitá el grupo"
-                            .to_string(),
-                    ),
-                ));
-            }
-
-            for (member_index, member) in group.members.iter().enumerate() {
-                if !input.nodes.iter().any(|node| &node.id == member) {
-                    errors.push(ValidationError::new(
-                        format!("groups[{index}].members[{member_index}]"),
-                        ErrorCode::UnknownRef,
-                        format!("pieza desconocida: `{member}`"),
-                        Some("los miembros referencian nodos declarados en `nodes`".to_string()),
-                    ));
-                    continue;
-                }
-                match owner.iter().find(|(id, _)| id == member) {
-                    Some((_, previous)) => errors.push(ValidationError::new(
-                        format!("groups[{index}].members[{member_index}]"),
-                        ErrorCode::DuplicateId,
-                        format!(
-                            "`{member}` ya pertenece al grupo `{previous}`: una pieza vive en una sola frontera"
-                        ),
-                        Some(
-                            "dejá la pieza en un grupo, o usá dos diagramas para las dos arquitecturas"
-                                .to_string(),
-                        ),
-                    )),
-                    None => owner.push((member.as_str(), group.id.as_str())),
-                }
-            }
-        }
+        let node_ids: Vec<&str> = input.nodes.iter().map(|node| node.id.as_str()).collect();
+        errors.extend(validate_groups(&node_ids, &input.groups));
 
         if errors.is_empty() {
             Ok(())
@@ -199,19 +133,7 @@ impl DiagramKind for ComponentKind {
             }
         }
 
-        graph.groups = input
-            .groups
-            .iter()
-            .map(|group| IrGroup {
-                id: group.id.clone(),
-                label: group
-                    .label
-                    .clone()
-                    .filter(|label| !label.trim().is_empty())
-                    .or_else(|| Some(group.id.clone())),
-                members: group.members.clone(),
-            })
-            .collect();
+        graph.groups = to_ir_groups(&input.groups);
 
         Ir::Graph(graph)
     }
@@ -310,11 +232,11 @@ mod tests {
 
         let error = errors
             .iter()
-            .find(|error| error.message.contains("frontera"))
-            .expect("el error de la frontera doble");
+            .find(|error| error.message.contains("backend"))
+            .expect("el error del grupo doble");
         assert_eq!(error.code, ErrorCode::DuplicateId);
         assert_eq!(error.path, "groups[1].members[0]");
-        assert!(error.message.contains("backend"), "{}", error.message);
+        assert!(error.message.contains("un solo grupo"), "{}", error.message);
     }
 
     #[test]
@@ -354,6 +276,124 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.code == ErrorCode::DuplicateId && error.path == "groups[1].id"));
+    }
+
+    /// RF15: un grupo puede contener otro grupo, y el anidamiento llega a la IR
+    /// con los miembros tal como el documento los declara.
+    #[test]
+    fn a_boundary_inside_a_boundary_is_accepted() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "component",
+                 "nodes": [ { "id": "api" } ],
+                 "groups": [
+                   { "id": "sys", "label": "Sistema", "members": ["backend"] },
+                   { "id": "backend", "label": "Backend", "members": ["api"] } ] }"#,
+        );
+
+        ComponentKind
+            .validate(&parsed)
+            .expect("un grupo puede contener otro grupo");
+
+        let Ir::Graph(graph) = ComponentKind.to_ir(&parsed) else {
+            panic!("un diagrama de componentes es un grafo");
+        };
+        assert_eq!(graph.groups.len(), 2);
+        assert_eq!(graph.groups[0].members, vec!["backend"]);
+        assert_eq!(graph.groups[1].members, vec!["api"]);
+    }
+
+    /// Un grupo no se contiene a sí mismo: el layout no puede cerrar el ciclo.
+    #[test]
+    fn a_boundary_that_contains_itself_is_reported() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "component",
+                 "nodes": [ { "id": "api" } ],
+                 "groups": [ { "id": "sys", "members": ["sys"] } ] }"#,
+        );
+
+        let errors = ComponentKind
+            .validate(&parsed)
+            .expect_err("un grupo no se contiene a sí mismo");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.code == ErrorCode::InvalidValue
+                    && error.path == "groups[0].members[0]"),
+            "{errors:?}"
+        );
+    }
+
+    /// Dos grupos que se contienen mutuamente son el mismo ciclo, un paso más
+    /// largo.
+    #[test]
+    fn a_boundary_cycle_is_reported() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "component",
+                 "nodes": [ { "id": "api" } ],
+                 "groups": [
+                   { "id": "a", "members": ["b"] },
+                   { "id": "b", "members": ["a"] } ] }"#,
+        );
+
+        let errors = ComponentKind
+            .validate(&parsed)
+            .expect_err("dos grupos no se contienen mutuamente");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.code == ErrorCode::InvalidValue),
+            "{errors:?}"
+        );
+    }
+
+    /// El id de un grupo y el de una pieza viven en el mismo espacio de nombres
+    /// del motor, así que no pueden coincidir.
+    #[test]
+    fn a_boundary_with_the_id_of_a_piece_is_reported() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "component",
+                 "nodes": [ { "id": "api" } ],
+                 "groups": [ { "id": "api", "members": ["api"] } ] }"#,
+        );
+
+        let errors = ComponentKind
+            .validate(&parsed)
+            .expect_err("un grupo no toma el id de una pieza");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.code == ErrorCode::DuplicateId && error.path == "groups[0].id"),
+            "{errors:?}"
+        );
+    }
+
+    /// Un grupo tiene un solo padre: si dos lo reclaman, el dibujo no puede
+    /// elegir cuál vale.
+    #[test]
+    fn a_boundary_with_two_parents_is_reported() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "component",
+                 "nodes": [ { "id": "api" } ],
+                 "groups": [
+                   { "id": "inner", "members": ["api"] },
+                   { "id": "left", "members": ["inner"] },
+                   { "id": "right", "members": ["inner"] } ] }"#,
+        );
+
+        let errors = ComponentKind
+            .validate(&parsed)
+            .expect_err("un grupo no vive en dos padres");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.code == ErrorCode::DuplicateId
+                    && error.path == "groups[2].members[0]"),
+            "{errors:?}"
+        );
     }
 
     #[test]
