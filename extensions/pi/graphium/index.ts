@@ -20,7 +20,8 @@
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 /** The name of the MCP server, as `/mcp` shows it. */
@@ -32,23 +33,60 @@ const EXPLICIT = "GRAPHIUM_BIN";
 /** How many exported files the status lists. */
 const RECENT_EXPORTS = 3;
 
-/** Finds the Graphium binary, or `null` when this machine has none. */
-export function findBinary(cwd: string = process.cwd()): string | null {
+/** The directory this extension lives in, wherever Pi resolved it from. */
+function here(): string {
+  try {
+    return dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return process.cwd();
+  }
+}
+
+/**
+ * Walks up from a directory looking for a checkout's build.
+ *
+ * Release before debug: the release build is what the human uses, the debug one
+ * is what the tests build. The depth is bounded because walking to `/` from a
+ * deep directory is not a search, it is a guess.
+ */
+function walkUpForBinary(start: string): string | null {
+  let directory = resolve(start);
+  for (let depth = 0; depth < 8; depth += 1) {
+    for (const relative of ["target/release/graphium", "target/debug/graphium"]) {
+      const candidate = join(directory, relative);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return null;
+}
+
+/**
+ * Finds the Graphium binary, or `null` when this machine has none.
+ *
+ * The extension's own location comes first, not the working directory: this
+ * file is shipped inside the Graphium checkout, so walking up from here finds
+ * the build even when Pi is started in another project.
+ */
+export function findBinary(
+  cwd: string = process.cwd(),
+  near: string = here(),
+): string | null {
   const explicit = process.env[EXPLICIT];
   if (explicit && existsSync(explicit)) {
     return explicit;
   }
 
-  // A checkout in the current project, release before debug: the release build
-  // is what the human uses, the debug one is what the tests build.
-  for (const relative of ["target/release/graphium", "target/debug/graphium"]) {
-    const candidate = resolve(cwd, relative);
-    if (existsSync(candidate)) {
-      return candidate;
-    }
+  const checkout = walkUpForBinary(near) ?? walkUpForBinary(cwd);
+  if (checkout) {
+    return checkout;
   }
 
-  // An installed binary, in the usual places and then the PATH.
+  // An installed binary, on the PATH.
   const path = process.env.PATH ?? "";
   for (const directory of path.split(":")) {
     if (!directory) continue;
@@ -149,9 +187,16 @@ export function statusLines(pi: Pick<ExtensionAPI, "getMcpServers">, binary: str
   ];
 }
 
-export default function graphium(pi: ExtensionAPI) {
-  const binary = findBinary();
-
+/**
+ * The extension.
+ *
+ * `binary` is a parameter with a default instead of a local call so the no-binary
+ * path can be exercised: a test cannot make this checkout disappear.
+ */
+export default function graphium(
+  pi: ExtensionAPI,
+  binary: string | null = findBinary(),
+) {
   if (binary) {
     // Registering here is what the docs call "while the extension loads": the
     // session connects it at start, and a `mcp.json` entry with the same name
