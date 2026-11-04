@@ -71,6 +71,12 @@ El binario imprime su propia configuración:
 ./target/release/graphium mcp-config --client pi   # pi | claude | cursor | generic
 ```
 
+El cliente habla con un **daemon en la bandeja**: la primera vez que un
+cliente arranca, lanza `graphium --owner` (detached, sobrevive al cierre del
+cliente); la ventana solo aparece con el primer diagrama o con el click en el
+icono de la bandeja, cerrarla la oculta, y el proceso muere solo cuando no
+quedan sesiones (`graphium quit` lo cierra cuando quieras). RF31 del PRD.
+
 Y el quickstart para agentes está en [`docs/QUICKSTART.md`](docs/QUICKSTART.md).
 
 ## Garantías que el repositorio sostiene con tests

@@ -17,7 +17,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::SystemTime;
 
 use gx_mcp::session::{
@@ -26,8 +26,31 @@ use gx_mcp::session::{
 };
 use serde_json::{json, Value};
 
+use crate::daemon;
+
 /// Counter used to build the session id of a forwarded connection.
 static CONNECTION_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// A graceful shutdown was ordered: `graphium quit`, the tray, or SIGTERM.
+static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// How many tool calls are running right now, across every connection.
+static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+/// A shutdown order arrived (quit control line, tray, SIGTERM).
+pub fn quit_requested() -> bool {
+    QUIT_REQUESTED.load(Ordering::SeqCst)
+}
+
+/// Orders the graceful shutdown.
+pub fn request_quit() {
+    QUIT_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+/// Tool calls running at this moment: the exit never abandons one (S7).
+pub fn in_flight() -> usize {
+    IN_FLIGHT.load(Ordering::SeqCst)
+}
 
 /// The transport id of a forwarded connection: `sock-<pid>-<n>`.
 ///
@@ -143,12 +166,26 @@ pub const IDENTITY_METHOD: &str = "graphium/identity";
 
 /// Serves the socket until the process ends: one thread per connection.
 pub fn serve(listener: UnixListener) {
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
-        std::thread::spawn(move || {
-            let session_id = forwarded_session_id();
-            serve_session(stream, &session_id, gx_mcp::session::session_registry());
-        });
+    listener
+        .set_nonblocking(true)
+        .expect("the accept loop must poll");
+    loop {
+        if quit_requested() {
+            return;
+        }
+        match listener.accept() {
+            Ok((stream, _)) => {
+                let _ = stream.set_nonblocking(false);
+                std::thread::spawn(move || {
+                    let session_id = forwarded_session_id();
+                    serve_session(stream, &session_id, gx_mcp::session::session_registry());
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(_) => continue,
+        }
     }
 }
 
@@ -239,6 +276,12 @@ fn serve_connection(
         if line.trim().is_empty() {
             continue;
         }
+        // A control line is not JSON-RPC: `graphium quit` opens its own
+        // connection, orders the graceful shutdown and closes (S5).
+        if line.trim() == daemon::QUIT_LINE {
+            request_quit();
+            break;
+        }
         // The identity of the client arrives on the wire, in the two levels
         // that reach this side of the socket. Refreshing the same session does
         // not open a second one, so no level consumes a place of the quota;
@@ -253,7 +296,13 @@ fn serve_connection(
             identity.client = client;
             *session_key = registry.connect(transport_id, &identity.resolved()).id;
         }
-        let response = handle_request(&line, session_key.as_str());
+        let response = {
+            // The exit drains these: a tool in flight is never abandoned (S7).
+            IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
+            let response = handle_request(&line, session_key.as_str());
+            IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+            response
+        };
         if response.is_empty() {
             continue;
         }

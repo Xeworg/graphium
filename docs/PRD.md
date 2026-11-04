@@ -266,6 +266,8 @@ El producto escala con reglas, no con buena voluntad. Esta sección fija los pre
 **RF29 — Ciclo de vida del catálogo (F2).** El catálogo tiene **techo declarado: 32 kinds**; pasar de 32 exige reemplazar uno. Un kind nuevo entra solo con el paquete completo: schema, `validate` con su caso de error, `to_ir`, **2 goldens** (el mínimo y uno en el límite de RF20) y **1 test de degradación** en el límite; CI corre la suite por kind registrado y falla el build si un kind no tiene sus 4 artefactos. Un kind sin uso declarado durante **2 versiones menores** pasa a `deprecated: true`: sigue validando y renderizando, pero `get_diagram_schema` lo marca y `render_diagram` devuelve `warnings: [{code: "deprecated_kind"}]`.
 **RF30 — Sesiones visibles y aisladas (F2.5).** Cada conexión MCP es una **sesión** con identidad visible: `{ id, familia, cliente, versión, proyecto, etiqueta, estado, diagramas }`. La familia se resuelve en tres niveles —**declarada** por `env` (`GRAPHIUM_CLIENT`, `GRAPHIUM_SESSION`, `GRAPHIUM_PROJECT`), **protocolo** (`clientInfo` del handshake `initialize`) o **proceso** (padre y `cwd`)— y sin señal clara es `other`: nunca se inventa un nombre. `register_session({ label? })` nombra la sesión; sin etiqueta se muestra el nombre automático (`Pi · graphium · 4824`). La ventana tiene un **selector de sesiones** que muestra familia, etiqueta, proyecto, estado y cantidad de diagramas; elegir una **oculta** los diagramas de las demás, **no** los cierra. El aislamiento no cambia: un agente solo ve y modifica lo suyo (`not_owner`), el humano ve todo. Al terminar una sesión, vencida la gracia de **45 s**, sus diagramas se borran. La identidad es auto-declarada: sirve para la interfaz, **no** es frontera de seguridad.
 
+**RF31 — Daemon en la bandeja (f5).** El dueño del socket es un daemon detached (`graphium --owner`, `setsid`, stdio a `/dev/null`): sobrevive al SIGTERM/SIGKILL que el cliente MCP manda a sus servidores, y arranca **sin ventana** — la ventana es una vista que aparece con el click del logo de la bandeja o cuando un agente envía un diagrama, y cerrarla la **oculta** sin matar nada. El humano cuenta como sesión `ui` (familia `ui`): ventana visible = sesión viva, ocultarla la termina con la gracia de RF30. El proceso muere solo cuando no quedan sesiones: **60 s** sin ninguna (gracia obligatoria — un `/mcp reconnect` no mata el programa), drenado de las tools en vuelo (tope 10 s), borrado de las sesiones vencidas y salida con código 0. Salidas explícitas: tray «Salir», `graphium quit`, SIGTERM. El `--stdio` es un forwarder: lanza el daemon si no hay dueño, reenvía por el socket y muere con su transporte. Un socket huérfano se detecta con `connect()`, nunca por la existencia del archivo.
+
 ### v1 (F2)
 
 - **RF8.** Kinds `sequence`, `class`, `state`, `component`.
@@ -413,8 +415,8 @@ pub enum Theme { Dark, Light }
 
 ### 8.6 Proceso, concurrencia y ciclo de vida
 
-- **Single instance por usuario:** socket local (`$XDG_RUNTIME_DIR/graphium.sock`). El primer proceso es dueño de la ventana. Un segundo servidor stdio (otro cliente MCP) se conecta al dueño y **reenvía** comandos; los diagramas se etiquetan por sesión — dos agentes pueden convivir sin dos ventanas.
-- **Cerrar la ventana NO mata el proceso** mientras haya sesión(es) MCP viva(s): pasa a estado headless-ready y la próxima tool reabre la ventana. `stdin` EOF del último cliente → shutdown limpio.
+- **Single instance por usuario:** socket local (`$XDG_RUNTIME_DIR/graphium.sock`). El dueño del socket es un **daemon detached** (`graphium --owner`, con `setsid` y stdio a `/dev/null` — RF31): vive mientras haya sesiones y no muere con el SIGTERM que el cliente MCP manda al parar sus servidores. Un servidor stdio (`graphium --stdio`) es solo un **forwarder**: si no hay dueño, lanza el daemon y reenvía por el socket; muere con su transporte.
+- **Cerrar la ventana NO mata el proceso** (RF31): la ventana es una **vista** — se muestra con el click del tray o cuando un diagrama llega, y cerrarla la **oculta** con el proceso vivo en la bandeja. El humano cuenta como sesión `ui`: ventana visible = sesión viva; ocultarla la termina con la gracia común. Sin sesiones durante **60 s**, el dueño drena las tools en vuelo, borra las sesiones vencidas y sale con código 0. Salidas explícitas: tray «Salir», `graphium quit`, SIGTERM.
 - **Sin display (SSH/CI):** `render_diagram` responde `ok: true, rendered: false, reason: "headless"` — validación y export inline siguen funcionando. `--headless` explícito disponible.
 - **Concurrencia de renders:** las tool calls se ejecutan async; el layout corre fuera del event loop (`spawn_blocking`); el canvas tiene single-writer (mutex) con política **last-writer-wins** por llegada — el PRD no promete ordering entre sesiones distintas.
 
@@ -432,8 +434,10 @@ pub enum Theme { Dark, Light }
 Razones de `rendered: false`: `headless` · `no_window` · `ui_timeout` · `ui_error`.
 
 **Modos de arranque.**
-- `graphium --stdio` → modo MCP: abre el servidor stdio; EOF del último cliente → shutdown limpio (§8.6).
-- `graphium` (sin argumentos, doble clic) → modo **solo-ui**: abre la ventana y el plano, **no** abre servidor MCP y **no** muere por EOF. Sirve para configurar colores antes de tener un cliente MCP.
+- `graphium --stdio` → modo MCP: es solo un **forwarder** (RF31) — si no hay dueño lanza el daemon detached y reenvía sus llamadas por el socket.
+- `graphium --owner` → el **daemon**: dueño del store, del socket y de la bandeja; arranca **sin ventana**, la muestra con el primer diagrama o el click del tray, y muere cuando se agotan las sesiones (gracia de 60 s y drenado).
+- `graphium quit` → pide al dueño el cierre gracioso por el socket.
+- `graphium` (sin argumentos, doble clic) → modo **solo-ui**: abre la ventana y el plano, **no** abre servidor MCP ni daemon. Sirve para configurar colores antes de tener un cliente MCP.
 - `graphium mcp-config [--client ...]` imprime `{"command": "<ruta absoluta del binario>", "args": ["--stdio"]}`.
 
 **Estado en el frontend.** El **modelo de diagramas vive en Rust** (`DiagramStore`); el frontend no es fuente de verdad. Al crear o recrear el webview, Rust emite `graphium://state` con la lista completa `{diagram_id, title, kind, updated_at, pos, bbox, session_id}` y el panel lateral se construye **solo** desde ese evento. `list_diagrams` lee el mismo `DiagramStore`.

@@ -6,6 +6,8 @@
 
 pub mod app;
 pub mod camera;
+pub mod daemon;
+pub mod lifecycle;
 pub mod relay;
 pub mod settings;
 pub mod socket;
@@ -56,10 +58,13 @@ pub fn mcp_config_for(client: &str) -> String {
     gx_mcp::mcp_config_for(client, &binary)
 }
 
-/// Runs the application in MCP mode: the window plus the stdio server.
+/// Runs the application in MCP mode: the stdio server, and nothing else.
 ///
-/// When another process already owns the window, this one forwards its stdio
-/// to the owner (PRD §8.6).
+/// This process is a **forwarder** (S2): it owns no store, no window and no
+/// socket. It looks for the owner, starts the detached daemon when nobody
+/// answers, waits for the socket and relays its transport through it — so the
+/// SIGTERM an MCP client sends when it stops its servers kills this process
+/// and never the plan.
 pub fn run_stdio() -> Result<(), Box<dyn Error>> {
     let path = socket::socket_path();
 
@@ -67,24 +72,61 @@ pub fn run_stdio() -> Result<(), Box<dyn Error>> {
         return forward_to_owner(&path);
     }
 
+    // Nobody answers on the socket — it was missing (`Owner`) or stale
+    // (`TookOver`): the daemon starts detached and this process waits for its
+    // socket, so the first forwarded call does not race the bind (S2, S7).
+    daemon::spawn_owner()?;
+    daemon::wait_for_socket(&path, daemon::SPAWN_TIMEOUT)?;
+    forward_to_owner(&path)
+}
+
+/// Runs the owner: the process that owns the store and the socket and lives in
+/// the tray while it has sessions (S1-S5).
+///
+/// It starts with no window — the plan is a view, shown by the tray or by the
+/// first diagram — and it never serves stdio: its clients arrive through the
+/// socket, one connection per session.
+pub fn run_owner() -> Result<(), Box<dyn Error>> {
     install_engines()?;
     gx_kinds::register_all();
+
+    let path = socket::socket_path();
+    if let socket::Instance::Forwarder = socket::probe(&path) {
+        return Err(
+            "ya hay un dueño del socket; `graphium quit` lo cierra antes de arrancar otro".into(),
+        );
+    }
 
     let listener = bind_socket(&path)?;
     std::thread::spawn(move || relay::serve(listener));
 
-    let (application, state) = app::build(true);
+    let (application, state) = app::build(true, false);
     app::install_render_hook(application.handle().clone(), state);
+    app::install_tray(application.handle())?;
+    lifecycle::watch(application.handle().clone());
 
-    // The stdio transport lives in its own thread with its own runtime, so
-    // the blocking read of stdin stays out of the window loop (PRD §8.6.1).
-    std::thread::spawn(|| {
-        if let Err(error) = gx_mcp::serve_stdio() {
-            eprintln!("graphium: the MCP server stopped: {error}");
+    application.run(|_handle, event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = event {
+            // The dock of macOS is the other door to a window that is only a
+            // view (S8).
+            app::show_main_window(_handle, true);
+        }
+        // Closing the last window must not end the process: the owner lives
+        // while it has sessions, and the tray is where it waits (S8,
+        // tauri#13511). An explicit exit carries a code and is never prevented.
+        if let tauri::RunEvent::ExitRequested {
+            code: None, api, ..
+        } = event
+        {
+            api.prevent_exit();
         }
     });
 
-    application.run(|_, _| {});
+    // An exit through the lifecycle leaves no socket behind; one that dies
+    // without draining is taken over by the next owner, because `probe`
+    // decides with `connect()` and not with the file (S7).
+    let _ = std::fs::remove_file(&path);
     Ok(())
 }
 
@@ -93,7 +135,7 @@ pub fn run_solo_ui() -> Result<(), Box<dyn Error>> {
     install_engines()?;
     gx_kinds::register_all();
 
-    let (application, _state) = app::build(false);
+    let (application, _state) = app::build(false, true);
     application.run(|_, _| {});
     Ok(())
 }
@@ -124,7 +166,9 @@ pub fn help_text() -> String {
         "graphium {}\n\n\
          Uso:\n  \
          graphium              abre la ventana (modo solo-ui)\n  \
-         graphium --stdio      sirve MCP por stdio\n  \
+         graphium --owner      arranca el dueño en la bandeja\n  \
+         graphium --stdio      sirve MCP por stdio (lanza el dueño si no hay)\n  \
+         graphium quit         cierra el dueño de forma ordenada\n  \
          graphium mcp-config   imprime la configuración MCP\n  \
          graphium --version    imprime la versión\n  \
          graphium --help       imprime esta ayuda\n",
@@ -162,5 +206,9 @@ mod tests {
         assert!(help.contains("--stdio"));
         assert!(help.contains("mcp-config"));
         assert!(help.contains("solo-ui"));
+        // The owner is the process that lives in the tray (S1, S2), and
+        // `quit` is the way to close it without leaving a dirty socket (S5).
+        assert!(help.contains("--owner"), "{help}");
+        assert!(help.contains("quit"), "{help}");
     }
 }

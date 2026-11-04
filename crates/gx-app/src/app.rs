@@ -24,7 +24,15 @@ pub const READY_TIMEOUT_MS: u64 = 2000;
 
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// State of the plan that Rust keeps: the camera copy and the pending
+/// The label of the plan window: the one the frontend, the tray and the
+/// render hook look for (S3).
+pub const MAIN_WINDOW: &str = "main";
+
+/// The icon of the tray, embedded in the binary: the process lives in the tray
+/// and must not depend on a file of the installation (S1).
+const TRAY_ICON: &[u8] = include_bytes!("../icons/icon.png");
+
+/// The state of the plan that Rust keeps: the camera copy and the pending
 /// acknowledgements.
 #[derive(Default)]
 pub struct PlanState {
@@ -229,11 +237,16 @@ fn plan_payload() -> PlanPayload {
 /// `keep_alive` is true in MCP mode: closing the window must not kill the
 /// process while a session is alive (PRD §8.6).
 ///
+/// `start_window` is false for the owner that lives in the tray (S3): there the
+/// window is a view, and it is created on demand by the render hook or by the
+/// tray. Everything else — the camera, the settings, the close of a diagram —
+/// is the same in both modes, so there is one builder and not two.
+///
 /// The plan state is created here and shared with the render hook: the setup
 /// hook of Tauri 2 only runs when the event loop starts, so a state that
 /// lives in the Tauri state manager would not exist yet when the MCP thread
 /// asks for it.
-pub fn build(keep_alive: bool) -> (tauri::App<tauri::Wry>, Arc<PlanState>) {
+pub fn build(keep_alive: bool, start_window: bool) -> (tauri::App<tauri::Wry>, Arc<PlanState>) {
     let state = Arc::new(PlanState::default());
 
     let application = tauri::Builder::default()
@@ -244,25 +257,9 @@ pub fn build(keep_alive: bool) -> (tauri::App<tauri::Wry>, Arc<PlanState>) {
     // declared in the configuration only appears when the loop is ready, and
     // by then the page may have already announced itself.
     let handle = application.handle().clone();
-
-    let window = tauri::WebviewWindowBuilder::new(&handle, "main", tauri::WebviewUrl::default())
-        .title("Graphium")
-        .inner_size(1280.0, 800.0)
-        .resizable(true)
-        .build()
-        .expect("the main window must be created");
-
-    // Closing the window does not kill the process while an MCP session is
-    // alive: the window hides and the next render brings it back (PRD §8.6).
-    let hidden = window.clone();
-    window.on_window_event(move |event| {
-        if let WindowEvent::CloseRequested { api, .. } = event {
-            if keep_alive {
-                api.prevent_close();
-                let _ = hidden.hide();
-            }
-        }
-    });
+    if start_window {
+        create_main_window(&handle, keep_alive).expect("the main window must be created");
+    }
 
     let camera_state = Arc::clone(&state);
     let ack_state = Arc::clone(&state);
@@ -336,6 +333,99 @@ pub fn build(keep_alive: bool) -> (tauri::App<tauri::Wry>, Arc<PlanState>) {
     (application, state)
 }
 
+/// Creates the plan window with the close behaviour of S3.
+///
+/// It is one function for the three paths that can create it — the solo-ui
+/// start, the tray and the first diagram — so the window never behaves in two
+/// ways. With `keep_alive`, closing it hides it: `hide`+`show`, never destroy
+/// and rebuild (tauri#9307), because the page must survive the next render.
+pub fn create_main_window(
+    handle: &tauri::AppHandle,
+    keep_alive: bool,
+) -> tauri::Result<tauri::WebviewWindow> {
+    let window =
+        tauri::WebviewWindowBuilder::new(handle, MAIN_WINDOW, tauri::WebviewUrl::default())
+            .title("Graphium")
+            .inner_size(1280.0, 800.0)
+            .resizable(true)
+            .build()?;
+
+    // Closing the window does not kill the process while an MCP session is
+    // alive: the window hides and the next render brings it back (PRD §8.6).
+    let hidden = window.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            if keep_alive {
+                api.prevent_close();
+                let _ = hidden.hide();
+            }
+        }
+    });
+    Ok(window)
+}
+
+/// Shows the plan window, creating it when it does not exist yet (S3).
+///
+/// `show()` + `unminimize()` + `set_focus()`: the same three steps whether the
+/// human clicked the tray or an agent painted a diagram, so the plan is in
+/// front of whoever asked for it. A window that cannot be created answers
+/// `None` instead of panicking: the caller decides what that means.
+pub fn show_main_window(
+    handle: &tauri::AppHandle,
+    keep_alive: bool,
+) -> Option<tauri::WebviewWindow> {
+    let window = match handle.get_webview_window(MAIN_WINDOW) {
+        Some(window) => window,
+        None => create_main_window(handle, keep_alive).ok()?,
+    };
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    Some(window)
+}
+
+/// Puts Graphium in the tray (S1, S3, S8).
+///
+/// The process starts there, with no window: «Mostrar el plano» opens the plan
+/// and «Salir» takes the graceful exit of S5 — the same path as `graphium quit`
+/// and SIGTERM, so no socket is left dirty.
+pub fn install_tray(handle: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+    let show = MenuItem::with_id(handle, "show", "Mostrar el plano", true, None::<&str>)?;
+    let quit = MenuItem::with_id(handle, "quit", "Salir", true, None::<&str>)?;
+    let menu = Menu::with_items(handle, &[&show, &quit])?;
+    let icon = tauri::image::Image::from_bytes(TRAY_ICON)?;
+
+    TrayIconBuilder::new()
+        .icon(icon)
+        .tooltip("Graphium")
+        .menu(&menu)
+        // A left click shows the plan where the platform reports it; on Linux
+        // the indicator has no click callback, so there the menu is the door.
+        .show_menu_on_left_click(cfg!(target_os = "linux"))
+        .on_menu_event(|handle, event| match event.id.as_ref() {
+            "show" => {
+                show_main_window(handle, true);
+            }
+            "quit" => crate::relay::request_quit(),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle(), true);
+            }
+        })
+        .build(handle)?;
+    Ok(())
+}
+
 /// Installs the hook that paints a diagram in the window and waits for the
 /// frontend to confirm it.
 pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
@@ -349,11 +439,9 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
         let req_id = format!("req-{}", REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed));
         let receiver = state.register_ack(&req_id);
 
-        let Some(window) = handle.get_webview_window("main") else {
+        let Some(window) = show_main_window(&handle, true) else {
             return gx_mcp::tools::RenderStatus::NoWindow;
         };
-        let _ = window.show();
-        let _ = window.unminimize();
 
         // The first render after the window is created can arrive before the
         // page is alive; emitting then would reach nobody. The wait is
