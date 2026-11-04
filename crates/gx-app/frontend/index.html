@@ -30,17 +30,34 @@
     </button>
 
     <aside id="panel" class="panel" aria-label="diagramas abiertos">
-      <!-- The selector of sessions (S1, S3, D3): the fixed row «Todas» and one
-           row per live session, with the colour of its family, its label, its
-           project, its state and how many diagrams it has. Choosing a row
-           hides the diagrams of the other sessions; it never closes them
-           (D5). It is built only from `graphium://state`, like the list. -->
-      <h2 class="panel-title">sesiones</h2>
-      <div id="session-list" class="session-list" role="group" aria-label="sesiones"></div>
-      <p id="session-notice" class="session-notice hidden" role="status"></p>
       <h2 class="panel-title">diagramas abiertos</h2>
       <ul id="panel-list" class="panel-list"></ul>
       <p id="panel-empty" class="panel-empty">sin diagramas abiertos</p>
+    </aside>
+
+    <!-- The panel of the sessions (S1, S3, D3), separated from the panel of
+         diagrams: its own button sits in the bottom-left corner and its own
+         panel opens above it. The fixed row «Todas» and one row per live
+         session, with the colour of its family, its label, its project, its
+         state and how many diagrams it has. Choosing a row hides the
+         diagrams of the other sessions; it never closes them (D5). It is
+         built only from `graphium://state`, like the list of diagrams. -->
+    <button
+      id="sessions-toggle"
+      class="sessions-toggle"
+      type="button"
+      aria-label="mostrar u ocultar las sesiones"
+      aria-expanded="false"
+      aria-controls="sessions-panel"
+      title="sesiones"
+    >
+      ◉
+    </button>
+
+    <aside id="sessions-panel" class="sessions-panel hidden" aria-label="sesiones">
+      <h2 class="panel-title">sesiones</h2>
+      <div id="session-list" class="session-list" role="group" aria-label="sesiones"></div>
+      <p id="session-notice" class="session-notice hidden" role="status"></p>
     </aside>
 
     <!-- State 1: empty plan. -->

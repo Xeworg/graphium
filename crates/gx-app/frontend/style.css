@@ -563,7 +563,56 @@ body {
   left: 12px;
   z-index: 30;
   width: 232px;
-  max-height: calc(100vh - 76px);
+  /* The sessions moved to their own panel in the bottom-left corner, so the
+     list of diagrams stops short of it instead of covering the button. */
+  max-height: calc(100vh - 108px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px var(--surface-shadow);
+  font-size: 13px;
+}
+
+/* The panel of the sessions (S1, S3, D3): the same look as the panel of
+ * diagrams, anchored to the bottom-left corner above its own button. */
+.sessions-toggle {
+  position: fixed;
+  bottom: 12px;
+  left: 12px;
+  z-index: 30;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.sessions-toggle:hover,
+.sessions-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sessions-panel {
+  position: fixed;
+  bottom: 52px;
+  left: 12px;
+  z-index: 30;
+  width: 232px;
+  max-height: 40vh;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -688,8 +737,8 @@ body {
   flex-direction: column;
   gap: 2px;
   min-height: 0;
-  /* Eight sessions stay reachable without pushing the list of open diagrams
-     out of the panel. */
+  /* Eight sessions stay reachable without pushing the notice out of the
+     panel of sessions. */
   max-height: 34vh;
   overflow-y: auto;
 }
@@ -1018,6 +1067,7 @@ body {
 .settings-radio input:focus-visible,
 .settings-field input:focus-visible,
 .panel-toggle:focus-visible,
+.sessions-toggle:focus-visible,
 .panel-item-open:focus-visible,
 .panel-item-close:focus-visible,
 .session-row:focus-visible,

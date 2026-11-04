@@ -91,8 +91,14 @@ const panelToggle = document.getElementById("panel-toggle");
 const panelList = document.getElementById("panel-list");
 const panelEmpty = document.getElementById("panel-empty");
 
-// The selector of sessions (S1, S3, D3, D5): the rows above the list of open
-// diagrams and the notice that says when the watched session ended.
+// The panel of the sessions (S1, S3, D3, D5): its own button in the
+// bottom-left corner and its own panel above it, separated from the list of
+// open diagrams.
+const sessionsPanel = document.getElementById("sessions-panel");
+const sessionsToggle = document.getElementById("sessions-toggle");
+
+// The selector of sessions (S1, S3, D3, D5): the rows of the panel of
+// sessions and the notice that says when the watched session ended.
 const sessionList = document.getElementById("session-list");
 const sessionNotice = document.getElementById("session-notice");
 
@@ -657,6 +663,17 @@ function setDiagramPanelOpen(open) {
 
 panelToggle.addEventListener("click", () => {
   setDiagramPanelOpen(panel.classList.contains("hidden"));
+});
+
+/** Hides the panel of sessions or brings it back, like the panel of
+ * diagrams: one discreet button, and the two panels are independent. */
+function setSessionsPanelOpen(open) {
+  sessionsPanel.classList.toggle("hidden", !open);
+  sessionsToggle.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+sessionsToggle.addEventListener("click", () => {
+  setSessionsPanelOpen(sessionsPanel.classList.contains("hidden"));
 });
 
 /** The center of the object of a diagram, in plan units, from the state. */
