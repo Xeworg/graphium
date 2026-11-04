@@ -22,6 +22,7 @@ use gx_core::render::{
 };
 use serde::Serialize;
 
+use crate::session::{self, SessionView};
 use crate::store::diagram_store;
 
 /// A request to render one diagram document.
@@ -98,6 +99,11 @@ pub struct RenderResponse {
     pub errors: Vec<ErrorPayload>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<Warning>,
+    /// The session of the caller: the name the human sees in the window
+    /// (S3, D2). [`render_diagram_with`] stamps it on every answer, so no
+    /// render path can travel without it; the field is additive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<SessionView>,
 }
 
 /// Cost of a render, reported to the agent (PRD §7.3, RF20-bis).
@@ -398,6 +404,7 @@ fn busy(depth: usize) -> RenderResponse {
             )),
         }],
         warnings: Vec::new(),
+        session: None,
     }
 }
 
@@ -421,6 +428,24 @@ pub fn render_diagram(request: &RenderRequest) -> RenderResponse {
 /// plane stays untouched. The detached worker may finish later: its result is
 /// dropped.
 pub fn render_diagram_with(request: &RenderRequest, opts: &RenderOptions) -> RenderResponse {
+    with_session(render_inner(request, opts), &request.session_id)
+}
+
+/// Stamps the session of the caller on the answer (S3, D2).
+///
+/// Every render leaves through here, so the agent learns with which name the
+/// human sees it even when the render failed (`busy`, `layout_timeout`,
+/// `too_large`); the field is additive and no other field of the answer moves.
+fn with_session(mut response: RenderResponse, session_id: &str) -> RenderResponse {
+    response.session = Some(session::current_view(session_id));
+    response
+}
+
+/// The render itself, with the answer the caller asked for.
+///
+/// [`render_diagram_with`] is the one door out: it stamps the session on
+/// whatever this answers, so no return of this pipeline can skip it.
+fn render_inner(request: &RenderRequest, opts: &RenderOptions) -> RenderResponse {
     crate::bootstrap();
 
     // The queue is taken before anything else: a refused render must not
@@ -492,6 +517,7 @@ pub fn render_diagram_with(request: &RenderRequest, opts: &RenderOptions) -> Ren
                 hint: Some("usá opts.extract: {around, depth}".to_string()),
             }],
             warnings: Vec::new(),
+            session: None,
         };
     }
 
@@ -581,6 +607,7 @@ pub fn render_diagram_with(request: &RenderRequest, opts: &RenderOptions) -> Ren
                 ),
             }],
             warnings: Vec::new(),
+            session: None,
         };
     }
     let diagram_id = store.next_id();
@@ -642,6 +669,7 @@ pub fn render_diagram_with(request: &RenderRequest, opts: &RenderOptions) -> Ren
         retry_after_ms: None,
         errors: Vec::new(),
         warnings,
+        session: None,
     }
 }
 
@@ -716,6 +744,7 @@ pub(crate) fn rejected(errors: Vec<ValidationError>) -> RenderResponse {
         retry_after_ms: None,
         errors: errors.iter().map(ErrorPayload::from).collect(),
         warnings: Vec::new(),
+        session: None,
     }
 }
 
@@ -750,6 +779,7 @@ fn layout_timeout(deadline_ms: u64, elapsed: Duration) -> RenderResponse {
             ),
         }],
         warnings: Vec::new(),
+        session: None,
     }
 }
 
@@ -997,7 +1027,9 @@ pub fn render_diagram_from_json(
 ) -> RenderResponse {
     let (opts, warnings) = match parse_opts(raw_opts) {
         Ok(parsed) => parsed,
-        Err(errors) => return rejected(errors),
+        // A rejected `opts` leaves no diagram, but it still answers with the
+        // session: the field travels on every path out (S3, D2).
+        Err(errors) => return with_session(rejected(errors), &request.session_id),
     };
     let mut response = render_diagram_with(request, &opts);
     response.warnings.extend(warnings);
@@ -1009,9 +1041,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{
-        busy, render_diagram, render_diagram_with, render_queue, set_render_hook, Admission,
-        RenderHook, RenderOptions, RenderQueue, RenderRequest, RenderResponse, RenderStatus,
-        BUSY_RETRY_AFTER_MS, MAX_PARALLEL_RENDERS, QUEUE_DEPTH, SVG_BUDGET_BYTES,
+        busy, render_diagram, render_diagram_from_json, render_diagram_with, render_queue,
+        set_render_hook, Admission, RenderHook, RenderOptions, RenderQueue, RenderRequest,
+        RenderResponse, RenderStatus, BUSY_RETRY_AFTER_MS, MAX_PARALLEL_RENDERS, QUEUE_DEPTH,
+        SVG_BUDGET_BYTES,
     };
     use crate::store::diagram_store;
     use crate::test_support::{lock_renders_blocking, MINIMAL};
@@ -1761,5 +1794,70 @@ mod tests {
             "a healthy render keeps the old shape"
         );
         assert_eq!(diagram_store().list().len(), 1);
+    }
+
+    /// S3/D2: the answer of a render names the session of the caller, with
+    /// the family and the label the human sees in the window.
+    #[test]
+    fn the_render_carries_the_session_of_the_caller() {
+        let _guard = lock_renders_blocking();
+        let id = format!("pi-{}", std::process::id());
+        let identity = crate::session::resolve(
+            &crate::session::Declared {
+                client: Some("pi".to_string()),
+                session: Some(id.clone()),
+                project: Some("/home/x/graphium".to_string()),
+            },
+            &crate::session::ClientFingerprint::default(),
+            &crate::session::ProcessFingerprint::default(),
+        );
+        crate::session::session_registry().connect(&id, &identity);
+
+        let response = render_diagram(&RenderRequest {
+            document: MINIMAL.to_string(),
+            session_id: id.clone(),
+        });
+        let session = response
+            .session
+            .expect("the session travels with the answer");
+        assert_eq!(session.id, id);
+        assert_eq!(session.family, "pi");
+        assert_eq!(
+            session.label,
+            format!("Pi · graphium · {}", &id[id.len() - 4..])
+        );
+        assert_eq!(session.project.as_deref(), Some("/home/x/graphium"));
+        assert_eq!(session.state, "active");
+
+        // A render that fails answers with the session too: the agent learns
+        // how the human sees it even when nothing reached the plan.
+        let rejected = render_diagram_from_json(
+            &RenderRequest {
+                document: MINIMAL.to_string(),
+                session_id: id.clone(),
+            },
+            Some(&serde_json::json!({ "extract": { "depth": 2 } })),
+        );
+        assert!(!rejected.ok, "{rejected:?}");
+        assert_eq!(
+            rejected.session.expect("the session travels").id,
+            id,
+            "a rejected render still names its session"
+        );
+    }
+
+    /// PRESERVE: a render answers the fields it always answered; `session`
+    /// is added next to them and no existing one moved (S3: additive).
+    #[test]
+    fn a_render_keeps_the_fields_it_had() {
+        let _guard = lock_renders_blocking();
+        let response = render(MINIMAL);
+        let value = serde_json::to_value(&response).expect("the answer is JSON");
+
+        for key in ["ok", "diagram_id", "rendered_kind", "rendered"] {
+            assert!(value.get(key).is_some(), "falta `{key}`: {value}");
+        }
+        assert!(value["metrics"].is_object(), "{value}");
+        assert!(value["session"].is_object(), "{value}");
     }
 }

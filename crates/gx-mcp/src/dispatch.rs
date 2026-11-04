@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use crate::contract;
 
 /// Every tool of the server, in the order the index reports them.
-pub const TOOL_NAMES: [&str; 8] = [
+pub const TOOL_NAMES: [&str; 9] = [
     "render_diagram",
     "validate_diagram",
     "get_diagram_schema",
@@ -19,6 +19,7 @@ pub const TOOL_NAMES: [&str; 8] = [
     "update_diagram",
     "export_diagram",
     "clear_canvas",
+    "register_session",
 ];
 
 /// Calls a tool by name with its JSON arguments.
@@ -113,6 +114,11 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
             let response = contract::clear_canvas(session_id, scope);
             serde_json::to_value(&response).map_err(|error| error.to_string())
         }
+        "register_session" => {
+            let label = arguments.get("label").and_then(Value::as_str);
+            let response = contract::register_session(session_id, label);
+            serde_json::to_value(&response).map_err(|error| error.to_string())
+        }
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -177,6 +183,15 @@ pub fn tool_schema(name: &str) -> Value {
         "clear_canvas" => json!({
             "type": "object",
             "properties": { "scope": { "type": ["string", "null"] } }
+        }),
+        "register_session" => json!({
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": ["string", "null"],
+                    "description": "The name the human sees for this session; it is trimmed. Without it the tool only answers the session. An empty or whitespace-only label is `invalid_value`."
+                }
+            }
         }),
         _ => json!({ "type": "object" }),
     }
@@ -348,5 +363,58 @@ mod tests {
         let cleared =
             call_tool("clear_canvas", &serde_json::json!({}), "session-dispatch").expect("cleared");
         assert_eq!(cleared["ok"], true);
+    }
+
+    /// S3/D2: naming the session is reachable through the dispatcher too, so
+    /// a client forwarded through the socket names its session exactly as one
+    /// that speaks stdio, and the empty label is the same code on both paths.
+    #[test]
+    fn register_session_is_reachable_through_the_dispatcher() {
+        let session = format!("dispatch-session-{}", std::process::id());
+
+        let named = call_tool(
+            "register_session",
+            &serde_json::json!({ "label": "  presupuesto API  " }),
+            &session,
+        )
+        .expect("answered");
+        assert_eq!(named["ok"], true, "{named}");
+        assert_eq!(named["session"]["label"], "presupuesto API", "{named}");
+        assert_eq!(named["session"]["state"], "active", "{named}");
+        let answered_id = named["session"]["id"]
+            .as_str()
+            .expect("the session names its id")
+            .to_string();
+        assert!(!answered_id.is_empty(), "{named}");
+
+        // Without a label it answers the session it kept (`whoami`).
+        let whoami =
+            call_tool("register_session", &serde_json::json!({}), &session).expect("answered");
+        assert_eq!(whoami["session"]["label"], "presupuesto API", "{whoami}");
+        assert_eq!(whoami["session"]["id"], answered_id, "{whoami}");
+
+        let empty = call_tool(
+            "register_session",
+            &serde_json::json!({ "label": "   " }),
+            &session,
+        )
+        .expect("answered");
+        assert_eq!(empty["ok"], false, "{empty}");
+        assert_eq!(empty["errors"][0]["code"], "invalid_value", "{empty}");
+        assert_eq!(empty["errors"][0]["path"], "label", "{empty}");
+        assert!(empty["errors"][0]["hint"].is_string(), "{empty}");
+    }
+
+    /// The schema the relay publishes for the new tool: `label` is optional
+    /// and, when it comes, it is a string.
+    #[test]
+    fn the_schema_of_register_session_has_an_optional_label() {
+        let schema = super::tool_schema("register_session");
+        assert!(schema["properties"]["label"].is_object(), "{schema}");
+        let required = schema.get("required").and_then(serde_json::Value::as_array);
+        assert!(
+            required.is_none_or(|required| required.is_empty()),
+            "`label` is optional: {schema}"
+        );
     }
 }

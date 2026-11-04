@@ -26,6 +26,8 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
+use serde::Serialize;
+
 /// The `session_id` of the stdio session of the owner (PRD §11.1).
 ///
 /// The tools keep tagging their diagrams with this same string: the registry
@@ -103,6 +105,16 @@ pub enum SessionState {
     InGrace,
 }
 
+impl SessionState {
+    /// The wire string of the state: `active|in_grace`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SessionState::Active => "active",
+            SessionState::InGrace => "in_grace",
+        }
+    }
+}
+
 /// What the registry answers to a session that arrives (D6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionAdmission {
@@ -138,6 +150,34 @@ impl SessionRecord {
         matches!(self.state, SessionState::InGrace)
             && self.grace_deadline.is_some_and(|deadline| now >= deadline)
     }
+
+    /// The session as the agent answers it (S3, D2): the id, the family, the
+    /// label and the project the human sees in the selector, and whether it
+    /// is active or in grace. It never carries another session (D3).
+    pub fn view(&self) -> SessionView {
+        SessionView {
+            id: self.id.clone(),
+            family: self.family.as_str(),
+            label: self.label.clone(),
+            project: self.project.clone(),
+            state: self.state.as_str(),
+        }
+    }
+}
+
+/// The session as the tools report it: the `session` object of
+/// `register_session`, `render_diagram` and `list_diagrams` (S3, D2).
+///
+/// `family` and `state` are the wire strings of [`SessionFamily`] and
+/// [`SessionState`], so an invalid one cannot travel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionView {
+    pub id: String,
+    pub family: &'static str,
+    pub label: String,
+    /// The directory the client declared, or the `cwd` of the process (D1).
+    pub project: Option<String>,
+    pub state: &'static str,
 }
 
 /// The identity the client declares through its environment (D1, level 1).
@@ -423,6 +463,21 @@ impl SessionRegistry {
         self.lock().records.get(id).cloned()
     }
 
+    /// The record behind a transport or behind a key (D4).
+    ///
+    /// A client that declared its id is registered under that id, and the
+    /// tools name the transport it came in through: this is the one place
+    /// that answers one with the other, so a session with a declared id is
+    /// found by whichever of the two the caller has.
+    pub fn resolve(&self, id: &str) -> Option<SessionRecord> {
+        let sessions = self.lock();
+        if let Some(record) = sessions.records.get(id) {
+            return Some(record.clone());
+        }
+        let key = sessions.transports.get(id)?;
+        sessions.records.get(key).cloned()
+    }
+
     /// Every session, in a deterministic order.
     pub fn list(&self) -> Vec<SessionRecord> {
         self.lock().records.values().cloned().collect()
@@ -641,6 +696,54 @@ pub fn register_transport_session(id: &str) -> ResolvedIdentity {
     let identity = current_identity();
     session_registry().connect_own_transport(id, &identity);
     identity
+}
+
+/// The session behind a transport, as the tools answer it (S3, D2).
+///
+/// A transport the registry does not know — a forwarded socket before it is
+/// registered, a server built by hand — still answers as itself: its own id,
+/// the family and the project this process declares, the automatic label of
+/// that identity and the active state. A read never opens a session: the
+/// registry is written by the transports and by [`name_session`].
+pub fn current_view(id: &str) -> SessionView {
+    session_registry()
+        .resolve(id)
+        .map_or_else(|| derived_view(id), |record| record.view())
+}
+
+/// The view of a transport the registry does not know yet.
+fn derived_view(id: &str) -> SessionView {
+    let identity = current_identity();
+    SessionView {
+        id: id.to_string(),
+        family: identity.family.as_str(),
+        label: auto_label(identity.family, identity.project.as_deref(), id),
+        project: identity.project,
+        state: SessionState::Active.as_str(),
+    }
+}
+
+/// Names the session of a transport and answers it (S3, D2).
+///
+/// The label arrives trimmed and validated by the caller: an empty one is its
+/// error, never the reset [`SessionRegistry::set_label`] performs. A session
+/// the registry does not know is registered first — naming a session is the
+/// one call that says "I am here" — keyed like its transport, so the owner's
+/// `stdio` keeps its cerco (PRD §11.1). If the session ended between the two
+/// steps the answer is the record as it is, without inventing a label.
+pub fn name_session(transport_id: &str, label: &str) -> SessionView {
+    let registry = session_registry();
+    let known = registry.resolve(transport_id).unwrap_or_else(|| {
+        let identity = current_identity();
+        if transport_id == STDIO_SESSION_ID {
+            registry.connect_own_transport(transport_id, &identity)
+        } else {
+            registry.connect(transport_id, &identity)
+        }
+    });
+    registry
+        .set_label(&known.id, label)
+        .map_or_else(|| known.view(), |record| record.view())
 }
 
 /// An environment variable with a value: absent and empty are both `None`.
@@ -1326,6 +1429,44 @@ mod tests {
             record.label.contains(&id[id.len().saturating_sub(4)..]),
             "{}",
             record.label
+        );
+    }
+
+    /// D2/D3: a transport the registry does not know answers as itself — its
+    /// own id, the family this process declares — and reading never registers
+    /// a session: only a transport or `register_session` do.
+    #[test]
+    fn an_unknown_transport_answers_as_itself_without_registering() {
+        let id = format!("never-registered-{}", std::process::id());
+        let view = current_view(&id);
+
+        assert_eq!(view.id, id);
+        assert_eq!(view.family, current_identity().family.as_str());
+        assert_eq!(view.state, "active");
+        assert!(
+            session_registry().resolve(&id).is_none(),
+            "a read never opens a session"
+        );
+    }
+
+    /// S3/D2/D4: naming a session registers it when it is not there and keys
+    /// it like its transport, so `stdio` keeps the cerco of PRD §11.1.
+    #[test]
+    fn naming_an_unknown_session_registers_it_and_answers_it() {
+        let id = format!("named-{}", std::process::id());
+        let view = name_session(&id, "presupuesto API");
+
+        assert_eq!(view.label, "presupuesto API");
+        assert!(
+            session_registry().resolve(&id).is_some(),
+            "naming a session registers it"
+        );
+        assert_eq!(
+            session_registry()
+                .get(&view.id)
+                .expect("the record is there")
+                .label,
+            "presupuesto API"
         );
     }
 }
