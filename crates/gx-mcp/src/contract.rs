@@ -567,6 +567,9 @@ fn min_example_of(kind: &str) -> Value {
             ],
             "edges": [
                 { "from": "read", "to": "ok", "label": "utf-8" }
+            ],
+            "groups": [
+                { "id": "io", "label": "I/O", "members": ["read"] }
             ]
         }),
     }
@@ -626,7 +629,7 @@ fn rules_of(kind: &str) -> Vec<String> {
                     .to_string(),
             );
             rules.push(
-                "Cada `groups[].members` referencia nodos declarados, y **una pieza vive en una sola frontera**."
+                "Cada `groups[].members` referencia piezas o fronteras declaradas, y **una pieza vive en una sola frontera**."
                     .to_string(),
             );
             rules.push(
@@ -675,7 +678,22 @@ fn rules_of(kind: &str) -> Vec<String> {
         }
         _ => {}
     }
+    if admits_groups(kind) {
+        rules.push(
+            "Un miembro de `groups[].members` es un nodo o **otro grupo**: los grupos anidan. Un miembro vive en un solo grupo y un grupo no puede contenerse a si mismo."
+                .to_string(),
+        );
+    }
     rules
+}
+
+/// The kinds whose document is nodes and edges, so they admit `groups`
+/// (PRD §7 RF15).
+fn admits_groups(kind: &str) -> bool {
+    matches!(
+        kind,
+        "graph" | "flowchart" | "state" | "class" | "component" | "dataflow"
+    )
 }
 
 /// The shapes valid for a kind (PRD §11.1).

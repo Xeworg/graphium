@@ -37,6 +37,11 @@ pub struct LayoutGroup {
     pub id: String,
     pub label: Option<String>,
     pub bbox: Rect,
+    /// How many groups contain this one (PRD §7 RF15): `0` is an outermost
+    /// box. The renderer draws the smaller depth first, so the outer box ends
+    /// up behind the inner one.
+    #[serde(default)]
+    pub depth: usize,
 }
 
 /// The result of a layout run.
@@ -109,6 +114,7 @@ pub trait LayoutEngine: Send + Sync {
                         bbox.max_x().max(1.0),
                         lane_height,
                     ),
+                    depth: 0,
                 })
                 .collect(),
             bbox,

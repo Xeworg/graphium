@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 14] = [
+const CASES: [(&str, &str); 15] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -47,6 +47,7 @@ const CASES: [(&str, &str); 14] = [
     ("dataflow-etl", DATAFLOW_ETL),
     ("class-shop", CLASS_SHOP),
     ("component-api", COMPONENT_API),
+    ("component-nested", COMPONENT_NESTED),
 ];
 
 const MINIMAL: &str = r#"{
@@ -295,6 +296,30 @@ const COMPONENT_API: &str = r#"{
     { "from": "api", "to": "db", "label": "SQL" },
     { "from": "api", "to": "pagos", "label": "cobro" },
     { "from": "api", "to": "jobs", "label": "encola" }
+  ]
+}"#;
+
+/// RF15: a group inside another group. The outer group owns the inner one as
+/// a member and the inner one owns the nodes, so the drawing has two boxes,
+/// the outer behind the inner.
+const COMPONENT_NESTED: &str = r#"{
+  "version": 1,
+  "kind": "component",
+  "title": "Pedidos",
+  "nodes": [
+    { "id": "web", "label": "Web", "role": "container" },
+    { "id": "api", "label": "API" },
+    { "id": "db", "label": "Postgres", "role": "database" },
+    { "id": "pagos", "label": "Pagos", "role": "external" }
+  ],
+  "groups": [
+    { "id": "plataforma", "label": "Plataforma", "members": ["web", "servicio"] },
+    { "id": "servicio", "label": "Servicio", "members": ["api", "db"] }
+  ],
+  "edges": [
+    { "from": "web", "to": "api", "label": "HTTPS" },
+    { "from": "api", "to": "db", "label": "SQL" },
+    { "from": "api", "to": "pagos", "label": "cobro" }
   ]
 }"#;
 

@@ -517,6 +517,86 @@ fn a_graph_draws_each_group_as_a_container_with_its_name() {
     assert_eq!(svg, render(&ir, &layout, &Palette::plano()));
 }
 
+/// RF15: un grupo dentro de otro. La caja externa se escribe primero —queda
+/// detrás— y el nombre del interno se sangra por profundidad, para que los dos
+/// nombres no se pisen en la misma esquina.
+#[test]
+fn nested_groups_draw_the_outer_box_first_and_indent_the_inner_name() {
+    let ir = Ir::Graph(IrGraph {
+        direction: Direction::TB,
+        layout_hint: LayoutHint::Layered,
+        nodes: vec![IrNode::new("api", "API")],
+        edges: vec![],
+        groups: vec![
+            gx_core::IrGroup {
+                id: "outer".to_string(),
+                label: Some("Sistema".to_string()),
+                members: vec!["inner".to_string()],
+            },
+            gx_core::IrGroup {
+                id: "inner".to_string(),
+                label: Some("Backend".to_string()),
+                members: vec!["api".to_string()],
+            },
+        ],
+    });
+    let layout = LayoutGraph {
+        nodes: [(
+            "api".to_string(),
+            NodeBox {
+                center: Point::new(140.0, 180.0),
+                size: Size::new(100.0, 44.0),
+            },
+        )]
+        .into_iter()
+        .collect(),
+        edges: vec![],
+        groups: vec![
+            nested_group(
+                "outer",
+                Some("Sistema"),
+                Rect::new(20.0, 60.0, 240.0, 220.0),
+                0,
+            ),
+            nested_group(
+                "inner",
+                Some("Backend"),
+                Rect::new(40.0, 100.0, 180.0, 140.0),
+                1,
+            ),
+        ],
+        bbox: Rect::new(0.0, 0.0, 280.0, 300.0),
+    };
+
+    let svg = render(&ir, &layout, &Palette::plano());
+    let document = document(&svg);
+
+    let outer = svg.find("cluster-outer").expect("la caja externa");
+    let inner = svg.find("cluster-inner").expect("la caja interna");
+    assert!(
+        outer < inner,
+        "la caja externa se dibuja primero, asi queda detras: {svg}"
+    );
+
+    let label_x = |title: &str| -> f64 {
+        element(&document, "text")
+            .into_iter()
+            .find(|node| classes(*node).contains("group-label") && node.text() == Some(title))
+            .unwrap_or_else(|| panic!("falta el nombre `{title}`"))
+            .attribute("x")
+            .expect("el nombre trae x")
+            .parse()
+            .expect("x es un numero")
+    };
+    assert!(
+        label_x("Backend") > label_x("Sistema"),
+        "el nombre del grupo interno se sangra por profundidad: {} vs {}",
+        label_x("Backend"),
+        label_x("Sistema")
+    );
+    assert_eq!(svg, render(&ir, &layout, &Palette::plano()));
+}
+
 /// Un timeline se lee por sus bandas: la banda dice en qué carril está el
 /// evento y su nombre va en la canaleta de la izquierda. Sin banda, el dibujo
 /// es una nube de cajas sueltas.
@@ -664,7 +744,15 @@ fn group(id: &str, label: Option<&str>, bbox: Rect) -> gx_core::LayoutGroup {
         id: id.to_string(),
         label: label.map(str::to_string),
         bbox,
+        depth: 0,
     }
+}
+
+/// Un grupo del layout con su profundidad de anidamiento (PRD §7 RF15).
+fn nested_group(id: &str, label: Option<&str>, bbox: Rect, depth: usize) -> gx_core::LayoutGroup {
+    let mut placed = group(id, label, bbox);
+    placed.depth = depth;
+    placed
 }
 
 /// The crow's foot opens towards the table: the ankle is away from it and the

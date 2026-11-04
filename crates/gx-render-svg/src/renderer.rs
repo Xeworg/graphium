@@ -107,7 +107,7 @@ impl SvgRenderer {
         // de cajas y no se ve qué piezas forman el mismo sistema.
         if graph.is_some() {
             out.push_str("<g class=\"layer-groups\">\n");
-            for group in ordered_groups(layout) {
+            for group in ordered_clusters(layout) {
                 write_group_box(&mut out, group);
             }
             out.push_str("</g>\n");
@@ -238,6 +238,18 @@ fn ordered_events(timeline: &IrTimeline) -> Vec<&IrEvent> {
     let mut events: Vec<&IrEvent> = timeline.events.iter().collect();
     events.sort_by(|left, right| left.id.cmp(&right.id));
     events
+}
+
+/// The clusters of a graph, outermost first: a box is drawn behind the ones it
+/// contains, so the inner box never hides the outer border (PRD §7 RF15).
+fn ordered_clusters(layout: &LayoutGraph) -> Vec<&LayoutGroup> {
+    let mut groups: Vec<&LayoutGroup> = layout.groups.iter().collect();
+    groups.sort_by(|left, right| {
+        left.depth
+            .cmp(&right.depth)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    groups
 }
 
 /// The lane bands of a timeline, in id order.
@@ -874,7 +886,7 @@ fn write_group_box(out: &mut String, group: &LayoutGroup) {
     };
     out.push_str(&format!(
         "<text class=\"group-label text\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"start\" dominant-baseline=\"central\">{}</text>\n",
-        fmt_num(group.bbox.x + TOKENS.node_padding),
+        fmt_num(group.bbox.x + TOKENS.node_padding * (1.0 + group.depth as f64)),
         fmt_num(group.bbox.y + TOKENS.text_size),
         fmt_num(TOKENS.text_size),
         escape_text(label),

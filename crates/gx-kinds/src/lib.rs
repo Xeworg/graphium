@@ -11,6 +11,7 @@ pub mod er;
 pub mod flow;
 pub mod flowchart;
 pub mod graph;
+pub mod groups;
 pub mod lanes;
 pub mod mindmap;
 pub mod sequence;
