@@ -9,6 +9,8 @@ use serde_json::Value;
 
 use gx_core::error::{ErrorCode, ValidationError};
 
+use crate::session::{self, SessionView};
+
 /// The maximum number of errors a tool reports (PRD §7 RF5).
 pub const MAX_ERRORS: usize = 20;
 
@@ -721,6 +723,9 @@ fn shapes_of(kind: &str) -> Vec<String> {
 pub struct ListResponse {
     pub ok: bool,
     pub diagrams: Vec<DiagramEntry>,
+    /// The session of the caller: the name the human sees in the window
+    /// (S3, D2). It is additive; every other field keeps its place.
+    pub session: SessionView,
 }
 
 /// One diagram of the plan, as `list_diagrams` reports it.
@@ -785,6 +790,65 @@ pub fn list_diagrams(session_id: &str) -> ListResponse {
                 revision: summary.revision,
             })
             .collect(),
+        session: session::current_view(session_id),
+    }
+}
+
+/// The response of `register_session` (S3, D2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RegisterSessionResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<SessionView>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<ErrorPayload>,
+}
+
+/// Names the session of the caller and answers it (S3, D2).
+///
+/// Without a label it is a `whoami`: the session answers as it is, with the
+/// name the human already sees. With one, the label is trimmed and stored;
+/// an empty or whitespace-only label is a value that does not fit its field,
+/// so it is `invalid_value` at `label` and the session keeps its name — an
+/// empty label never resets the name the agent already chose.
+pub fn register_session(session_id: &str, label: Option<&str>) -> RegisterSessionResponse {
+    crate::bootstrap();
+
+    let Some(label) = label else {
+        return RegisterSessionResponse {
+            ok: true,
+            session: Some(session::current_view(session_id)),
+            errors: Vec::new(),
+        };
+    };
+
+    let label = label.trim();
+    if label.is_empty() {
+        return RegisterSessionResponse {
+            ok: false,
+            session: None,
+            errors: vec![empty_label()],
+        };
+    }
+
+    RegisterSessionResponse {
+        ok: true,
+        session: Some(session::name_session(session_id, label)),
+        errors: Vec::new(),
+    }
+}
+
+/// The error of a label with nothing in it (D2).
+fn empty_label() -> ErrorPayload {
+    ErrorPayload {
+        path: "label".to_string(),
+        code: ErrorCode::InvalidValue.as_str().to_string(),
+        message: "la etiqueta de la sesión no puede estar vacía".to_string(),
+        hint: Some(
+            "mandá un nombre corto y reconocible, por ejemplo \"presupuesto API\", o no mandés \
+             `label` para solo consultar la sesión"
+                .to_string(),
+        ),
     }
 }
 
@@ -1353,5 +1417,172 @@ mod tests {
             .available_kinds
             .unwrap()
             .contains(&"graph".to_string()));
+    }
+
+    // ---- La sesión en la superficie (S3, D2, D3) ------------------------
+
+    /// An id of this run: the registry and the store are process-wide, so a
+    /// test never shares one with its neighbours.
+    fn unique(prefix: &str) -> String {
+        format!("{prefix}-{}", std::process::id())
+    }
+
+    /// Registers a session with the identity a client declares (D1), so the
+    /// family and the project of the answer are the ones the test chose.
+    fn registered_session(id: &str, client: &str, project: &str) {
+        let identity = crate::session::resolve(
+            &crate::session::Declared {
+                client: Some(client.to_string()),
+                session: Some(id.to_string()),
+                project: Some(project.to_string()),
+            },
+            &crate::session::ClientFingerprint::default(),
+            &crate::session::ProcessFingerprint::default(),
+        );
+        crate::session::session_registry().connect(id, &identity);
+    }
+
+    /// S3/D2: the label round-trips trimmed and the answer is the session
+    /// with which the human sees the agent; without a label it is `whoami`.
+    #[test]
+    fn register_session_names_the_session_and_answers_it() {
+        let id = unique("named");
+        registered_session(&id, "pi", "/home/x/graphium");
+
+        let named = super::register_session(&id, Some("  presupuesto API  "));
+        assert!(named.ok, "{named:?}");
+        let session = named.session.expect("the session travels with the answer");
+        assert_eq!(session.id, id);
+        assert_eq!(session.family, "pi");
+        assert_eq!(session.label, "presupuesto API", "the label is trimmed");
+        assert_eq!(session.project.as_deref(), Some("/home/x/graphium"));
+        assert_eq!(session.state, "active");
+
+        // It round-trips: the registry kept the trimmed name.
+        let stored = crate::session::session_registry()
+            .get(&id)
+            .expect("the session is registered");
+        assert_eq!(stored.label, "presupuesto API");
+
+        // Without a label the tool only answers the session (`whoami`).
+        let whoami = super::register_session(&id, None);
+        assert!(whoami.ok, "{whoami:?}");
+        assert_eq!(
+            whoami.session.expect("the session travels").label,
+            "presupuesto API",
+            "a `whoami` never renames the session"
+        );
+    }
+
+    /// D2: a label with nothing in it names nothing: it is `invalid_value` at
+    /// `label` and the session keeps the name it had, never a silent reset.
+    #[test]
+    fn an_empty_label_is_rejected_and_the_name_stays() {
+        let id = unique("empty-label");
+        registered_session(&id, "pi", "/home/x/graphium");
+        crate::session::session_registry().set_label(&id, "presupuesto API");
+
+        for label in ["", "   ", "\t\n "] {
+            let rejected = super::register_session(&id, Some(label));
+            assert!(!rejected.ok, "{label:?} names nothing");
+            assert!(rejected.session.is_none(), "{label:?}");
+            assert_eq!(rejected.errors.len(), 1, "{rejected:?}");
+            assert_eq!(rejected.errors[0].path, "label");
+            assert_eq!(rejected.errors[0].code, "invalid_value");
+            assert!(
+                rejected.errors[0].hint.is_some(),
+                "the agent needs a way out of the error: {rejected:?}"
+            );
+            assert_eq!(
+                crate::session::session_registry()
+                    .get(&id)
+                    .expect("the session is registered")
+                    .label,
+                "presupuesto API",
+                "{label:?} never resets the name"
+            );
+        }
+    }
+
+    /// S3/D2: `list_diagrams` answers with the session of the caller, in the
+    /// same shape `register_session` gives, next to the diagrams it already
+    /// answered.
+    #[test]
+    fn list_diagrams_carries_the_session_of_the_caller() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = unique("listed");
+        registered_session(&id, "pi", "/home/x/graphium");
+        crate::session::session_registry().set_label(&id, "presupuesto API");
+        render_into_store(MINIMAL, &id);
+
+        let listed = super::list_diagrams(&id);
+        assert!(listed.ok);
+        assert_eq!(listed.diagrams.len(), 1);
+        assert_eq!(
+            listed.diagrams[0].session_id, id,
+            "the cerco of a diagram is still the session"
+        );
+        assert_eq!(listed.session.id, id);
+        assert_eq!(listed.session.family, "pi");
+        assert_eq!(listed.session.label, "presupuesto API");
+        assert_eq!(listed.session.state, "active");
+    }
+
+    /// D3: a session sees only its own diagrams and answers with its own id,
+    /// never the id of the session next door.
+    #[test]
+    fn a_second_session_lists_its_own_and_never_the_neighbours() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let first = unique("iso-first");
+        let second = unique("iso-second");
+        registered_session(&first, "pi", "/work/graphium");
+        registered_session(&second, "claude", "/work/api");
+        render_into_store(MINIMAL, &first);
+
+        let mine = super::list_diagrams(&second);
+        assert!(mine.ok);
+        assert!(mine.diagrams.is_empty(), "{:?}", mine.diagrams);
+        assert_eq!(mine.session.id, second, "each session answers as itself");
+        assert_eq!(mine.session.family, "claude");
+        assert_eq!(mine.session.project.as_deref(), Some("/work/api"));
+
+        let theirs = super::list_diagrams(&first);
+        assert_eq!(theirs.diagrams.len(), 1);
+        assert_eq!(theirs.session.id, first);
+    }
+
+    /// PRESERVE: the fields `list_diagrams` already answered keep their names
+    /// and their place; `session` is the only key added.
+    #[test]
+    fn list_diagrams_keeps_the_fields_it_had() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = unique("preserve-list");
+        registered_session(&id, "pi", "/work/graphium");
+        render_into_store(MINIMAL, &id);
+
+        let value = serde_json::to_value(super::list_diagrams(&id)).expect("the answer is JSON");
+        assert_eq!(value["ok"], true);
+        let entry = &value["diagrams"][0];
+        for key in [
+            "diagram_id",
+            "title",
+            "kind",
+            "updated_at",
+            "session_id",
+            "revision",
+        ] {
+            assert!(entry.get(key).is_some(), "falta `{key}`: {entry}");
+        }
+        assert_eq!(entry["session_id"].as_str(), Some(id.as_str()));
+
+        let object = value.as_object().expect("the answer is an object");
+        assert_eq!(
+            object.len(),
+            3,
+            "`session` is the only key added: {object:?}"
+        );
+        for key in ["ok", "diagrams", "session"] {
+            assert!(object.contains_key(key), "falta `{key}`: {object:?}");
+        }
     }
 }

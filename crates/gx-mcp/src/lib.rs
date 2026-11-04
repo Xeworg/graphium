@@ -80,7 +80,7 @@ as `unknown_kind` with the available kinds in `hint`. Every node needs a \
 unique `id`; edges reference node ids with `from` and `to`. \
 Unknown fields are rejected, so send only documented keys. The response is \
 JSON: { ok, diagram_id, rendered_kind, rendered, metrics, extracted_from, \
-errors, warnings }. `ok: false` means nothing was placed and `errors[]` \
+errors, warnings, session }. `ok: false` means nothing was placed and `errors[]` \
 carries `{ path, code, message, hint? }` with a stable `code`; `ok: true` \
 returns the new `diagram_id`, the `rendered_kind`, `metrics { nodes, edges, \
 layout_ms, render_ms, svg_bytes }` and `rendered` telling whether the window \
@@ -156,8 +156,8 @@ pub struct GetDiagramSchemaParams {
 const LIST_DIAGRAMS_DESCRIPTION: &str = "\
 The diagrams of this session that are on the plan: their ids, titles, kinds, \
 revisions and when they were updated. Use it after a compaction, or when an \
-id was lost, to find the diagram to update or export. It never renders \
-anything.";
+id was lost, to find the diagram to update or export. The answer also carries \
+`session`, the name the human sees for you. It never renders anything.";
 
 /// Description of the `get_diagram` tool, written for the agent.
 const GET_DIAGRAM_DESCRIPTION: &str = "\
@@ -181,6 +181,22 @@ with the same pipeline as `render_diagram` and only then replaces the \
 document, so a bad patch leaves the diagram untouched and returns \
 `applied: false` with the errors. Send the `revision` you read, so a stale \
 write is rejected with `stale_revision`. The `kind` cannot change.";
+
+/// Description of the `register_session` tool, written for the agent (S3, D2).
+///
+/// The text lives in the harness, which is where the relay reads it too: the
+/// tool is described once and both surfaces publish the same words.
+const REGISTER_SESSION_DESCRIPTION: &str = crate::harness::REGISTER_SESSION_DESCRIPTION;
+
+/// Parameters of the `register_session` tool (S3, D2).
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterSessionParams {
+    /// The name the human sees for this session. Without it the tool only
+    /// answers the session it is in.
+    #[serde(default)]
+    pub label: Option<String>,
+}
 
 /// Parameters of the `clear_canvas` tool (PRD §11).
 #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
@@ -503,6 +519,27 @@ impl GraphiumServer {
         })?;
         Ok(CallToolResult::structured(value))
     }
+
+    #[tool(
+        name = "register_session",
+        description = REGISTER_SESSION_DESCRIPTION,
+        annotations(
+            title = "Register session",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn register_session(
+        &self,
+        Parameters(params): Parameters<RegisterSessionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        structured(contract::register_session(
+            &self.session_id,
+            params.label.as_deref(),
+        ))
+    }
 }
 
 #[tool_handler(name = "graphium")]
@@ -560,7 +597,10 @@ mod tests {
     use rmcp::handler::server::wrapper::Parameters;
     use rmcp::ServiceExt;
 
-    use super::{mcp_config_json, ExportDiagramParams, GraphiumServer, RenderDiagramParams};
+    use super::{
+        mcp_config_json, ExportDiagramParams, GraphiumServer, RegisterSessionParams,
+        RenderDiagramParams,
+    };
     use crate::test_support::{lock_renders, MINIMAL};
 
     #[test]
@@ -632,6 +672,89 @@ mod tests {
         assert!(properties.contains_key("diagram_id"), "{properties:?}");
         assert!(properties.contains_key("format"), "{properties:?}");
         assert!(properties.contains_key("opts"), "{properties:?}");
+    }
+
+    /// S3/D2: the router of the stdio server advertises the tool that names
+    /// the session, with an optional `label`. The relay reaches it through
+    /// the dispatcher; an agent that speaks stdio to the owner has to see the
+    /// same tool.
+    #[test]
+    fn the_server_advertises_register_session() {
+        let tools = GraphiumServer::tool_router().list_all();
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == "register_session")
+            .expect("register_session is advertised");
+
+        let description = tool.description.as_deref().unwrap_or_default();
+        for expected in ["label", "session", "invalid_value"] {
+            assert!(
+                description.contains(expected),
+                "the description names `{expected}`: {description}"
+            );
+        }
+
+        let properties = tool.input_schema["properties"]
+            .as_object()
+            .expect("the input schema has properties");
+        assert!(properties.contains_key("label"), "{properties:?}");
+        let required = tool
+            .input_schema
+            .get("required")
+            .and_then(serde_json::Value::as_array);
+        assert!(
+            required.is_none_or(|required| required.is_empty()),
+            "`label` is optional: {:?}",
+            tool.input_schema
+        );
+    }
+
+    /// D2: the agent names its session through the tool, the name is trimmed
+    /// and it survives a second call without a label; an empty label is the
+    /// error the agent can branch on and never a rename.
+    #[tokio::test]
+    async fn the_register_session_tool_names_the_session() {
+        let id = format!("tool-session-{}", std::process::id());
+        let server = GraphiumServer::with_session_id(&id);
+
+        let named = server
+            .register_session(Parameters(RegisterSessionParams {
+                label: Some("  presupuesto API  ".to_string()),
+            }))
+            .await
+            .expect("answering never fails")
+            .structured_content
+            .expect("structured content");
+        assert_eq!(named["ok"], true, "{named}");
+        assert_eq!(named["session"]["label"], "presupuesto API", "{named}");
+        assert_eq!(named["session"]["state"], "active", "{named}");
+        let answered_id = named["session"]["id"]
+            .as_str()
+            .expect("the session names its id")
+            .to_string();
+        assert!(!answered_id.is_empty(), "{named}");
+
+        let whoami = server
+            .register_session(Parameters(RegisterSessionParams { label: None }))
+            .await
+            .expect("answering never fails")
+            .structured_content
+            .expect("structured content");
+        assert_eq!(whoami["session"]["label"], "presupuesto API", "{whoami}");
+        assert_eq!(whoami["session"]["id"], answered_id, "{whoami}");
+
+        let rejected = server
+            .register_session(Parameters(RegisterSessionParams {
+                label: Some("   ".to_string()),
+            }))
+            .await
+            .expect("a rejected label is an answer")
+            .structured_content
+            .expect("structured content");
+        assert_eq!(rejected["ok"], false, "{rejected}");
+        assert_eq!(rejected["errors"][0]["code"], "invalid_value", "{rejected}");
+        assert_eq!(rejected["errors"][0]["path"], "label", "{rejected}");
+        assert!(rejected["errors"][0]["hint"].is_string(), "{rejected}");
     }
 
     /// S3: `opts` es opcional y un `opts: {}` vacío tiene que funcionar.

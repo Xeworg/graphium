@@ -23,21 +23,28 @@ anything that reads better as text: a diagram there costs a window and adds \
 nothing. Never draw to compensate for not understanding the code: read first.
 
 HOW, IN ORDER.
-1. `get_diagram_schema` WITHOUT `kind` lists the available kinds with their \
+1. `register_session` with a `label` names this session for the human (\"presupuesto \
+API\"); without `label` it only answers the session you are in. The name is what the \
+session selector of the window shows, so a human with two agents working on two \
+projects knows which one drew what. It is optional: without it the session appears \
+with its automatic name and works the same.
+2. `get_diagram_schema` WITHOUT `kind` lists the available kinds with their \
 limits and a minimal example. Call it with `kind` to get that kind's JSON Schema, \
 its cross rules, its valid shapes and its limits. Read it before writing a \
 document: the schema is the same contract the render validates, and unknown \
 fields are rejected.
-2. Build the document. Keep it small: a diagram that needs more than ~40 nodes to \
+3. Build the document. Keep it small: a diagram that needs more than ~40 nodes to \
 say one thing is several diagrams.
-3. `validate_diagram` with the document. It runs exactly the same validation as \
+4. `validate_diagram` with the document. It runs exactly the same validation as \
 the render and opens nothing. Fix what `errors[]` reports and call it again until \
 `ok` is true. This loop is free: no window, no layout.
-4. `render_diagram` with the same document. `ok: true` means the diagram is on the \
+5. `render_diagram` with the same document. `ok: true` means the diagram is on the \
 plan and `diagram_id` identifies it; `rendered: true` means the window confirmed \
 the paint, and `rendered: false` comes with a `reason` (`headless`, `no_window`, \
-`ui_timeout`, `ui_error`) that you can report to the human without retrying.
-5. To change a diagram you already have, use `update_diagram` with an RFC 7386 \
+`ui_timeout`, `ui_error`) that you can report to the human without retrying. Every \
+answer also carries `session`: the id, family, label, project and state with which \
+the human sees you.
+6. To change a diagram you already have, use `update_diagram` with an RFC 7386 \
 merge patch and the `revision` you read: it is transactional, so a bad patch \
 leaves the diagram untouched. Do not render a new one to replace it.
 
@@ -91,12 +98,30 @@ for an export is always safe. Past 1 MB of inline text the answer is \
 `too_large` with `size_bytes`: send `path` or narrow the diagram with \
 `opts.extract`.";
 
+/// The description of `register_session`, written for the agent (S3, D2).
+///
+/// The relay and the stdio server publish this same text, so the tool is
+/// described once.
+pub const REGISTER_SESSION_DESCRIPTION: &str = "\
+Name this session for the human, or ask which session you are in. With `label` \
+the session appears in the window's session selector with that name: use a short \
+name of the work (\"presupuesto API\"), not of the tool, so a human with two agents \
+working on two projects knows which one drew what. The label is trimmed before it \
+is stored; an empty or whitespace-only one answers `ok: false` with code \
+`invalid_value` at `path: \"label\"` and the session keeps the name it had. Without \
+`label` the tool only answers the session, which is how you find out how the human \
+sees you. The response is { ok, session: { id, family, label, project, state } }: \
+`family` is `pi|claude|opencode|ui|other`, `project` is the directory the client \
+declared and `state` is `active|in_grace`. The same `session` object travels with \
+`render_diagram` and `list_diagrams`, and a session only ever sees its own.";
+
 /// The description of a tool, written for the agent.
 ///
 /// The relay and the stdio server both read this table, so a tool exists once
 /// with one description.
 pub fn description(name: &str) -> &'static str {
     match name {
+        "register_session" => REGISTER_SESSION_DESCRIPTION,
         "render_diagram" => {
             "\
 Draw a diagram and place it on the plan. Send the whole document as a JSON \
@@ -138,7 +163,8 @@ fields are rejected."
             "\
 The diagrams of this session that are on the plan: id, title, kind, revision and \
 when they were updated. Call it after a compaction or when an id was lost, before \
-assuming which diagram to update or export. It never renders anything."
+assuming which diagram to update or export. The answer also carries `session`, the \
+name the human sees for you. It never renders anything."
         }
         "get_diagram" => {
             "\
@@ -298,6 +324,28 @@ mod tests {
                 "the instructions lack `{future}`"
             );
         }
+    }
+
+    /// S3/D2: the agent learns how to name its session, and that the name is
+    /// what the human sees in the window.
+    #[test]
+    fn the_harness_teaches_how_to_name_the_session() {
+        let register = description("register_session");
+        for needle in ["label", "session", "invalid_value"] {
+            assert!(
+                register.contains(needle),
+                "register_session lacks `{needle}`"
+            );
+        }
+
+        assert!(
+            INSTRUCTIONS.contains("register_session"),
+            "the flow has to say when the session is named"
+        );
+        assert!(
+            INSTRUCTIONS.contains("label"),
+            "the flow has to say that the name is optional"
+        );
     }
 
     #[test]
