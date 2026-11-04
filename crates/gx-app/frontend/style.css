@@ -44,6 +44,14 @@
   --zoom: 1;
   --accent: #6ea8fe;
   --text: #e9e9ec;
+  /* The colour of each family of agent (S4, D1): the dot of a session in the
+     selector and the badge of its diagrams paint with them, so the human
+     tells whose work is whose (D3). */
+  --family-pi: #6ea8fe;
+  --family-claude: #e0a165;
+  --family-opencode: #7cc9a4;
+  --family-ui: #b9b9c2;
+  --family-other: #a89bd6;
   /* Chrome of the window: the settings panel, the ghost box and the inline
      code of the empty state. They follow the theme, like the drawings. */
   --surface: #232329;
@@ -77,6 +85,13 @@
   --edge-text: #4a4a54;
   --accent: #2f6fd0;
   --text: #1b1b1f;
+  /* The same five families, one step darker so the dot reads on the light
+     plan (RF22, S18). */
+  --family-pi: #2f6fd0;
+  --family-claude: #a25f1b;
+  --family-opencode: #2b7a53;
+  --family-ui: #6f6f7a;
+  --family-other: #6a5aa6;
   --surface: #ffffff;
   --surface-border: #d3d3db;
   --surface-shadow: rgba(20, 20, 30, 0.18);
@@ -296,6 +311,13 @@ body {
   position: absolute;
 }
 
+/* The object of a session the selector is hiding (D5): out of the paint, never
+ * closed. It keeps its place, its rectangle and its diagrams in Rust, so
+ * choosing «Todas» puts it back exactly where it was. */
+.diagram.session-hidden {
+  display: none;
+}
+
 .diagram svg {
   display: block;
   overflow: visible;
@@ -350,6 +372,28 @@ body {
 .diagram-close:hover {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+/* The badge of the session of a diagram (S1, D3): a dot in the colour of
+ * whoever drew it. It sits in the padding ring of the object and is
+ * positioned, so the drawing never changes shape because of it. It only shows
+ * while the plan shows every session: with one session chosen every badge
+ * would say the same thing. */
+.diagram-badge {
+  position: absolute;
+  top: -18px;
+  left: 2px;
+  z-index: 2;
+  display: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--surface);
+  pointer-events: none;
+}
+
+.diagrams.show-session-badges .diagram-badge {
+  display: block;
 }
 
 /* The box that stands in for a diagram whose SVG left the DOM (PRD RNF1-ter,
@@ -635,6 +679,157 @@ body {
   opacity: 0.6;
 }
 
+/* The selector of sessions (S1, S3, D3, D5): the fixed row «Todas» and one
+ * row per session, above the list of open diagrams. It is built from
+ * `graphium://state` like the list, so it paints with the tokens of the theme
+ * and reads in both of them (RF22, S18). */
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  /* Eight sessions stay reachable without pushing the list of open diagrams
+     out of the panel. */
+  max-height: 34vh;
+  overflow-y: auto;
+}
+
+/* One row: the dot of the family, the label and, under it, the family, the
+ * project, the state and the count of diagrams. */
+.session-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.session-row:hover {
+  border-color: var(--surface-border);
+}
+
+.session-row.selected {
+  border-color: var(--accent);
+  background: var(--code-bg);
+}
+
+.session-row.selected .session-label {
+  color: var(--accent);
+}
+
+/* A session in grace is on its way out (D4): the row still lists it, so the
+ * human knows why its diagrams are about to go, but it reads dimmer. */
+.session-row.in-grace {
+  opacity: 0.72;
+}
+
+.session-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border-radius: 50%;
+}
+
+.family-pi {
+  background: var(--family-pi);
+}
+
+.family-claude {
+  background: var(--family-claude);
+}
+
+.family-opencode {
+  background: var(--family-opencode);
+}
+
+.family-ui {
+  background: var(--family-ui);
+}
+
+.family-other {
+  background: var(--family-other);
+}
+
+/* «Todas» is not a family: its dot is the neutral ink of the plan. */
+.family-all {
+  background: var(--edge-text);
+}
+
+.session-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.session-count {
+  flex: none;
+  font-size: 12px;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-meta {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-meta > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* `Pi · graphium · activa`: the separator belongs to the piece that follows
+ * it, so a clipped piece never leaves a dot hanging. */
+.session-meta > span:not(:first-child)::before {
+  content: "· ";
+}
+
+.session-family,
+.session-state {
+  flex: none;
+}
+
+/* Why the plan went back to «Todas» when the watched session ended (S3, D5):
+ * a notice in the selector area, never an empty plan with no explanation. */
+.session-notice {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: var(--code-bg);
+  border-left: 2px solid var(--accent);
+  border-radius: 4px;
+}
+
 /* The settings of the plan (PRD §7.1 RF25, S19): the gear, top-right of the
  * plan, and the panel it opens. Both are siblings of `#plan`, never children:
  * the wheel and the drag of the camera listen on the plan, so a control over
@@ -825,6 +1020,7 @@ body {
 .panel-toggle:focus-visible,
 .panel-item-open:focus-visible,
 .panel-item-close:focus-visible,
+.session-row:focus-visible,
 .diagram-close:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

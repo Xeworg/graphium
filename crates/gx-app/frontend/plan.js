@@ -91,6 +91,11 @@ const panelToggle = document.getElementById("panel-toggle");
 const panelList = document.getElementById("panel-list");
 const panelEmpty = document.getElementById("panel-empty");
 
+// The selector of sessions (S1, S3, D3, D5): the rows above the list of open
+// diagrams and the notice that says when the watched session ended.
+const sessionList = document.getElementById("session-list");
+const sessionNotice = document.getElementById("session-notice");
+
 // The settings panel (PRD §7.1 RF25, S19).
 const settingsToggle = document.getElementById("settings-toggle");
 const settingsPanel = document.getElementById("settings-panel");
@@ -111,7 +116,7 @@ const presetButtons = Array.from(document.querySelectorAll("[data-preset]"));
 
 const camera = { tx: 0, ty: 0, zoom: 1 };
 const objects = new Map(); // diagram_id -> element
-const state = { diagrams: [] }; // the state Rust owns (PRD §8.6.1)
+const state = { diagrams: [], sessions: [] }; // the state Rust owns (PRD §8.6.1)
 let cameraTimer = null;
 // The settings of the human: Rust sends them and the page paints them. Until
 // the first `graphium://settings` arrives the plan shows the `plano` preset.
@@ -685,9 +690,265 @@ function selectDiagram(diagramId) {
   if (!diagram) {
     return;
   }
+  // The human asked for this diagram, so the plan shows its session if the
+  // selector was hiding it: the camera never travels to an object nobody can
+  // see (D5). Choosing from the list keeps working as it always did.
+  if (!isVisibleSession(diagram.session_id)) {
+    selectSessionById(diagram.session_id);
+  }
   selectedId = diagramId;
   renderPanel();
   focusDiagram(diagram);
+}
+
+// --- Selector of sessions (S1, S3, D3, D5) ------------------------------
+
+// The family of a session as the human reads it and the colour it paints
+// with. The keys are the wire strings of `SessionFamily::as_str`
+// (`crates/gx-mcp/src/session.rs`); the colours are tokens of `style.css`. A
+// family the page does not know reads and paints as `other`: a mislabelled
+// agent is worse than an unlabelled one (D1).
+const SESSION_FAMILIES = {
+  pi: "Pi",
+  claude: "Claude",
+  opencode: "OpenCode",
+  ui: "Interfaz",
+  other: "Otro",
+};
+
+// The session the human chose to watch, or `null` for «Todas» (S3). The
+// filter only hides objects of the plan: the diagrams of the other sessions
+// stay open in Rust, with the place Rust gave them (D5).
+let sessionFilter = null;
+// Why the plan went back to «Todas», when it had to. Empty means no notice.
+let sessionMessage = "";
+
+/** The colour class of a family: one of the five tokens, else `other`. */
+function familyClass(family) {
+  return Object.prototype.hasOwnProperty.call(SESSION_FAMILIES, family)
+    ? `family-${family}`
+    : "family-other";
+}
+
+/** The family of a session as the human reads it. */
+function familyName(family) {
+  return SESSION_FAMILIES[family] || SESSION_FAMILIES.other;
+}
+
+/** Whether the plan is showing every session («Todas» is selected). */
+function showsEverySession() {
+  return sessionFilter === null;
+}
+
+/** Whether a diagram of `sessionId` belongs to what the plan shows now. */
+function isVisibleSession(sessionId) {
+  return sessionFilter === null || sessionId === sessionFilter.id;
+}
+
+/** How many diagrams of a session are on the plan right now. */
+function sessionDiagramCount(sessionId) {
+  return state.diagrams.filter((diagram) => diagram.session_id === sessionId).length;
+}
+
+/** The last part of a project path: `/home/x/graphium` -> `graphium`. */
+function projectName(project) {
+  const text = typeof project === "string" ? project : "";
+  const parts = text.split("/").filter((part) => part !== "");
+  return parts.length > 0 ? parts[parts.length - 1] : "";
+}
+
+/** The text of the count: `1 diagrama`, `3 diagramas`. */
+function diagramCountText(count) {
+  return `${count} ${count === 1 ? "diagrama" : "diagramas"}`;
+}
+
+/** The dot of a family: the colour of whoever drew the diagram (D3). */
+function sessionDot(family) {
+  const dot = document.createElement("span");
+  dot.className = `session-dot ${familyClass(family)}`;
+  return dot;
+}
+
+/**
+ * One row of the selector: the colour of the family, the label of the
+ * session, its project, whether it is `activa` or `en gracia` and how many
+ * diagrams it has on the plan. Every piece of it comes from the state Rust
+ * emits; the page invents none.
+ */
+function sessionRow(session) {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "session-row";
+  const chosen = !showsEverySession() && sessionFilter.id === session.id;
+  row.classList.toggle("selected", chosen);
+  row.classList.toggle("in-grace", session.state === "in_grace");
+  row.setAttribute("aria-pressed", chosen ? "true" : "false");
+  row.title = session.label;
+  row.addEventListener("click", () => selectSession(session));
+
+  const head = document.createElement("span");
+  head.className = "session-head";
+  const label = document.createElement("span");
+  label.className = "session-label";
+  label.textContent = session.label;
+  const diagramsOfSession = sessionDiagramCount(session.id);
+  const count = document.createElement("span");
+  count.className = "session-count";
+  count.textContent = String(diagramsOfSession);
+  count.title = diagramCountText(diagramsOfSession);
+  head.append(label, count);
+
+  const meta = document.createElement("span");
+  meta.className = "session-meta";
+  const family = document.createElement("span");
+  family.className = "session-family";
+  family.textContent = familyName(session.family);
+  const project = document.createElement("span");
+  project.className = "session-project";
+  const name = projectName(session.project);
+  project.textContent = name || "sin proyecto";
+  if (name) {
+    project.title = session.project;
+  }
+  const status = document.createElement("span");
+  status.className = "session-state";
+  status.textContent = session.state === "in_grace" ? "en gracia" : "activa";
+  meta.append(family, project, status);
+
+  const body = document.createElement("span");
+  body.className = "session-body";
+  body.append(head, meta);
+  row.append(sessionDot(session.family), body);
+  return row;
+}
+
+/**
+ * The fixed first row: «Todas». It shows every session again, which is what
+ * the plan shows before the human chooses anything.
+ */
+function allSessionsRow() {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "session-row";
+  row.classList.toggle("selected", showsEverySession());
+  row.setAttribute("aria-pressed", showsEverySession() ? "true" : "false");
+  row.title = "mostrar todas las sesiones";
+  row.addEventListener("click", () => selectSession(null));
+
+  const head = document.createElement("span");
+  head.className = "session-head";
+  const label = document.createElement("span");
+  label.className = "session-label";
+  label.textContent = "Todas";
+  const count = document.createElement("span");
+  count.className = "session-count";
+  count.textContent = String(state.diagrams.length);
+  count.title = diagramCountText(state.diagrams.length);
+  head.append(label, count);
+
+  const meta = document.createElement("span");
+  meta.className = "session-meta";
+  const all = document.createElement("span");
+  all.className = "session-family";
+  all.textContent = "todas las sesiones";
+  meta.append(all);
+
+  const body = document.createElement("span");
+  body.className = "session-body";
+  body.append(head, meta);
+
+  const dot = document.createElement("span");
+  dot.className = "session-dot family-all";
+  row.append(dot, body);
+  return row;
+}
+
+/**
+ * Shows the objects of the chosen session and hides the others (D5).
+ *
+ * Hiding is one class that takes the object out of the paint (`display:
+ * none` in the stylesheet): the camera, the rectangle of the object and the
+ * place Rust gave it are untouched, so «Todas» brings every diagram back
+ * exactly where it was. Nothing is closed here: the diagrams of the other
+ * sessions keep living in Rust.
+ */
+function applySessionFilter() {
+  for (const element of objects.values()) {
+    element.classList.toggle("session-hidden", !isVisibleSession(element.sessionId || ""));
+  }
+  // The badge of a diagram says whose work it is; with one session chosen
+  // every badge would say the same thing, so it only shows under «Todas»
+  // (S1, D3).
+  diagrams.classList.toggle("show-session-badges", showsEverySession());
+}
+
+/**
+ * The human chose a row of the selector (S3): the plan shows that session and
+ * hides the rest, or shows them all again with «Todas». The camera is not
+ * moved: filtering hides, it never travels (D5).
+ */
+function selectSession(session) {
+  sessionFilter = session === null ? null : { id: session.id, label: session.label };
+  sessionMessage = "";
+  applySessionFilter();
+  // The drawings that come back are mounted again by the camera that is
+  // already there: applying it changes nothing of the view, it only lets the
+  // culling decide which objects keep their SVG.
+  applyCamera();
+  renderSessions();
+}
+
+/** Chooses a session by its id; an id the selector does not list means «Todas». */
+function selectSessionById(sessionId) {
+  selectSession(state.sessions.find((session) => session.id === sessionId) || null);
+}
+
+/**
+ * The session the human was watching is gone: its grace ended and the owner
+ * dropped it with its diagrams (D4, S2). The selector says so and the plan
+ * goes back to «Todas», instead of leaving an empty plan with no explanation
+ * (S3, D5).
+ */
+function reconcileSessionFilter() {
+  if (sessionFilter === null) {
+    return;
+  }
+  if (state.sessions.some((session) => session.id === sessionFilter.id)) {
+    return;
+  }
+  sessionMessage = `la sesión «${sessionFilter.label}» terminó; vuelvo a «Todas»`;
+  sessionFilter = null;
+}
+
+/**
+ * Builds the selector from the state: the fixed row «Todas» and one row per
+ * session, in the order Rust lists them (D3: the human sees every session).
+ * The notice explains why the plan fell back to «Todas», when it had to.
+ */
+function renderSessions() {
+  const rows = [allSessionsRow()];
+  for (const session of state.sessions) {
+    rows.push(sessionRow(session));
+  }
+  sessionList.replaceChildren(...rows);
+  sessionNotice.textContent = sessionMessage;
+  sessionNotice.classList.toggle("hidden", sessionMessage === "");
+}
+
+/**
+ * The colour and the name of the session that drew a diagram (S1, D3): the
+ * badge of the object. A diagram whose session the state does not list keeps
+ * a badge with no colour instead of inventing one.
+ */
+function paintBadge(element) {
+  const session = state.sessions.find((entry) => entry.id === element.sessionId);
+  if (!session) {
+    element.badge.className = "diagram-badge";
+    element.badge.title = "";
+    return;
+  }
+  element.badge.className = `diagram-badge ${familyClass(session.family)}`;
+  element.badge.title = session.label;
 }
 
 // --- Diagrams -----------------------------------------------------------
@@ -759,6 +1020,14 @@ function insertDiagram(payload) {
   });
   content.appendChild(close);
 
+  // The badge of the session (S1, D3): a dot in the colour of whoever drew
+  // this diagram. It is positioned inside the padding ring of the object and
+  // is never in its flow, so the drawing keeps its geometry; the state paints
+  // its colour, because the family arrives with the sessions.
+  const badge = document.createElement("span");
+  badge.className = "diagram-badge";
+  content.appendChild(badge);
+
   // The rectangle of the object in plan units (PRD §7.2: the SVG plus its
   // 24 px padding). The state carries the same numbers; this is the copy the
   // culling tests every frame, and it never asks the DOM for a layout to get
@@ -794,6 +1063,7 @@ function insertDiagram(payload) {
   container.content = content;
   container.box = box;
   container.boxLabel = boxLabel;
+  container.badge = badge;
   container.caption = "";
   container.culled = false;
   paintBox(container);
@@ -957,6 +1227,12 @@ function applyCulling() {
   const zoomedOut = camera.zoom < CULL_ZOOM;
   const candidates = [];
   for (const element of objects.values()) {
+    // An object the selector is hiding keeps no drawing in the page: the
+    // three live SVGs are for the diagrams the human is looking at (D5).
+    if (element.classList.contains("session-hidden")) {
+      cullObject(element);
+      continue;
+    }
     if (zoomedOut || !rectsIntersect(element.rect, view)) {
       cullObject(element);
       continue;
@@ -982,6 +1258,12 @@ function readObject(element, diagram) {
   if (typeof diagram.title === "string" && diagram.title !== "") {
     element.caption = diagram.title;
   }
+  // Which session drew this diagram: the key the selector filters by and the
+  // colour of the badge (S1, D3). It is the same id Rust lists in `sessions`.
+  if (typeof diagram.session_id === "string" && diagram.session_id !== "") {
+    element.sessionId = diagram.session_id;
+  }
+  paintBadge(element);
   if (diagram.pos && diagram.bbox) {
     element.rect = {
       x: Number(diagram.pos.x),
@@ -1019,6 +1301,10 @@ function syncObjects() {
       readObject(element, diagram);
     }
   }
+  // The selector hides the objects of the sessions the human is not watching
+  // and badges the rest (D3, D5), before the culling decides which drawings
+  // stay in the page.
+  applySessionFilter();
   // A state may have moved an object or given it a title: whether it keeps
   // its SVG depends on both, so the culling is decided again.
   applyCulling();
@@ -1062,11 +1348,18 @@ listen("graphium://render", (event) => {
 });
 listen("graphium://state", (event) => {
   // The model of the diagrams lives in Rust (PRD §8.6.1): the frontend only
-  // reads the state it receives.
-  const diagrams = Array.isArray(event.payload) ? event.payload : [];
+  // reads the state it receives. It carries the diagrams of the plan and
+  // **every** session the human can choose from (S1, S3, D3).
+  const payload = event.payload || {};
+  const diagrams = Array.isArray(payload.diagrams) ? payload.diagrams : [];
   state.diagrams = diagrams;
+  state.sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+  // A watched session the owner dropped takes the plan back to «Todas», with
+  // a notice, never to an empty plan with no explanation (S3, D5).
+  reconcileSessionFilter();
   syncObjects();
   renderPanel();
+  renderSessions();
   empty.classList.toggle("hidden", diagrams.length > 0);
 });
 listen("graphium://pending", (event) => {
