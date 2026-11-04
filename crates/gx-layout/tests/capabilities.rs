@@ -293,6 +293,36 @@ fn the_same_nest_lays_out_the_same_way_twice() {
     assert_eq!(first.bbox, second.bbox);
 }
 
+/// Una arista que no une dos nodos declarados no puede voltear el motor:
+/// `dagre` hace panick en su network simplex cuando un extremo es un grupo o un
+/// id que no existe. La puerta de los kinds ya rechaza ese documento; el motor
+/// igual no se cae, ignora la arista y coloca todo.
+#[test]
+fn an_edge_that_names_a_group_or_an_unknown_id_is_ignored() {
+    let mut graph = graph(Direction::TB);
+    graph.groups.push(IrGroup {
+        id: "cluster".to_string(),
+        label: Some("cluster".to_string()),
+        members: vec!["a".to_string(), "b".to_string()],
+    });
+    graph.edges.push(IrEdge::new("a", "cluster"));
+    graph.edges.push(IrEdge::new("cluster", "b"));
+    graph.edges.push(IrEdge::new("c", "fantasma"));
+
+    let layout = engine().layout(&graph, &LayoutOpts::default());
+
+    assert_eq!(layout.nodes.len(), graph.nodes.len());
+    for routed in &layout.edges {
+        assert!(
+            graph.nodes.iter().any(|node| node.id == routed.from)
+                && graph.nodes.iter().any(|node| node.id == routed.to),
+            "la arista envenenada no se rutea: {routed:?}"
+        );
+    }
+    // The three original edges are routed; the three poisoned ones are not.
+    assert_eq!(layout.edges.len(), 3);
+}
+
 #[test]
 fn an_edge_with_a_label_gets_a_label_position() {
     let mut graph = graph(Direction::TB);

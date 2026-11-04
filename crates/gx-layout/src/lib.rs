@@ -189,7 +189,15 @@ impl DagreEngine {
             dagre.set_parent(member, Some(parent));
         }
 
+        // An edge that does not join two declared nodes is not the engine's
+        // business: `dagre` panics inside its network simplex when an endpoint
+        // is a compound group or an id nobody declared. The door rejects those
+        // documents; the engine still refuses to fall over.
+        let node_ids: BTreeSet<&str> = graph.nodes.iter().map(|node| node.id.as_str()).collect();
         for (index, edge) in graph.edges.iter().enumerate() {
+            if !node_ids.contains(edge.from.as_str()) || !node_ids.contains(edge.to.as_str()) {
+                continue;
+            }
             let mut label = EdgeLabel::default();
             if let Some(text) = &edge.label {
                 let measured = self
