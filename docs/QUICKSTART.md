@@ -50,7 +50,35 @@ render_diagram con el documento {"version": 1, "kind": "graph", "nodes": [{"id":
 La ventana abre con el diagrama sobre el plano. Con la rueda hacés zoom,
 arrastrando hacés pan, y con el fondo del plano la grilla se mueve con vos.
 
-## 4. Modos del binario
+## 4. Exportar el diagrama
+
+El diagrama vive en la ventana; para sacarlo de ahí está `export_diagram`. Dos
+caminos, y no son intercambiables.
+
+**Texto, para pegar.** Cero acceso a disco: el SVG vuelve por MCP en `content`.
+
+```
+export_diagram con {"format": "svg", "opts": {"inline": true}}
+```
+
+**Archivo, dentro de la raíz de exportes** (`~/.graphium/exports/`, o
+`GRAPHIUM_EXPORTS_ROOT` si la configuraste):
+
+```
+export_diagram con {"format": "svg", "opts": {"path": "arquitectura.svg"}}
+export_diagram con {"format": "png", "opts": {"path": "arquitectura.png", "scale": 2}}
+```
+
+Queda en `~/.graphium/exports/arquitectura.png`. El `path` es **siempre
+relativo** a esa raíz: los absolutos, el `..` y los symlinks vuelven con
+`export_path_outside_root` y no escriben nada. Pisar un archivo existente pide
+`"overwrite": true`; sin eso la respuesta es `export_exists` y los bytes viejos
+quedan. `png` **necesita** `path` (son bytes, no viajan como texto), acepta
+`scale` hasta 3 y un techo de píxeles; el SVG inline tiene tope de 1 MB y el
+export entero, deadline de 5 s. Exportar **no toca el plano**: no abre, no
+cierra ni vuelve a dibujar nada.
+
+## 5. Modos del binario
 
 | Comando | Qué hace |
 |---|---|
@@ -60,7 +88,7 @@ arrastrando hacés pan, y con el fondo del plano la grilla se mueve con vos.
 | `graphium --version` | Imprime la versión. |
 | `graphium --help` | Imprime la ayuda. |
 
-## 5. Una sola ventana
+## 6. Una sola ventana
 
 El primer proceso es dueño de la ventana. Un segundo cliente MCP se conecta
 por el socket local y **reenvía** sus pedidos: los dos comparten la misma
@@ -97,6 +125,7 @@ compensar no haber entendido el código: primero se lee.
 | 3 | `validate_diagram` | Dry-run: la misma validación que el render, **sin abrir nada**. Se itera gratis. |
 | 4 | `render_diagram` | Dibuja en el plano. `rendered: true` es que la ventana confirmó el pintado. |
 | 5 | `update_diagram` | Cambia un diagrama existente con un merge patch RFC 7386, transaccional. |
+| 6 | `export_diagram` | Lo saca de la ventana: `format: "svg"` + `opts.inline` para pegarlo, `opts.path` para escribirlo dentro de la raíz de exportes (el PNG exige `path`). |
 
 Después de una compaction, el agente recupera el contexto con
 `list_diagrams` y `get_diagram` en vez de adivinar un `diagram_id`.
@@ -112,6 +141,10 @@ Después de una compaction, el agente recupera el contexto con
 | `too_large` | El documento supera el límite de su kind. |
 | `stale_revision` | Se mandó una revisión vieja a `update_diagram`. |
 | `not_owner` | El diagrama pertenece a otra sesión MCP. |
+| `export_path_outside_root` | El `path` del export es absoluto, sube con `..` o pasa por un symlink. |
+| `export_exists` | El archivo ya está en la raíz de exportes: mandá `overwrite: true`. |
+| `export_timeout` | El export no terminó en 5 s. |
+| `disk_quota_exceeded` | La raíz de exportes llegó a su tope de 200 MB. |
 
 ### Configurar el cliente
 

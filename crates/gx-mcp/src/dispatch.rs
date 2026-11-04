@@ -10,13 +10,14 @@ use serde_json::{json, Value};
 use crate::contract;
 
 /// Every tool of the server, in the order the index reports them.
-pub const TOOL_NAMES: [&str; 7] = [
+pub const TOOL_NAMES: [&str; 8] = [
     "render_diagram",
     "validate_diagram",
     "get_diagram_schema",
     "list_diagrams",
     "get_diagram",
     "update_diagram",
+    "export_diagram",
     "clear_canvas",
 ];
 
@@ -79,6 +80,34 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
             let response = contract::update_diagram(session_id, diagram_id, patch, revision);
             serde_json::to_value(&response).map_err(|error| error.to_string())
         }
+        "export_diagram" => {
+            let format = arguments
+                .get("format")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "`format` is required".to_string())?;
+            let opts = arguments.get("opts").cloned().unwrap_or(Value::Null);
+            // The same implementation the stdio server uses, with the same
+            // reading of `opts`: a forwarded client cannot get a different
+            // export than a local one.
+            let request = crate::export::ExportRequest {
+                session_id: session_id.to_string(),
+                diagram_id: arguments
+                    .get("diagram_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                format: format.to_string(),
+                inline: opts.get("inline").and_then(Value::as_bool).unwrap_or(false),
+                path: opts.get("path").and_then(Value::as_str).map(str::to_string),
+                overwrite: opts
+                    .get("overwrite")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                scale: opts.get("scale").and_then(Value::as_f64),
+                max_px: opts.get("max_px").and_then(Value::as_u64),
+            };
+            let response = crate::export::export_diagram(&request);
+            serde_json::to_value(&response).map_err(|error| error.to_string())
+        }
         "clear_canvas" => {
             let scope = arguments.get("scope").and_then(Value::as_str);
             let response = contract::clear_canvas(session_id, scope);
@@ -126,6 +155,24 @@ pub fn tool_schema(name: &str) -> Value {
                 "revision": { "type": ["integer", "null"] }
             },
             "required": ["diagram_id", "patch"]
+        }),
+        "export_diagram" => json!({
+            "type": "object",
+            "properties": {
+                "diagram_id": { "type": ["string", "null"] },
+                "format": { "type": "string", "enum": ["svg", "png"] },
+                "opts": {
+                    "type": ["object", "null"],
+                    "properties": {
+                        "inline": { "type": ["boolean", "null"] },
+                        "path": { "type": ["string", "null"] },
+                        "overwrite": { "type": ["boolean", "null"] },
+                        "scale": { "type": ["number", "null"] },
+                        "max_px": { "type": ["integer", "null"] }
+                    }
+                }
+            },
+            "required": ["format"]
         }),
         "clear_canvas" => json!({
             "type": "object",
@@ -210,6 +257,48 @@ mod tests {
                     .any(|warning| warning["code"] == "opts_ignored")),
             "the relay has to report the keys of the later phases: {ignored}"
         );
+    }
+
+    /// S1-S3, S5 through the relay: a forwarded client exports exactly like a
+    /// local one. Without this arm in the dispatcher the tool would exist in
+    /// the stdio server and be invisible to the window owner's socket.
+    #[test]
+    fn the_export_is_reachable_through_the_dispatcher() {
+        let document = serde_json::json!({
+            "version": 1, "kind": "graph",
+            "nodes": [ { "id": "a", "label": "A" }, { "id": "b", "label": "B" } ],
+            "edges": [ { "from": "a", "to": "b" } ]
+        });
+        call_tool(
+            "render_diagram",
+            &serde_json::json!({ "diagram": document }),
+            "session-export",
+        )
+        .expect("rendered");
+
+        let exported = call_tool(
+            "export_diagram",
+            &serde_json::json!({ "format": "svg", "opts": { "inline": true } }),
+            "session-export",
+        )
+        .expect("exported");
+        assert_eq!(exported["ok"], true, "{exported}");
+        let content = exported["content"].as_str().expect("the SVG travels");
+        assert!(content.starts_with("<svg"), "{content}");
+        assert!(
+            content.contains("class=\"bg\""),
+            "the forwarded export paints its canvas too: {content}"
+        );
+
+        // The ceilings are the same on both paths.
+        let wrong = call_tool(
+            "export_diagram",
+            &serde_json::json!({ "format": "png", "opts": { "inline": true } }),
+            "session-export",
+        )
+        .expect("answered");
+        assert_eq!(wrong["ok"], false, "{wrong}");
+        assert_eq!(wrong["errors"][0]["code"], "invalid_value", "{wrong}");
     }
 
     #[test]
