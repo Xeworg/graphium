@@ -39,8 +39,11 @@ binario, registra el servidor por vos y agrega `/graphium` (estado) y
 `/graphium open` (abrir el plano):
 
 ```bash
-ln -s "$PWD/extensions/pi/graphium" ~/.pi/agent/extensions/graphium
+ln -s "$PWD/extensions/pi/graphium" "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/graphium"
 ```
+
+(`PI_CODING_AGENT_DIR` manda: en gentle-shell las extensiones viven en
+`~/.gentle-shell/agent/extensions/`.)
 
 Ojo: `graphium mcp-config --client pi` imprime **TOML**, pero Pi lee
 `~/.pi/agent/mcp.json` en JSON. Con la extensión ese archivo no se toca.

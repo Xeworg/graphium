@@ -30,11 +30,16 @@ Dónde busca el binario, en orden:
 Con el repo clonado, para todas las sesiones de Pi:
 
 ```bash
-ln -s "$PWD/extensions/pi/graphium" ~/.pi/agent/extensions/graphium
+# Pi normal: ~/.pi/agent/extensions
+# gentle-shell y otros: manda PI_CODING_AGENT_DIR
+ln -s "$PWD/extensions/pi/graphium" "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/graphium"
 ```
 
-o, si preferís no tocar tu carpeta de extensiones, agregá la ruta a
-`~/.pi/agent/settings.json`:
+En esta máquina `PI_CODING_AGENT_DIR` es `/home/xeworg/.gentle-shell/agent`, así
+que el enlace va ahí y no en `~/.pi/agent`.
+
+o, si preferís no tocar tu carpeta de extensiones, agregá la ruta al
+`settings.json` de ese mismo directorio:
 
 ```json
 { "extensions": ["/ruta/a/Graphium/extensions/pi/graphium"] }
