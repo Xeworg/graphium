@@ -7,6 +7,7 @@
 
 pub mod engine;
 pub mod error;
+pub mod export;
 pub mod fmt;
 pub mod geom;
 pub mod ir;
@@ -18,6 +19,10 @@ pub mod tokens;
 
 pub use engine::{install, render_json, Engines};
 pub use error::{ErrorCode, ValidationError};
+pub use export::{
+    install_rasterizer, rasterizer, ExportFormat, PathError, RasterError, RasterImage,
+    RasterOptions, Rasterizer,
+};
 pub use fmt::fmt_num;
 pub use geom::{Point, Rect, Size};
 pub use ir::{
