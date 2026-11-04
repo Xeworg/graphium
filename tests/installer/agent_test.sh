@@ -17,17 +17,21 @@ assert_contains "$out" "se omite"
 assert_no_file "$SCRATCH_HOME/.pi/agent/extensions/graphium"
 
 # Con el host presente, la extensión aterriza completa y con la versión del
-# árbol.
-mkdir -p "$SCRATCH_HOME/.pi/agent"
+# árbol. gentle-shell es otro host (fork de Pi en otra ruta) y aterriza en
+# el suyo: GENTLE_SHELL_AGENT_DIR o ~/.gentle-shell/agent.
+mkdir -p "$SCRATCH_HOME/.pi/agent" "$SCRATCH_HOME/.gentle-shell/agent"
 run_installer agent --env pi >/dev/null
 for file in index.ts package.json README.md; do
   assert_file "$SCRATCH_HOME/.pi/agent/extensions/graphium/$file"
 done
 grep -q '"version"' "$SCRATCH_HOME/.pi/agent/extensions/graphium/package.json"
+run_installer agent --env gentle-shell >/dev/null
+assert_file "$SCRATCH_HOME/.gentle-shell/agent/extensions/graphium/index.ts"
 
-# --all sobre el mismo host reinstala (sobreescribe) sin fallar.
+# --all reinstala en ambos hosts (sobreescribe) sin fallar.
 run_installer agent --all >/dev/null
 assert_file "$SCRATCH_HOME/.pi/agent/extensions/graphium/index.ts"
+assert_file "$SCRATCH_HOME/.gentle-shell/agent/extensions/graphium/index.ts"
 
 # Sin tty y sin --env/--all: error accionable, no una pregunta colgada.
 if run_installer agent >/dev/null 2>&1; then

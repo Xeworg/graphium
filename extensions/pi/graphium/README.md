@@ -35,16 +35,26 @@ Dónde busca el binario, en orden:
 
 ## Instalar
 
-Con el repo clonado, para todas las sesiones de Pi:
+Con el instalador del repositorio (recomendado: instala el binario en
+`$HOME/.local/bin`, así la extensión lo encuentra por el PATH):
 
 ```bash
-# Pi normal: ~/.pi/agent/extensions
-# gentle-shell y otros: manda PI_CODING_AGENT_DIR
-ln -s "$PWD/extensions/pi/graphium" "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/graphium"
+./install.sh agent    # pregunta en qué agente instalar; sin tty: --env pi
 ```
 
-En esta máquina `PI_CODING_AGENT_DIR` es `/home/xeworg/.gentle-shell/agent`, así
-que el enlace va ahí y no en `~/.pi/agent`.
+A mano, con el repo clonado, para todas las sesiones de cada host:
+
+```bash
+# pi: PI_CODING_AGENT_DIR o ~/.pi/agent
+# gentle-shell: GENTLE_SHELL_AGENT_DIR o ~/.gentle-shell/agent
+ln -s "$PWD/extensions/pi/graphium" "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/graphium"
+ln -s "$PWD/extensions/pi/graphium" "${GENTLE_SHELL_AGENT_DIR:-$HOME/.gentle-shell/agent}/extensions/graphium"
+```
+
+En esta máquina `PI_CODING_AGENT_DIR` es `/home/xeworg/.gentle-shell/agent`;
+con el instalador no importa: `--all` instala la copia en cada host presente
+y tenerla en ambos no da conflicto (cada host registra su propio MCP y sus
+sesiones son independientes).
 
 o, si preferís no tocar tu carpeta de extensiones, agregá la ruta al
 `settings.json` de ese mismo directorio:

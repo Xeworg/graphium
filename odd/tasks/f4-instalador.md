@@ -46,10 +46,10 @@ primer tag (el tag sigue siendo decisión del humano).
   [commit: 10dfa20]
 - T5 (S5): `scripts/package-release.sh` + `.github/workflows/release.yml`
   (trigger `v*`): gates + build x86_64/aarch64 + publish con binarios,
-  extensión, `install.sh` y SHA256SUMS. [commit: pendiente]
+  extensión, `install.sh` y SHA256SUMS. [commit: eb478f9]
 - T6 (S1-S4): suite de tests del instalador (`scripts/test-installer.sh` +
   `tests/installer/`) contra HOME de scratch; el CI de release la corre.
-  [commit: pendiente]
+  [commit: eb478f9]
 - T7 (S1-S4): docs (README raíz y README de la extensión) y verificación
   local completa. [commit: 10dfa20]
 
@@ -75,3 +75,11 @@ primer tag (el tag sigue siendo decisión del humano).
 - L6: hallazgo del primer run de install.sh: faltaba `mkdir -p` del
   directorio de instalación (falla en un HOME sin ~/.local/bin). Corregido
   junto con S6.
+- L7: «esto es una version de pi, pero no es la version de pi real, no se si
+  afecta el que este instalado en ambas si no afecta podemos agregar tambien
+  una opcion para gentle shell ya que pi esta instalado en otra ruta» —
+  gentle-shell y pi son hosts separados (fork instalado en otra ruta);
+  tener la extensión en ambos no afecta (cada host registra su propio MCP
+  y sus sesiones son independientes). El instalador vuelve a ofrecer los
+  dos: pi en PI_CODING_AGENT_DIR o ~/.pi/agent, gentle-shell en
+  GENTLE_SHELL_AGENT_DIR o ~/.gentle-shell/agent; --all cubre ambos.

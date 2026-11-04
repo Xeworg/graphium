@@ -52,10 +52,12 @@ usage() {
     '  install    Instala (el comando por omisión). Con un release más nuevo' \
     '             publicado, actualiza el binario instalado.' \
     '  agent      Instala la extensión de Graphium (extensions/pi/graphium)' \
-    '             en el agente de IA. Detecta el host presente (pi, con' \
-    '             PI_CODING_AGENT_DIR o ~/.pi/agent) y si ya está instalada;' \
-    '             en una terminal pregunta si instalar o actualizar. Sin tty' \
-    '             hay que pasar --env pi o --all.' \
+    '             en los agentes de IA elegidos. Detecta los hosts presentes' \
+    '             (pi en PI_CODING_AGENT_DIR o ~/.pi/agent; gentle-shell en' \
+    '             GENTLE_SHELL_AGENT_DIR o ~/.gentle-shell/agent) y en cuáles' \
+    '             ya está instalada; en una terminal pregunta en cuáles' \
+    '             instalar o actualizar. Sin tty hay que pasar --env <name>' \
+    '             (uno o más) o --all.' \
     '  update     Si hay un release más nuevo que lo instalado, actualiza el' \
     '             binario y refresca la extensión en cada agente que ya la' \
     '             tiene. Antes del primer release avisa y no hace nada.' \
@@ -63,7 +65,7 @@ usage() {
     '             tienen. Los datos de exportes (~/.graphium) se conservan.' \
     '' \
     'Opciones de agent:' \
-    '  --env <name>  Agente destino (repetible): pi.' \
+    '  --env <name>  Agente destino (repetible): pi, gentle-shell.' \
     '  --all         Todos los hosts detectados.' \
     '' \
     'El binario de Graphium abre una ventana (Tauri): necesita' \
@@ -339,16 +341,18 @@ install_binary() {
 # --- la extensión de los agentes --------------------------------------------
 
 # Los hosts de agente que el instalador conoce, y dónde busca extensiones
-# cada uno. gentle-shell es un flavor de Pi y honra la misma variable: hay
-# un solo host «pi», cuyo directorio de agente es PI_CODING_AGENT_DIR o
-# ~/.pi/agent.
+# cada uno. gentle-shell es un fork de Pi instalado en otra ruta: son dos
+# hosts distintos, cada uno con su copia de la extensión (no hay conflicto:
+# cada host registra su propio MCP y sus sesiones son independientes). pi
+# honra PI_CODING_AGENT_DIR; gentle-shell, GENTLE_SHELL_AGENT_DIR.
 agent_envs() {
-  printf '%s\n' pi
+  printf '%s\n' pi gentle-shell
 }
 
 agent_env_dir() {
   case "$1" in
     pi) printf '%s\n' "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions" ;;
+    gentle-shell) printf '%s\n' "${GENTLE_SHELL_AGENT_DIR:-$HOME/.gentle-shell/agent}/extensions" ;;
     *) return 1 ;;
   esac
 }
@@ -456,7 +460,7 @@ select_agents() {
 
   if [[ ! -t 0 ]]; then
     error "sin terminal no se pregunta en qué agentes instalar:"
-    error "pasá --env pi o --all."
+    error "pasá --env <name> (pi, gentle-shell) o --all."
     return 1
   fi
 
