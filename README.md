@@ -41,6 +41,28 @@ cargo build --release --bin graphium
 cargo test --workspace
 ```
 
+## Instalar
+
+Con el repositorio clonado, instala el binario en `$HOME/.local/bin` y la
+extensión en tu agente de IA:
+
+```bash
+./install.sh          # compila e instala $HOME/.local/bin/graphium
+./install.sh agent    # instala la extensión en el agente (pi; pregunta en una tty)
+./install.sh update   # actualiza binario y extensión si hay un release más nuevo
+./install.sh uninstall
+```
+
+Sin clonar nada, una vez publicado el primer release:
+
+```bash
+curl -fsSL https://github.com/Xeworg/graphium/releases/latest/download/install.sh | bash
+```
+
+El binario abre una ventana (Tauri): necesita `webkit2gtk-4.1` en tiempo de
+ejecución; el instalador lo avisa si falta. Los tests del instalador corren
+contra un HOME de scratch: `bash scripts/test-installer.sh`.
+
 ## Usarlo desde un cliente MCP
 
 El binario imprime su propia configuración:

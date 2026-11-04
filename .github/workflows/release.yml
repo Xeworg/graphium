@@ -1,0 +1,168 @@
+name: release
+
+# Un tag de versión corta un release: corre los gates, compila los artefactos
+# para cada plataforma soportada y los publica con sus checksums. El tag es
+# la versión (v0.1.0 -> 0.1.0). Etiquetar es la decisión del humano; sin tag
+# no hay release y el instalador pipeado avisa que no hay nada que bajar.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: tests and gates
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the system dependencies (RNF2)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            file
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Build
+        run: cargo build --workspace
+
+      - name: Tests
+        run: cargo test --workspace
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Installer suite
+        run: bash scripts/test-installer.sh
+
+  build:
+    name: build ${{ matrix.arch }}
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the system dependencies (RNF2)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            file
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked
+
+      # La extensión de Pi no depende de la plataforma: se empaqueta una
+      # sola vez, en el job x86_64.
+      - name: Package
+        run: |
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            bash scripts/package-release.sh --version "${GITHUB_REF_NAME}" --arch "${{ matrix.arch }}" --outdir dist
+          else
+            bash scripts/package-release.sh --version "${GITHUB_REF_NAME}" --arch "${{ matrix.arch }}" --outdir dist --no-extension
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: graphium-${{ matrix.arch }}
+          path: |
+            dist/graphium-linux-${{ matrix.arch }}.tar.gz
+            dist/graphium-pi-extension.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Merge the checksums
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp artifacts/*/graphium-*.tar.gz release/
+          cat artifacts/*/SHA256SUMS >release/SHA256SUMS
+          # El instalador viaja con el release y queda cubierto por el
+          # mismo archivo de checksums.
+          cp install.sh release/install.sh
+          (cd release && sha256sum -- install.sh >>SHA256SUMS)
+          (cd release && sort -k2 -- SHA256SUMS >SHA256SUMS.sorted && mv SHA256SUMS.sorted SHA256SUMS)
+
+      - name: Verify the checksums
+        run: cd release && sha256sum -c SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          notes="$(mktemp)"
+          cat >"$notes" <<NOTES
+          Graphium ${TAG#v}
+
+          Instalalo con:
+
+              curl -fsSL https://github.com/Xeworg/graphium/releases/latest/download/install.sh | bash
+
+          Fijá una versión con GRAPHIUM_VERSION:
+
+              curl -fsSL https://github.com/Xeworg/graphium/releases/download/${TAG}/install.sh | bash
+
+          Después conectá tu agente con:
+
+              ./install.sh agent
+
+          El binario abre una ventana (Tauri): necesita webkit2gtk-4.1 en
+          tiempo de ejecución. Los artefactos de este release están cubiertos
+          por SHA256SUMS, verificables con:
+
+              sha256sum -c SHA256SUMS
+
+          Este release no está firmado todavía: el checksum protege contra
+          una descarga corrupta o truncada, no contra un release
+          comprometido.
+          NOTES
+          gh release create "$TAG" \
+            release/graphium-*.tar.gz \
+            release/install.sh \
+            release/SHA256SUMS \
+            --title "Graphium ${TAG#v}" \
+            --notes-file "$notes" \
+            --verify-tag

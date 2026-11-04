@@ -6,3 +6,6 @@ node_modules/
 
 # Tauri generated schemas
 crates/gx-app/gen/
+
+# Installer test-suite build cache and scratch artifacts
+tmp/
