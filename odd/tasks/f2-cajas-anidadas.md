@@ -37,6 +37,34 @@ hoja; la caja se pinta de fondo translúcido detrás de nodos y aristas, así qu
 eso es costo de legibilidad y no dibujo roto. Si algún día molesta, el que pelea
 eso es el motor, no `gx-layout`.
 
+## Reporte upstream (redactado para `dagre` 0.1.2, **no publicado**)
+
+Título propuesto: *compound layout leaves nodes without coordinates when
+children of a cluster are ranked through transitive dummies*.
+
+Cuerpo, listo para pegar en un issue (no se abre sin permiso del humano porque
+es un repositorio ajeno):
+
+> `build_layer_matrix` (`src/layout/util.rs`, ~líneas 155-181) coloca cada nodo
+> en `layers[rank][order]` sin buscar un hueco libre. Cuando dos nodos de la
+> misma capa comparten `order` —y los nodos compuestos entran en las listas de
+> **cada** capa que abarcan (`layout/order/mod.rs`, el bucle `min_rank..=max_rank`),
+> y `do_resolve_conflicts` descarta los que caen en un ciclo de restricciones—
+> el último pisa al primero, el pisado no entra en la matriz y `position_x`/
+> `position_y` nunca le escriben coordenadas (`layout/position/mod.rs`);
+> `translate_graph` ignora los `None` sin avisar.
+>
+> Reproducción: 100 nodos, 150 aristas, 8 clusters de 12 nodos más **un grupo
+> externo que contiene a los 8**. Resultado: 82 de 100 nodos con `x` y `y` en
+> `None`. Sin el grupo externo: 100/100. Anidando sin aristas: 96/96.
+> `NodeLabel.padding` y el orden de las llamadas a `set_parent` no cambian nada.
+>
+> Parche mínimo (una función): en `build_layer_matrix`, si el slot `order` ya
+> está ocupado, usar el primer slot libre de esa capa y reasignar `order`
+> densos. Parche de causa (dos funciones): además, en `do_resolve_conflicts`,
+> agregar al final del orden los nodos que nunca salieron del conjunto de
+> fuente. El primero no cambia el comportamiento de los grafos sin colisiones.
+
 ## Tasks
 
 | ID | Qué | Specs | Ruta | Commit |
