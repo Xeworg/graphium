@@ -9,16 +9,16 @@ validación/layout/render; RSS < 250 MB con 12 diagramas de 300 nodos».
 
 ## Specs
 
-- **S1** (PRD §7 RF10, verbatim): «**RF10.** Tool `export_diagram(diagram_id?, format, opts)`:
-  - `inline: true` → devuelve texto por MCP: `markdown` (bloque mermaid dentro de markdown), `mermaid` (DSL puro), `svg`. **Cero acceso a disco.** Camino primario para pegar en READMEs.
+- **S1** (PRD §7 RF10, verbatim, luego del cambio de alcance L2/L8): «**RF10.** Tool `export_diagram(diagram_id?, format, opts)`, con `format: "svg" | "png"`:
+  - `inline: true` → devuelve **texto por MCP**: el SVG. **Cero acceso a disco.** Camino primario para pegar donde haga falta.
   - `path: <relativo>` → escribe SOLO dentro de la raíz de exportes (`~/.graphium/exports/` o configurada): rechaza `..`, absolutos y symlinks; `png` rasteriza con `resvg`; sobrescribir exige `opts.overwrite: true`.
-  - Nota de identidad: Mermaid aparece **solo como formato de export de texto** para interoperar con GitHub — nunca como motor (O6 se mantiene).»
+  - Nota de alcance (§21): **Mermaid y markdown salieron del alcance**, con RF10.1 (matriz de export por kind). No se genera DSL ajeno; el motor sigue siendo propio (**O6** — Mermaid nunca fue motor, así que O6 no cambia).»
 - **S2** (PRD §7 RF10-bis, verbatim): «**RF10-bis — Límites de export (F2).** `inline` devuelve como máximo **1 MB** de texto; si el contenido excede → `ok: false, code: "too_large", size_bytes` con `hint: "usá path para escribir a archivo o opts.extract"`. `png` acepta `opts.scale` (default 1.0, techo 3.0) y `opts.max_px` (default 16 Mpx, techo 64 Mpx): si `ancho × alto × scale²` excede `max_px` → `too_large` con las dimensiones calculadas. Todo export tiene deadline de **5 s** → `export_timeout`. La raíz de exportes tiene tope de **200 MB** → `disk_quota_exceeded`.»
-- **S3** (PRD §11, tabla de tools, verbatim): «| `export_diagram` | `diagram_id?`, `format: "markdown"\|"mermaid"\|"svg"\|"png"`, `opts: { inline?: bool, path?: string, overwrite?: bool, scale?: number, max_px?: number }` | inline → `{ ok, content }`; archivo → `{ ok, path }` (solo raíz autorizada) |»
+- **S3** (PRD §11, tabla de tools, verbatim): «| `export_diagram` | `diagram_id?`, `format: "svg"\|"png"`, `opts: { inline?: bool, path?: string, overwrite?: bool, scale?: number, max_px?: number }` | inline → `{ ok, content }`; archivo → `{ ok, path }` (solo raíz autorizada) |»
 - **S4** (PRD §11.1, verbatim): «`export_diagram` sin `diagram_id`: si hay exactamente 1 abierto en la sesión → ese; si hay 0 → `unknown_diagram`; si hay ≥ 2 → `ambiguous_diagram` con `candidates[]`.» y «`get_diagram`/`update_diagram`/`export_diagram` sobre un diagrama de otra sesión → `not_owner` con `hint: "ese diagrama pertenece a otra sesión MCP"`.»
 - **S5** (PRD §5, verbatim): «**H4 — Exportación inline (F2):**
-  El humano pide pegar el diagrama en el README del repo. El agente llama `export_diagram(format: "markdown", inline: true)` y recibe el texto (bloque mermaid embebido en markdown) por el canal MCP — sin escribir un archivo. Para archivo: `export_diagram(format: "svg", path: "arquitectura.svg")` escribe solo dentro de la raíz de exportes autorizada.»
-- **S6** (PRD §8.5, verbatim): «- **Export:** `svg` = el string; `png` = `resvg`; `mermaid`/`markdown` = traducción IR→DSL de texto (interoperabilidad GitHub, no motor).»
+  El humano pide pegar el diagrama en el README del repo. El agente llama `export_diagram(format: "svg", inline: true)` y recibe el texto (el SVG) por el canal MCP — sin escribir un archivo. Para archivo: `export_diagram(format: "svg", path: "arquitectura.svg")` escribe solo dentro de la raíz de exportes autorizada.»
+- **S6** (PRD §8.5, verbatim): «- **Export:** `svg` = el string; `png` = `resvg`, ambos con la paleta resuelta. Sin DSL ajeno: Mermaid/markdown están fuera del alcance (§21).»
 - **S7** (PRD §8.5.2, verbatim): «- El export `svg` incluye la paleta resuelta; el export `png` rasteriza con esa paleta.»
 - **S8** (PRD §7 RNF4, verbatim): «**Seguridad:** sin ejecución de código del JSON, sin network externa; **escritura de Graphium limitada a `~/.graphium/`** (`settings.json` + `exports/`); **la IA solo escribe dentro de `~/.graphium/exports/`** (RF10); MCP stdio solamente.»
 - **S9** (PRD §7, criterio 14, verbatim): «**no** afecta al SVG exportado (el export sale sin grilla).»
@@ -46,9 +46,9 @@ Consecuencias, todas aplicadas:
 
 | ID | Tarea | Specs | Ruta | Commit |
 |---|---|---|---|---|
-| T1 | Feature doc del corte + mirror + lista de tareas | S1-S12 | inline | este PR |
-| T2 | `gx-core`: módulo `export` con el sandbox (ruta relativa, sin `..`, sin symlink), los límites (1 MB inline, 5 s, 200 MB de raíz, escala y techo de píxeles) y el seam del rasterizador | S2, S8, S12 | inline | este PR |
-| T3 | El índice de kinds deja de prometer `mermaid_export`; el PRD y el README quedan coherentes | S6 | inline | este PR |
+| T1 | Feature doc del corte + mirror + lista de tareas | S1-S12 | inline | `770f4f7` |
+| T2 | `gx-core`: módulo `export` con el sandbox (ruta relativa, sin `..`, sin symlink), los límites (1 MB inline, 5 s, 200 MB de raíz, escala y techo de píxeles) y el seam del rasterizador | S2, S8, S12 | inline | `3877d05` |
+| T3 | El índice de kinds deja de prometer `mermaid_export`; el PRD queda coherente (v1.8, §21) | S6 | inline | `881dd73` |
 | T4 | `png` con `resvg`: rasteriza el SVG con la paleta resuelta, con `opts.scale` y `opts.max_px`; **medición del presupuesto de binario** (RNF1-quater) | S2, S7, S10, S11 | inline | PR de T4 |
 | T5 | Tool `export_diagram`: `svg` inline (tope de 1 MB, deadline de 5 s), `svg`/`png` a archivo (sandbox, `opts.overwrite`, cuota de la raíz), `diagram_id` opcional (`unknown_diagram` / `ambiguous_diagram` / `not_owner`) | S1, S2, S3, S4, S5 | inline | PR de T5 |
 | T6 | Cierre: descripción de la tool para el agente, relay, `README`/`QUICKSTART`, suite completa en verde, clippy y fmt limpios | S3, S5 | inline | PR de T6 |
@@ -68,3 +68,7 @@ Consecuencias, todas aplicadas:
 - **L6** (2026-11-03, el PNG y las fuentes): el SVG lleva `font-family:Inter` y el texto como `<text>`, así que el PNG necesita la misma fuente que el resto del dibujo: la Inter embebida, no la del sistema. Rasterizar con la fuente del sistema daría un PNG que no se parece al SVG, que es justo lo que el export promete. El PNG queda **fuera del pipeline determinista** (S10): sus bytes dependen de la versión de `resvg` y no se comparan por hash.
 
 - **L7** (2026-11-03, el tema del export, revisado sobre L5): L5 había anotado como «límite conocido» que el export sale con la paleta oscura aunque el humano esté mirando otro tema. Ese límite se resuelve **sin** romper la matriz de dependencias (§9.1): `gx-core::export` guarda el tema del plano en un slot (`install_theme` / `plan_theme`, oscuro por defecto), igual que ya hace con los motores y el renderer. `gx-app` instala el tema con el que está pintando y `gx-mcp` lo lee al exportar; `gx-mcp` sigue **sin** depender de `gx-app`, porque el valor viaja por `gx-core`, que es la base de los dos. Si nadie instala nada, el export sale oscuro, que es exactamente lo que L5 describía. L5 queda como historia; lo que manda es L7.
+
+- **L8** (2026-11-03, T3: el PRD se puso coherente): sacar Mermaid del corte dejaba al PRD prometiendo lo que ya no se iba a hacer: `format: "markdown" | "mermaid"` (RF10, §5 H4, §11 tabla), la matriz RF10.1 y el campo `mermaid_export` del índice de `get_diagram_schema`. El PRD sube a **v1.8** (§21) y esas líneas se reescriben a `svg`/`png`; el campo sale del índice en `gx-mcp`. S1, S3, S5 y S6 quedaron reescritas con el texto nuevo, verbatim. La prueba de T3 no es «el campo no está» sino que la entrada serializada del índice tenga **exactamente** las seis claves que el producto cumple (`disponible`, `engine`, `kind`, `limits`, `min_example`, `phase`): un índice que promete una capacidad inexistente es una mentira que el agente no tiene cómo verificar.
+
+**Slice 1** de este corte (rama `feature/f2-export`): T1 `770f4f7` + T2 `3877d05` + T3 `881dd73` — unas 530 líneas, de las cuales 433 son `gx-core::export`. T4 (`resvg` + presupuesto de binario), T5 (tool `export_diagram`) y T6 (cierre) van en PRs propios, cada uno con su medición.
