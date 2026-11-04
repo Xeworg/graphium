@@ -147,7 +147,11 @@ pub fn render_json(src: &str, opts: &RenderOpts) -> Result<RenderOutcome, Vec<Va
 
     let palette = Palette::for_theme(opts.theme);
     let render_started = Instant::now();
-    let svg = engines.renderer.render(&ir, &layout, &palette);
+    let svg = if opts.export {
+        engines.renderer.render_export(&ir, &layout, &palette)
+    } else {
+        engines.renderer.render(&ir, &layout, &palette)
+    };
     let render_ms = render_started.elapsed().as_millis() as u64;
     let svg_bytes = svg.len();
 

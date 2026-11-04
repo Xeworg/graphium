@@ -12,6 +12,7 @@
 
 pub mod contract;
 pub mod dispatch;
+pub mod export;
 pub mod harness;
 pub mod store;
 pub mod tools;
@@ -91,6 +92,26 @@ nodes) and the response carries `extracted_from: \"<diagram_id>@<depth>\"`; \
 `opts.focus: { id, depth? }` puts the camera on that node and, with `depth`, on \
 its neighbourhood. `opts.replace_id` and `opts.interactive` arrive in F2/F3 and \
 are ignored for now.";
+
+/// Description of the `export_diagram` tool, written for the agent.
+const EXPORT_DIAGRAM_DESCRIPTION: &str = "\
+Exports a diagram of this session as SVG or PNG. With `format: \"svg\"` and \
+`opts.inline: true` (or no `opts`) the SVG comes back as text in `content`, \
+with zero disk access: paste it in a README or in a message. With `opts.path` \
+the export writes a file instead, and the path is **relative to the exports \
+root** (`~/.graphium/exports/` or the configured root): absolute paths, `..` \
+and symlinks are refused with `export_path_outside_root`. `svg` and `png` \
+both write to a path; `png` **requires** `opts.path`, because it is bytes and \
+not text. An existing file is not replaced unless you send `opts.overwrite: \
+true`; without it the answer is `export_exists` and the old bytes stay. \
+`diagram_id` is optional: without it the tool exports the only open diagram \
+of the session, and answers `ambiguous_diagram` with the candidates when \
+there are two or more. The response is JSON: { ok, content, path, format, \
+diagram_id, bytes, size_bytes, errors }. Inline SVG is capped at 1 MB (`ok: \
+false, code: \"too_large\", size_bytes` past it: send `opts.path` or narrow \
+the diagram), a PNG accepts `opts.scale` (default 1.0, ceiling 3.0) and \
+`opts.max_px` (default 16 Mpx, ceiling 64 Mpx), and the whole export has a \
+5 s deadline (`export_timeout`). Exporting never changes the plan.";
 
 /// Description of the `validate_diagram` tool, written for the agent.
 const VALIDATE_DIAGRAM_DESCRIPTION: &str = "\
@@ -188,6 +209,40 @@ pub struct UpdateDiagramParams {
     /// The revision the caller read; a stale one is rejected.
     #[serde(default)]
     pub revision: Option<u64>,
+}
+
+/// The options of an export (PRD §11, RF10).
+///
+/// Every field is optional so `opts: {}` works: the defaults are the ones of
+/// PRD §7 RF10-bis (inline for `svg`, scale 1.0 and 16 Mpx for `png`).
+#[derive(Debug, Clone, Default, serde::Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct ExportOpts {
+    /// Returns the SVG as text instead of writing a file.
+    pub inline: Option<bool>,
+    /// The path relative to the exports root where the file is written.
+    pub path: Option<String>,
+    /// Whether an existing file may be replaced.
+    pub overwrite: Option<bool>,
+    /// Scale of the PNG (default 1.0, ceiling 3.0).
+    pub scale: Option<f64>,
+    /// Pixel ceiling of the PNG (default 16 Mpx, ceiling 64 Mpx).
+    pub max_px: Option<u64>,
+}
+
+/// Parameters of the `export_diagram` tool (PRD §11).
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExportDiagramParams {
+    /// The id returned by `render_diagram` or `list_diagrams`. Without it the
+    /// tool exports the only open diagram of the session.
+    #[serde(default)]
+    pub diagram_id: Option<String>,
+    /// `svg` or `png`.
+    pub format: String,
+    /// The options of the export.
+    #[serde(default)]
+    pub opts: Option<ExportOpts>,
 }
 
 /// Parameters of the `render_diagram` tool (PRD §11).
@@ -308,6 +363,43 @@ impl GraphiumServer {
         Parameters(params): Parameters<GetDiagramParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let response = contract::get_diagram(&self.session_id, &params.diagram_id);
+        structured(response)
+    }
+
+    #[tool(
+        name = "export_diagram",
+        description = EXPORT_DIAGRAM_DESCRIPTION,
+        annotations(
+            title = "Export diagram",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn export_diagram(
+        &self,
+        Parameters(params): Parameters<ExportDiagramParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let opts = params.opts.unwrap_or_default();
+        let request = export::ExportRequest {
+            session_id: self.session_id.clone(),
+            diagram_id: params.diagram_id,
+            format: params.format,
+            inline: opts.inline.unwrap_or(false),
+            path: opts.path,
+            overwrite: opts.overwrite.unwrap_or(false),
+            scale: opts.scale,
+            max_px: opts.max_px,
+        };
+
+        // The render, the rasterization and the write run off the async loop,
+        // under the deadline of RF10-bis (PRD §7).
+        let response = tokio::task::spawn_blocking(move || export::export_diagram(&request))
+            .await
+            .map_err(|error| {
+                ErrorData::internal_error(format!("the export task failed: {error}"), None)
+            })?;
         structured(response)
     }
 
@@ -461,7 +553,7 @@ mod tests {
     use rmcp::handler::server::wrapper::Parameters;
     use rmcp::ServiceExt;
 
-    use super::{mcp_config_json, GraphiumServer, RenderDiagramParams};
+    use super::{mcp_config_json, ExportDiagramParams, GraphiumServer, RenderDiagramParams};
     use crate::test_support::{lock_renders, MINIMAL};
 
     #[test]
@@ -507,6 +599,54 @@ mod tests {
             .expect("the input schema has properties");
         assert!(properties.contains_key("diagram"), "{properties:?}");
         assert!(properties.contains_key("opts"), "{properties:?}");
+    }
+
+    /// S3: la tool existe en el router, con la descripción que el agente
+    /// necesita para elegir entre inline y archivo.
+    #[test]
+    fn the_server_advertises_export_diagram() {
+        let tools = GraphiumServer::tool_router().list_all();
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == "export_diagram")
+            .expect("export_diagram is advertised");
+
+        let description = tool.description.as_deref().unwrap_or_default();
+        for expected in ["inline", "path", "overwrite", "png"] {
+            assert!(
+                description.contains(expected),
+                "the description names `{expected}`: {description}"
+            );
+        }
+
+        let properties = tool.input_schema["properties"]
+            .as_object()
+            .expect("the input schema has properties");
+        assert!(properties.contains_key("diagram_id"), "{properties:?}");
+        assert!(properties.contains_key("format"), "{properties:?}");
+        assert!(properties.contains_key("opts"), "{properties:?}");
+    }
+
+    /// S3: `opts` es opcional y un `opts: {}` vacío tiene que funcionar.
+    #[test]
+    fn an_empty_opts_is_the_default_export() {
+        let params: ExportDiagramParams = serde_json::from_value(serde_json::json!({
+            "format": "svg",
+            "opts": {}
+        }))
+        .expect("an empty opts is valid");
+        assert!(params.diagram_id.is_none());
+        let opts = params.opts.expect("opts is there");
+        assert_eq!(opts.inline, None);
+        assert_eq!(opts.path, None);
+        assert_eq!(opts.overwrite, None);
+        assert_eq!(opts.scale, None);
+        assert_eq!(opts.max_px, None);
+
+        let bare: ExportDiagramParams =
+            serde_json::from_value(serde_json::json!({ "format": "svg" }))
+                .expect("opts is optional");
+        assert!(bare.opts.is_none());
     }
 
     #[tokio::test]

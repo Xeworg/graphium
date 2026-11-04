@@ -120,6 +120,10 @@ pub struct RenderOpts {
     /// How much of the drawing is degraded to enter the budget of
     /// PRD §7.3. The caller walks the ladder; the door only obeys.
     pub degradation: Degradation,
+    /// Draws the document as a **self-contained file** (PRD §7 RF10, §8.5.2):
+    /// the canvas is painted in the palette colour. The plan leaves the object
+    /// transparent so the grid shows through, so this is off by default.
+    pub export: bool,
 }
 
 /// The neighbourhood to draw instead of the whole graph (PRD §7.3, S21).
@@ -145,6 +149,7 @@ impl Default for RenderOpts {
             layout_timeout_ms: DEFAULT_LAYOUT_TIMEOUT_MS,
             extract: None,
             degradation: Degradation::NONE,
+            export: false,
         }
     }
 }
@@ -239,4 +244,14 @@ pub struct RenderOutcome {
 /// The SVG renderer behind a trait (PRD §8.5).
 pub trait SvgRenderer: Send + Sync {
     fn render(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> String;
+
+    /// The drawing as a self-contained document: the canvas painted in the
+    /// palette colour (PRD §8.5.2, S7).
+    ///
+    /// The default is the plain drawing, which is right for anything that
+    /// paints its own background; the real renderer overrides it, because an
+    /// exported file has nobody behind it.
+    fn render_export(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> String {
+        self.render(ir, layout, palette)
+    }
 }
