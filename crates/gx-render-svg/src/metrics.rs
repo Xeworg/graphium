@@ -9,9 +9,12 @@ use gx_core::{Size, TextMetrics, TextStyle};
 use rustybuzz::{Face, UnicodeBuffer};
 
 /// Inter Regular, embedded so the metrics never read the filesystem (PRD §8.5).
-const INTER_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
+///
+/// The PNG rasterizer loads the very same bytes: the text of the PNG has to be
+/// measured with the face that draws it.
+pub(crate) const INTER_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/Inter-Regular.ttf");
 /// Inter SemiBold, embedded for weight 600 (PRD §8.5, S8).
-const INTER_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
+pub(crate) const INTER_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
 
 /// Why the embedded font could not be used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

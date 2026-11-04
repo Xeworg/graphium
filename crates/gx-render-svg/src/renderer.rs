@@ -58,10 +58,28 @@ impl SvgRenderer {
     pub fn metrics(&self) -> Arc<dyn TextMetrics> {
         Arc::clone(&self.metrics)
     }
-}
 
-impl SvgRendererContract for SvgRenderer {
-    fn render(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> String {
+    /// The drawing as a **self-contained** document: the same SVG the plan
+    /// paints, plus the canvas rectangle in the palette colour (PRD §8.5.2,
+    /// S7).
+    ///
+    /// The plan leaves the object transparent on purpose — the diagram floats
+    /// over the grid — but an exported file is pasted somewhere else, and a
+    /// light text over a transparent background is invisible when the reader
+    /// has a white page. The rectangle uses the `.bg` rule the style block
+    /// already carries, so the export shares the palette instead of inventing
+    /// one.
+    pub fn render_export(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> String {
+        self.render_with(ir, layout, palette, true)
+    }
+
+    fn render_with(
+        &self,
+        ir: &Ir,
+        layout: &LayoutGraph,
+        palette: &Palette,
+        background: bool,
+    ) -> String {
         let canvas = canvas_rect(layout);
         let mut out = String::new();
 
@@ -75,6 +93,18 @@ impl SvgRendererContract for SvgRenderer {
             fmt_num(canvas.h),
         ));
         write_style(&mut out, palette);
+
+        // The background goes right after the style block: under every layer,
+        // so nothing it covers is lost.
+        if background {
+            out.push_str(&format!(
+                "<rect class=\"bg\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>\n",
+                fmt_num(canvas.x),
+                fmt_num(canvas.y),
+                fmt_num(canvas.w),
+                fmt_num(canvas.h),
+            ));
+        }
 
         let graph = ir.graph();
         let timeline = ir.timeline();
@@ -155,6 +185,12 @@ impl SvgRendererContract for SvgRenderer {
 
         out.push_str("</svg>");
         out
+    }
+}
+
+impl SvgRendererContract for SvgRenderer {
+    fn render(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> String {
+        self.render_with(ir, layout, palette, false)
     }
 }
 

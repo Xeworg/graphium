@@ -814,3 +814,50 @@ fn a_sequence_keeps_a_lifeline_under_every_actor() {
         "capas no lleva líneas de vida: {svg}"
     );
 }
+
+/// S7 (PRD §8.5.2): el export es un documento **cerrado**, y el plano no. El
+/// objeto del plano tiene que dejar ver la grilla detrás del dibujo, así que
+/// solo el export pinta el rectángulo del lienzo; y ese rectángulo cubre todo
+/// el `viewBox`, porque un fondo que no llega al borde deja una franja
+/// transparente donde el texto claro desaparece.
+#[test]
+fn only_the_export_paints_the_canvas() {
+    let plan = render_fixture();
+    assert!(
+        !plan.contains("<rect class=\"bg\""),
+        "el plano deja el objeto transparente: {plan}"
+    );
+
+    let palette = Palette::plano();
+    let engine = engine();
+    let exported =
+        engine.render_export(&fixture::fixture_ir(), &fixture::fixture_layout(), &palette);
+
+    let document = Document::parse(&exported).expect("the exported svg parses");
+    let root = document.root_element();
+    let view_box: Vec<&str> = root
+        .attribute("viewBox")
+        .expect("the canvas has a viewBox")
+        .split(' ')
+        .collect();
+    let background = document
+        .descendants()
+        .find(|node| node.attribute("class") == Some("bg"))
+        .expect("the export paints a background");
+    assert_eq!(background.attribute("x"), Some(view_box[0]), "covers x");
+    assert_eq!(background.attribute("y"), Some(view_box[1]), "covers y");
+    assert_eq!(background.attribute("width"), Some(view_box[2]), "covers w");
+    assert_eq!(
+        background.attribute("height"),
+        Some(view_box[3]),
+        "covers h"
+    );
+
+    // Todo lo demás es el mismo dibujo: el export no reescribe nada.
+    let without_background: String = exported
+        .lines()
+        .filter(|line| !line.contains("<rect class=\"bg\""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(without_background, plan);
+}

@@ -31,6 +31,17 @@ pub fn install_engines() -> Result<(), Box<dyn Error>> {
         metrics,
         renderer,
     });
+
+    // The PNG of an export is rasterized by the process that owns the window:
+    // `resvg` travels behind the `png` feature so the MCP-only build does not
+    // pay for it (RNF1-quater).
+    gx_core::export::install_rasterizer(Arc::new(gx_render_svg::ResvgRasterizer::new()));
+
+    // The export paints with the theme the human is looking at, and the theme
+    // lives here: `gx-mcp` reads it through `gx-core` and never depends on this
+    // crate (decision L7 of `f2-export.md`).
+    gx_core::export::install_theme(settings::Settings::load().theme());
+
     Ok(())
 }
 

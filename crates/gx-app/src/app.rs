@@ -292,6 +292,9 @@ pub fn build(keep_alive: bool) -> (tauri::App<tauri::Wry>, Arc<PlanState>) {
         // comes back, so a rejected field never leaves the UI lying.
         let settings = Settings::load();
         settings_state.set_settings(settings.clone());
+        // The export follows the theme of the plan: the human changed what it
+        // sees, so the next export paints with it (decision L7).
+        gx_core::export::install_theme(settings.theme());
         let _ = settings_handle.emit("graphium://settings", settings);
     });
 
