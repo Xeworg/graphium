@@ -41,12 +41,12 @@ las sesiones stdio.
 |---|---|---|---|---|
 | T1 | Registro de sesiones en el dueño: `SessionRecord`, resolución de identidad (env → `clientInfo` → proceso) y ciclo `activa`/`en gracia`; el transporte **stdio** se registra | S4, S6, D1, D4 | worker | `374d08b` |
 | T1-bis | Registrar también cada conexión de **socket** como sesión: el relay y los ids `sock-<pid>-<n>` viven en `crates/gx-app/src/relay.rs`, no en `gx-mcp` (corrección de ruta a L4) | S4, D1 | worker | pending |
-| T2 | `register_session({ label? })` que devuelve la sesión propia, y `session` en las respuestas de `render_diagram`/`list_diagrams` para que el agente sepa con qué nombre lo ven | S3, D2 | inline | pending |
+| T2 | `register_session({ label? })` que devuelve la sesión propia, y `session` en las respuestas de `render_diagram`/`list_diagrams` | S3, D2 | worker | `c876604` (PR #36) |
 | T3 | Fin de sesión: borrar sus diagramas al vencer la gracia, y conteo real de sesiones (stdio + sockets) con `too_many_sessions`. Incluye T1-bis | S2, S7, D4, D6 | worker | pending |
-| T4 | Interfaz: selector lateral (familia con icono/color, etiqueta, proyecto, estado, contador), opción «todas», badge por diagrama, aviso cuando desaparece la sesión que estabas mirando | S1, S3, D3, D5 | inline | pending |
+| T4 | Interfaz: selector lateral (familia con icono/color, etiqueta, proyecto, estado, contador), opción «todas», badge por diagrama, aviso cuando desaparece la sesión que estabas mirando | S1, S3, D3, D5 | worker | `8bcf26d` (PR #37) |
 | T5 | PRD: **RF30** nueva (sesiones visibles y aisladas), reescritura de §11.1 «Alcance de sesión» y de RNF9, nota en §12 | S6, S7, S8 | inline | pending |
 | T6 | Extensión de Pi: registrar con `env` de identidad y re-registrar si cambia el id de sesión; `verify.mjs` en 17 checks | S4, D1 | worker | `4df7703` |
-| T7 | Cierre: rama `feature/f3-sesiones`, PR con cuerpo, merge sin tag | — | parent | pending |
+| T7 | Cierre: tres PRs con merge y sin tag — motor (#35), superficie (#36), selector (#37); ramas borradas | — | parent | `541e47c` + `ea6e2df` |
 
 ## Slices de revisión
 
@@ -89,3 +89,5 @@ Ninguno lleva tag: el release se decide aparte.
 - **L3** (orden, 2026-11-04): el selector **no necesita** el daemon — el dueño ya recibe varias sesiones por socket (hasta 8) —, así que va primero y solo; el background (vida del proceso, tray, ventana, sesión `ui`) es el corte siguiente.
 - **L4** (estado hoy, verificado en código): `session_id` es la constante `"stdio"` en el proceso dueño (`crates/gx-mcp/src/lib.rs:272-283`) y `sock-<pid>-<n>` para cada conexión reenviada; **el relay, esos ids y `MAX_SESSIONS` viven en `crates/gx-app/src/relay.rs:16-20,117`**, no en `gx-mcp` (corregido en T1); `not_owner` existe y se emite (`contract.rs:805,856`); `owner_unavailable` y `diagram_closed` son variantes muertas.
 - **L5** (T1 y T6, medido): `cargo test -p gx-mcp --lib` 106 en verde y `node extensions/pi/graphium/verify.mjs` en 17 checks. La extensión lee `ctx.sessionManager.getSessionId()` (`dist/core/session-manager.d.ts:178,246`) y usa `PI_SESSION_ID` solo como respaldo, porque esa variable existe en los subprocesos de bash/powershell, no en la extensión; los valores `env` del registro MCP son plantillas `${…}`. Decisión del worker sobre la identidad: familia y versión salen **del mismo nivel** (una familia declarada no se mezcla con una versión de protocolo).
+
+- **L6** (cierre, medido): el corte salió en tres PRs mergeados en `main` — motor `#35` (`541e47c` incluye el merge), superficie `#36`, selector `#37` (`ea6e2df`) — con las ramas borradas y sin tag. Gates en cada uno: `cargo test --workspace`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets`; y en el selector además `node --check`. **Lo que no está verificado por máquina es el dibujo del selector**: `crates/gx-app/frontend` no tiene harness de JS, así que falta mirarlo con dos sesiones vivas.
