@@ -4,6 +4,12 @@
 //! `100n/150e` without groups, `100n/400e` without groups, `100n/150e` with
 //! 8 clusters and `300n/600e` without groups.
 //!
+//! Next to those four there is a fifth case, [`rf15_nested_case`], which is
+//! **not** part of the matrix the PRD fixes: it is the reproduction of the
+//! defect of S3 (`100n/150e + 8 clusters + grupo externo`) and the evidence
+//! that nested groups never drop a node (S7, S8 of
+//! `odd/tasks/f2-cajas-anidadas.md`).
+//!
 //! The cases are built with a fixed formula, never with randomness: the same
 //! case has to be the same graph on every machine and every run.
 
@@ -38,6 +44,26 @@ pub fn rnf1_bis_cases() -> Vec<Case> {
             graph: build(300, 600, 0),
         },
     ]
+}
+
+/// The extra case for RF15: the reproduction of the defect of S3, the eight
+/// leaf clusters wrapped in one outer group, with edges that cross groups.
+///
+/// It is not one of the four cases RNF1-bis measures (the PRD fixes four and
+/// the thresholds are asserted for those); it is the nested reproduction that
+/// proves the engine never returns fewer nodes than the IR (S8).
+pub fn rf15_nested_case() -> Case {
+    let mut graph = build(100, 150, 8);
+    let members: Vec<String> = graph.groups.iter().map(|group| group.id.clone()).collect();
+    graph.groups.push(IrGroup {
+        id: "outer".to_string(),
+        label: Some("grupo externo".to_string()),
+        members,
+    });
+    Case {
+        name: "100n/150e + 8 clusters + grupo externo",
+        graph,
+    }
 }
 
 /// Builds a deterministic graph with `nodes` nodes, `edges` edges and
@@ -91,7 +117,7 @@ fn build(nodes: usize, edges: usize, clusters: usize) -> IrGraph {
 
 #[cfg(test)]
 mod tests {
-    use super::rnf1_bis_cases;
+    use super::{rf15_nested_case, rnf1_bis_cases};
 
     #[test]
     fn the_matrix_has_the_four_cases_of_the_prd() {
@@ -135,6 +161,41 @@ mod tests {
         assert_eq!(
             rnf1_bis_cases()[0].graph.nodes[7].id,
             rnf1_bis_cases()[0].graph.nodes[7].id
+        );
+    }
+
+    /// El quinto caso es el de S8: los ocho clusters hoja dentro de un grupo
+    /// externo, sin tocar los cuatro índices que fija el PRD.
+    #[test]
+    fn the_extra_case_wraps_the_eight_clusters_in_one_outer_group() {
+        let case = rf15_nested_case();
+        assert_eq!(
+            (
+                case.graph.nodes.len(),
+                case.graph.edges.len(),
+                case.graph.groups.len(),
+            ),
+            (100, 150, 9)
+        );
+        let outer = case.graph.groups.last().expect("el grupo externo");
+        assert_eq!(outer.id, "outer");
+        assert_eq!(outer.members.len(), 8);
+        assert!(outer
+            .members
+            .iter()
+            .all(|member| member.starts_with("cluster")));
+        // El PRD sigue midiendo cuatro casos, en el mismo orden.
+        assert_eq!(
+            rnf1_bis_cases()
+                .iter()
+                .map(|case| case.name)
+                .collect::<Vec<_>>(),
+            vec![
+                "100n/150e",
+                "100n/400e",
+                "100n/150e + 8 clusters",
+                "300n/600e",
+            ]
         );
     }
 }

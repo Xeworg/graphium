@@ -13,7 +13,7 @@ use std::sync::Arc;
 use dagre::graph::{Graph, GraphOptions};
 use dagre::{layout, EdgeLabel, LayoutOptions, NodeLabel, RankDir, Ranker};
 use gx_core::geom::{Point, Rect, Size};
-use gx_core::ir::{Direction, IrEvent, IrGraph, IrLane, IrTimeline};
+use gx_core::ir::{Direction, IrEvent, IrGraph, IrGroup, IrLane, IrTimeline};
 use gx_core::layout::{LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, LayoutOpts, NodeBox};
 use gx_core::text::{TextMetrics, TextStyle};
 use gx_core::tokens::TOKENS;
@@ -35,6 +35,19 @@ const EDGE_SEPARATION: f64 = 20.0;
 const DETOUR_CLEARANCE: f64 = 12.0;
 /// Margin around the drawing.
 const MARGIN: f64 = 10.0;
+/// How far the box of a cluster grows past its members on the left, right and
+/// bottom edges, in plan units. The top edge grows by [`GROUP_TOP_PADDING`]
+/// instead: it has to hold the name of the cluster.
+const GROUP_PADDING: f64 = TOKENS.node_padding;
+/// How far the box of a cluster grows past its topmost member, in plan units.
+///
+/// The renderer writes the name of the box at `y = bbox.y + text_size` with a
+/// central baseline, so the line of text occupies from half a line above that
+/// baseline to half a line below it, that is, down to
+/// `bbox.y + text_size * 1.5`. The top edge therefore has to be raised by that
+/// whole line plus the same gap the other sides get: pushing it up only
+/// [`GROUP_PADDING`] would draw the name on top of the first member.
+const GROUP_TOP_PADDING: f64 = TOKENS.text_size * 1.5 + TOKENS.node_padding;
 
 /// The layered layout engine, backed by `dagre` 0.1.2 (PRD §8.4).
 pub struct DagreEngine {
@@ -57,12 +70,80 @@ fn rank_dir(direction: Direction) -> RankDir {
     }
 }
 
+/// What one pass of the engine placed, in plan units, before the drawing is
+/// normalized.
+struct Pass {
+    /// The nodes `dagre` gave coordinates to, by id.
+    nodes: BTreeMap<String, NodeBox>,
+    /// The routes `dagre` reported.
+    edges: Vec<LayoutEdge>,
+    /// The boxes `dagre` reported for the leaf clusters. Empty in the flat
+    /// pass, where every group box is computed locally.
+    cluster_boxes: BTreeMap<String, Rect>,
+}
+
 impl LayoutEngine for DagreEngine {
     fn layout(&self, graph: &IrGraph, opts: &LayoutOpts) -> LayoutGraph {
+        let mut pass = self.run(graph, opts, true);
+
+        // S7 of `odd/tasks/f2-cajas-anidadas.md`: a drawing that silently lost
+        // a node is not a drawing. `dagre` 0.1.2 can still leave nodes without
+        // coordinates when many leaf clusters have edges crossing them, so the
+        // engine asks for a second pass, without compound nodes and with every
+        // box computed locally. The second pass runs only when the first one
+        // came back short: the normal path pays one pass, never two.
+        if pass.nodes.len() < graph.nodes.len() {
+            pass = self.run(graph, opts, false);
+            place_leftovers(graph, &mut pass.nodes, &pass.edges, opts.spacing_scale);
+        }
+
+        let mut groups = group_boxes(graph, &pass.nodes, &pass.cluster_boxes);
+
+        // Normalize so the drawing starts at (0, 0) (F0 decision L9).
+        let offset = drawing_offset(&pass.nodes, &pass.edges, &groups);
+        for placed in pass.nodes.values_mut() {
+            placed.center.x -= offset.0;
+            placed.center.y -= offset.1;
+        }
+        for edge in &mut pass.edges {
+            for point in &mut edge.points {
+                point.x -= offset.0;
+                point.y -= offset.1;
+            }
+            if let Some(point) = &mut edge.label_at {
+                point.x -= offset.0;
+                point.y -= offset.1;
+            }
+        }
+        for group in &mut groups {
+            group.bbox.x -= offset.0;
+            group.bbox.y -= offset.1;
+        }
+
+        let bbox = drawing_bbox(&pass.nodes, &pass.edges, &groups);
+        LayoutGraph {
+            nodes: pass.nodes,
+            edges: pass.edges,
+            groups,
+            bbox,
+        }
+    }
+}
+
+impl DagreEngine {
+    /// Runs `dagre` once and collects what it placed, in plan units, before the
+    /// drawing is normalized.
+    ///
+    /// `compound` asks for the leaf clusters as compound nodes (S5). The safety
+    /// net runs the very same pass with `compound: false`, where `dagre` sees
+    /// only the nodes and every group box is computed here (S7).
+    fn run(&self, graph: &IrGraph, opts: &LayoutOpts, compound: bool) -> Pass {
         let mut dagre: Graph<NodeLabel, EdgeLabel> = Graph::with_options(GraphOptions {
             directed: true,
             multigraph: true,
-            compound: true,
+            // The flat pass of the safety net (S7) tells `dagre` that the graph
+            // has no groups at all, so the compound code paths stay out of it.
+            compound,
         });
 
         for node in &graph.nodes {
@@ -81,14 +162,30 @@ impl LayoutEngine for DagreEngine {
             );
         }
 
-        // Clusters: a compound parent node with the members below it. Every
-        // group is registered first, because a group can be a member of another
-        // one (PRD §7 RF15) and the engine needs both ends to exist before it
-        // links them.
+        // Clusters: a compound parent node with the members below it. Only the
+        // leaf clusters are registered (S5 of `odd/tasks/f2-cajas-anidadas.md`):
+        // `dagre` 0.1.2 drops node positions when a cluster's members are ranked
+        // through transitive dummies, so a group that contains another group
+        // never reaches the engine. Its box is built here instead (S6).
+        //
+        // The flat pass of the safety net (S7) registers no group at all: an
+        // empty set makes both loops below no-ops and leaves every box to the
+        // local computation.
+        let leaves = if compound {
+            leaf_groups(graph)
+        } else {
+            BTreeSet::new()
+        };
         for group in &graph.groups {
+            if !leaves.contains(group.id.as_str()) {
+                continue;
+            }
             dagre.set_node(group.id.clone(), Some(NodeLabel::default()));
         }
         for (parent, member) in group_parents(graph) {
+            if !leaves.contains(parent) {
+                continue;
+            }
             dagre.set_parent(member, Some(parent));
         }
 
@@ -183,58 +280,188 @@ impl LayoutEngine for DagreEngine {
             });
         }
 
-        let depths = group_depths(graph);
-        let mut groups = Vec::new();
+        // The boxes the engine already has. Only the leaf clusters went to
+        // `dagre`, so these are the only ones it can report; every other group
+        // is computed from its members by `group_boxes` (S6). A cluster whose
+        // box `dagre` could not place simply stays out of the map and is
+        // computed locally too, so no group loses its box.
+        let mut cluster_boxes: BTreeMap<String, Rect> = BTreeMap::new();
         for group in &graph.groups {
+            if !leaves.contains(group.id.as_str()) {
+                continue;
+            }
             let Some(label) = dagre.node(group.id.as_str()) else {
                 continue;
             };
             let (Some(x), Some(y)) = (label.x, label.y) else {
                 continue;
             };
-            groups.push(LayoutGroup {
-                id: group.id.clone(),
-                label: group.label.clone(),
-                bbox: Rect::new(
+            cluster_boxes.insert(
+                group.id.clone(),
+                Rect::new(
                     x - label.width / 2.0,
                     y - label.height / 2.0,
                     label.width,
                     label.height,
                 ),
-                depth: depths.get(group.id.as_str()).copied().unwrap_or(0),
-            });
+            );
         }
 
-        // Normalize so the drawing starts at (0, 0) (F0 decision L9).
-        let offset = drawing_offset(&nodes, &edges, &groups);
-        for placed in nodes.values_mut() {
-            placed.center.x -= offset.0;
-            placed.center.y -= offset.1;
-        }
-        for edge in &mut edges {
-            for point in &mut edge.points {
-                point.x -= offset.0;
-                point.y -= offset.1;
-            }
-            if let Some(point) = &mut edge.label_at {
-                point.x -= offset.0;
-                point.y -= offset.1;
-            }
-        }
-        for group in &mut groups {
-            group.bbox.x -= offset.0;
-            group.bbox.y -= offset.1;
-        }
-
-        let bbox = drawing_bbox(&nodes, &edges, &groups);
-
-        LayoutGraph {
+        Pass {
             nodes,
             edges,
-            groups,
-            bbox,
+            cluster_boxes,
         }
     }
+}
+
+/// The box of every group, in the same coordinates as the nodes, before the
+/// drawing is normalized.
+///
+/// A cluster that `dagre` placed keeps its box (`cluster_boxes`). A group that
+/// contains another group — and every group in the flat pass, where
+/// `cluster_boxes` is empty — gets its box here: the union of the boxes of its
+/// members expanded by the padding, innermost first (S6 of
+/// `odd/tasks/f2-cajas-anidadas.md`). A group with no member left to measure
+/// gets no box, the same way it got none before.
+fn group_boxes(
+    graph: &IrGraph,
+    nodes: &BTreeMap<String, NodeBox>,
+    cluster_boxes: &BTreeMap<String, Rect>,
+) -> Vec<LayoutGroup> {
+    let depths = group_depths(graph);
+
+    let mut boxes: BTreeMap<&str, Rect> = BTreeMap::new();
+    for group in &graph.groups {
+        if let Some(bbox) = cluster_boxes.get(&group.id) {
+            boxes.insert(group.id.as_str(), *bbox);
+        }
+    }
+
+    let mut ancestors: Vec<&IrGroup> = graph
+        .groups
+        .iter()
+        .filter(|group| !boxes.contains_key(group.id.as_str()))
+        .collect();
+    // Innermost first: a box is built from boxes that already exist. The id
+    // breaks ties between two groups of the same depth, so the order — and the
+    // drawing — does not depend on the order of the document.
+    ancestors.sort_by(|left, right| {
+        depths
+            .get(right.id.as_str())
+            .cmp(&depths.get(left.id.as_str()))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    for group in ancestors {
+        let mut members: Option<Rect> = None;
+        for member in &group.members {
+            let Some(rect) = member_rect(nodes, &boxes, member) else {
+                continue;
+            };
+            members = Some(members.map_or(rect, |acc| acc.union(&rect)));
+        }
+        let Some(members) = members else {
+            continue;
+        };
+        boxes.insert(
+            group.id.as_str(),
+            Rect::new(
+                members.min_x() - GROUP_PADDING,
+                members.min_y() - GROUP_TOP_PADDING,
+                members.w + 2.0 * GROUP_PADDING,
+                members.h + GROUP_TOP_PADDING + GROUP_PADDING,
+            ),
+        );
+    }
+
+    let mut groups = Vec::new();
+    for group in &graph.groups {
+        let Some(bbox) = boxes.get(group.id.as_str()).copied() else {
+            continue;
+        };
+        groups.push(LayoutGroup {
+            id: group.id.clone(),
+            label: group.label.clone(),
+            bbox,
+            depth: depths.get(group.id.as_str()).copied().unwrap_or(0),
+        });
+    }
+    groups
+}
+
+/// Places the nodes no pass could position, in a column below the drawing and
+/// in the order of the document (S7, last resort).
+///
+/// It is a last resort and it is written down as one: that spot is not a
+/// layout, it is a place to stand. It runs only if `dagre` drops nodes even
+/// without compound nodes, and it exists because returning a `LayoutGraph` with
+/// fewer nodes than the IR is worse than any odd position: the drawing would
+/// quietly lose a box, and the counts of the IR and of the layout would never
+/// agree again, so nothing downstream could tell an empty graph from a broken
+/// one.
+///
+/// It is deterministic: it walks the nodes of the IR in the order of the
+/// document, so the same graph gets the same column, run after run.
+fn place_leftovers(
+    graph: &IrGraph,
+    nodes: &mut BTreeMap<String, NodeBox>,
+    edges: &[LayoutEdge],
+    scale: f64,
+) {
+    let occupied = drawing_bbox(nodes, edges, &[]);
+    let gap = RANK_SEPARATION * scale;
+    let left = occupied.min_x();
+    let mut top = occupied.max_y() + gap;
+    for node in &graph.nodes {
+        if nodes.contains_key(node.id.as_str()) {
+            continue;
+        }
+        nodes.insert(
+            node.id.clone(),
+            NodeBox {
+                center: Point::new(left + node.size.w / 2.0, top + node.size.h / 2.0),
+                size: node.size,
+            },
+        );
+        top += node.size.h + gap;
+    }
+}
+
+/// The groups whose members are all nodes (S5): the only clusters `dagre` sees
+/// as compound nodes. A member that is neither a node nor a group is ignored,
+/// the same way the parent pairs ignore it.
+fn leaf_groups(graph: &IrGraph) -> BTreeSet<&str> {
+    let group_ids: BTreeSet<&str> = graph.groups.iter().map(|group| group.id.as_str()).collect();
+    graph
+        .groups
+        .iter()
+        .filter(|group| {
+            !group
+                .members
+                .iter()
+                .any(|member| group_ids.contains(member.as_str()))
+        })
+        .map(|group| group.id.as_str())
+        .collect()
+}
+
+/// The box of a member of a cluster: the box of a placed node, or the box of a
+/// group that was already computed. `None` when the member was not placed.
+fn member_rect(
+    nodes: &BTreeMap<String, NodeBox>,
+    boxes: &BTreeMap<&str, Rect>,
+    member: &str,
+) -> Option<Rect> {
+    if let Some(bbox) = boxes.get(member) {
+        return Some(*bbox);
+    }
+    let placed = nodes.get(member)?;
+    Some(Rect::new(
+        placed.center.x - placed.size.w / 2.0,
+        placed.center.y - placed.size.h / 2.0,
+        placed.size.w,
+        placed.size.h,
+    ))
 }
 
 /// The parent of each group, read from the members that name another group.
@@ -1049,5 +1276,68 @@ impl LayoutEngine for LanesEngine {
             groups,
             bbox,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use gx_core::geom::{Point, Size};
+    use gx_core::ir::{Direction, IrGraph, IrNode, LayoutHint};
+    use gx_core::layout::NodeBox;
+
+    use super::place_leftovers;
+
+    fn node(id: &str, w: f64, h: f64) -> IrNode {
+        let mut node = IrNode::new(id, id);
+        node.size = Size::new(w, h);
+        node
+    }
+
+    /// S7, last resort: a node `dagre` could not place even in the flat pass is
+    /// not dropped. It goes to a column below the drawing, in the order of the
+    /// document, and lands in the same spot run after run.
+    #[test]
+    fn the_last_resort_places_the_leftovers_in_a_column_below_the_drawing() {
+        let graph = IrGraph {
+            direction: Direction::TB,
+            layout_hint: LayoutHint::Layered,
+            nodes: vec![
+                node("placed", 100.0, 40.0),
+                node("a", 60.0, 30.0),
+                node("b", 80.0, 50.0),
+            ],
+            edges: Vec::new(),
+            groups: Vec::new(),
+        };
+        let place = |graph: &IrGraph| {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(
+                "placed".to_string(),
+                NodeBox {
+                    center: Point::new(50.0, 20.0),
+                    size: Size::new(100.0, 40.0),
+                },
+            );
+            place_leftovers(graph, &mut nodes, &[], 1.0);
+            nodes
+        };
+
+        let nodes = place(&graph);
+        assert_eq!(nodes.len(), graph.nodes.len(), "no node is dropped");
+        let a = nodes.get("a").expect("a is placed");
+        let b = nodes.get("b").expect("b is placed");
+        assert!(
+            a.center.y - a.size.h / 2.0 > 20.0,
+            "the leftovers go below the drawing"
+        );
+        assert!(a.center.y < b.center.y, "the document order wins");
+        assert_eq!(
+            a.center.x - a.size.w / 2.0,
+            b.center.x - b.size.w / 2.0,
+            "a single column, left aligned"
+        );
+        assert_eq!(nodes, place(&graph), "the last resort is deterministic");
     }
 }
