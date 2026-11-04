@@ -193,6 +193,37 @@ fn state_entries() -> Vec<StateEntry> {
         .collect()
 }
 
+/// The state of the plan the panel reads (PRD §8.6.1, S8; feature
+/// `f3-sesiones`, S1/S3/D3/D5).
+///
+/// Besides the diagrams, it carries **every** session of the owner, because
+/// the human is the exception to the isolation of D3: the selector lists them
+/// all and chooses which ones the plan shows. Each diagram already names its
+/// session (`session_id`), which is the key the selector and the badge use.
+#[derive(Debug, Clone, Serialize)]
+struct PlanPayload {
+    diagrams: Vec<StateEntry>,
+    /// The sessions in the deterministic order of the registry (a
+    /// `BTreeMap`, never a `HashMap`): the rows never jump around.
+    sessions: Vec<gx_mcp::session::SessionView>,
+}
+
+/// The whole state of the plan: what is drawn and who drew it.
+///
+/// The store is read first on purpose: reading it is the tick that ends the
+/// sessions whose grace finished (D4, S2), so a session that ended is already
+/// gone from the list the selector reads instead of lingering as a row with no
+/// diagrams.
+fn plan_payload() -> PlanPayload {
+    let diagrams = state_entries();
+    let sessions = gx_mcp::session::session_registry()
+        .list()
+        .into_iter()
+        .map(|record| record.view())
+        .collect();
+    PlanPayload { diagrams, sessions }
+}
+
 /// Builds the Tauri application with the plan window.
 ///
 /// `keep_alive` is true in MCP mode: closing the window must not kill the
@@ -269,7 +300,7 @@ pub fn build(keep_alive: bool) -> (tauri::App<tauri::Wry>, Arc<PlanState>) {
             "graphium://closed",
             serde_json::json!({ "diagram_id": payload.diagram_id }),
         );
-        let _ = close_handle.emit("graphium://state", state_entries());
+        let _ = close_handle.emit("graphium://state", plan_payload());
     });
 
     let ready_state = Arc::clone(&state);
@@ -277,6 +308,10 @@ pub fn build(keep_alive: bool) -> (tauri::App<tauri::Wry>, Arc<PlanState>) {
     handle.listen("graphium://ready", move |_event| {
         ready_state.set_ready();
         let _ = ready_handle.emit("graphium://settings", ready_state.settings());
+        // The selector of sessions is built from the state, like the panel
+        // (S8): the page gets one as soon as it is alive, so the rows are
+        // there before the first render and never invented by the page.
+        let _ = ready_handle.emit("graphium://state", plan_payload());
     });
 
     let settings_state = Arc::clone(&state);
@@ -408,7 +443,7 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
 
         // The model of the diagrams lives in Rust (PRD §8.6.1, S22): the
         // frontend rebuilds its panel from this event.
-        let _ = window.emit("graphium://state", state_entries());
+        let _ = window.emit("graphium://state", plan_payload());
 
         gx_mcp::tools::RenderStatus::Painted
     });
@@ -461,5 +496,128 @@ mod tests {
 
         assert!(json.get("pos").is_none(), "{json}");
         assert!(json.get("bbox").is_none(), "{json}");
+    }
+
+    /// The identity a session declares, resolved the way the transports
+    /// resolve it (D1).
+    fn declared_identity(
+        client: &str,
+        session: &str,
+        project: &str,
+    ) -> gx_mcp::session::ResolvedIdentity {
+        gx_mcp::session::resolve(
+            &gx_mcp::session::Declared {
+                client: Some(client.to_string()),
+                session: Some(session.to_string()),
+                project: Some(project.to_string()),
+            },
+            &gx_mcp::session::ClientFingerprint::default(),
+            &gx_mcp::session::ProcessFingerprint::default(),
+        )
+    }
+
+    /// S1/S3/D3: the panel is built only from this event, so the state has to
+    /// carry **every** session of the owner — the human sees all of them — and
+    /// say which session drew each diagram, or the selector cannot group a row
+    /// with its diagrams.
+    #[test]
+    fn the_state_of_the_plan_carries_every_session_and_what_it_drew() {
+        let pid = std::process::id();
+        let pi_id = format!("pi-panel-{pid}");
+        let claude_id = format!("claude-panel-{pid}");
+
+        // Two live sessions, each with one diagram on the plan.
+        let registry = gx_mcp::session::session_registry();
+        registry.connect(&pi_id, &declared_identity("pi", &pi_id, "/work/graphium"));
+        registry.connect(
+            &claude_id,
+            &declared_identity("claude", &claude_id, "/work/api"),
+        );
+        let store = gx_mcp::store::diagram_store();
+        let pi_diagram = store.next_id();
+        store.insert(
+            pi_diagram.clone(),
+            "schema".to_string(),
+            "er".to_string(),
+            pi_id.clone(),
+            "{}".to_string(),
+        );
+        let claude_diagram = store.next_id();
+        store.insert(
+            claude_diagram.clone(),
+            "flujo".to_string(),
+            "graph".to_string(),
+            claude_id.clone(),
+            "{}".to_string(),
+        );
+
+        let payload = serde_json::to_value(super::plan_payload()).expect("the state serializes");
+
+        let sessions = payload["sessions"]
+            .as_array()
+            .expect("the state carries the sessions the human can choose");
+        let ids: Vec<&str> = sessions
+            .iter()
+            .filter_map(|session| session["id"].as_str())
+            .collect();
+        assert!(
+            ids.windows(2).all(|pair| pair[0] < pair[1]),
+            "the sessions come in a deterministic order, not in the order of a map: {ids:?}"
+        );
+
+        let pi = sessions
+            .iter()
+            .find(|session| session["id"].as_str() == Some(pi_id.as_str()))
+            .expect("the Pi session is in the state");
+        assert_eq!(pi["family"], "pi");
+        assert_eq!(pi["state"], "active");
+        assert_eq!(pi["project"], "/work/graphium");
+        assert!(
+            pi["label"]
+                .as_str()
+                .is_some_and(|label| label.starts_with("Pi · graphium")),
+            "the row shows the label of the session: {pi}"
+        );
+
+        let claude = sessions
+            .iter()
+            .find(|session| session["id"].as_str() == Some(claude_id.as_str()))
+            .expect("the Claude session is in the state");
+        assert_eq!(claude["family"], "claude");
+
+        // D4: a session in grace is still a row of the selector — the human
+        // sees everything (D3) — with its state spelled out for the page.
+        registry.begin_grace(&claude_id, std::time::SystemTime::now());
+        let in_grace = serde_json::to_value(super::plan_payload()).expect("serializes");
+        let claude = in_grace["sessions"]
+            .as_array()
+            .expect("the state carries the sessions")
+            .iter()
+            .find(|session| session["id"].as_str() == Some(claude_id.as_str()))
+            .expect("a session in grace is still listed")
+            .clone();
+        assert_eq!(claude["state"], "in_grace");
+
+        let diagrams = payload["diagrams"]
+            .as_array()
+            .expect("the state carries the diagrams of the plan");
+        for (diagram_id, session_id) in [(&pi_diagram, &pi_id), (&claude_diagram, &claude_id)] {
+            let entry = diagrams
+                .iter()
+                .find(|entry| entry["diagram_id"].as_str() == Some(diagram_id.as_str()))
+                .unwrap_or_else(|| panic!("{diagram_id} is on the plan"));
+            assert_eq!(
+                entry["session_id"].as_str(),
+                Some(session_id.as_str()),
+                "a diagram says which session drew it"
+            );
+            assert!(
+                sessions
+                    .iter()
+                    .any(|session| session["id"] == entry["session_id"]),
+                "the session of a diagram is one the selector lists, or the row \
+                 and its diagrams would disagree: {entry}"
+            );
+        }
     }
 }
