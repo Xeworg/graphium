@@ -3,12 +3,22 @@
 //! The owner of the socket serves a minimal JSON-RPC dispatcher: the
 //! forwarded calls are the same tool calls the stdio server serves, so a
 //! second MCP client gets the same answers from the same window.
+//!
+//! Every accepted connection is a session of the owner (feature `f3-sesiones`,
+//! T1-bis/T3): it registers with the identity its client declares on the wire,
+//! it spends one place of `MAX_SESSIONS` together with the stdio session of
+//! the owner, and when its transport closes it goes into the grace of D4
+//! instead of erasing the diagrams of the agent that may reconnect.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::SystemTime;
 
+use gx_mcp::session::{
+    resolve, ClientFingerprint, Declared, ProcessFingerprint, ResolvedIdentity, SessionAdmission,
+    SessionRegistry,
+};
 use serde_json::{json, Value};
 
 /// Counter used to build the session id of a forwarded connection.
@@ -110,44 +120,102 @@ fn error_response(id: Value, code: i64, message: &str) -> String {
 }
 
 /// The maximum number of MCP sessions a single owner serves (PRD RNF9).
+///
+/// The count includes the stdio session of the owner (D6): with the owner
+/// speaking stdio, `MAX_SESSIONS - 1` socket clients get in and the next one
+/// is refused with `too_many_sessions`.
 pub const MAX_SESSIONS: usize = 8;
+
+/// The JSON-RPC method the forwarder uses to declare who it stands for (D1).
+///
+/// It is a notification, so an owner that does not know it ignores it: the
+/// wire keeps working with a relay of another version.
+pub const IDENTITY_METHOD: &str = "graphium/identity";
 
 /// Serves the socket until the process ends: one thread per connection.
 pub fn serve(listener: UnixListener) {
-    let sessions = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
-        // The ninth session is refused with `too_many_sessions` (PRD RNF9).
-        if sessions.fetch_add(1, Ordering::SeqCst) >= MAX_SESSIONS {
-            sessions.fetch_sub(1, Ordering::SeqCst);
-            refuse(stream);
-            continue;
-        }
-        let counter = Arc::clone(&sessions);
         std::thread::spawn(move || {
             let session_id = forwarded_session_id();
-            serve_connection(stream, &session_id);
-            counter.fetch_sub(1, Ordering::SeqCst);
+            serve_session(stream, &session_id, gx_mcp::session::session_registry());
         });
     }
 }
 
-/// Answers a session that exceeds the quota and closes it.
-fn refuse(mut stream: UnixStream) {
+/// Serves one accepted connection as a session (T1-bis, T3, D4, D6).
+///
+/// The session registers before the first answer, so it spends one place of
+/// `MAX_SESSIONS` together with the owner's stdio session; past the quota the
+/// connection is refused with `too_many_sessions` and the number of open
+/// sessions. When the client closes the stream the session does not vanish:
+/// it goes into the grace of D4, which is what keeps its diagrams alive for a
+/// reconnect.
+pub fn serve_session(stream: UnixStream, session_id: &str, registry: &SessionRegistry) {
+    let mut identity = WireIdentity::default();
+    match registry.admit(session_id, &identity.resolved(), MAX_SESSIONS) {
+        SessionAdmission::Accepted(_) => {}
+        SessionAdmission::Refused { open } => {
+            refuse(stream, open);
+            return;
+        }
+    }
+
+    serve_connection(stream, session_id, registry, &mut identity);
+    registry.begin_grace(session_id, SystemTime::now());
+}
+
+/// What the owner knows about the identity of a connection, level by level
+/// (D1).
+///
+/// The socket carries it piece by piece: the forwarder declares the `env` of
+/// the client it stands for (level 1) and the handshake reports `clientInfo`
+/// (level 2). The process level is the one of the forwarder, because the
+/// process of the client is not reachable across the socket: the owner never
+/// invents one of its own.
+#[derive(Debug, Default)]
+struct WireIdentity {
+    declared: Declared,
+    client: ClientFingerprint,
+    process: ProcessFingerprint,
+}
+
+impl WireIdentity {
+    fn resolved(&self) -> ResolvedIdentity {
+        resolve(&self.declared, &self.client, &self.process)
+    }
+}
+
+/// Answers a session that exceeds the quota and closes it (PRD RNF9, D6).
+///
+/// The shape of the error is the one it always had; it now says how many
+/// sessions are open, which is the number the client hit.
+fn refuse(mut stream: UnixStream, open: usize) {
     let error = json!({
         "jsonrpc": "2.0",
         "id": Value::Null,
         "error": {
             "code": -32000,
-            "message": "too_many_sessions",
-            "data": { "code": "too_many_sessions", "limit": MAX_SESSIONS }
+            "message": format!(
+                "too_many_sessions: {open} sesiones abiertas (máximo {MAX_SESSIONS})"
+            ),
+            "data": {
+                "code": "too_many_sessions",
+                "limit": MAX_SESSIONS,
+                "open": open
+            }
         }
     });
     let _ = writeln!(stream, "{error}");
     let _ = stream.flush();
 }
 
-fn serve_connection(stream: UnixStream, session_id: &str) {
+fn serve_connection(
+    stream: UnixStream,
+    session_id: &str,
+    registry: &SessionRegistry,
+    identity: &mut WireIdentity,
+) {
     let reader = BufReader::new(match stream.try_clone() {
         Ok(clone) => clone,
         Err(_) => return,
@@ -158,6 +226,19 @@ fn serve_connection(stream: UnixStream, session_id: &str) {
         if line.trim().is_empty() {
             continue;
         }
+        // The identity of the client arrives on the wire, in the two levels
+        // that reach this side of the socket. Refreshing the same id does not
+        // open a second session, so no level consumes a place of the quota.
+        if let Some((declared, process)) = declared_of_line(&line) {
+            identity.declared = declared;
+            identity.process = process;
+            registry.connect(session_id, &identity.resolved());
+            continue;
+        }
+        if let Some(client) = client_info_of_line(&line) {
+            identity.client = client;
+            registry.connect(session_id, &identity.resolved());
+        }
         let response = handle_request(&line, session_id);
         if response.is_empty() {
             continue;
@@ -166,6 +247,44 @@ fn serve_connection(stream: UnixStream, session_id: &str) {
             break;
         }
     }
+}
+
+/// The `graphium/identity` notification: the declared level and the process
+/// level of the client the forwarder stands for (D1).
+fn declared_of_line(line: &str) -> Option<(Declared, ProcessFingerprint)> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    if value.get("method").and_then(Value::as_str) != Some(IDENTITY_METHOD) {
+        return None;
+    }
+    let params = value.get("params");
+    let declared = Declared {
+        client: text_of(params, "client"),
+        session: text_of(params, "session"),
+        project: text_of(params, "project"),
+    };
+    let process = ProcessFingerprint {
+        parent: text_of(params, "parent"),
+        cwd: text_of(params, "cwd"),
+    };
+    Some((declared, process))
+}
+
+/// The `clientInfo` of an `initialize` request (D1, level 2).
+fn client_info_of_line(line: &str) -> Option<ClientFingerprint> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    if value.get("method").and_then(Value::as_str) != Some("initialize") {
+        return None;
+    }
+    let info = value.get("params")?.get("clientInfo")?;
+    Some(ClientFingerprint {
+        name: text_of(Some(info), "name"),
+        version: text_of(Some(info), "version"),
+    })
+}
+
+/// A string field of a JSON object; absent, `null` and non-string are `None`.
+fn text_of(object: Option<&Value>, key: &str) -> Option<String> {
+    object?.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
 /// Forwards the stdio of this process to the owner of the window.
@@ -178,6 +297,14 @@ pub fn forward(stream: UnixStream, input: &mut dyn BufRead, output: &mut dyn Wri
         Err(_) => return,
     };
     let mut reader = BufReader::new(stream);
+
+    // Who this forwarder stands for, before the first request arrives (D1):
+    // the owner cannot read the `env` of the process on the other side of the
+    // socket, and the parent process that is worth reporting is this one's,
+    // not the owner's.
+    if send_identity(&mut writer).is_err() {
+        return;
+    }
 
     for line in input.lines() {
         let Ok(line) = line else { break };
@@ -206,10 +333,38 @@ pub fn forward(stream: UnixStream, input: &mut dyn BufRead, output: &mut dyn Wri
     }
 }
 
+/// Sends the `graphium/identity` notification of this process (D1).
+fn send_identity(writer: &mut impl Write) -> std::io::Result<()> {
+    let declared = gx_mcp::session::declared_from_env();
+    let process = gx_mcp::session::process_fingerprint();
+    let notification = json!({
+        "jsonrpc": "2.0",
+        "method": IDENTITY_METHOD,
+        "params": {
+            "client": declared.client,
+            "session": declared.session,
+            "project": declared.project,
+            "parent": process.parent,
+            "cwd": process.cwd,
+        }
+    });
+    writeln!(writer, "{notification}")?;
+    writer.flush()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{handle_request, tools};
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    use std::time::{Duration, Instant, SystemTime};
+
+    use gx_mcp::session::{
+        resolve, ClientFingerprint, Declared, ProcessFingerprint, ResolvedIdentity, SessionFamily,
+        SessionRegistry, SessionState, STDIO_SESSION_ID,
+    };
     use serde_json::Value;
+
+    use super::{handle_request, serve_session, tools, IDENTITY_METHOD, MAX_SESSIONS};
 
     #[test]
     fn initialize_answers_with_the_server_info() {
@@ -226,6 +381,19 @@ mod tests {
     fn notifications_get_no_answer() {
         let response = handle_request(
             r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            "session-1",
+        );
+        assert!(response.is_empty());
+    }
+
+    /// The identity notification is a notification: an owner of another
+    /// version answers nothing to it, which is what keeps the wire working.
+    #[test]
+    fn the_identity_notification_gets_no_answer() {
+        let response = handle_request(
+            &format!(
+                r#"{{"jsonrpc":"2.0","method":"{IDENTITY_METHOD}","params":{{"client":"pi"}}}}"#
+            ),
             "session-1",
         );
         assert!(response.is_empty());
@@ -261,6 +429,269 @@ mod tests {
         let response = handle_request("{not json", "session-1");
         let value: Value = serde_json::from_str(&response).expect("json");
         assert_eq!(value["error"]["code"], -32700);
+    }
+
+    /// The identity a session gets when nothing is known yet (D1): the
+    /// transport registers it, and the wire fills the levels in.
+    fn unknown_identity() -> ResolvedIdentity {
+        resolve(
+            &Declared::default(),
+            &ClientFingerprint::default(),
+            &ProcessFingerprint::default(),
+        )
+    }
+
+    /// The client end of a connection the owner serves as a session.
+    struct Client {
+        writer: UnixStream,
+        reader: BufReader<UnixStream>,
+    }
+
+    impl Client {
+        fn new(stream: UnixStream) -> Self {
+            let writer = stream.try_clone().expect("a cloned end");
+            Self {
+                writer,
+                reader: BufReader::new(stream),
+            }
+        }
+
+        fn send(&mut self, line: &str) {
+            writeln!(self.writer, "{line}").expect("the request fits");
+            self.writer.flush().expect("the request goes out");
+        }
+
+        /// The next line the owner writes.
+        fn receive(&mut self) -> String {
+            let mut line = String::new();
+            self.reader.read_line(&mut line).expect("an answer");
+            line.trim_end().to_string()
+        }
+
+        /// Asks `initialize`: the connection is served once the owner answers.
+        fn initialize(&mut self) {
+            self.send(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
+            let answer = self.receive();
+            assert!(answer.contains("graphium"), "the owner answers: {answer}");
+        }
+    }
+
+    /// Opens a pair and serves one end as a session, on its own thread.
+    fn open_session<'scope, 'env>(
+        scope: &'scope std::thread::Scope<'scope, 'env>,
+        registry: &'env SessionRegistry,
+        id: String,
+    ) -> Client {
+        let (client, server) = UnixStream::pair().expect("a socket pair");
+        scope.spawn(move || serve_session(server, &id, registry));
+        Client::new(client)
+    }
+
+    /// Waits (bounded) until the transport close of `id` reaches the registry.
+    fn wait_in_grace(registry: &SessionRegistry, id: &str) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if registry.get(id).map(|record| record.state) == Some(SessionState::InGrace) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("the session {id} never went into grace");
+    }
+
+    /// T3/D6: `MAX_SESSIONS` counts every session — the owner's stdio one and
+    /// every socket — and the ninth attempt is refused with its count.
+    #[test]
+    fn the_quota_counts_the_stdio_session_and_every_socket() {
+        let registry = SessionRegistry::new();
+        // The owner's stdio transport registered itself when it started (T1).
+        registry.connect(STDIO_SESSION_ID, &unknown_identity());
+
+        std::thread::scope(|scope| {
+            let mut open = Vec::new();
+            // 1 stdio + 7 sockets fill the quota: the 8th session.
+            for number in 0..MAX_SESSIONS - 1 {
+                let id = format!("sock-{number}");
+                let mut client = open_session(scope, &registry, id.clone());
+                client.initialize();
+                assert!(registry.get(&id).is_some(), "{id} is registered");
+                open.push(client);
+            }
+            assert_eq!(registry.active_count(), MAX_SESSIONS);
+
+            // The ninth attempt is refused instead of served.
+            let mut refused = open_session(scope, &registry, "sock-ninth".to_string());
+            let answer: Value = serde_json::from_str(&refused.receive()).expect("json");
+            assert_eq!(answer["error"]["code"], -32000);
+            assert_eq!(answer["error"]["data"]["code"], "too_many_sessions");
+            assert_eq!(answer["error"]["data"]["limit"], MAX_SESSIONS);
+            assert_eq!(
+                answer["error"]["data"]["open"], MAX_SESSIONS,
+                "the error says how many sessions are open"
+            );
+            let message = answer["error"]["message"].as_str().expect("a message");
+            assert!(message.starts_with("too_many_sessions"), "{message}");
+            assert!(
+                message.contains(&format!("{MAX_SESSIONS} sesiones abiertas")),
+                "the message says how many are open: {message}"
+            );
+            assert!(
+                registry.get("sock-ninth").is_none(),
+                "a refused session does not register"
+            );
+        });
+    }
+
+    /// T3/D6: a session that ends frees its slot. A session in grace already
+    /// ended for the quota, so a client restart is never locked out for 45 s.
+    #[test]
+    fn a_session_that_ends_frees_its_slot() {
+        let registry = SessionRegistry::new();
+        registry.connect(STDIO_SESSION_ID, &unknown_identity());
+
+        std::thread::scope(|scope| {
+            let mut open = Vec::new();
+            for number in 0..MAX_SESSIONS - 1 {
+                let id = format!("sock-{number}");
+                let mut client = open_session(scope, &registry, id);
+                client.initialize();
+                open.push(client);
+            }
+            assert_eq!(registry.active_count(), MAX_SESSIONS);
+
+            // Closing the transport ends the session: it goes into grace and
+            // leaves the count, and the grace is what keeps its diagrams (D4).
+            drop(open.remove(0));
+            wait_in_grace(&registry, "sock-0");
+            assert_eq!(registry.active_count(), MAX_SESSIONS - 1);
+
+            // With the slot free, a new connection is served.
+            let mut client = open_session(scope, &registry, "sock-new".to_string());
+            client.initialize();
+            assert!(registry.get("sock-new").is_some());
+            assert_eq!(registry.active_count(), MAX_SESSIONS);
+        });
+    }
+
+    /// T1-bis/D1: an accepted socket is a session, and its identity arrives on
+    /// the wire: the declared level wins over `clientInfo`.
+    #[test]
+    fn an_accepted_socket_registers_with_the_identity_its_client_declares() {
+        let registry = SessionRegistry::new();
+        std::thread::scope(|scope| {
+            let mut client = open_session(scope, &registry, "sock-1".to_string());
+
+            // Level 2: the `clientInfo` of the handshake.
+            client.send(
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"claude-ai","version":"2.0.0"}}}"#,
+            );
+            let answer = client.receive();
+            assert!(answer.contains("graphium"), "{answer}");
+            let record = registry.get("sock-1").expect("the session is registered");
+            assert_eq!(record.family, SessionFamily::Claude);
+            assert_eq!(record.client_name.as_deref(), Some("claude-ai"));
+            assert_eq!(record.client_version.as_deref(), Some("2.0.0"));
+            assert_eq!(record.state, SessionState::Active);
+
+            // Level 1: what the forwarder declared.
+            client.send(&format!(
+                r#"{{"jsonrpc":"2.0","method":"{IDENTITY_METHOD}","params":{{"client":"pi","session":"pi-4824","project":"/work/graphium","parent":"node","cwd":"/work/graphium"}}}}"#
+            ));
+            client.send(r#"{"jsonrpc":"2.0","id":2,"method":"initialize"}"#);
+            let answer = client.receive();
+            assert!(answer.contains("graphium"), "{answer}");
+
+            let record = registry.get("sock-1").expect("the same session");
+            assert_eq!(record.family, SessionFamily::Pi);
+            assert_eq!(record.project.as_deref(), Some("/work/graphium"));
+            assert_eq!(
+                record.client_version, None,
+                "the version comes from the same level as the family"
+            );
+            assert!(
+                record.label.starts_with("Pi · graphium · "),
+                "{}",
+                record.label
+            );
+        });
+    }
+
+    /// D1: with nothing declared and no `clientInfo`, the third level is the
+    /// process of the client, which only the forwarder can see.
+    #[test]
+    fn the_forwarder_reports_the_process_level_of_the_client() {
+        let registry = SessionRegistry::new();
+        std::thread::scope(|scope| {
+            let mut client = open_session(scope, &registry, "sock-1".to_string());
+            client.send(&format!(
+                r#"{{"jsonrpc":"2.0","method":"{IDENTITY_METHOD}","params":{{"parent":"opencode","cwd":"/work/web"}}}}"#
+            ));
+            client.send(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
+            let answer = client.receive();
+            assert!(answer.contains("graphium"), "{answer}");
+
+            let record = registry.get("sock-1").expect("the session is registered");
+            assert_eq!(record.family, SessionFamily::OpenCode);
+            assert_eq!(record.project.as_deref(), Some("/work/web"));
+        });
+    }
+
+    /// D4: closing the transport does not erase the session; it puts it in
+    /// grace, which is what keeps its diagrams alive for a reconnect.
+    #[test]
+    fn closing_the_transport_puts_the_session_in_grace() {
+        let registry = SessionRegistry::new();
+        std::thread::scope(|scope| {
+            let mut client = open_session(scope, &registry, "sock-1".to_string());
+            client.initialize();
+            drop(client);
+            wait_in_grace(&registry, "sock-1");
+        });
+
+        let record = registry.get("sock-1").expect("the session is still there");
+        assert_eq!(record.state, SessionState::InGrace);
+        assert!(record.grace_deadline.is_some());
+        assert!(
+            registry.expired(SystemTime::now()).is_empty(),
+            "closing does not shorten the grace"
+        );
+    }
+
+    /// D1: the forwarder announces who it stands for and keeps relaying the
+    /// requests of its client with their answers, as it always did.
+    #[test]
+    fn the_forwarder_declares_its_identity_and_relays_the_answer() {
+        let (forwarder, owner) = UnixStream::pair().expect("a socket pair");
+        let request = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"initialize\"}\n";
+        let mut output = Vec::new();
+
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                let mut reader = BufReader::new(owner.try_clone().expect("a cloned end"));
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("the identity arrives");
+                let identity: Value = serde_json::from_str(&line).expect("json");
+                assert_eq!(identity["method"], IDENTITY_METHOD);
+                assert!(identity["params"].is_object(), "{identity}");
+                assert!(identity["params"].get("cwd").is_some(), "{identity}");
+
+                line.clear();
+                reader.read_line(&mut line).expect("the request arrives");
+                let forwarded: Value = serde_json::from_str(&line).expect("json");
+                assert_eq!(forwarded["id"], 7);
+
+                let mut writer = owner;
+                writeln!(writer, "{{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{{}}}}")
+                    .expect("the answer fits");
+                writer.flush().expect("the answer goes out");
+            });
+
+            let mut input = std::io::Cursor::new(request.as_bytes());
+            super::forward(forwarder, &mut input, &mut output);
+        });
+
+        let answer = String::from_utf8(output).expect("the answer is text");
+        assert_eq!(answer.trim_end(), r#"{"jsonrpc":"2.0","id":7,"result":{}}"#);
     }
 
     #[test]

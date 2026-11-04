@@ -260,9 +260,22 @@ impl DiagramStore {
 pub const MAX_OPEN_DIAGRAMS: usize = 12;
 
 /// The single store of the process.
+///
+/// Reading the store is also the cheap tick of the end of session (D4, S2):
+/// every path that touches the plan — the tools of both transports and the
+/// state the panel reads — passes through here, so a session whose grace
+/// finished is deleted with its diagrams on the next call, without a thread
+/// per session and without a timer. The check is a lock and a scan of the
+/// sessions, and it does nothing while no grace has run out.
 pub fn diagram_store() -> &'static DiagramStore {
     static STORE: OnceLock<DiagramStore> = OnceLock::new();
-    STORE.get_or_init(DiagramStore::new)
+    let store = STORE.get_or_init(DiagramStore::new);
+    crate::session::end_expired_sessions(
+        crate::session::session_registry(),
+        store,
+        SystemTime::now(),
+    );
+    store
 }
 
 /// `d-0001` style id from its number.

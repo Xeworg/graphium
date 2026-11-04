@@ -96,6 +96,16 @@ pub enum SessionState {
     InGrace,
 }
 
+/// What the registry answers to a session that arrives (D6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionAdmission {
+    /// The session is in the registry; a reconnect refreshes the record it
+    /// already had instead of opening a second one.
+    Accepted(SessionRecord),
+    /// There is no room: `open` sessions are active, the owner's included.
+    Refused { open: usize },
+}
+
 /// One session of the owner process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRecord {
@@ -256,42 +266,33 @@ impl SessionRegistry {
     /// A reconnect keeps the diagrams and a label the agent set; it clears
     /// the grace, because the transport is back (D4).
     pub fn connect(&self, id: &str, identity: &ResolvedIdentity) -> SessionRecord {
+        insert_or_refresh(&mut self.lock(), id, identity)
+    }
+
+    /// Registers a session only when there is room for it (D6).
+    ///
+    /// The quota counts the **active** sessions, the owner's stdio session
+    /// included. A session in grace already ended for the quota: counting it
+    /// would lock a client out for the 45 s of D4 after every restart, and the
+    /// slot it frees is exactly what makes `too_many_sessions` about live
+    /// work instead of about history.
+    ///
+    /// A reconnect of a registered id always lands: it refreshes the session
+    /// that was already there instead of opening a new one.
+    pub fn admit(&self, id: &str, identity: &ResolvedIdentity, limit: usize) -> SessionAdmission {
         let mut sessions = self.lock();
-        let now = SystemTime::now();
-
-        if let Some(record) = sessions.get_mut(id) {
-            // Only an automatic label follows the identity: a label the agent
-            // set survives a reconnect (D2).
-            let keeps_label =
-                record.label != auto_label(record.family, record.project.as_deref(), &record.id);
-            record.family = identity.family;
-            record.client_name = identity.client_name.clone();
-            record.client_version = identity.client_version.clone();
-            record.project = identity.project.clone();
-            record.state = SessionState::Active;
-            record.grace_deadline = None;
-            record.last_seen = now;
-            if !keeps_label {
-                record.label = auto_label(record.family, record.project.as_deref(), &record.id);
+        if !sessions.contains_key(id) {
+            let open = active_count(&sessions);
+            if open >= limit {
+                return SessionAdmission::Refused { open };
             }
-            return record.clone();
         }
+        SessionAdmission::Accepted(insert_or_refresh(&mut sessions, id, identity))
+    }
 
-        let record = SessionRecord {
-            id: id.to_string(),
-            family: identity.family,
-            client_name: identity.client_name.clone(),
-            client_version: identity.client_version.clone(),
-            project: identity.project.clone(),
-            label: auto_label(identity.family, identity.project.as_deref(), id),
-            state: SessionState::Active,
-            grace_deadline: None,
-            diagram_ids: Vec::new(),
-            connected_at: now,
-            last_seen: now,
-        };
-        sessions.insert(id.to_string(), record.clone());
-        record
+    /// How many sessions are active: the number the quota spends (D6).
+    pub fn active_count(&self) -> usize {
+        active_count(&self.lock())
     }
 
     /// Sets the label of a session; an empty label goes back to the
@@ -340,14 +341,25 @@ impl SessionRegistry {
 
     /// The ids of the sessions whose grace ended at `now`, in order.
     ///
-    /// The registry only reports them: deleting their diagrams belongs to the
-    /// next task (D4).
+    /// The registry only reports them: [`drain_expired`] is the one that ends
+    /// them.
     pub fn expired(&self, now: SystemTime) -> Vec<String> {
-        self.lock()
-            .values()
-            .filter(|record| record.grace_expired(now))
-            .map(|record| record.id.clone())
-            .collect()
+        expired_ids(&self.lock(), now)
+    }
+
+    /// Ends every session whose grace finished at `now` and returns their
+    /// ids, in order (D4).
+    ///
+    /// Removing is the ending: the session leaves the registry, so the id is
+    /// free and its slot is back. It is one step under one lock, so a
+    /// reconnect cannot slip between the check and the deletion.
+    pub fn drain_expired(&self, now: SystemTime) -> Vec<String> {
+        let mut sessions = self.lock();
+        let ended = expired_ids(&sessions, now);
+        for id in &ended {
+            sessions.remove(id);
+        }
+        ended
     }
 
     /// One session, if it is registered.
@@ -365,6 +377,93 @@ impl SessionRegistry {
             .lock()
             .expect("the session registry is not poisoned")
     }
+}
+
+/// Registers a session in the map, or refreshes the one with the same id.
+///
+/// Every path that opens a session goes through here, under the lock the
+/// caller already holds: `connect` and `admit` cannot disagree about what a
+/// reconnect means (D4).
+fn insert_or_refresh(
+    sessions: &mut BTreeMap<String, SessionRecord>,
+    id: &str,
+    identity: &ResolvedIdentity,
+) -> SessionRecord {
+    let now = SystemTime::now();
+
+    if let Some(record) = sessions.get_mut(id) {
+        // Only an automatic label follows the identity: a label the agent
+        // set survives a reconnect (D2).
+        let keeps_label =
+            record.label != auto_label(record.family, record.project.as_deref(), &record.id);
+        record.family = identity.family;
+        record.client_name = identity.client_name.clone();
+        record.client_version = identity.client_version.clone();
+        record.project = identity.project.clone();
+        record.state = SessionState::Active;
+        record.grace_deadline = None;
+        record.last_seen = now;
+        if !keeps_label {
+            record.label = auto_label(record.family, record.project.as_deref(), &record.id);
+        }
+        return record.clone();
+    }
+
+    let record = SessionRecord {
+        id: id.to_string(),
+        family: identity.family,
+        client_name: identity.client_name.clone(),
+        client_version: identity.client_version.clone(),
+        project: identity.project.clone(),
+        label: auto_label(identity.family, identity.project.as_deref(), id),
+        state: SessionState::Active,
+        grace_deadline: None,
+        diagram_ids: Vec::new(),
+        connected_at: now,
+        last_seen: now,
+    };
+    sessions.insert(id.to_string(), record.clone());
+    record
+}
+
+/// How many sessions of the map are active (D6).
+fn active_count(sessions: &BTreeMap<String, SessionRecord>) -> usize {
+    sessions
+        .values()
+        .filter(|record| record.state == SessionState::Active)
+        .count()
+}
+
+/// The ids of the sessions whose grace finished at `now`, in order.
+fn expired_ids(sessions: &BTreeMap<String, SessionRecord>, now: SystemTime) -> Vec<String> {
+    sessions
+        .values()
+        .filter(|record| record.grace_expired(now))
+        .map(|record| record.id.clone())
+        .collect()
+}
+
+/// Ends the sessions whose grace finished at `now` (D4, S2): the session
+/// leaves the registry and the store deletes every diagram of it.
+///
+/// The store calls this on its entry point ([`crate::store::diagram_store`]),
+/// which is where both transports and the panel already land: the expiry needs
+/// no thread per session and no timer, and the plan is up to date on the next
+/// call that touches it. The check costs a registry lock and a scan of the
+/// sessions, and the ones whose grace is still running are left alone.
+///
+/// The diagrams go with the session, so a session that ended does not leave
+/// its plan behind (S2). Returns the ids that ended, in order.
+pub fn end_expired_sessions(
+    registry: &SessionRegistry,
+    store: &crate::store::DiagramStore,
+    now: SystemTime,
+) -> Vec<String> {
+    let ended = registry.drain_expired(now);
+    for id in &ended {
+        store.clear_session(id);
+    }
+    ended
 }
 
 /// The automatic name of a session: `<Client> · <project> · <short id>` (D2).
@@ -471,6 +570,19 @@ mod tests {
             session: session.map(str::to_string),
             project: project.map(str::to_string),
         }
+    }
+
+    /// A diagram of one session, in a store the test owns.
+    fn insert_diagram(store: &crate::store::DiagramStore, id: &str, session: &str) -> String {
+        store
+            .insert(
+                id.to_string(),
+                "t".to_string(),
+                "graph".to_string(),
+                session.to_string(),
+                "{}".to_string(),
+            )
+            .diagram_id
     }
 
     fn client(name: Option<&str>, version: Option<&str>) -> ClientFingerprint {
@@ -722,6 +834,175 @@ mod tests {
                 .expect("the session is there")
                 .diagram_ids,
             vec!["d-0002"]
+        );
+    }
+
+    /// D4/S2: when the grace of a session finishes, its diagrams are deleted
+    /// and it leaves the registry; the session next door is untouched.
+    #[test]
+    fn ending_a_session_deletes_its_diagrams_after_the_grace() {
+        let registry = SessionRegistry::new();
+        let store = crate::store::DiagramStore::new();
+        let identity = resolve(
+            &declared(Some("pi"), Some("pi-1"), Some("/work/graphium")),
+            &ClientFingerprint::default(),
+            &ProcessFingerprint::default(),
+        );
+
+        registry.connect("pi-1", &identity);
+        registry.connect("claude-1", &identity);
+        insert_diagram(&store, "d-0001", "pi-1");
+        insert_diagram(&store, "d-0002", "claude-1");
+
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000_000);
+        let closed = registry.begin_grace("pi-1", now).expect("the session");
+        assert_eq!(closed.state, SessionState::InGrace);
+
+        // Inside the grace the session still has its diagrams.
+        assert!(end_expired_sessions(
+            &registry,
+            &store,
+            now + SESSION_GRACE - Duration::from_millis(1)
+        )
+        .is_empty());
+        assert_eq!(store.list_for_session("pi-1").len(), 1);
+        assert!(registry.get("pi-1").is_some());
+
+        // Past the deadline the session ends: its diagrams go with it.
+        assert_eq!(
+            end_expired_sessions(
+                &registry,
+                &store,
+                now + SESSION_GRACE + Duration::from_millis(1)
+            ),
+            vec!["pi-1".to_string()]
+        );
+        assert!(store.record("d-0001").is_none(), "the diagram is gone");
+        assert!(store.list_for_session("pi-1").is_empty());
+        assert!(
+            registry.get("pi-1").is_none(),
+            "the session left the registry"
+        );
+
+        // The other session survives untouched.
+        assert!(store.record("d-0002").is_some());
+        assert_eq!(store.list_for_session("claude-1").len(), 1);
+        assert!(registry.get("claude-1").is_some());
+        assert!(end_expired_sessions(
+            &registry,
+            &store,
+            now + SESSION_GRACE + Duration::from_secs(600)
+        )
+        .is_empty());
+    }
+
+    /// D4: a reconnect with the same declared id inside the grace keeps the
+    /// session and its diagrams: no deadline is left to run out.
+    #[test]
+    fn a_reconnect_inside_the_grace_keeps_the_diagrams() {
+        let registry = SessionRegistry::new();
+        let store = crate::store::DiagramStore::new();
+        let identity = resolve(
+            &declared(Some("pi"), Some("pi-4824"), Some("/work/graphium")),
+            &ClientFingerprint::default(),
+            &ProcessFingerprint::default(),
+        );
+
+        registry.connect("pi-4824", &identity);
+        insert_diagram(&store, "d-0001", "pi-4824");
+
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(3_000_000);
+        registry.begin_grace("pi-4824", now);
+        let reconnected = registry.connect("pi-4824", &identity);
+        assert_eq!(reconnected.state, SessionState::Active);
+        assert_eq!(reconnected.grace_deadline, None);
+
+        assert!(end_expired_sessions(
+            &registry,
+            &store,
+            now + SESSION_GRACE + Duration::from_secs(600)
+        )
+        .is_empty());
+        assert!(store.record("d-0001").is_some(), "the diagram stays");
+        assert_eq!(store.list_for_session("pi-4824").len(), 1);
+        assert!(registry.get("pi-4824").is_some());
+    }
+
+    /// D6: the quota is spent by the active sessions, the owner's stdio one
+    /// included; a reconnect of a known id always lands.
+    #[test]
+    fn the_quota_counts_the_active_sessions_and_admits_a_reconnect() {
+        let registry = SessionRegistry::new();
+        let identity = resolve(
+            &declared(Some("pi"), None, None),
+            &ClientFingerprint::default(),
+            &ProcessFingerprint::default(),
+        );
+        let limit = 3;
+        registry.connect(STDIO_SESSION_ID, &identity);
+        registry.connect("sock-1", &identity);
+        registry.connect("sock-2", &identity);
+        assert_eq!(registry.active_count(), limit);
+
+        assert_eq!(
+            registry.admit("sock-ninth", &identity, limit),
+            SessionAdmission::Refused { open: limit }
+        );
+        assert!(registry.get("sock-ninth").is_none());
+
+        // A session in grace already ended for the quota: its slot is free.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(4_000_000);
+        registry.begin_grace("sock-1", now);
+        assert_eq!(registry.active_count(), limit - 1);
+        assert!(matches!(
+            registry.admit("sock-new", &identity, limit),
+            SessionAdmission::Accepted(_)
+        ));
+        assert!(matches!(
+            registry.admit("sock-1", &identity, limit),
+            SessionAdmission::Accepted(_)
+        ));
+        assert_eq!(
+            registry.get("sock-1").expect("the session").state,
+            SessionState::Active,
+            "a reconnect brings the session back"
+        );
+    }
+
+    /// D4/S2: the check runs where the plan is already touched, without a
+    /// thread per session: reading the store ends the sessions whose grace
+    /// finished.
+    #[test]
+    fn the_store_entry_point_ends_the_sessions_whose_grace_finished() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = format!("wire-end-{}", std::process::id());
+        let registry = session_registry();
+        let identity = resolve(
+            &declared(Some("pi"), Some(&id), Some("/work/graphium")),
+            &ClientFingerprint::default(),
+            &ProcessFingerprint::default(),
+        );
+        registry.connect(&id, &identity);
+
+        let store = crate::store::diagram_store();
+        let diagram = insert_diagram(store, &store.next_id(), &id);
+        assert!(store.record(&diagram).is_some());
+
+        // The transport closed long ago: the grace already ran out.
+        registry.begin_grace(
+            &id,
+            SystemTime::now() - SESSION_GRACE - Duration::from_secs(1),
+        );
+
+        // The next touch of the store is the check: the session ends here.
+        let store = crate::store::diagram_store();
+        assert!(
+            registry.get(&id).is_none(),
+            "the store entry point ended the session"
+        );
+        assert!(
+            store.list_for_session(&id).is_empty(),
+            "and deleted its diagrams"
         );
     }
 
