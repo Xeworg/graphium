@@ -15,7 +15,10 @@ gx-render-svg = { workspace = true, features = ["png"] }
 gx-mcp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tauri = { workspace = true }
+signal-hook = { workspace = true }
+# The tray of the owner (S1) and the PNG of its icon: the icon is embedded in
+# the binary, so the tray needs the image decoder.
+tauri = { workspace = true, features = ["tray-icon", "image-png"] }
 tokio = { workspace = true }
 
 [build-dependencies]

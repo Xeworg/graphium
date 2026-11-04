@@ -25,6 +25,7 @@ gx-mcp = { path = "crates/gx-mcp" }
 
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
+signal-hook = "0.3"
 schemars = "1.2.3"
 thiserror = "2.0.12"
 tokio = { version = "1.45.1", features = ["rt-multi-thread", "rt", "macros", "io-std", "io-util", "sync", "time", "process", "net"] }
