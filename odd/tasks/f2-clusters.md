@@ -43,7 +43,7 @@ Todas con `path` + `code`, sobre el helper compartido:
 
 | ID | Qué | Specs | Ruta | Commit |
 |---|---|---|---|---|
-| T1 | Validación y layout del anidamiento: `validate_groups` compartido en `gx-core`, `DagreEngine` encadena `set_parent` grupo→grupo, `LayoutGroup` gana `depth` | S1, S3, S5, S10 | inline | pending |
+| T1 | Validación y layout del anidamiento: `validate_groups` compartido en `gx-kinds/groups.rs`, `DagreEngine` encadena `set_parent` grupo→grupo, `LayoutGroup` gana `depth` | S1, S3, S5, S10 | inline | `976b191` |
 | T2 | Render anidado: cajas ordenadas por profundidad (externa detrás), etiqueta sangrada por profundidad, `drawing_bbox` incluye la caja externa | S1, S3 | inline | pending |
 | T3 | `groups` en `kind: "graph"` (el ejemplo del PRD): schema, parseo, validación por el helper, `xs-graphium-since`/version sin subir | S2, S5, S8 | inline | pending |
 | T4 | `groups` en `flow`, `state`, `class` y `dataflow` con la misma forma y el mismo helper | S2, S5, S8 | inline | pending |
@@ -55,6 +55,19 @@ Ruta: la cadena T1 → T2 → T3/T4 → T5 → T6 tiene dependencias, así que n
 unidades independientes que justifiquen escritores en paralelo (regla de
 Writer: solo por razón, no por cantidad de archivos). T3 y T4 son mecánicos una
 vez que existe el helper de T1.
+
+## Slices de revisión
+
+Una sola rama y un solo PR (preferencia de entrega del humano: rama `feature/`,
+PR y merge, sin tags), pero el PR se lee por slices, cada uno con su commit:
+
+- **Slice 1 — el motor anida:** este documento (`3a07f95`) + T1 (`976b191`).
+  Es el corte que no cambia ningún kind nuevo: sólo la validación compartida y
+  el layout.
+- **Slice 2 — se dibuja:** T2 (render por profundidad) + T5 (`component` por el
+  helper compartido).
+- **Slice 3 — los kinds lo exponen:** T3 + T4 (`groups` en `graph`, `flow`,
+  `state`, `class`, `dataflow`) y T6 (docs, goldens, gates).
 
 ## Log
 
