@@ -56,10 +56,24 @@ mismo comportamiento al lado:
 1. **Plan y contrato**: este documento (`0fef937`) y el PRD con RF30 (`52e4906`).
 2. **Identidad**: registro de sesiones en el dueño (`374d08b`) y `env` de la
    extensión de Pi (`4df7703`).
-3. **Conteo y fin de sesión**: T1-bis + T3 (relay, borrado con gracia,
-   `too_many_sessions`).
+3. **Conteo y fin de sesión**: T1-bis + T3 (`09ec836`; relay, borrado con gracia,
+   `too_many_sessions`) y T2a (la clave declarada, para que un reconnect
+   recupere la sesión).
 4. **Superficie y vista**: T2 (`register_session` y la sesión en las respuestas)
    y T4 (selector).
+
+### Entrega por PRs
+
+El corte va en **dos PRs**, y el límite es el que separa revisar concurrencia de
+revisar una pantalla:
+
+- **PR A — el motor de sesiones**: documento, PRD, registro con identidad, `env`
+  de la extensión, cuota, borrado con gracia y la clave declarada (T1, T1-bis,
+  T3, T2a, T6). Es donde vive el riesgo de concurrencia y de contrato.
+- **PR B — la superficie y la vista**: `register_session` y el objeto `session`
+  en las respuestas (T2b) más el selector de la interfaz (T4). Se apoya en A.
+
+Ninguno lleva tag: el release se decide aparte.
 
 ## Evidencia esperada
 
