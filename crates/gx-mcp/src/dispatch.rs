@@ -269,6 +269,11 @@ mod tests {
             "nodes": [ { "id": "a", "label": "A" }, { "id": "b", "label": "B" } ],
             "edges": [ { "from": "a", "to": "b" } ]
         });
+        // The store and the engines are process-wide: without the lock, a
+        // test that resets them runs in between and the export sees no
+        // diagram at all.
+        let _guard = crate::test_support::lock_renders_blocking();
+
         call_tool(
             "render_diagram",
             &serde_json::json!({ "diagram": document }),
