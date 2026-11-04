@@ -48,7 +48,7 @@ Todas con `path` + `code`, sobre el helper compartido:
 | T3 | `groups` en `kind: "graph"` (el ejemplo del PRD): schema, parseo, validación por el helper, version sin subir | S2, S5, S8 | inline | `a667a5d` |
 | T4 | `groups` en `flow`, `state`, `class` y `dataflow` con la misma forma y el mismo helper | S2, S5, S8 | inline | `a667a5d` |
 | T5 | `component` pasa su validación de grupos al helper compartido y acepta anidamiento | S1, S5, S10 | inline | `976b191` |
-| T6 | Docs y evidencia: PRD §10.1, `rules_of`/`min_example_of` en `contract.rs`, golden de un cluster anidado, suite + clippy + fmt | S1, S4, S6, S7, S8 | inline + worker (golden) | pending |
+| T6 | Docs y evidencia: PRD §10.1, `rules_of`/`min_example_of` en `contract.rs`, golden de un cluster anidado, suite + clippy + fmt | S1, S4, S6, S7, S8 | inline + worker (golden) | `a57a5ce` + `b0d6095` (+ `1ebe1fb`) |
 | T7 | Cierre: rama `feature/f2-clusters`, commits por unidad de trabajo, PR con cuerpo, merge sin tag | — | parent | pending |
 | T8 | **Abierto / bloqueante:** los clusters anidados con aristas que cruzan grupos pierden posiciones de nodo en `dagre` a escala. Reproducción: el caso RNF1-bis `100n/150e + 8 clusters` con un grupo externo que contiene a los 8 coloca **82 de 100** nodos (`n2`, `n6`, `n17`, …); sin el grupo externo coloca 100/100; sin aristas, 96 nodos en 8 clusters anidados se colocan 96/96. Probado y descartado: `padding` del `NodeLabel` del grupo, y enlazar primero los contenedores. Requiere workaround propio (calcular la caja del grupo a partir de los miembros) o un fix del motor | S1, S6, S7 | pendiente de decisión | — |
 
@@ -69,8 +69,9 @@ PR y merge, sin tags), pero el PR se lee por slices, cada uno con su commit:
   (`976b191`) entró con el slice 1: `component` ya valida por el helper
   compartido y acepta un grupo dentro de otro.
 - **Slice 3 — los kinds lo exponen:** T3 + T4 (`a667a5d`, `groups` en `graph`,
-  `flow`, `state`, `class`, `dataflow`) y T6 (PRD §10.1, reglas del schema,
-  golden anidado, gates).
+  `flow`, `state`, `class`, `dataflow`) y T6 (`a57a5ce` PRD + reglas del schema,
+  `b0d6095` golden `component-nested`, `1ebe1fb` el relay de export toma el lock
+  del store, defecto de aislamiento de tests que este corte dejó a la vista).
 
 ## Log
 
@@ -89,6 +90,13 @@ PR y merge, sin tags), pero el PR se lee por slices, cada uno con su commit:
   schema por kind lo genera `schemars` (`contract.rs:346`), así que sumar el
   campo al struct lo publica solo; hay que tocar a mano `rules_of`
   (`contract.rs:626-631`) y `min_example_of` (`contract.rs:422-424`).
+- **L5** (evidencia, 2026-11-04): el golden `component-nested` fija el
+  anidamiento de punta a punta: `cluster-plataforma` (profundidad 0) se escribe
+  antes que `cluster-servicio` (profundidad 1), el nombre del interno arranca
+  doce unidades más adentro por nivel (117.92 contra 149.92 con bordes en
+  105.92 y 125.92) y la caja externa contiene a la interna. Gates al cerrar el
+  corte: `cargo test --workspace` verde, `cargo clippy --workspace --all-targets`
+  sin avisos, `cargo fmt --all -- --check` limpio.
 - **L4** (hallazgo, 2026-11-04): el anidamiento de clusters funciona cuando no
   hay aristas cruzando grupos (96 nodos en 8 clusters dentro de uno: 96/96
   colocados) y se rompe con ellas a escala: el caso RNF1-bis con un grupo
