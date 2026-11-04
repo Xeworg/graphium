@@ -69,10 +69,11 @@ es un repositorio ajeno):
 
 | ID | Qué | Specs | Ruta | Commit |
 |---|---|---|---|---|
-| T1 | Diagnóstico empírico: instrumentar `(rank, order, x.is_some(), y.is_some())` en el caso `100n/150e + 8 clusters + grupo externo` y confirmar las colisiones de `order`. Sin artefacto enviado: la instrumentación se borra al terminar | S3, S4 | worker | pending |
-| T2 | Registro sólo-hoja en `DagreEngine` + cajas ancestro locales (unión + padding, de adentro hacia afuera) | S5, S6 | worker | pending |
-| T3 | Red de seguridad (`compound: false` + cajas locales), invariante en test y quinto caso de matriz | S7, S8 | worker | pending |
-| T4 | Goldens (sólo `component-nested`), nota en el PRD §8.4 y reporte upstream **redactado, no publicado** | S1, S2, S8 | inline | pending |
+| T1 | Diagnóstico empírico de las colisiones de `order` en el caso `100n/150e + 8 clusters + grupo externo`, sin artefacto enviado | S3, S4 | worker | `eea26f6` |
+| T2 | Registro sólo-hoja en `DagreEngine` + cajas ancestro locales (unión + padding, de adentro hacia afuera) | S5, S6 | worker | `ae5b2db` |
+| T3 | Red de seguridad (`compound: false` + cajas locales), invariante en test y quinto caso de matriz | S7, S8 | worker | `ae5b2db` |
+| T4 | Goldens (sólo `component-nested`), nota en el PRD §8.4 y reporte upstream **redactado, no publicado** | S1, S2, S8 | inline | `03494a3` + `eaa5bdd` |
+| T3-bis | Una arista que nombra un grupo hacía panick adentro de `dagre`: el motor la filtra en vez de caerse | S7 | inline | `d935930` |
 | T5 | Cierre: rama `feature/f2-cajas-anidadas`, PR con cuerpo, merge sin tag | — | parent | pending |
 
 ## Log
@@ -92,6 +93,15 @@ es un repositorio ajeno):
   casos de matriz (arquitectura).
 - **L3** (decisión del humano, 2026-11-04): «si dale» a A′, con T1 de
   diagnóstico empírico primero y sin tocar la dependencia.
+- **L6** (cierre de T2/T3/T4, medido): reproducción de S3 en **100/100** nodos
+  después de T2; el disparador que queda es más grande —16 clusters hoja de 8
+  nodos con 240 aristas cruzadas: 52 de 128 nodos y 9 de 16 cajas— y es el que
+  ejercita la red de seguridad. Goldens: sólo `component-nested` se movió, de
+  4170 a 4169 bytes (310.05 × 444.50 contra 338.05 × 479.50, las dos cajas
+  anidadas y el nombre interno sangrado 24 unidades). Un caso nuevo: una arista
+  que nombra un grupo hacía **panick** en `rank/network_simplex.rs` de dagre; el
+  motor ahora la ignora (`d935930`). Gates: `cargo test --workspace` verde,
+  clippy sin avisos, fmt limpio.
 - **L4** (T1, número medido): reproducción confirmada — 18 de 100 nodos sin
   posición con el grupo externo, 100/100 sin él, 96/96 anidando sin aristas; 4
   celdas `(rank, order)` duplicadas en el resultado y 4 de 18 nodos explicados
