@@ -25,7 +25,9 @@ corte F6 en paralelo; se hace después de su merge.
   vez de crear uno nuevo; la respuesta reporta el `diagram_id` afectado.
 - S6 (restricción del humano): «de esos worktrees los agentes no pueden hacer
   merge de la rama lo haremos luego de revisar y probar nosotros» — el worker
-  no commitea ni merguea; deja el árbol listo para revisión.
+  no commitea ni merguea; deja el árbol listo para revisión. Integración
+  (decisión del 2026-11-05): feature → `staging` (revisión y prueba ahí) →
+  PRs encadenados → `main`; nunca directo a `main`.
 
 ### Derivados
 
@@ -76,3 +78,6 @@ corte F6 en paralelo; se hace después de su merge.
   recuerdo que hay pendiente de f2 aun».
 - L2 (2026-11-05): secuenciado con F6 en paralelo: RF14 UI queda para después
   del merge de F6; `render.rs`/`export.rs` de gx-core fuera de alcance (R5).
+- L3 (2026-11-05): el humano fijó la integración: «no haremos merge a la rama
+  main directamente usaremos una rama primero a la que haremos merge y cuando
+  esa sea estable hacer pr encadenados» — la rama de integración es `staging`.
