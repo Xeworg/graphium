@@ -66,10 +66,10 @@ corte F6 en paralelo; se hace después de su merge.
 
 ## Tasks
 
-- T1 (R1, R7): goldens de export con clusters anidados y emphasis; fixes en `gx-render-svg` si algo se deforma. Commit: pendiente.
-- T2 (R2, R7): `opts.replace_id` en store/dispatch/contract/tools con tests. Commit: pendiente.
-- T3 (R3, R7): versiones del documento en el store (tope 20) + superficie MCP de lectura con tests. Commit: pendiente.
-- T4 (R6): docs (PRD, harness INSTRUCTIONS, textos de tools) y suite completa verde. Commit: pendiente.
+- T1 (R1, R7): goldens de export con clusters anidados y emphasis; fixes en `gx-render-svg` si algo se deforma. Commit: `96422bb`. No hicieron falta fixes: render_export reusa render_with y las cajas/clases salen completas.
+- T2 (R2, R7): `opts.replace_id` en store/dispatch/contract/tools con tests. Commits: `36e0110` + `a91f355`.
+- T3 (R3, R7): versiones del documento en el store (tope 20) + superficie MCP de lectura con tests. Commits: `36e0110` + `a91f355`.
+- T4 (R6): docs (PRD, harness INSTRUCTIONS, textos de tools) y suite completa verde. Commit: `dd0c89c`. Evidencia: fmt + clippy -D warnings + test --workspace (32 binarios ok).
 - T5 (R4, abierto): UI de RF14 (flechas + «v3/7») — después del merge de F6.
 
 ## Log
@@ -78,6 +78,8 @@ corte F6 en paralelo; se hace después de su merge.
   recuerdo que hay pendiente de f2 aun».
 - L2 (2026-11-05): secuenciado con F6 en paralelo: RF14 UI queda para después
   del merge de F6; `render.rs`/`export.rs` de gx-core fuera de alcance (R5).
-- L3 (2026-11-05): el humano fijó la integración: «no haremos merge a la rama
-  main directamente usaremos una rama primero a la que haremos merge y cuando
-  esa sea estable hacer pr encadenados» — la rama de integración es `staging`.
+- L3 (2026-11-05): el humano fijó la integración: feature → `staging` →
+  PRs encadenados → `main`; nunca directo a `main`.
+- L4 (2026-11-05): implementación completa del worker (sin commit); el
+  orquestador la empaquetó en cuatro unidades: golden (`96422bb`), store
+  (`36e0110`), contrato MCP (`a91f355`), docs (`dd0c89c`).

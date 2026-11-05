@@ -12,7 +12,8 @@
 # Requisitos: bash, coreutils, rustc + cargo (los tests de instalación
 # necesitan una build release). El runner compila el release una vez; cada
 # test de install re-corre el mismo `cargo build --release` como chequeo de
-# frescura rápido.
+# frescura rápido. Los tests conservan el CARGO_HOME real (solo el HOME es de
+# scratch) para reusar esa build y no volver a bajar dependencias.
 
 set -euo pipefail
 
