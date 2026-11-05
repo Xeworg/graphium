@@ -96,7 +96,16 @@ place Graphium writes, and a refused export writes nothing. Exporting \
 never changes the plan: no diagram is opened, closed or re-rendered, so asking \
 for an export is always safe. Past 1 MB of inline text the answer is \
 `too_large` with `size_bytes`: send `path` or narrow the diagram with \
-`opts.extract`.";
+`opts.extract`.
+
+HISTORY. Every render that creates a diagram and every update or \
+`opts.replace_id` leaves a version of the source document behind, capped at 20 \
+with the oldest discarded. `list_diagram_versions` shows them (with the current \
+one) and `get_diagram_version` returns the exact document of one version; both \
+are read-only, so browsing history never touches the plan. To go back, take the \
+document of the version and render it again (with `opts.replace_id` to stay on \
+the same diagram). Use them when the human asks what changed or wants an older \
+shape back; the versions live only while the diagram is open.";
 
 /// The description of `register_session`, written for the agent (S3, D2).
 ///
@@ -138,8 +147,28 @@ response carries `extracted_from` (`\"<diagram_id>@<depth>\"`); the document \
 itself is unchanged. `opts.layout_timeout_ms` (default 2000, ceiling 10000) is \
 the deadline of the layout: missing it answers `ok: false`, code \
 `layout_timeout`, with `metrics.elapsed_ms` and nothing on the plan. \
-`opts.focus` puts the camera on a node and its neighbourhood; `opts.replace_id` \
-and `opts.interactive` arrive in F2/F3."
+`opts.focus` puts the camera on a node and its neighbourhood. `opts.replace_id` \
+replaces the document of the named diagram instead of creating another one: an \
+unknown id answers `unknown_diagram` and creates nothing. `opts.interactive` \
+arrives in F3."
+        }
+        "list_diagram_versions" => {
+            "\
+List the source-document versions of one diagram (RF14): every render that \
+creates a diagram and every update or `opts.replace_id` adds one, capped at 20 \
+with the oldest discarded. Read-only: a version is never restored through a \
+tool — take its document with `get_diagram_version` and render it again. \
+Answers `ok: true` with `current_version` and `versions[]`; an unknown or \
+foreign `diagram_id` answers `unknown_diagram` or `not_owner`."
+        }
+        "get_diagram_version" => {
+            "\
+Get the exact source document of one version of a diagram (RF14): pass the \
+`version` from `list_diagram_versions` and the tool answers the document that \
+produced that paint. Read-only; feed the document back to `render_diagram` (or \
+use `opts.replace_id`) to restore it on the plan. An unknown version answers \
+`invalid_value` on path `version`; an unknown or foreign `diagram_id` answers \
+`unknown_diagram` or `not_owner`."
         }
         "validate_diagram" => {
             "\

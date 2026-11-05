@@ -80,9 +80,11 @@ as `unknown_kind` with the available kinds in `hint`. Every node needs a \
 unique `id`; edges reference node ids with `from` and `to`. \
 Unknown fields are rejected, so send only documented keys. The response is \
 JSON: { ok, diagram_id, rendered_kind, rendered, metrics, extracted_from, \
-errors, warnings, session }. `ok: false` means nothing was placed and `errors[]` \
+replaced, errors, warnings, session }. `ok: false` means nothing was placed and \
+`errors[]` \
 carries `{ path, code, message, hint? }` with a stable `code`; `ok: true` \
-returns the new `diagram_id`, the `rendered_kind`, `metrics { nodes, edges, \
+returns the `diagram_id` that was placed —the new one, or the one \
+`opts.replace_id` named—, the `rendered_kind`, `metrics { nodes, edges, \
 layout_ms, render_ms, svg_bytes }` and `rendered` telling whether the window \
 confirmed the paint. `opts` is optional: `opts.extract: { around, depth? }` \
 draws only the neighbourhood of one node (default `depth: 1`, at most 300 \
@@ -91,8 +93,11 @@ nodes) and the response carries `extracted_from: \"<diagram_id>@<depth>\"`; \
 10000) and a layout that misses it answers `ok: false, code: \
 \"layout_timeout\"` with `metrics.elapsed_ms`, leaving the plan untouched. \
 `opts.focus: { id, depth? }` puts the camera on that node and, with `depth`, on \
-its neighbourhood. `opts.replace_id` and `opts.interactive` arrive in F2/F3 and \
-are ignored for now.";
+its neighbourhood. `opts.replace_id: \"<diagram_id>\"` replaces the document of \
+that diagram instead of creating another one — the same cycle as an update plus \
+the render —, an unknown id answers `unknown_diagram` and creates nothing, and \
+the answer names the diagram in `replaced`; without it the render sums to the \
+plan. `opts.interactive` arrives in F3 and is ignored for now.";
 
 /// Description of the `export_diagram` tool, written for the agent.
 const EXPORT_DIAGRAM_DESCRIPTION: &str = "\
@@ -165,6 +170,31 @@ The source document of a diagram, with its current revision. Use it to read \
 before an `update_diagram` (the revision is the one to send back), or to \
 recover a document after a compaction. It never renders anything.";
 
+/// Description of the `list_diagram_versions` tool, written for the agent
+/// (RF14; feature doc `f2-cierre.md`, R3).
+const LIST_DIAGRAM_VERSIONS_DESCRIPTION: &str = "\
+The versions of a diagram's source document, oldest first. Every \
+`render_diagram` and every accepted `update_diagram` writes one; the store \
+keeps the last 20 of each diagram and discards the oldest. The response is \
+JSON: { ok, diagram_id, current_version, versions: [{ version, revision, \
+updated_at, bytes }], errors? }. `current_version` is the version the diagram \
+is on now; the «v3/7» of the window is its position among the kept versions \
+(`versions.len()` is the 7), so a full history reads «v20/20». It is \
+read-only and never renders: use `get_diagram_version` to read the document \
+of one version, and `render_diagram` or `update_diagram` to go back, which \
+writes a new version instead of rewriting the history.";
+
+/// Description of the `get_diagram_version` tool, written for the agent
+/// (RF14, R3).
+const GET_DIAGRAM_VERSION_DESCRIPTION: &str = "\
+The source document of one version of a diagram: { ok, diagram_id, version, \
+revision, updated_at, document, errors? }. Call `list_diagram_versions` \
+first to know which numbers exist; a number the diagram does not keep answers \
+`invalid_value` at `version` with the range it has. It is read-only: no tool \
+restores a version. To restore one, send that document to `render_diagram` \
+(or patch the current document with `update_diagram`): that writes a new \
+version and never rewrites the history.";
+
 /// Description of the `clear_canvas` tool, written for the agent.
 const CLEAR_CANVAS_DESCRIPTION: &str = "\
 Removes diagrams from the plan. Without `scope` it clears only the diagrams \
@@ -213,6 +243,24 @@ pub struct ClearCanvasParams {
 pub struct GetDiagramParams {
     /// The id returned by `render_diagram` or `list_diagrams`.
     pub diagram_id: String,
+}
+
+/// Parameters of the `list_diagram_versions` tool (RF14).
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListDiagramVersionsParams {
+    /// The id returned by `render_diagram` or `list_diagrams`.
+    pub diagram_id: String,
+}
+
+/// Parameters of the `get_diagram_version` tool (RF14).
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GetDiagramVersionParams {
+    /// The id returned by `render_diagram` or `list_diagrams`.
+    pub diagram_id: String,
+    /// The version number reported by `list_diagram_versions`, from `1`.
+    pub version: u64,
 }
 
 /// Parameters of the `update_diagram` tool (PRD §11).
@@ -268,9 +316,9 @@ pub struct ExportDiagramParams {
 pub struct RenderDiagramParams {
     /// The complete diagram document, as a JSON object.
     pub diagram: serde_json::Value,
-    /// Options of the render: `extract { around, depth? }` and
-    /// `layout_timeout_ms`. `focus`, `replace_id` and `interactive` arrive in
-    /// F2/F3 and are ignored for now.
+    /// Options of the render: `extract { around, depth? }`,
+    /// `focus { id, depth? }`, `replace_id` and `layout_timeout_ms`.
+    /// `interactive` arrives in F3 and is ignored for now.
     #[serde(default)]
     pub opts: Option<serde_json::Value>,
 }
@@ -381,6 +429,49 @@ impl GraphiumServer {
     ) -> Result<CallToolResult, ErrorData> {
         let response = contract::get_diagram(&self.session_id, &params.diagram_id);
         structured(response)
+    }
+
+    #[tool(
+        name = "list_diagram_versions",
+        description = LIST_DIAGRAM_VERSIONS_DESCRIPTION,
+        annotations(
+            title = "List diagram versions",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn list_diagram_versions(
+        &self,
+        Parameters(params): Parameters<ListDiagramVersionsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        structured(contract::list_diagram_versions(
+            &self.session_id,
+            &params.diagram_id,
+        ))
+    }
+
+    #[tool(
+        name = "get_diagram_version",
+        description = GET_DIAGRAM_VERSION_DESCRIPTION,
+        annotations(
+            title = "Get diagram version",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn get_diagram_version(
+        &self,
+        Parameters(params): Parameters<GetDiagramVersionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        structured(contract::get_diagram_version(
+            &self.session_id,
+            &params.diagram_id,
+            params.version,
+        ))
     }
 
     #[tool(
@@ -598,8 +689,8 @@ mod tests {
     use rmcp::ServiceExt;
 
     use super::{
-        mcp_config_json, ExportDiagramParams, GraphiumServer, RegisterSessionParams,
-        RenderDiagramParams,
+        mcp_config_json, ExportDiagramParams, GetDiagramVersionParams, GraphiumServer,
+        ListDiagramVersionsParams, RegisterSessionParams, RenderDiagramParams, UpdateDiagramParams,
     };
     use crate::test_support::{lock_renders, MINIMAL};
 
@@ -808,6 +899,100 @@ mod tests {
         assert!(warnings.contains(&"no_window"), "{warnings:?}");
     }
 
+    /// RF14/R3: the router advertises the two read-only history tools with the
+    /// arguments the dispatcher reads. A tool that exists in the dispatcher
+    /// and not here is invisible to a stdio client.
+    #[test]
+    fn the_server_advertises_the_history_tools() {
+        let tools = GraphiumServer::tool_router().list_all();
+
+        for (name, required) in [
+            ("list_diagram_versions", "diagram_id"),
+            ("get_diagram_version", "version"),
+        ] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == name)
+                .unwrap_or_else(|| panic!("{name} is advertised"));
+            let description = tool.description.as_deref().unwrap_or_default();
+            assert!(description.len() > 80, "{name} needs a real description");
+            assert!(
+                tool.annotations
+                    .as_ref()
+                    .is_some_and(|annotations| annotations.read_only_hint.unwrap_or(false)),
+                "{name} is read-only: {:?}",
+                tool.annotations
+            );
+            let properties = tool.input_schema["properties"]
+                .as_object()
+                .expect("the input schema has properties");
+            assert!(properties.contains_key("diagram_id"), "{properties:?}");
+            assert!(
+                properties.contains_key(required),
+                "{name} takes `{required}`: {properties:?}"
+            );
+        }
+    }
+
+    /// RF14/R3: the stdio server reaches the history through the same
+    /// `contract` functions the relay uses.
+    #[tokio::test]
+    async fn the_history_tools_read_the_versions_of_a_diagram() {
+        let _guard = lock_renders().await;
+        let server = GraphiumServer::new();
+        let diagram = serde_json::from_str(MINIMAL).expect("the example is JSON");
+
+        let rendered = server
+            .render_diagram(Parameters(RenderDiagramParams {
+                diagram,
+                opts: None,
+            }))
+            .await
+            .expect("a valid document never fails the tool")
+            .structured_content
+            .expect("structured content");
+        let diagram_id = rendered["diagram_id"]
+            .as_str()
+            .expect("the render names the diagram")
+            .to_string();
+
+        server
+            .update_diagram(Parameters(UpdateDiagramParams {
+                diagram_id: diagram_id.clone(),
+                patch: serde_json::json!({ "title": "segunda" }),
+                revision: None,
+            }))
+            .await
+            .expect("the update answers");
+
+        let listed = server
+            .list_diagram_versions(Parameters(ListDiagramVersionsParams {
+                diagram_id: diagram_id.clone(),
+            }))
+            .await
+            .expect("the history answers")
+            .structured_content
+            .expect("structured content");
+        assert_eq!(listed["ok"], true, "{listed}");
+        assert_eq!(listed["current_version"], 2, "{listed}");
+
+        let first = server
+            .get_diagram_version(Parameters(GetDiagramVersionParams {
+                diagram_id,
+                version: 1,
+            }))
+            .await
+            .expect("the version answers")
+            .structured_content
+            .expect("structured content");
+        assert_eq!(first["ok"], true, "{first}");
+        assert_eq!(first["version"], 1, "{first}");
+        assert_eq!(
+            first["document"]["title"], "parse_config() — flujo",
+            "{first}"
+        );
+    }
+
     /// S21: `opts.extract` is honoured and, when every key is supported,
     /// there is no `opts_ignored` warning at all.
     #[tokio::test]
@@ -841,8 +1026,8 @@ mod tests {
     }
 
     /// S21: the message of `opts_ignored` names the keys of the later phases,
-    /// so the agent learns when they arrive. `opts.focus` ya se honra en F2,
-    /// así que el aviso queda para las que faltan.
+    /// so the agent learns when they arrive. `opts.focus` y `opts.replace_id`
+    /// ya se honran en F2, así que el aviso queda para `opts.interactive`.
     #[tokio::test]
     async fn opts_ignored_names_the_keys_of_the_later_phases() {
         let _guard = lock_renders().await;
@@ -852,7 +1037,7 @@ mod tests {
         let result = server
             .render_diagram(Parameters(RenderDiagramParams {
                 diagram,
-                opts: Some(serde_json::json!({ "replace_id": "d-0001" })),
+                opts: Some(serde_json::json!({ "interactive": true })),
             }))
             .await
             .expect("a valid document never fails the tool");
@@ -865,14 +1050,14 @@ mod tests {
             .find(|warning| warning["code"] == "opts_ignored")
             .expect("the ignored key is reported");
         let message = warning["message"].as_str().expect("the warning says why");
-        for key in ["opts.replace_id", "opts.interactive"] {
-            assert!(message.contains(key), "the message names {key}: {message}");
-        }
-        // `opts.focus` aparece en el texto como honrada, no como ignorada:
-        // lo que importa es que el aviso nombre solo las que faltan.
         assert!(
-            message.contains("esta versión honra"),
-            "el aviso dice qué se honra hoy: {message}"
+            message.contains("opts.interactive"),
+            "the message names the key of the later phase: {message}"
+        );
+        assert!(
+            !message.contains("opts.replace_id`, `opts.interactive")
+                && message.contains("honra `opts.extract`, `opts.focus`, `opts.replace_id`"),
+            "el aviso dice que replace_id ya se honra: {message}"
         );
     }
 

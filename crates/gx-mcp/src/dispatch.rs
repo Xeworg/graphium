@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use crate::contract;
 
 /// Every tool of the server, in the order the index reports them.
-pub const TOOL_NAMES: [&str; 9] = [
+pub const TOOL_NAMES: [&str; 11] = [
     "render_diagram",
     "validate_diagram",
     "get_diagram_schema",
@@ -18,6 +18,8 @@ pub const TOOL_NAMES: [&str; 9] = [
     "get_diagram",
     "update_diagram",
     "export_diagram",
+    "list_diagram_versions",
+    "get_diagram_version",
     "clear_canvas",
     "register_session",
 ];
@@ -109,6 +111,26 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
             let response = crate::export::export_diagram(&request);
             serde_json::to_value(&response).map_err(|error| error.to_string())
         }
+        "list_diagram_versions" => {
+            let diagram_id = arguments
+                .get("diagram_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "`diagram_id` is required".to_string())?;
+            let response = contract::list_diagram_versions(session_id, diagram_id);
+            serde_json::to_value(&response).map_err(|error| error.to_string())
+        }
+        "get_diagram_version" => {
+            let diagram_id = arguments
+                .get("diagram_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "`diagram_id` is required".to_string())?;
+            let version = arguments
+                .get("version")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "`version` is required".to_string())?;
+            let response = contract::get_diagram_version(session_id, diagram_id, version);
+            serde_json::to_value(&response).map_err(|error| error.to_string())
+        }
         "clear_canvas" => {
             let scope = arguments.get("scope").and_then(Value::as_str);
             let response = contract::clear_canvas(session_id, scope);
@@ -179,6 +201,19 @@ pub fn tool_schema(name: &str) -> Value {
                 }
             },
             "required": ["format"]
+        }),
+        "list_diagram_versions" => json!({
+            "type": "object",
+            "properties": { "diagram_id": { "type": "string" } },
+            "required": ["diagram_id"]
+        }),
+        "get_diagram_version" => json!({
+            "type": "object",
+            "properties": {
+                "diagram_id": { "type": "string" },
+                "version": { "type": "integer" }
+            },
+            "required": ["diagram_id", "version"]
         }),
         "clear_canvas" => json!({
             "type": "object",
@@ -321,6 +356,51 @@ mod tests {
         assert_eq!(wrong["errors"][0]["code"], "invalid_value", "{wrong}");
     }
 
+    /// S5/R2: `opts.replace_id` also arrives through the relay, because the
+    /// dispatcher hands the raw `opts` to the same implementation the stdio
+    /// server uses. A forwarded client therefore replaces instead of piling
+    /// up diagrams, exactly like a local one.
+    #[test]
+    fn the_relay_honours_replace_id() {
+        let _guard = crate::test_support::lock_renders_blocking();
+
+        let document = serde_json::from_str::<serde_json::Value>(MINIMAL).unwrap();
+        let first = call_tool(
+            "render_diagram",
+            &serde_json::json!({ "diagram": document }),
+            "session-replace",
+        )
+        .expect("rendered");
+        let diagram_id = first["diagram_id"]
+            .as_str()
+            .expect("the render names the diagram")
+            .to_string();
+
+        let replaced = call_tool(
+            "render_diagram",
+            &serde_json::json!({
+                "diagram": { "version": 1, "kind": "graph", "title": "reemplazado",
+                    "nodes": [{ "id": "a", "label": "A" }], "edges": [] },
+                "opts": { "replace_id": diagram_id }
+            }),
+            "session-replace",
+        )
+        .expect("rendered");
+        assert_eq!(replaced["ok"], true, "{replaced}");
+        assert_eq!(replaced["diagram_id"], diagram_id.as_str(), "{replaced}");
+        assert_eq!(replaced["replaced"], diagram_id.as_str(), "{replaced}");
+
+        let listed =
+            call_tool("list_diagrams", &serde_json::json!({}), "session-replace").expect("listed");
+        let diagrams = listed["diagrams"].as_array().expect("diagrams");
+        assert_eq!(
+            diagrams.len(),
+            1,
+            "the relay replaced, it did not pile up: {listed}"
+        );
+        assert_eq!(diagrams[0]["title"], "reemplazado", "{listed}");
+    }
+
     #[test]
     fn the_lifecycle_is_reachable_through_the_dispatcher() {
         // The global store is shared: the test that renders serializes with
@@ -403,6 +483,68 @@ mod tests {
         assert_eq!(empty["errors"][0]["code"], "invalid_value", "{empty}");
         assert_eq!(empty["errors"][0]["path"], "label", "{empty}");
         assert!(empty["errors"][0]["hint"].is_string(), "{empty}");
+    }
+
+    /// RF14/R3: the history is readable through the relay too, because the
+    /// dispatcher is the second door to the same `contract` functions a stdio
+    /// client reaches.
+    #[test]
+    fn the_history_is_reachable_through_the_dispatcher() {
+        let _guard = crate::test_support::lock_renders_blocking();
+
+        let document = serde_json::from_str::<serde_json::Value>(MINIMAL).unwrap();
+        let rendered = call_tool(
+            "render_diagram",
+            &serde_json::json!({ "diagram": document }),
+            "session-history",
+        )
+        .expect("rendered");
+        let diagram_id = rendered["diagram_id"]
+            .as_str()
+            .expect("the render names the diagram")
+            .to_string();
+
+        call_tool(
+            "update_diagram",
+            &serde_json::json!({ "diagram_id": diagram_id, "patch": { "title": "segunda" } }),
+            "session-history",
+        )
+        .expect("updated");
+
+        let listed = call_tool(
+            "list_diagram_versions",
+            &serde_json::json!({ "diagram_id": diagram_id }),
+            "session-history",
+        )
+        .expect("listed");
+        assert_eq!(listed["ok"], true, "{listed}");
+        assert_eq!(listed["current_version"], 2, "{listed}");
+        assert_eq!(
+            listed["versions"].as_array().expect("versions").len(),
+            2,
+            "{listed}"
+        );
+
+        let first = call_tool(
+            "get_diagram_version",
+            &serde_json::json!({ "diagram_id": diagram_id, "version": 1 }),
+            "session-history",
+        )
+        .expect("read");
+        assert_eq!(first["ok"], true, "{first}");
+        assert_eq!(
+            first["document"]["nodes"][0]["id"], "a",
+            "the first version is the document the render stored: {first}"
+        );
+
+        let missing = call_tool(
+            "get_diagram_version",
+            &serde_json::json!({ "diagram_id": diagram_id, "version": 9 }),
+            "session-history",
+        )
+        .expect("answered");
+        assert_eq!(missing["ok"], false, "{missing}");
+        assert_eq!(missing["errors"][0]["code"], "invalid_value", "{missing}");
     }
 
     /// The schema the relay publishes for the new tool: `label` is optional
