@@ -1,11 +1,13 @@
 name: CI
 
-# El CI corre cuando se publica una etiqueta de versión, y solo entonces:
-# los gates (tests, golden, clippy, presupuestos) son de entrega, no de cada
-# push. Para comprobar una rama antes de etiquetarla, `cargo test --workspace`
-# y `cargo clippy --workspace --all-targets` en local; la etiqueta es la que
-# decide si el artefacto sale.
+# El CI corre en cada pull request y cuando se publica una etiqueta de
+# versión. En un PR es el required check de `main` («tests and gates»): sin
+# él la protección de la rama bloquea el merge para siempre, porque un check
+# que nunca reporta no aprueba nada. Para comprobar una rama sin abrir PR,
+# `cargo test --workspace` y `cargo clippy --workspace --all-targets` en
+# local; la etiqueta es la que decide si el artefacto sale.
 on:
+  pull_request:
   push:
     tags: ["v*"]
 
