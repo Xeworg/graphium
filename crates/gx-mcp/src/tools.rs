@@ -45,6 +45,9 @@ pub struct RenderOptions {
     /// Puts the camera on one node and, optionally, its neighbourhood
     /// (PRD §7, RF27).
     pub focus: Option<Focus>,
+    /// Replaces the document of this diagram instead of creating another one
+    /// (PRD §7, S5 of `f2-cierre.md`).
+    pub replace_id: Option<String>,
     /// Deadline of the whole pipeline, in milliseconds.
     pub layout_timeout_ms: u64,
 }
@@ -63,6 +66,7 @@ impl Default for RenderOptions {
         Self {
             extract: None,
             focus: None,
+            replace_id: None,
             layout_timeout_ms: DEFAULT_LAYOUT_TIMEOUT_MS,
         }
     }
@@ -87,6 +91,11 @@ pub struct RenderResponse {
     /// `<diagram_id>@<depth>` (PRD §7.3, S21).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extracted_from: Option<String>,
+    /// The diagram whose document this render replaced, when the agent sent
+    /// `opts.replace_id` (PRD §7 RF1 caption; feature doc `f2-cierre.md`, S5).
+    /// Without it the render sums to the plan and the field is absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replaced: Option<String>,
     /// How many renders were waiting when the queue refused this one
     /// (PRD §7.3, S22).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -393,6 +402,7 @@ fn busy(depth: usize) -> RenderResponse {
         extracted_from: None,
         queue_depth: Some(depth),
         retry_after_ms: Some(BUSY_RETRY_AFTER_MS),
+        replaced: None,
         errors: vec![ErrorPayload {
             path: "diagram".to_string(),
             code: "busy".to_string(),
@@ -441,6 +451,84 @@ fn with_session(mut response: RenderResponse, session_id: &str) -> RenderRespons
     response
 }
 
+/// Checks the diagram `opts.replace_id` names before the layout runs (S5, R2).
+///
+/// Replacing is an update of that diagram, so the errors are the ones of
+/// `update_diagram` — `unknown_diagram`, `not_owner` — with the path of the
+/// option that named the id: the agent fixes `opts.replace_id`, not a
+/// `diagram_id` it never sent. Nothing is created on either error. The summary
+/// of the target comes back so the kind can be checked after the render
+/// without asking the store twice.
+fn resolve_replacement(
+    replace_id: Option<&str>,
+    session_id: &str,
+) -> Result<Option<crate::store::DiagramSummary>, ErrorPayload> {
+    let Some(replace_id) = replace_id else {
+        return Ok(None);
+    };
+    let store = diagram_store();
+    let Some(record) = store.record(replace_id) else {
+        return Err(contract_payload(
+            crate::contract::unknown_diagram(replace_id, &store.known_ids()),
+            "opts.replace_id",
+        ));
+    };
+    if record.summary.session_id != session_id {
+        return Err(contract_payload(
+            crate::contract::not_owner(replace_id),
+            "opts.replace_id",
+        ));
+    }
+    Ok(Some(record.summary))
+}
+
+/// The answer of a replacement whose document is another kind.
+///
+/// An existing diagram keeps its kind (PRD §11.1): replacing is an update plus
+/// the render, and `list_diagrams` would otherwise name a kind the document no
+/// longer has.
+fn kind_change_not_allowed(replace_id: &str, kind: &str, current: &str) -> RenderResponse {
+    RenderResponse {
+        ok: false,
+        diagram_id: None,
+        rendered_kind: None,
+        rendered: false,
+        reason: None,
+        metrics: None,
+        extracted_from: None,
+        queue_depth: None,
+        retry_after_ms: None,
+        replaced: None,
+        errors: vec![ErrorPayload {
+            path: "kind".to_string(),
+            code: ErrorCode::KindChangeNotAllowed.as_str().to_string(),
+            message: format!(
+                "el diagrama `{replace_id}` es `{current}` y el documento nuevo es `{kind}`: el `kind` de un diagrama no se puede cambiar"
+            ),
+            hint: Some(
+                "creá otro diagrama con `render_diagram` sin `opts.replace_id`".to_string(),
+            ),
+        }],
+        warnings: Vec::new(),
+        session: None,
+    }
+}
+
+/// Joins a lifecycle payload of `contract` with the response type of the
+/// tools, under the path of the field that failed.
+///
+/// The wording of `unknown_diagram` and `not_owner` (with `known_ids[]`) is
+/// owned by `contract`; this is the one place where the two copies of the
+/// type meet, so the messages cannot drift.
+pub(crate) fn contract_payload(payload: crate::contract::ErrorPayload, path: &str) -> ErrorPayload {
+    ErrorPayload {
+        path: path.to_string(),
+        code: payload.code,
+        message: payload.message,
+        hint: payload.hint,
+    }
+}
+
 /// The render itself, with the answer the caller asked for.
 ///
 /// [`render_diagram_with`] is the one door out: it stamps the session on
@@ -453,6 +541,31 @@ fn render_inner(request: &RenderRequest, opts: &RenderOptions) -> RenderResponse
     let _slot = match enter_queue() {
         Ok(slot) => slot,
         Err(depth) => return busy(depth),
+    };
+
+    // `opts.replace_id` names the diagram whose document this render replaces
+    // (PRD §7, S5). The target is resolved before the layout: an id that is
+    // not on the plan is answered without paying a layout, and a replacement
+    // never creates a diagram, so it does not need a free slot either.
+    let replacing = match resolve_replacement(opts.replace_id.as_deref(), &request.session_id) {
+        Ok(target) => target,
+        Err(payload) => {
+            return RenderResponse {
+                ok: false,
+                diagram_id: None,
+                rendered_kind: None,
+                rendered: false,
+                reason: None,
+                metrics: None,
+                extracted_from: None,
+                queue_depth: None,
+                retry_after_ms: None,
+                replaced: None,
+                errors: vec![payload],
+                warnings: Vec::new(),
+                session: None,
+            }
+        }
     };
 
     let deadline_ms = opts
@@ -507,6 +620,7 @@ fn render_inner(request: &RenderRequest, opts: &RenderOptions) -> RenderResponse
             extracted_from: None,
             queue_depth: None,
             retry_after_ms: None,
+            replaced: None,
             errors: vec![ErrorPayload {
                 path: "diagram".to_string(),
                 code: "too_large".to_string(),
@@ -538,6 +652,14 @@ fn render_inner(request: &RenderRequest, opts: &RenderOptions) -> RenderResponse
         .to_string();
 
     let metrics = Metrics::from(outcome.metrics);
+    // An existing diagram keeps its kind (PRD §11.1): replacing is an update
+    // plus the render, so `list_diagrams` cannot end up naming a kind the
+    // document no longer has. Nothing is stored when they disagree.
+    if let Some(target) = &replacing {
+        if target.kind != kind {
+            return kind_change_not_allowed(&target.diagram_id, &kind, &target.kind);
+        }
+    }
     // The size of what was just painted is reported, never hidden: the same
     // warning the dry run gives, in the same words (PRD §7 RF20, S6).
     let mut warnings = match gx_core::kind::for_kind(&kind) {
@@ -580,50 +702,85 @@ fn render_inner(request: &RenderRequest, opts: &RenderOptions) -> RenderResponse
     };
 
     let store = diagram_store();
-    // The plan holds a dozen diagrams (PRD §11.1, RF13). A render that would
-    // not fit is refused **before** anything is stored or painted, so the
-    // plane stays exactly as the human left it.
-    if store.is_full() {
-        return RenderResponse {
-            ok: false,
-            diagram_id: None,
-            rendered_kind: None,
-            rendered: false,
-            reason: None,
-            metrics: Some(metrics),
-            extracted_from: None,
-            queue_depth: None,
-            retry_after_ms: None,
-            errors: vec![ErrorPayload {
-                path: "diagram".to_string(),
-                code: "too_many_diagrams".to_string(),
-                message: format!(
-                    "el plano ya tiene {} diagramas abiertos y el tope es {}",
-                    store.open_count(),
-                    crate::store::MAX_OPEN_DIAGRAMS
-                ),
-                hint: Some(
-                    "cerrá un diagrama desde el panel lateral y volvé a intentar".to_string(),
-                ),
-            }],
-            warnings: Vec::new(),
-            session: None,
-        };
-    }
-    let diagram_id = store.next_id();
     // The document is kept normalized: `get_diagram` returns exactly this.
     let document = serde_json::to_string(
         &serde_json::from_str::<serde_json::Value>(&request.document)
             .unwrap_or(serde_json::Value::Null),
     )
     .unwrap_or_else(|_| request.document.clone());
-    store.insert(
-        diagram_id.clone(),
-        title,
-        kind.clone(),
-        request.session_id.clone(),
-        document,
-    );
+    let diagram_id = match opts.replace_id.as_deref() {
+        // The same cycle as `update_diagram` followed by a re-render: the
+        // document and the title move to the stored diagram, the revision
+        // grows and the id stays. Nothing is inserted, so the plane does not
+        // grow.
+        Some(replace_id) => match store.replace(replace_id, title, document) {
+            Some(summary) => summary.diagram_id,
+            None => {
+                // The diagram was closed between the check and here.
+                return RenderResponse {
+                    ok: false,
+                    diagram_id: None,
+                    rendered_kind: None,
+                    rendered: false,
+                    reason: None,
+                    metrics: Some(metrics),
+                    extracted_from: None,
+                    queue_depth: None,
+                    retry_after_ms: None,
+                    replaced: None,
+                    errors: vec![contract_payload(
+                        crate::contract::unknown_diagram(replace_id, &store.known_ids()),
+                        "opts.replace_id",
+                    )],
+                    warnings: Vec::new(),
+                    session: None,
+                };
+            }
+        },
+        None => {
+            // The plan holds a dozen diagrams (PRD §11.1, RF13). A render that
+            // would not fit is refused **before** anything is stored or
+            // painted, so the plane stays exactly as the human left it.
+            if store.is_full() {
+                return RenderResponse {
+                    ok: false,
+                    diagram_id: None,
+                    rendered_kind: None,
+                    rendered: false,
+                    reason: None,
+                    metrics: Some(metrics),
+                    extracted_from: None,
+                    queue_depth: None,
+                    retry_after_ms: None,
+                    replaced: None,
+                    errors: vec![ErrorPayload {
+                        path: "diagram".to_string(),
+                        code: "too_many_diagrams".to_string(),
+                        message: format!(
+                            "el plano ya tiene {} diagramas abiertos y el tope es {}",
+                            store.open_count(),
+                            crate::store::MAX_OPEN_DIAGRAMS
+                        ),
+                        hint: Some(
+                            "cerrá un diagrama desde el panel lateral y volvé a intentar"
+                                .to_string(),
+                        ),
+                    }],
+                    warnings: Vec::new(),
+                    session: None,
+                };
+            }
+            let diagram_id = store.next_id();
+            store.insert(
+                diagram_id.clone(),
+                title,
+                kind.clone(),
+                request.session_id.clone(),
+                document,
+            );
+            diagram_id
+        }
+    };
 
     let status = match installed_hook() {
         Some(hook) => hook(&RenderHookPayload {
@@ -667,6 +824,7 @@ fn render_inner(request: &RenderRequest, opts: &RenderOptions) -> RenderResponse
         extracted_from,
         queue_depth: None,
         retry_after_ms: None,
+        replaced: opts.replace_id.clone(),
         errors: Vec::new(),
         warnings,
         session: None,
@@ -742,6 +900,7 @@ pub(crate) fn rejected(errors: Vec<ValidationError>) -> RenderResponse {
         extracted_from: None,
         queue_depth: None,
         retry_after_ms: None,
+        replaced: None,
         errors: errors.iter().map(ErrorPayload::from).collect(),
         warnings: Vec::new(),
         session: None,
@@ -770,6 +929,7 @@ fn layout_timeout(deadline_ms: u64, elapsed: Duration) -> RenderResponse {
         extracted_from: None,
         queue_depth: None,
         retry_after_ms: None,
+        replaced: None,
         errors: vec![ErrorPayload {
             path: "diagram".to_string(),
             code: ErrorCode::LayoutTimeout.as_str().to_string(),
@@ -788,7 +948,7 @@ pub const DEFAULT_EXTRACT_DEPTH: usize = 1;
 
 /// Reads `opts` into [`RenderOptions`] (PRD §7.3, S21).
 ///
-/// The keys that belong to F2/F3 are accepted and reported in an
+/// The keys that belong to a later phase are accepted and reported in an
 /// `opts_ignored` warning that names them, so the agent knows when they
 /// arrive instead of guessing. A malformed value is an error with its own
 /// path, never a silent default: rendering the whole diagram because `around`
@@ -820,6 +980,7 @@ pub fn parse_opts(
         match key.as_str() {
             "extract" => render_opts.extract = Some(parse_extract(value)?),
             "focus" => render_opts.focus = Some(parse_focus(value)?),
+            "replace_id" => render_opts.replace_id = Some(parse_replace_id(value)?),
             "layout_timeout_ms" => {
                 let Some(ms) = value.as_u64() else {
                     return Err(vec![ValidationError::new(
@@ -844,12 +1005,36 @@ pub fn parse_opts(
         warnings.push(Warning {
             code: "opts_ignored".to_string(),
             message: format!(
-                "`opts.{}` todavía se ignora: `opts.replace_id` llega con el ciclo de reemplazo y `opts.interactive` en F3; esta versión honra `opts.extract`, `opts.focus` y `opts.layout_timeout_ms`",
+                "`opts.{}` todavía se ignora: `opts.interactive` llega en F3; esta versión honra `opts.extract`, `opts.focus`, `opts.replace_id` y `opts.layout_timeout_ms`",
                 ignored.join("`, `opts.")
             ),
         });
     }
     Ok((render_opts, warnings))
+}
+
+/// Reads `opts.replace_id` into the id of the diagram to replace (S5).
+///
+/// The value is the id a previous render answered. An empty or non-string
+/// value is an error with its own path: falling back to "create another"
+/// would leave two diagrams where the agent asked for one.
+fn parse_replace_id(
+    value: &serde_json::Value,
+) -> Result<String, Vec<gx_core::error::ValidationError>> {
+    use gx_core::error::{ErrorCode, ValidationError};
+
+    let id = value.as_str().map(str::trim).unwrap_or_default();
+    if id.is_empty() {
+        return Err(vec![ValidationError::new(
+            "opts.replace_id",
+            ErrorCode::InvalidValue,
+            format!("`opts.replace_id` tiene que ser el id de un diagrama del plano, no `{value}`"),
+            Some(
+                "mandá el `diagram_id` que devolvió `render_diagram` o `list_diagrams`".to_string(),
+            ),
+        )]);
+    }
+    Ok(id.to_string())
 }
 
 /// Reads `opts.focus` into a [`Focus`] (PRD §7, RF27).
@@ -1067,6 +1252,26 @@ mod tests {
         )
     }
 
+    /// Renders with the raw `opts` of the MCP contract, the way the stdio
+    /// server and the relay do: the only door that sees `opts.replace_id`.
+    fn render_from_json(document: &str, opts: serde_json::Value) -> RenderResponse {
+        render_from_json_in("session-test", document, opts)
+    }
+
+    fn render_from_json_in(
+        session_id: &str,
+        document: &str,
+        opts: serde_json::Value,
+    ) -> RenderResponse {
+        render_diagram_from_json(
+            &RenderRequest {
+                document: document.to_string(),
+                session_id: session_id.to_string(),
+            },
+            Some(&opts),
+        )
+    }
+
     fn focus(around: &str, depth: usize) -> RenderOptions {
         RenderOptions {
             focus: Some(super::Focus {
@@ -1197,6 +1402,199 @@ mod tests {
         let listed = diagram_store().list();
         assert_eq!(listed.len(), 2, "los dos siguen en el plano: {listed:?}");
         assert_eq!(diagram_store().open_count(), 2);
+        // Sin `opts.replace_id` no hay diagrama reemplazado: el render suma.
+        assert!(first.replaced.is_none());
+        assert!(second.replaced.is_none());
+        let json = serde_json::to_value(&first).expect("the response serializes");
+        assert!(json.get("replaced").is_none(), "{json}");
+    }
+
+    /// S5/R2 (f2-cierre): `opts.replace_id` reemplaza el documento del
+    /// diagrama nombrado en vez de acumular otro. Es el ciclo de un `update`
+    /// seguido de un re-render: la revisión avanza, el id no cambia y la
+    /// respuesta reporta el diagrama afectado.
+    #[test]
+    fn replace_id_replaces_the_named_diagram_instead_of_creating_another() {
+        let _guard = lock_renders_blocking();
+
+        let first = render(MINIMAL);
+        let diagram_id = first.diagram_id.expect("the render stores the diagram");
+
+        let replacement = r#"{
+          "version": 1, "kind": "graph", "title": "reemplazado",
+          "nodes": [ { "id": "a", "label": "A" }, { "id": "b", "label": "B" } ],
+          "edges": [ { "from": "a", "to": "b" } ]
+        }"#;
+        let response =
+            render_from_json(replacement, serde_json::json!({ "replace_id": diagram_id }));
+
+        assert!(response.ok, "{:?}", response.errors);
+        assert_eq!(response.diagram_id.as_deref(), Some(diagram_id.as_str()));
+        assert_eq!(response.replaced.as_deref(), Some(diagram_id.as_str()));
+        assert!(
+            response
+                .warnings
+                .iter()
+                .all(|warning| warning.code != "opts_ignored"),
+            "`opts.replace_id` se honra: {:?}",
+            response.warnings
+        );
+
+        let listed = diagram_store().list();
+        assert_eq!(
+            listed.len(),
+            1,
+            "no se acumula un segundo diagrama: {listed:?}"
+        );
+        assert_eq!(listed[0].diagram_id, diagram_id);
+        assert_eq!(listed[0].revision, 2, "el ciclo de un update + re-render");
+        assert_eq!(listed[0].title, "reemplazado");
+        let stored = diagram_store()
+            .record(&diagram_id)
+            .expect("the diagram stays on the plan")
+            .document;
+        let stored: serde_json::Value =
+            serde_json::from_str(&stored).expect("the document is JSON");
+        assert_eq!(stored["title"], "reemplazado");
+        assert_eq!(stored["nodes"].as_array().expect("nodes").len(), 2);
+        // Reemplazar también escribe una versión del documento (RF14): el
+        // render inicial y este reemplazo.
+        let versions = diagram_store()
+            .versions(&diagram_id)
+            .expect("the diagram stays on the plan");
+        assert_eq!(versions.len(), 2, "el render y el reemplazo");
+        assert_eq!(versions.last().expect("hay versiones").version, 2);
+
+        let json = serde_json::to_value(&response).expect("the response serializes");
+        assert_eq!(json["replaced"], diagram_id);
+    }
+
+    /// S5/R2: un `replace_id` que no está en el plano es `unknown_diagram` y
+    /// **nada** se crea; el plano queda exactamente como estaba.
+    #[test]
+    fn replace_id_of_an_unknown_diagram_is_unknown_diagram_and_creates_nothing() {
+        let _guard = lock_renders_blocking();
+
+        let existing = render(MINIMAL)
+            .diagram_id
+            .expect("the render stores the diagram");
+        let response = render_from_json(MINIMAL, serde_json::json!({ "replace_id": "d-9999" }));
+
+        assert!(!response.ok, "{response:?}");
+        assert_eq!(error_codes(&response), vec!["unknown_diagram"]);
+        assert_eq!(response.errors[0].path, "opts.replace_id");
+        assert!(
+            response.errors[0].message.contains("d-9999"),
+            "the error names the id: {:?}",
+            response.errors[0]
+        );
+        assert!(response.errors[0].hint.is_some());
+        assert_eq!(diagram_store().list().len(), 1, "nada se crea");
+        assert_eq!(diagram_store().list()[0].diagram_id, existing);
+        assert!(diagram_store().get("d-9999").is_none());
+    }
+
+    /// S5/R2: un `replace_id` que no es un id (número, vacío) es un valor que
+    /// no encaja y no se convierte en un render nuevo por default.
+    #[test]
+    fn a_malformed_replace_id_is_invalid_value_and_stores_nothing() {
+        let _guard = lock_renders_blocking();
+
+        for bad in [serde_json::json!(42), serde_json::json!("   ")] {
+            let response = render_from_json(MINIMAL, serde_json::json!({ "replace_id": bad }));
+
+            assert!(!response.ok, "{response:?}");
+            assert_eq!(error_codes(&response), vec!["invalid_value"]);
+            assert_eq!(response.errors[0].path, "opts.replace_id");
+            assert!(response.errors[0].hint.is_some());
+            assert!(diagram_store().list().is_empty(), "nada se crea");
+        }
+    }
+
+    /// PRD §11.1 (RF30): reemplazar el diagrama de otra sesión es `not_owner`
+    /// y no cambia el documento ajeno.
+    #[test]
+    fn replace_id_of_another_session_is_not_owner_and_changes_nothing() {
+        let _guard = lock_renders_blocking();
+
+        let foreign = render_diagram(&RenderRequest {
+            document: MINIMAL.to_string(),
+            session_id: "otra-sesion".to_string(),
+        })
+        .diagram_id
+        .expect("the render stores the diagram");
+
+        let response = render_from_json(MINIMAL, serde_json::json!({ "replace_id": foreign }));
+
+        assert!(!response.ok, "{response:?}");
+        assert_eq!(error_codes(&response), vec!["not_owner"]);
+        let record = diagram_store()
+            .record(&foreign)
+            .expect("el diagrama ajeno sigue en el plano");
+        assert_eq!(record.summary.revision, 1, "no se re-renderizó");
+        let stored: serde_json::Value =
+            serde_json::from_str(&record.document).expect("the document is JSON");
+        let original: serde_json::Value =
+            serde_json::from_str(MINIMAL).expect("the example is JSON");
+        assert_eq!(stored, original, "el documento no cambia");
+    }
+
+    /// PRD §11.1: un diagrama existente no cambia de `kind`, ni siquiera por
+    /// un reemplazo completo del documento. El store y el plano quedan como
+    /// estaban.
+    #[test]
+    fn replace_id_cannot_change_the_kind() {
+        let _guard = lock_renders_blocking();
+
+        let diagram_id = render(MINIMAL)
+            .diagram_id
+            .expect("the render stores the diagram");
+        let er = r#"{
+          "version": 1, "kind": "er", "title": "otro",
+          "tables": [ { "name": "users", "columns": [ { "name": "id", "type": "uuid", "key": "pk" } ] } ]
+        }"#;
+
+        let response = render_from_json(er, serde_json::json!({ "replace_id": diagram_id }));
+
+        assert!(!response.ok, "{response:?}");
+        assert_eq!(error_codes(&response), vec!["kind_change_not_allowed"]);
+        assert_eq!(response.errors[0].path, "kind");
+        assert!(response.errors[0].hint.is_some());
+        let record = diagram_store()
+            .record(&diagram_id)
+            .expect("el diagrama sigue en el plano");
+        assert_eq!(record.summary.kind, "graph", "el kind no cambia");
+        assert_eq!(record.summary.revision, 1, "no se re-renderizó");
+        assert_eq!(
+            diagram_store().versions(&diagram_id).map(|v| v.len()),
+            Some(1)
+        );
+    }
+
+    /// R2/RF13: reemplazar no pide un slot libre, porque no suma un diagrama;
+    /// el plano lleno sigue rechazando un render que sí crearía otro.
+    #[test]
+    fn a_full_plan_accepts_a_replacement_and_still_refuses_a_new_diagram() {
+        let _guard = lock_renders_blocking();
+
+        for _ in 0..crate::store::MAX_OPEN_DIAGRAMS {
+            assert!(render(MINIMAL).ok);
+        }
+        assert!(diagram_store().is_full());
+        let diagram_id = diagram_store().list()[0].diagram_id.clone();
+
+        let replaced = render_from_json(MINIMAL, serde_json::json!({ "replace_id": diagram_id }));
+        assert!(replaced.ok, "reemplazar no necesita un slot: {replaced:?}");
+        assert_eq!(replaced.replaced.as_deref(), Some(diagram_id.as_str()));
+        assert_eq!(
+            diagram_store().open_count(),
+            crate::store::MAX_OPEN_DIAGRAMS,
+            "el plano no crece"
+        );
+
+        let refused = render(MINIMAL);
+        assert!(!refused.ok, "{refused:?}");
+        assert_eq!(error_codes(&refused), vec!["too_many_diagrams"]);
     }
 
     /// PRD §11.1 (RF13, S7): el plano tiene tope. El decimotercero se rechaza

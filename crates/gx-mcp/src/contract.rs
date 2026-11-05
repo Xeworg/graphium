@@ -751,6 +751,63 @@ pub struct GetResponse {
     pub errors: Vec<ErrorPayload>,
 }
 
+/// The response of `list_diagram_versions` (RF14; feature doc
+/// `f2-cierre.md`, R3).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct VersionsResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagram_id: Option<String>,
+    /// The version the current document is on. The «v3/7» of the window is
+    /// the position of this number among the kept versions (`versions.len()`
+    /// is the `7`), so a full history reads «v20/20» and never «v25/20».
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_version: Option<u64>,
+    /// Oldest first; the current one is the last of the list.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub versions: Vec<VersionEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<ErrorPayload>,
+}
+
+/// One version of the document, as `list_diagram_versions` reports it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VersionEntry {
+    pub version: u64,
+    pub revision: u64,
+    pub updated_at: String,
+    pub bytes: usize,
+}
+
+impl From<crate::store::VersionSummary> for VersionEntry {
+    fn from(summary: crate::store::VersionSummary) -> Self {
+        Self {
+            version: summary.version,
+            revision: summary.revision,
+            updated_at: summary.updated_at,
+            bytes: summary.bytes,
+        }
+    }
+}
+
+/// The response of `get_diagram_version` (RF14, R3).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct VersionResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagram_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document: Option<Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<ErrorPayload>,
+}
+
 /// The response of `clear_canvas` (PRD §11).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ClearResponse {
@@ -880,6 +937,120 @@ pub fn get_diagram(session_id: &str, diagram_id: &str) -> GetResponse {
         diagram: serde_json::from_str(&record.document).ok(),
         revision: Some(record.summary.revision),
         errors: Vec::new(),
+    }
+}
+
+/// The record of a diagram of this session, or the error that says why not.
+///
+/// The two checks every tool that names an id makes (PRD §11.1): the diagram
+/// has to be on the plan and it has to be of the caller. Only the summary is
+/// read, because the history tools never need the current document.
+fn owned_summary(
+    store: &crate::store::DiagramStore,
+    session_id: &str,
+    diagram_id: &str,
+) -> Result<crate::store::DiagramSummary, ErrorPayload> {
+    let Some(summary) = store.get(diagram_id) else {
+        return Err(unknown_diagram(diagram_id, &store.known_ids()));
+    };
+    if summary.session_id != session_id {
+        return Err(not_owner(diagram_id));
+    }
+    Ok(summary)
+}
+
+/// Lists the versions of the source document of a diagram (RF14, R3).
+///
+/// It is a read: nothing on the plan, in the document or in the history moves.
+pub fn list_diagram_versions(session_id: &str, diagram_id: &str) -> VersionsResponse {
+    crate::bootstrap();
+    let store = crate::store::diagram_store();
+
+    if let Err(error) = owned_summary(store, session_id, diagram_id) {
+        return VersionsResponse {
+            ok: false,
+            diagram_id: None,
+            current_version: None,
+            versions: Vec::new(),
+            errors: vec![error],
+        };
+    }
+
+    let versions = store.versions(diagram_id).unwrap_or_default();
+    VersionsResponse {
+        ok: true,
+        diagram_id: Some(diagram_id.to_string()),
+        current_version: versions.last().map(|version| version.version),
+        versions: versions.into_iter().map(VersionEntry::from).collect(),
+        errors: Vec::new(),
+    }
+}
+
+/// Returns the source document of one version of a diagram (RF14, R3).
+///
+/// Read-only on purpose: there is no tool that restores a version. Restoring
+/// is a `render_diagram` or an `update_diagram` that creates a new version, so
+/// the history never rewrites itself.
+pub fn get_diagram_version(session_id: &str, diagram_id: &str, version: u64) -> VersionResponse {
+    crate::bootstrap();
+    let store = crate::store::diagram_store();
+
+    if let Err(error) = owned_summary(store, session_id, diagram_id) {
+        return VersionResponse {
+            ok: false,
+            diagram_id: None,
+            version: None,
+            revision: None,
+            updated_at: None,
+            document: None,
+            errors: vec![error],
+        };
+    }
+
+    let Some(found) = store.version(diagram_id, version) else {
+        let known = store.versions(diagram_id).unwrap_or_default();
+        return VersionResponse {
+            ok: false,
+            diagram_id: Some(diagram_id.to_string()),
+            version: None,
+            revision: None,
+            updated_at: None,
+            document: None,
+            errors: vec![unknown_version(diagram_id, version, &known)],
+        };
+    };
+
+    VersionResponse {
+        ok: true,
+        diagram_id: Some(diagram_id.to_string()),
+        version: Some(found.summary.version),
+        revision: Some(found.summary.revision),
+        updated_at: Some(found.summary.updated_at),
+        document: serde_json::from_str(&found.document).ok(),
+        errors: Vec::new(),
+    }
+}
+
+/// The error of a version the diagram does not keep (RF14).
+fn unknown_version(
+    diagram_id: &str,
+    version: u64,
+    known: &[crate::store::VersionSummary],
+) -> ErrorPayload {
+    let range = match (known.first(), known.last()) {
+        (Some(first), Some(last)) => format!(
+            "las versiones que guarda son {}..={} ({} en total)",
+            first.version,
+            last.version,
+            known.len()
+        ),
+        _ => "no guarda ninguna versión".to_string(),
+    };
+    ErrorPayload {
+        path: "version".to_string(),
+        code: ErrorCode::InvalidValue.as_str().to_string(),
+        message: format!("el diagrama `{diagram_id}` no tiene la versión {version}: {range}"),
+        hint: Some("usá `list_diagram_versions` para ver los números que existen".to_string()),
     }
 }
 
@@ -1147,6 +1318,135 @@ mod tests {
             "{}",
             response.errors[0].message
         );
+    }
+
+    /// RF14/R3: el historial de un diagrama se lista del más viejo al más
+    /// nuevo, con la versión actual para el indicador «v3/7», y el documento
+    /// de una versión se lee tal como estaba entonces.
+    #[test]
+    fn the_history_lists_the_versions_and_returns_their_documents() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = render_into_store(MINIMAL, "session-a");
+        super::update_diagram(
+            "session-a",
+            &id,
+            &serde_json::json!({ "title": "segunda" }),
+            Some(1),
+        );
+
+        let listed = super::list_diagram_versions("session-a", &id);
+        assert!(listed.ok, "{listed:?}");
+        assert_eq!(listed.diagram_id.as_deref(), Some(id.as_str()));
+        assert_eq!(listed.current_version, Some(2), "la «v2» de «v2/2»");
+        assert_eq!(listed.versions.len(), 2, "el render y el update");
+        assert_eq!(listed.versions[0].version, 1);
+        assert_eq!(listed.versions[0].revision, 1);
+        assert_eq!(listed.versions[1].version, 2);
+        assert_eq!(listed.versions[1].revision, 2);
+        assert!(listed.versions[0].bytes > 0);
+
+        let first = super::get_diagram_version("session-a", &id, 1);
+        assert!(first.ok, "{first:?}");
+        assert_eq!(first.version, Some(1));
+        assert_eq!(first.revision, Some(1));
+        assert!(first.updated_at.is_some());
+        let document = first.document.expect("la versión trae su documento");
+        assert_eq!(document["title"], "parse_config() — flujo");
+
+        let second = super::get_diagram_version("session-a", &id, 2);
+        assert!(second.ok, "{second:?}");
+        assert_eq!(
+            second.document.expect("documento")["title"],
+            "segunda",
+            "la segunda versión es la del update"
+        );
+    }
+
+    /// RF14: leer una versión no es restaurarla ni reescribir el historial.
+    /// La única forma de volver atrás es un render o un update, que agregan
+    /// una versión nueva.
+    #[test]
+    fn reading_a_version_never_changes_the_diagram() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = render_into_store(MINIMAL, "session-a");
+        let before = super::get_diagram("session-a", &id);
+
+        let listed = super::list_diagram_versions("session-a", &id);
+        assert!(listed.ok, "{listed:?}");
+        let first = super::get_diagram_version("session-a", &id, 1);
+        assert!(first.ok, "{first:?}");
+
+        let after = super::get_diagram("session-a", &id);
+        assert_eq!(before.revision, after.revision, "la revisión no se mueve");
+        assert_eq!(before.diagram, after.diagram, "el documento no se mueve");
+        assert_eq!(
+            crate::store::diagram_store().open_count(),
+            1,
+            "el plano no cambia"
+        );
+
+        // Volver atrás es un update: aparece una versión nueva, las viejas
+        // siguen donde estaban.
+        let restored = first.document.expect("documento de la versión 1");
+        let patch = serde_json::json!({ "title": restored["title"] });
+        super::update_diagram("session-a", &id, &patch, None);
+        let listed = super::list_diagram_versions("session-a", &id);
+        let numbers: Vec<u64> = listed.versions.iter().map(|entry| entry.version).collect();
+        assert_eq!(numbers, vec![1, 2], "la restauración agrega, no reescribe");
+        assert_eq!(listed.current_version, Some(2));
+    }
+
+    /// RF14: un número que el diagrama no guarda es `invalid_value` en
+    /// `version`, con el rango que sí existe como pista.
+    #[test]
+    fn an_unknown_version_reports_the_range_and_keeps_everything() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = render_into_store(MINIMAL, "session-a");
+
+        let response = super::get_diagram_version("session-a", &id, 7);
+
+        assert!(!response.ok, "{response:?}");
+        assert_eq!(response.errors[0].code, "invalid_value");
+        assert_eq!(response.errors[0].path, "version");
+        assert!(
+            response.errors[0].message.contains("1..=1"),
+            "el error dice qué hay: {:?}",
+            response.errors[0]
+        );
+        assert!(response.errors.iter().all(|error| error.hint.is_some()));
+        assert!(response.document.is_none());
+        assert_eq!(
+            crate::store::diagram_store().list()[0].revision,
+            1,
+            "nada se movió"
+        );
+    }
+
+    /// PRD §11.1: el historial respeta el alcance de la sesión y el ciclo de
+    /// vida del id, como el resto de las tools.
+    #[test]
+    fn the_history_respects_the_session_scope_and_the_lifecycle() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = render_into_store(MINIMAL, "session-a");
+
+        let foreign = super::list_diagram_versions("session-b", &id);
+        assert!(!foreign.ok);
+        assert_eq!(foreign.errors[0].code, "not_owner");
+        let foreign_version = super::get_diagram_version("session-b", &id, 1);
+        assert!(!foreign_version.ok);
+        assert_eq!(foreign_version.errors[0].code, "not_owner");
+
+        let unknown = super::list_diagram_versions("session-a", "d-9999");
+        assert!(!unknown.ok);
+        assert_eq!(unknown.errors[0].code, "unknown_diagram");
+        assert!(
+            unknown.errors[0].message.contains(&id),
+            "los ids conocidos viajan: {:?}",
+            unknown.errors[0]
+        );
+        let unknown_version = super::get_diagram_version("session-a", "d-9999", 1);
+        assert!(!unknown_version.ok);
+        assert_eq!(unknown_version.errors[0].code, "unknown_diagram");
     }
 
     #[test]
