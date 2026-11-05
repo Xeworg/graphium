@@ -2,11 +2,12 @@
 #
 # Instalador / desinstalador de Graphium (Linux).
 #
-#   ./install.sh [install]      Compila con cargo (release) e instala
-#                               $HOME/.local/bin/graphium.
+#   ./install.sh [install]      Compila con cargo (release), instala
+#                               $HOME/.local/bin/graphium y al final ofrece
+#                               conectar la extensión en tus agentes.
 #   ./install.sh agent          Instala o actualiza la extensión en los
-#                               agentes elegidos (interactivo en una tty;
-#                               --env/--all sin tty).
+#                               agentes elegidos con un checklist en una
+#                               tty; --env/--all sin preguntas.
 #   ./install.sh update         Actualiza el binario y la extensión de los
 #                               agentes que ya la tienen si hay un release
 #                               más nuevo que lo instalado.
@@ -35,6 +36,7 @@
 set -euo pipefail
 
 usage() {
+  local name env_name default_dir
   printf '%s\n' \
     'Uso: ./install.sh [install]' \
     '       ./install.sh agent [--env <name> ... | --all]' \
@@ -50,14 +52,19 @@ usage() {
     '' \
     'Comandos:' \
     '  install    Instala (el comando por omisión). Con un release más nuevo' \
-    '             publicado, actualiza el binario instalado.' \
+    '             publicado, actualiza el binario instalado. En una terminal' \
+    '             termina ofreciendo conectar la extensión en tus agentes,' \
+    '             con opción de saltear; sin tty solo deja el siguiente paso.' \
     '  agent      Instala la extensión de Graphium (extensions/pi/graphium)' \
     '             en los agentes de IA elegidos. Detecta los hosts presentes' \
-    '             (pi en PI_CODING_AGENT_DIR o ~/.pi/agent; gentle-shell en' \
-    '             GENTLE_SHELL_AGENT_DIR o ~/.gentle-shell/agent) y en cuáles' \
-    '             ya está instalada; en una terminal pregunta en cuáles' \
-    '             instalar o actualizar. Sin tty hay que pasar --env <name>' \
-    '             (uno o más) o --all.' \
+    '             (ver «Hosts de agente»), en cuáles ya está instalada y abre' \
+    '             un checklist: ↑/↓ para moverte, espacio para marcar o' \
+    '             desmarcar, «a» para todos, Enter para confirmar y q o Esc' \
+    '             para salir sin instalar nada. Arranca con los hosts' \
+    '             detectados ya marcados. Si la terminal no da para el' \
+    '             checklist (TERM tonta, sin tput/terminfo) pregunta con' \
+    '             números. Sin tty hay que pasar --env <name> (uno o más)' \
+    '             o --all.' \
     '  update     Si hay un release más nuevo que lo instalado, actualiza el' \
     '             binario y refresca la extensión en cada agente que ya la' \
     '             tiene. Antes del primer release avisa y no hace nada.' \
@@ -65,8 +72,16 @@ usage() {
     '             tienen. Los datos de exportes (~/.graphium) se conservan.' \
     '' \
     'Opciones de agent:' \
-    '  --env <name>  Agente destino (repetible): pi, gentle-shell.' \
+    "  --env <name>  Agente destino (repetible): $(agent_envs_list)." \
     '  --all         Todos los hosts detectados.' \
+    '  Con --env o --all no se pregunta: la selección es la que pediste.' \
+    '' \
+    'Hosts de agente (registro: nombre, variable de entorno, directorio):'
+  while IFS='|' read -r name env_name default_dir; do
+    [[ -n "$name" ]] || continue
+    printf '  %-13s %s o ~/%s\n' "$name" "$env_name" "$default_dir"
+  done <<<"$AGENT_REGISTRY"
+  printf '%s\n' \
     '' \
     'El binario de Graphium abre una ventana (Tauri): necesita' \
     'webkit2gtk-4.1 en tiempo de ejecución; el instalador lo avisa si falta.'
@@ -339,22 +354,54 @@ install_binary() {
 }
 
 # --- la extensión de los agentes --------------------------------------------
+#
+# Registro único de hosts de agente. Cada línea es
+#
+#   <nombre>|<variable de entorno que manda>|<directorio por defecto bajo $HOME>
+#
+# y de acá salen la ayuda, la detección, el estado, el selector y la
+# instalación: sumar un agente es agregar una línea (R1).
+#
+# gentle-shell es un fork de Pi instalado en otra ruta: son dos hosts
+# distintos, cada uno con su copia de la extensión (no hay conflicto: cada
+# host registra su propio MCP y sus sesiones son independientes).
+AGENT_REGISTRY='pi|PI_CODING_AGENT_DIR|.pi/agent
+gentle-shell|GENTLE_SHELL_AGENT_DIR|.gentle-shell/agent'
 
-# Los hosts de agente que el instalador conoce, y dónde busca extensiones
-# cada uno. gentle-shell es un fork de Pi instalado en otra ruta: son dos
-# hosts distintos, cada uno con su copia de la extensión (no hay conflicto:
-# cada host registra su propio MCP y sus sesiones son independientes). pi
-# honra PI_CODING_AGENT_DIR; gentle-shell, GENTLE_SHELL_AGENT_DIR.
+# Nombres del registro, uno por línea y en orden.
 agent_envs() {
-  printf '%s\n' pi gentle-shell
+  local name _env_name _default_dir
+  while IFS='|' read -r name _env_name _default_dir; do
+    [[ -n "$name" ]] && printf '%s\n' "$name"
+  done <<<"$AGENT_REGISTRY"
 }
 
+# Los nombres del registro separados por coma, para la ayuda y los errores.
+agent_envs_list() {
+  local out="" name
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    out="${out:+$out, }$name"
+  done <<<"$(agent_envs)"
+  printf '%s\n' "$out"
+}
+
+# Directorio de extensiones de un host, o error si el nombre no está en el
+# registro (así --env rechaza agentes desconocidos).
 agent_env_dir() {
-  case "$1" in
-    pi) printf '%s\n' "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions" ;;
-    gentle-shell) printf '%s\n' "${GENTLE_SHELL_AGENT_DIR:-$HOME/.gentle-shell/agent}/extensions" ;;
-    *) return 1 ;;
-  esac
+  local wanted="$1" name env_name default_dir value=""
+  while IFS='|' read -r name env_name default_dir; do
+    [[ "$name" == "$wanted" ]] || continue
+    if [[ -n "$env_name" ]]; then
+      # Indirección explícita: `${!var}` sobre una variable sin definir rompe
+      # bajo `set -u` en bash viejos, y el nombre sale del registro, nunca de
+      # la entrada del usuario.
+      eval "value=\${$env_name-}"
+    fi
+    printf '%s\n' "${value:-$HOME/$default_dir}/extensions"
+    return 0
+  done <<<"$AGENT_REGISTRY"
+  return 1
 }
 
 # Un host «existe» cuando su directorio de agente está en el disco: no tiene
@@ -423,8 +470,296 @@ agent_env_status() {
   fi
 }
 
-# Selección de hosts. Interactiva en una tty (marcando qué hosts están
-# presentes y en cuáles ya hay extensión); sin tty exige --env o --all.
+# Estado corto de un host para el checklist: presencia y versión instalada.
+agent_env_detail() {
+  local env="$1" version=""
+  if ! agent_env_present "$env"; then
+    printf 'host ausente en esta máquina'
+    return 0
+  fi
+  version="$(extension_installed_version "$(agent_env_dir "$env")/graphium")"
+  if [[ -n "$version" ]]; then
+    printf 'host presente, extensión instalada v%s' "$version"
+  else
+    printf 'host presente, extensión no instalada'
+  fi
+}
+
+# --- selector interactivo (checklist) ---------------------------------------
+
+# Estado del checklist en globales: bash no tiene cierres y redibujar necesita
+# ver el estado completo. Se resetea en cada llamada.
+AGENT_TUI_NAMES=()
+AGENT_TUI_SELECTED=()
+AGENT_TUI_CURSOR=0
+AGENT_TUI_DRAWN=0
+AGENT_TUI_COLS=80
+AGENT_TUI_STTY=""
+AGENT_TUI_ACTIVE=0
+AGENT_TUI_CANCELLED=0
+AGENT_TUI_KEY=""
+AGENT_TUI_HEADER="¿En qué agentes instalar la extensión de Graphium?"
+AGENT_TUI_FOOTER="↑/↓ mover · espacio marcar · a todos · Enter confirmar · q salir"
+
+# Un número de la terminal (columnas o líneas), con un valor razonable cuando
+# el driver no lo sabe.
+agent_tui_tput() {
+  local value=""
+  value="$(tput "$1" 2>/dev/null || true)"
+  if [[ ! "$value" =~ ^[0-9]+$ ]] || ((value == 0)); then
+    if [[ "$1" == "cols" ]]; then
+      value=80
+    else
+      value=24
+    fi
+  fi
+  printf '%s\n' "$value"
+}
+
+# ¿La terminal soporta el checklist? Sin tty en stdin y stderr, con TERM tonta
+# o sin stty/tput/terminfo se usa el prompt numerico de siempre (R3).
+agent_tui_capable() {
+  [[ -t 0 && -t 2 ]] || return 1
+  [[ -n "${TERM:-}" && "${TERM}" != "dumb" ]] || return 1
+  command -v stty >/dev/null 2>&1 || return 1
+  command -v tput >/dev/null 2>&1 || return 1
+  tput cols >/dev/null 2>&1 || return 1
+  return 0
+}
+
+# Modo crudo: sin eco y sin canónico, una tecla por lectura. No se toca isig:
+# Ctrl-C sigue interrumpiendo y el trap restaura la terminal.
+agent_tui_raw_on() {
+  AGENT_TUI_STTY="$(stty -g)" || return 1
+  if ! stty -echo -icanon min 1 time 0; then
+    agent_tui_raw_off
+    return 1
+  fi
+  AGENT_TUI_ACTIVE=1
+  printf '\033[?25l' >&2
+}
+
+agent_tui_raw_off() {
+  [[ -n "$AGENT_TUI_STTY" ]] || return 0
+  stty "$AGENT_TUI_STTY" 2>/dev/null || true
+  AGENT_TUI_STTY=""
+}
+
+# Restaura la terminal en cualquier salida: fin normal, q, Ctrl-C o señal.
+agent_tui_cleanup() {
+  ((AGENT_TUI_ACTIVE == 1)) || return 0
+  agent_tui_raw_off
+  printf '\033[?25h' >&2
+  AGENT_TUI_ACTIVE=0
+}
+
+# Recorta una línea al ancho de la terminal: el bloque se redibuja contando
+# líneas impresas, así que ninguna puede envolver.
+agent_tui_fit() {
+  local text="$1" cols="${AGENT_TUI_COLS:-80}"
+  if ((${#text} >= cols)); then
+    printf '%s' "${text:0:$((cols - 1))}"
+  else
+    printf '%s' "$text"
+  fi
+}
+
+# Dibuja (o redibuja) el checklist en stderr: encabezado, una línea por host
+# y pie. Siempre mide lo mismo, así que subir esa cantidad de líneas vuelve
+# al inicio del bloque.
+agent_tui_draw() {
+  local i pointer mark line
+  if ((AGENT_TUI_DRAWN > 0)); then
+    printf '\033[%dA' "$AGENT_TUI_DRAWN" >&2
+  fi
+  printf '\r\033[J' >&2
+  printf '%s\n' "$(agent_tui_fit "$AGENT_TUI_HEADER")" >&2
+  for i in "${!AGENT_TUI_NAMES[@]}"; do
+    if ((i == AGENT_TUI_CURSOR)); then pointer='>'; else pointer=' '; fi
+    if [[ "${AGENT_TUI_SELECTED[i]}" == 1 ]]; then mark='[x]'; else mark='[ ]'; fi
+    line="$(printf '%s %s %-14s %s' "$pointer" "$mark" \
+      "${AGENT_TUI_NAMES[i]}" "$(agent_env_detail "${AGENT_TUI_NAMES[i]}")")"
+    printf '%s\n' "$(agent_tui_fit "$line")" >&2
+  done
+  printf '%s\n' "$(agent_tui_fit "$AGENT_TUI_FOOTER")" >&2
+  AGENT_TUI_DRAWN=$((${#AGENT_TUI_NAMES[@]} + 2))
+}
+
+# Borra el bloque del checklist y deja el cursor al inicio de su primera
+# línea, donde el llamador escribe el resumen de la elección.
+agent_tui_erase() {
+  if ((AGENT_TUI_DRAWN > 0)); then
+    printf '\033[%dA\r\033[J' "$AGENT_TUI_DRAWN" >&2
+    AGENT_TUI_DRAWN=0
+  fi
+}
+
+# Lee una tecla en modo crudo y la normaliza en AGENT_TUI_KEY: up, down,
+# space, all, enter, quit u otro. Las flechas llegan como ESC [ A/B; un Esc
+# solo (o una secuencia desconocida) cuenta como salir.
+agent_tui_read_key() {
+  local key="" rest=""
+  AGENT_TUI_KEY="otro"
+  IFS= read -rsn1 key || return 1
+  case "$key" in
+    '' | $'\r' | $'\n') AGENT_TUI_KEY=enter ;;
+    ' ') AGENT_TUI_KEY=space ;;
+    a | A) AGENT_TUI_KEY=all ;;
+    q | Q) AGENT_TUI_KEY=quit ;;
+    j) AGENT_TUI_KEY=down ;;
+    k) AGENT_TUI_KEY=up ;;
+    $'\033')
+      IFS= read -rsn1 -t 0.05 rest || {
+        AGENT_TUI_KEY=quit
+        return 0
+      }
+      if [[ "$rest" == '[' ]]; then
+        IFS= read -rsn1 -t 0.05 rest || {
+          AGENT_TUI_KEY=quit
+          return 0
+        }
+        case "$rest" in
+          A) AGENT_TUI_KEY=up ;;
+          B) AGENT_TUI_KEY=down ;;
+          *) AGENT_TUI_KEY=otro ;;
+        esac
+        return 0
+      fi
+      AGENT_TUI_KEY=quit
+      ;;
+  esac
+  return 0
+}
+
+# Checklist interactivo (R2): flechas para moverse, espacio marca/desmarca,
+# «a» marca o desmarca todos, Enter confirma y q/Esc cancela. Deja el resultado
+# en AGENT_TUI_SELECTED y, si se salió sin confirmar, AGENT_TUI_CANCELLED.
+# Devuelve 1 cuando la terminal no permite dibujarlo, para caer al prompt.
+agent_select_tui() {
+  local name i total all cols rows needed
+  AGENT_TUI_NAMES=()
+  AGENT_TUI_SELECTED=()
+  AGENT_TUI_CURSOR=0
+  AGENT_TUI_DRAWN=0
+  AGENT_TUI_CANCELLED=0
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    AGENT_TUI_NAMES+=("$name")
+    # Estado inicial: marcados los hosts detectados en esta máquina (R2).
+    if agent_env_present "$name"; then
+      AGENT_TUI_SELECTED+=(1)
+    else
+      AGENT_TUI_SELECTED+=(0)
+    fi
+  done <<<"$(agent_envs)"
+  total=${#AGENT_TUI_NAMES[@]}
+  ((total > 0)) || return 1
+
+  cols="$(agent_tui_tput cols)"
+  rows="$(agent_tui_tput lines)"
+  needed=$((total + 4))
+  ((cols >= 40 && rows >= needed)) || return 1
+  AGENT_TUI_COLS="$cols"
+
+  trap 'agent_tui_cleanup' EXIT
+  trap 'agent_tui_cleanup; exit 130' INT TERM HUP
+  if ! agent_tui_raw_on; then
+    trap - EXIT INT TERM HUP
+    return 1
+  fi
+  agent_tui_draw
+  while :; do
+    if ! agent_tui_read_key; then
+      AGENT_TUI_CANCELLED=1
+      break
+    fi
+    case "$AGENT_TUI_KEY" in
+      up)
+        AGENT_TUI_CURSOR=$(((AGENT_TUI_CURSOR + total - 1) % total))
+        ;;
+      down)
+        AGENT_TUI_CURSOR=$(((AGENT_TUI_CURSOR + 1) % total))
+        ;;
+      space)
+        if [[ "${AGENT_TUI_SELECTED[AGENT_TUI_CURSOR]}" == 1 ]]; then
+          AGENT_TUI_SELECTED[AGENT_TUI_CURSOR]=0
+        else
+          AGENT_TUI_SELECTED[AGENT_TUI_CURSOR]=1
+        fi
+        ;;
+      all)
+        all=1
+        for i in "${!AGENT_TUI_SELECTED[@]}"; do
+          [[ "${AGENT_TUI_SELECTED[i]}" == 1 ]] || all=0
+        done
+        for i in "${!AGENT_TUI_SELECTED[@]}"; do
+          AGENT_TUI_SELECTED[i]=$((1 - all))
+        done
+        ;;
+      enter) break ;;
+      quit)
+        AGENT_TUI_CANCELLED=1
+        break
+        ;;
+      *) continue ;;
+    esac
+    agent_tui_draw
+  done
+  agent_tui_cleanup
+  trap - EXIT INT TERM HUP
+  agent_tui_erase
+  return 0
+}
+
+# Respaldo sin checklist (R3): el prompt numerico de siempre, alimentado por
+# el registro. Enter omite, «all» elige todos, un número elige esa posición.
+agent_select_prompt() {
+  local env answer="" total pick
+  while IFS= read -r env; do
+    agent_env_status "$env" >&2
+  done <<<"$(agent_envs)"
+  printf 'Agentes a instalar/actualizar (números separados por espacio,' >&2
+  printf ' «all», o Enter para omitir): ' >&2
+  read -r answer || answer=""
+  [[ -n "$answer" ]] || return 0
+  if [[ "$answer" == "all" || "$answer" == "ALL" ]]; then
+    agent_envs
+    return 0
+  fi
+  total="$(agent_envs | wc -l)"
+  for pick in $answer; do
+    if [[ ! "$pick" =~ ^[0-9]+$ ]] || ((pick < 1 || pick > total)); then
+      error "selección inválida: '$pick' (1..$total)"
+      return 1
+    fi
+    env="$(agent_envs | sed -n "${pick}p")"
+    printf '%s\n' "$env"
+  done
+}
+
+# Elige hosts de forma interactiva: checklist si la terminal lo soporta y el
+# prompt numerico si no (R2/R3). Imprime un nombre por línea en stdout; el
+# dibujo del checklist va a stderr para no ensuciar la captura del llamador.
+agent_select_interactive() {
+  local i
+  if agent_tui_capable && agent_select_tui; then
+    if ((AGENT_TUI_CANCELLED == 1)); then
+      printf 'Selección cancelada: no se instaló nada.\n' >&2
+      return 0
+    fi
+    for i in "${!AGENT_TUI_NAMES[@]}"; do
+      if [[ "${AGENT_TUI_SELECTED[i]}" == 1 ]]; then
+        printf '%s\n' "${AGENT_TUI_NAMES[i]}"
+      fi
+    done
+    return 0
+  fi
+  agent_select_prompt
+}
+
+# Selección de hosts. Interactiva en una tty (checklist con marcado, o prompt
+# numerico si la terminal no da para el checklist); sin tty exige --env o
+# --all.
 select_agents() {
   local requested_all=0
   local -a requested_envs=()
@@ -460,38 +795,18 @@ select_agents() {
 
   if [[ ! -t 0 ]]; then
     error "sin terminal no se pregunta en qué agentes instalar:"
-    error "pasá --env <name> (pi, gentle-shell) o --all."
+    error "pasá --env <name> ($(agent_envs_list)) o --all."
     return 1
   fi
 
-  agent_env_status pi >&2
-  agent_env_status gentle-shell >&2
-  printf 'Agentes a instalar/actualizar (números separados por espacio,' >&2
-  printf ' «all», o Enter para omitir): ' >&2
-  local answer=""
-  read -r answer || answer=""
-  [[ -n "$answer" ]] || return 0
-  if [[ "$answer" == "all" || "$answer" == "ALL" ]]; then
-    agent_envs
-    return 0
-  fi
-  local env total pick
-  total="$(agent_envs | wc -l)"
-  for pick in $answer; do
-    if [[ ! "$pick" =~ ^[0-9]+$ ]] || ((pick < 1 || pick > total)); then
-      error "selección inválida: '$pick' (1..$total)"
-      return 1
-    fi
-    env="$(agent_envs | sed -n "${pick}p")"
-    printf '%s\n' "$env"
-  done
+  agent_select_interactive
 }
 
-cmd_agent() {
-  local -a agents
-  agents="$(select_agents "$@")" || exit $?
+# Instala la extensión en los hosts elegidos: reporta cada uno y saltea los que
+# no están en esta máquina.
+install_agents() {
   local installed_any=0 env
-  for env in $agents; do
+  for env in "$@"; do
     agent_env_present "$env" || {
       printf '%s: el host no está en esta máquina (%s); se omite.\n' \
         "$env" "$(agent_env_dir "$env")"
@@ -503,6 +818,53 @@ cmd_agent() {
   if ((installed_any == 0)); then
     printf 'No se instaló la extensión en ningún agente.\n'
   fi
+}
+
+cmd_agent() {
+  local selected
+  selected="$(select_agents "$@")" || exit $?
+  install_selected_agents "$selected"
+}
+
+# Lo que imprimió la selección se muestra antes de instalar y después se
+# instala host por host (R6). Lo comparten `agent` y el final de `install`.
+install_selected_agents() {
+  local selected="$1" env
+  local -a envs=()
+  while IFS= read -r env; do
+    if [[ -n "$env" ]]; then
+      envs+=("$env")
+    fi
+  done <<<"$selected"
+  if ((${#envs[@]} == 0)); then
+    printf 'No se instaló la extensión en ningún agente.\n'
+    return 0
+  fi
+  printf 'Agentes elegidos: %s\n' "${envs[*]}"
+  install_agents "${envs[@]}"
+}
+
+# `./install.sh` termina ofreciendo la elección de agentes (R5): el checklist
+# en una tty (o el prompt numerico si la terminal no lo soporta), con una
+# salida clara para saltear y conectar el agente después a mano. Sin tty deja
+# el «Siguiente paso» de siempre, así los scripts no se cuelgan (R4).
+offer_agent_install() {
+  local selected next_step
+  next_step='Siguiente paso: ./install.sh agent conecta la extensión de tu agente.'
+  if [[ ! -t 0 ]]; then
+    printf '%s\n' "$next_step"
+    return 0
+  fi
+  printf '\n'
+  if ! selected="$(select_agents)"; then
+    printf '%s\n' "$next_step"
+    return 0
+  fi
+  if [[ -z "$selected" ]]; then
+    printf '%s\n' "$next_step"
+    return 0
+  fi
+  install_selected_agents "$selected"
 }
 
 # --- update -----------------------------------------------------------------
@@ -593,7 +955,7 @@ main() {
       done
       install_binary 1
       warn_runtime_deps
-      printf 'Siguiente paso: ./install.sh agent conecta la extensión de tu agente.\n'
+      offer_agent_install
       ;;
     agent)
       shift || true
