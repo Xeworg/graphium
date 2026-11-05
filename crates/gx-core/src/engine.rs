@@ -16,7 +16,7 @@ use crate::error::{ErrorCode, ValidationError};
 use crate::ir::{Ir, IrGraph};
 use crate::kind::{self, KindLimits};
 use crate::layout::{LayoutEngine, LayoutOpts};
-use crate::render::{Palette, RenderMetrics, RenderOpts, RenderOutcome, SvgRenderer};
+use crate::render::{RenderMetrics, RenderOpts, RenderOutcome, SvgRenderer};
 use crate::text::{TextMetrics, TextStyle};
 use crate::tokens::TOKENS;
 
@@ -145,7 +145,7 @@ pub fn render_json(src: &str, opts: &RenderOpts) -> Result<RenderOutcome, Vec<Va
     };
     let layout_ms = layout_started.elapsed().as_millis() as u64;
 
-    let palette = Palette::for_theme(opts.theme);
+    let palette = opts.effective_palette();
     let render_started = Instant::now();
     let svg = if opts.export {
         engines.renderer.render_export(&ir, &layout, &palette)

@@ -32,45 +32,134 @@ const CULL_ZOOM = 0.4;
 // order the page sends them back. The panel reads and writes exactly these:
 // the page never invents a setting and never decides a default.
 const SETTINGS_KEYS = [
+  "accent",
   "background",
-  "grid_color",
-  "grid_opacity",
-  "grid_diagonal",
+  "edge_stroke",
+  "edge_text",
   "grid_angle_degrees",
+  "grid_color",
+  "grid_diagonal",
+  "grid_opacity",
   "grid_visible",
+  "node_fill",
+  "node_stroke",
+  "node_text",
   "theme",
 ];
 
-// The three presets of F1 (PRD §8.5.2). Rust owns them
+// The themes of the plan (`Theme` in `crates/gx-core/src/render.rs`), in the
+// order the panel lists them. The stylesheet answers to the same name with a
+// `[data-theme="…"]` block (PRD §8.5.2 RF22, `f6-themes.md` R5).
+const THEMES = ["dark", "light", "brasa", "arcilla", "aurora", "neblina"];
+
+// The presets of F1 and of the four themes of F6 (PRD §8.5.2). Rust owns them
 // (`settings::presets`): this table only fills the controls, and the contract
 // test in `crates/gx-app/tests/settings_panel.rs` keeps both sides equal.
 const PLAN_PRESETS = {
   "plano": {
+    "accent": "#6ea8fe",
     "background": "#1b1b1b",
-    "grid_color": "#ffffff",
-    "grid_opacity": 0.14,
-    "grid_diagonal": 59,
+    "edge_stroke": "#8a8a96",
+    "edge_text": "#b9b9c2",
     "grid_angle_degrees": 45,
+    "grid_color": "#ffffff",
+    "grid_diagonal": 59,
+    "grid_opacity": 0.14,
     "grid_visible": true,
+    "node_fill": "#2a2a30",
+    "node_stroke": "#4d4d57",
+    "node_text": "#e9e9ec",
     "theme": "dark"
   },
   "claro": {
-    "background": "#f4f4f5",
-    "grid_color": "#1b1b1b",
-    "grid_opacity": 0.1,
-    "grid_diagonal": 59,
+    "accent": "#2f6fd0",
+    "background": "#f7f7f8",
+    "edge_stroke": "#6f6f7a",
+    "edge_text": "#4a4a54",
     "grid_angle_degrees": 45,
+    "grid_color": "#000000",
+    "grid_diagonal": 59,
+    "grid_opacity": 0.1,
     "grid_visible": true,
+    "node_fill": "#ffffff",
+    "node_stroke": "#c7c7cf",
+    "node_text": "#1b1b1f",
     "theme": "light"
   },
   "sin grilla": {
+    "accent": "#6ea8fe",
     "background": "#1b1b1b",
-    "grid_color": "#ffffff",
-    "grid_opacity": 0.14,
-    "grid_diagonal": 59,
+    "edge_stroke": "#8a8a96",
+    "edge_text": "#b9b9c2",
     "grid_angle_degrees": 45,
+    "grid_color": "#ffffff",
+    "grid_diagonal": 59,
+    "grid_opacity": 0.14,
     "grid_visible": false,
+    "node_fill": "#2a2a30",
+    "node_stroke": "#4d4d57",
+    "node_text": "#e9e9ec",
     "theme": "dark"
+  },
+  "brasa": {
+    "accent": "#f5a623",
+    "background": "#131316",
+    "edge_stroke": "#8f867c",
+    "edge_text": "#cbbcab",
+    "grid_angle_degrees": 45,
+    "grid_color": "#ffffff",
+    "grid_diagonal": 59,
+    "grid_opacity": 0.16,
+    "grid_visible": true,
+    "node_fill": "#1e1e24",
+    "node_stroke": "#3d3d47",
+    "node_text": "#f2e9e1",
+    "theme": "brasa"
+  },
+  "arcilla": {
+    "accent": "#c05a3a",
+    "background": "#faf6f0",
+    "edge_stroke": "#8a7a68",
+    "edge_text": "#5c4d40",
+    "grid_angle_degrees": 45,
+    "grid_color": "#000000",
+    "grid_diagonal": 59,
+    "grid_opacity": 0.1,
+    "grid_visible": true,
+    "node_fill": "#fffdf9",
+    "node_stroke": "#d9cbb7",
+    "node_text": "#3a2f27",
+    "theme": "arcilla"
+  },
+  "aurora": {
+    "accent": "#9a8cf0",
+    "background": "#0e1626",
+    "edge_stroke": "#7288b0",
+    "edge_text": "#a9bcd9",
+    "grid_angle_degrees": 45,
+    "grid_color": "#c8dcff",
+    "grid_diagonal": 59,
+    "grid_opacity": 0.13,
+    "grid_visible": true,
+    "node_fill": "#16213a",
+    "node_stroke": "#2c3d5e",
+    "node_text": "#e6ecf7",
+    "theme": "aurora"
+  },
+  "neblina": {
+    "accent": "#2f8f86",
+    "background": "#eef1f2",
+    "edge_stroke": "#6f8080",
+    "edge_text": "#4c5c5d",
+    "grid_angle_degrees": 45,
+    "grid_color": "#000000",
+    "grid_diagonal": 59,
+    "grid_opacity": 0.1,
+    "grid_visible": true,
+    "node_fill": "#fafbfb",
+    "node_stroke": "#cbd3d5",
+    "node_text": "#22302f",
+    "theme": "neblina"
   }
 };
 
@@ -112,6 +201,14 @@ const gridOpacityInput = document.getElementById("settings-grid-opacity");
 const gridDiagonalInput = document.getElementById("settings-grid-diagonal");
 const gridAngleInput = document.getElementById("settings-grid-angle");
 const gridVisibleInput = document.getElementById("settings-grid-visible");
+// The colours of the drawing (`f6-themes.md`, R2): the theme is the base and
+// each picker is the override of the human.
+const nodeFillInput = document.getElementById("settings-node-fill");
+const nodeStrokeInput = document.getElementById("settings-node-stroke");
+const nodeTextInput = document.getElementById("settings-node-text");
+const edgeStrokeInput = document.getElementById("settings-edge-stroke");
+const edgeTextInput = document.getElementById("settings-edge-text");
+const accentInput = document.getElementById("settings-accent");
 const gridOpacityValue = document.getElementById("settings-grid-opacity-value");
 const gridDiagonalValue = document.getElementById("settings-grid-diagonal-value");
 const gridAngleValue = document.getElementById("settings-grid-angle-value");
@@ -409,12 +506,18 @@ window.addEventListener("resize", () => {
 function settingsFromPayload(payload) {
   const p = payload || {};
   return {
+    accent: String(p.accent),
     background: String(p.background),
-    grid_color: String(p.grid_color),
-    grid_opacity: Number(p.grid_opacity),
-    grid_diagonal: Number(p.grid_diagonal),
+    edge_stroke: String(p.edge_stroke),
+    edge_text: String(p.edge_text),
     grid_angle_degrees: Number(p.grid_angle_degrees),
+    grid_color: String(p.grid_color),
+    grid_diagonal: Number(p.grid_diagonal),
+    grid_opacity: Number(p.grid_opacity),
     grid_visible: Boolean(p.grid_visible),
+    node_fill: String(p.node_fill),
+    node_stroke: String(p.node_stroke),
+    node_text: String(p.node_text),
     theme: String(p.theme),
   };
 }
@@ -423,12 +526,18 @@ function settingsFromPayload(payload) {
 function readPanel() {
   const theme = themeInputs.find((input) => input.checked) || themeInputs[0];
   return {
+    accent: accentInput.value,
     background: backgroundInput.value,
-    grid_color: gridColorInput.value,
-    grid_opacity: Number(gridOpacityInput.value),
-    grid_diagonal: Number(gridDiagonalInput.value),
+    edge_stroke: edgeStrokeInput.value,
+    edge_text: edgeTextInput.value,
     grid_angle_degrees: Number(gridAngleInput.value),
+    grid_color: gridColorInput.value,
+    grid_diagonal: Number(gridDiagonalInput.value),
+    grid_opacity: Number(gridOpacityInput.value),
     grid_visible: gridVisibleInput.checked,
+    node_fill: nodeFillInput.value,
+    node_stroke: nodeStrokeInput.value,
+    node_text: nodeTextInput.value,
     theme: theme ? theme.value : "dark",
   };
 }
@@ -454,6 +563,12 @@ function fillPanel(next) {
   gridDiagonalInput.value = String(next.grid_diagonal);
   gridAngleInput.value = String(next.grid_angle_degrees);
   gridVisibleInput.checked = next.grid_visible;
+  nodeFillInput.value = next.node_fill;
+  nodeStrokeInput.value = next.node_stroke;
+  nodeTextInput.value = next.node_text;
+  edgeStrokeInput.value = next.edge_stroke;
+  edgeTextInput.value = next.edge_text;
+  accentInput.value = next.accent;
   for (const input of themeInputs) {
     input.checked = input.value === next.theme;
   }
@@ -461,17 +576,26 @@ function fillPanel(next) {
 }
 
 /**
- * Paints the plan with the settings: the background, the grid and the theme.
+ * Paints the plan with the settings: every colour of the palette and the
+ * theme.
  *
  * The theme is a real theme (RF22, S18), not a background: `data-theme` on
- * the root element switches the whole palette of the stylesheet, so nodes,
- * labels and arrows keep their contrast.
+ * the root element switches the whole palette of the stylesheet (the chrome
+ * of the panel included), and the colours the human changed are painted over
+ * it as variables, so nodes, labels and arrows keep their contrast
+ * (`f6-themes.md`, R1, R2).
  */
 function applySettings(next) {
   settings = next;
   const root = document.documentElement;
-  root.dataset.theme = next.theme === "light" ? "light" : "dark";
+  root.dataset.theme = THEMES.includes(next.theme) ? next.theme : "dark";
   root.style.setProperty("--bg", next.background);
+  root.style.setProperty("--node-fill", next.node_fill);
+  root.style.setProperty("--node-stroke", next.node_stroke);
+  root.style.setProperty("--node-text", next.node_text);
+  root.style.setProperty("--edge-stroke", next.edge_stroke);
+  root.style.setProperty("--edge-text", next.edge_text);
+  root.style.setProperty("--accent", next.accent);
   applyGrid();
 }
 
@@ -553,6 +677,12 @@ for (const input of [
   gridDiagonalInput,
   gridAngleInput,
   gridVisibleInput,
+  nodeFillInput,
+  nodeStrokeInput,
+  nodeTextInput,
+  edgeStrokeInput,
+  edgeTextInput,
+  accentInput,
   ...themeInputs,
 ]) {
   input.addEventListener("input", onPanelInput);

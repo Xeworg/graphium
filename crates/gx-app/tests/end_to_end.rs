@@ -65,6 +65,34 @@ fn the_same_document_renders_the_same_bytes() {
 }
 
 #[test]
+fn the_effective_palette_paints_the_drawing_not_the_theme_alone() {
+    install_engines();
+    gx_kinds::register_all();
+
+    // The theme alone keeps painting its own colours (default path).
+    let themed = render_json(MINIMAL, &RenderOpts::default()).expect("renders");
+    assert!(
+        themed.svg.contains("rgba(42, 42, 48, 1.00)"),
+        "the dark theme fills the nodes with its own colour"
+    );
+
+    // A caller-resolved palette wins: the export with human overrides must
+    // reach the renderer through the single door (f6-themes.md, R7).
+    let mut custom = gx_core::render::Palette::for_theme(gx_core::render::Theme::Dark);
+    custom.node_fill = gx_core::render::Color::rgb(0x12, 0x34, 0x56);
+    let opts = RenderOpts {
+        export: true,
+        palette: Some(custom),
+        ..RenderOpts::default()
+    };
+    let painted = render_json(MINIMAL, &opts).expect("renders");
+    assert!(
+        painted.svg.contains("rgba(18, 52, 86, 1.00)"),
+        "the resolved palette must paint the nodes, not the theme"
+    );
+}
+
+#[test]
 fn an_unknown_kind_is_rejected_with_its_code() {
     install_engines();
     gx_kinds::register_all();

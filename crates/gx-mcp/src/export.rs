@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use gx_core::error::ErrorCode;
 use gx_core::export::{
-    exports_root, plan_theme, rasterizer, resolve_in_root, used_bytes, ExportFormat, PathError,
+    exports_root, plan_palette, rasterizer, resolve_in_root, used_bytes, ExportFormat, PathError,
     RasterError, RasterOptions, EXPORT_ROOT_QUOTA_BYTES, EXPORT_TIMEOUT_MS, MAX_INLINE_BYTES,
     PNG_DEFAULT_MAX_PX, PNG_DEFAULT_SCALE, PNG_MAX_MAX_PX, PNG_MAX_SCALE,
 };
@@ -373,16 +373,26 @@ fn path_error(error: &PathError) -> ErrorPayload {
     }
 }
 
-/// Runs the export: render, rasterize and write.
-fn write_export(plan: &ExportPlan) -> ExportResponse {
-    // PRD §8.5.2/S7: the exported SVG is a closed document, so it travels with
-    // the canvas painted in the palette of the plan. It goes through the only
-    // engine door, and only reads the store.
-    let opts = RenderOpts {
-        theme: plan_theme(),
+/// The options of an export drawing.
+///
+/// PRD §8.5.2/S7: the exported SVG is a closed document, so it travels with
+/// the canvas painted in the palette of the plan. The palette —the theme the
+/// human chose plus the colours they changed— travels in `RenderOpts`, so the
+/// file looks like the window (`f6-themes.md`, R7).
+fn export_opts() -> RenderOpts {
+    let palette = plan_palette();
+    RenderOpts {
+        theme: palette.theme,
+        palette: Some(palette),
         export: true,
         ..RenderOpts::default()
-    };
+    }
+}
+
+/// Runs the export: render, rasterize and write.
+fn write_export(plan: &ExportPlan) -> ExportResponse {
+    // It goes through the only engine door, and only reads the store.
+    let opts = export_opts();
     let outcome = match gx_core::engine::render_json(&plan.document, &opts) {
         Ok(outcome) => outcome,
         Err(errors) => {
@@ -1140,6 +1150,31 @@ mod tests {
         assert_eq!(response.errors[0].path, "edges[0].to");
         assert_eq!(response.diagram_id.as_deref(), Some(diagram_id.as_str()));
         assert_eq!(root.files(), 0, "no se escribe antes de validar");
+    }
+
+    /// R7 (`f6-themes.md`): la puerta del export pide la **paleta** del plano
+    /// —el tema más los colores del humano—, no solo el tema: así el archivo
+    /// sale con lo que el humano ve.
+    #[test]
+    fn the_export_asks_for_the_palette_of_the_plan() {
+        let _guard = lock_renders_blocking();
+        crate::bootstrap();
+
+        gx_core::export::install_palette(gx_core::render::Palette::arcilla());
+        let opts = super::export_opts();
+        assert!(opts.export, "el export se dibuja como documento cerrado");
+        assert_eq!(
+            opts.palette,
+            Some(gx_core::render::Palette::arcilla()),
+            "la paleta del plano viaja en `RenderOpts`"
+        );
+        assert_eq!(
+            opts.theme,
+            gx_core::render::Theme::Arcilla,
+            "el tema sigue siendo la base de la paleta"
+        );
+
+        gx_core::export::install_theme(gx_core::render::Theme::Dark);
     }
 
     /// S7: la puerta (`gx_core::engine::render_json`) pide el dibujo del export
