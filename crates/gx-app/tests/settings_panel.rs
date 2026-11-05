@@ -372,6 +372,30 @@ fn the_theme_switch_shows_a_palette_beside_every_name() {
     }
 }
 
+/// The theme chips are the one selector: the page offers no preset buttons
+/// any more — `sin grilla` is the checkbox of the grid, not a look — and no
+/// label of the panel wraps, so no control reads cut next to its label.
+#[test]
+fn the_panel_keeps_one_selector_and_labels_on_one_line() {
+    assert!(
+        !HTML.contains("data-preset"),
+        "the theme chips are the one selector: the panel has no preset buttons"
+    );
+    assert!(
+        !JS.contains("presetButtons"),
+        "the page has no preset buttons to wire: {JS}"
+    );
+    let field = slice_between(CSS, ".settings-field {", "}");
+    assert!(
+        field.contains("max-content"),
+        "the label column sizes to its longest label: {field}"
+    );
+    assert!(
+        !CSS.contains(".settings-preset"),
+        "the styles of the removed preset buttons go with them"
+    );
+}
+
 #[test]
 fn the_page_listens_to_the_settings_and_announces_every_change() {
     assert!(

@@ -265,7 +265,6 @@ const gridAngleValue = document.getElementById("settings-grid-angle-value");
 const themeInputs = Array.from(
   document.querySelectorAll('input[name="settings-theme"]'),
 );
-const presetButtons = Array.from(document.querySelectorAll("[data-preset]"));
 
 const camera = { tx: 0, ty: 0, zoom: 1 };
 const objects = new Map(); // diagram_id -> element
@@ -737,21 +736,6 @@ for (const input of [
 ]) {
   input.addEventListener("input", onPanelInput);
   input.addEventListener("change", onPanelInput);
-}
-
-for (const button of presetButtons) {
-  button.addEventListener("click", () => {
-    const preset = PLAN_PRESETS[button.dataset.preset];
-    if (!preset) {
-      return;
-    }
-    // A preset fills the controls and the change travels to Rust like any
-    // other one: the page never writes the file.
-    const next = settingsFromPayload(preset);
-    fillPanel(next);
-    applySettings(next);
-    notifySettings(next);
-  });
 }
 
 fillSwatches();

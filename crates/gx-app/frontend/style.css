@@ -1066,13 +1066,16 @@ body {
 
 .settings-field {
   display: grid;
-  grid-template-columns: 80px 1fr 46px;
+  /* The column of the labels sizes to its longest label, so `mostrar
+     grilla` fits on one line and its checkbox never reads cut. */
+  grid-template-columns: max-content 1fr 46px;
   align-items: center;
   gap: 8px;
 }
 
 .settings-field label {
   opacity: 0.85;
+  white-space: nowrap;
 }
 
 .settings-field input[type="color"] {
@@ -1173,34 +1176,9 @@ body {
   box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.45);
 }
 
-.settings-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding-top: 2px;
-  border-top: 1px solid var(--surface-border);
-}
-
-.settings-preset {
-  padding: 3px 8px;
-  font: inherit;
-  font-size: 12px;
-  color: var(--text);
-  background: none;
-  border: 1px solid var(--surface-border);
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.settings-preset:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 /* Every control of the panel is reachable and visible with the keyboard. */
 .settings-toggle:focus-visible,
 .settings-close:focus-visible,
-.settings-preset:focus-visible,
 .settings-radio input:focus-visible,
 .settings-field input:focus-visible,
 .panel-toggle:focus-visible,

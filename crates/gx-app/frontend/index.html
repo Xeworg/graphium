@@ -232,9 +232,10 @@
         </label>
       </fieldset>
 
-      <div class="settings-presets">
-        <button type="button" class="settings-preset" data-preset="sin grilla">sin grilla</button>
-      </div>
+      <!-- The theme chips are the one selector: `sin grilla` is not a look,
+           it is the grid of `plano` turned off, and the checkbox above does
+           that. The `PLAN_PRESETS` table stays: the chips read their
+           swatches from it and the contract test pins it to Rust. -->
     </section>
 
     <script src="plan.js"></script>
