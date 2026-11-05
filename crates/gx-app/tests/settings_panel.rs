@@ -7,7 +7,8 @@
 //! now change) and the palette of the light theme (which has to keep the
 //! contrast of a real theme, S18).
 
-use gx_app::settings::{preset, Settings};
+use gx_app::settings::{preset, presets, Settings, PRESET_NAMES};
+use gx_core::render::{Palette, Theme};
 
 const HTML: &str = include_str!("../frontend/index.html");
 const CSS: &str = include_str!("../frontend/style.css");
@@ -97,7 +98,8 @@ fn page_presets() -> serde_json::Value {
 
 #[test]
 fn the_panel_has_a_control_for_every_setting() {
-    // The six settings of RF25 plus the theme of RF22.
+    // The six settings of RF25, the theme of RF22 and the six colours the
+    // panel can now change (`f6-themes.md`, R2).
     for id in [
         "settings-background",
         "settings-grid-color",
@@ -105,6 +107,12 @@ fn the_panel_has_a_control_for_every_setting() {
         "settings-grid-diagonal",
         "settings-grid-angle",
         "settings-grid-visible",
+        "settings-node-fill",
+        "settings-node-stroke",
+        "settings-node-text",
+        "settings-edge-stroke",
+        "settings-edge-text",
+        "settings-accent",
     ] {
         assert!(
             HTML.contains(&format!("id=\"{id}\"")),
@@ -126,6 +134,22 @@ fn the_panel_has_a_control_for_every_setting() {
         grid_color.contains("type=\"color\""),
         "the grid colour is a colour: {grid_color}"
     );
+    // R2: the colours that could not be touched follow the convention of the
+    // background and the grid: a native colour picker, nothing invented.
+    for id in [
+        "settings-node-fill",
+        "settings-node-stroke",
+        "settings-node-text",
+        "settings-edge-stroke",
+        "settings-edge-text",
+        "settings-accent",
+    ] {
+        let tag = tag_of(HTML, id);
+        assert!(
+            tag.contains("type=\"color\""),
+            "`{id}` is a colour picker like the background: {tag}"
+        );
+    }
 
     let opacity = tag_of(HTML, "settings-grid-opacity");
     for (attribute, value) in [
@@ -164,12 +188,13 @@ fn the_panel_has_a_control_for_every_setting() {
 }
 
 #[test]
-fn the_theme_switch_offers_the_two_themes_of_the_settings() {
+fn the_theme_switch_offers_the_seven_themes_of_the_settings() {
     let theme = slice_between(HTML, "name=\"settings-theme\"", "</fieldset>");
-    for value in ["value=\"dark\"", "value=\"light\""] {
+    for name in Theme::ALL {
         assert!(
-            theme.contains(value),
-            "the theme switch offers {value}: {theme}"
+            theme.contains(&format!("value=\"{}\"", name.as_str())),
+            "the theme switch offers `{}`: {theme}",
+            name.as_str()
         );
     }
     // The page paints the theme it is given, and the stylesheet answers to
@@ -188,13 +213,77 @@ fn the_theme_switch_offers_the_two_themes_of_the_settings() {
     );
 }
 
+/// R1, R6 (`f6-themes.md`): cada tema declara la paleta completa en la hoja
+/// de estilos, y los seis son distintos entre sí: un tema no es solo un fondo.
 #[test]
-fn the_three_presets_of_the_page_are_the_presets_of_rust() {
+fn every_theme_of_the_stylesheet_paints_the_whole_palette() {
+    let mut fills = Vec::new();
+    for theme in Theme::ALL {
+        let selector = match theme {
+            Theme::Dark => ":root".to_string(),
+            other => format!("[data-theme=\"{}\"]", other.as_str()),
+        };
+        let block = slice_between(CSS, &format!("{selector} {{"), "}");
+        let palette = Palette::for_theme(theme);
+        for (token, colour) in [
+            ("--bg", palette.bg),
+            ("--node-fill", palette.node_fill),
+            ("--node-stroke", palette.node_stroke),
+            ("--node-text", palette.node_text),
+            ("--edge-stroke", palette.edge_stroke),
+            ("--edge-text", palette.edge_text),
+            ("--accent", palette.accent),
+        ] {
+            assert_eq!(
+                declaration(block, token),
+                colour.hex(),
+                "{selector} must declare {token}: the theme is the whole palette"
+            );
+        }
+        fills.push(declaration(block, "--node-fill").to_string());
+    }
+    let mut unique = fills.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(
+        unique.len(),
+        fills.len(),
+        "every theme fills its nodes its own way"
+    );
+}
+
+/// R2 (`f6-themes.md`): el plano pinta cada color de la paleta desde los
+/// ajustes, no desde una tabla fija de la hoja de estilos.
+#[test]
+fn the_plan_paints_the_colours_of_the_settings() {
+    let body = slice_between(JS, "function applySettings(next) {", "\n}");
+    for token in [
+        "--bg",
+        "--node-fill",
+        "--node-stroke",
+        "--node-text",
+        "--edge-stroke",
+        "--edge-text",
+        "--accent",
+    ] {
+        assert!(
+            body.contains(token),
+            "the plan must paint {token} from the settings: {body}"
+        );
+    }
+}
+
+#[test]
+fn the_presets_of_the_page_are_the_presets_of_rust() {
     let presets = page_presets();
     let table = presets.as_object().expect("a table of presets");
-    assert_eq!(table.len(), 3, "F1 offers exactly three presets: {table:?}");
+    assert_eq!(
+        table.len(),
+        PRESET_NAMES.len(),
+        "the page offers every preset of Rust: {table:?}"
+    );
 
-    for name in ["plano", "claro", "sin grilla"] {
+    for name in PRESET_NAMES {
         let expected = preset(name).unwrap_or_else(|| panic!("Rust must know the preset {name}"));
         let from_page = table
             .get(name)
@@ -214,6 +303,97 @@ fn the_three_presets_of_the_page_are_the_presets_of_rust() {
             "the preset {name} of the page drifted from `settings::presets`"
         );
     }
+
+    // R5, R6: the four themes of F6 are offered as presets, and each one
+    // carries the palette of its own theme.
+    for (theme, name) in [
+        (Theme::Dark, "plano"),
+        (Theme::Light, "claro"),
+        (Theme::Brasa, "brasa"),
+        (Theme::Arcilla, "arcilla"),
+        (Theme::Aurora, "aurora"),
+        (Theme::Neblina, "neblina"),
+        (Theme::Pitaya, "pitaya"),
+    ] {
+        let from_page = table
+            .get(name)
+            .unwrap_or_else(|| panic!("the page must offer the preset {name}"));
+        let as_settings: Settings = serde_json::from_value(from_page.clone())
+            .unwrap_or_else(|error| panic!("the preset {name} is a settings object: {error}"));
+        assert_eq!(
+            as_settings,
+            presets::of_theme(theme),
+            "the preset {name} is the look of {theme:?}"
+        );
+    }
+}
+
+/// The theme switch is the one selector: each theme shows its name and a
+/// small palette beside it (the colours the theme paints), so the human
+/// sees the look before choosing it. The dots are filled by the page from
+/// `PLAN_PRESETS` — one source of truth, the table of the presets.
+#[test]
+fn the_theme_switch_shows_a_palette_beside_every_name() {
+    let theme = slice_between(HTML, "<fieldset class=\"settings-theme\">", "</fieldset>");
+    for name in Theme::ALL {
+        let value = format!("value=\"{}\"", name.as_str());
+        let at = theme
+            .find(&value)
+            .unwrap_or_else(|| panic!("the theme switch offers `{}`", name.as_str()));
+        let label_start = theme[..at]
+            .rfind("<label")
+            .expect("the radio sits in a label");
+        let label_end = at + theme[at..].find("</label>").expect("the label closes");
+        let label = &theme[label_start..label_end];
+        assert!(
+            label.contains("class=\"swatches\""),
+            "the label of `{}` shows a palette beside its name: {label}",
+            name.as_str()
+        );
+    }
+    // The page paints the dots from the presets table, one source of truth.
+    assert!(
+        JS.contains("THEME_PRESETS"),
+        "the page maps every theme to its preset to paint the swatches"
+    );
+    for (theme, preset) in [
+        ("dark", "plano"),
+        ("light", "claro"),
+        ("brasa", "brasa"),
+        ("arcilla", "arcilla"),
+        ("aurora", "aurora"),
+        ("neblina", "neblina"),
+        ("pitaya", "pitaya"),
+    ] {
+        assert!(
+            JS.contains(&format!("\"{theme}\": \"{preset}\"")),
+            "THEME_PRESETS maps {theme} to {preset}"
+        );
+    }
+}
+
+/// The theme chips are the one selector: the page offers no preset buttons
+/// any more — `sin grilla` is the checkbox of the grid, not a look — and no
+/// label of the panel wraps, so no control reads cut next to its label.
+#[test]
+fn the_panel_keeps_one_selector_and_labels_on_one_line() {
+    assert!(
+        !HTML.contains("data-preset"),
+        "the theme chips are the one selector: the panel has no preset buttons"
+    );
+    assert!(
+        !JS.contains("presetButtons"),
+        "the page has no preset buttons to wire: {JS}"
+    );
+    let field = slice_between(CSS, ".settings-field {", "}");
+    assert!(
+        field.contains("max-content"),
+        "the label column sizes to its longest label: {field}"
+    );
+    assert!(
+        !CSS.contains(".settings-preset"),
+        "the styles of the removed preset buttons go with them"
+    );
 }
 
 #[test]
@@ -403,6 +583,13 @@ fn the_panel_lives_outside_the_plan_so_it_never_steals_the_camera() {
     assert!(
         panel_css.contains("position: fixed") && panel_css.contains("top:"),
         "the panel floats over the plan: {panel_css}"
+    );
+    // F6 (`f6-themes.md`, R2) added six pickers to the panel: on a short
+    // window the controls have to stay reachable, so the panel scrolls
+    // instead of hiding them.
+    assert!(
+        panel_css.contains("max-height:") && panel_css.contains("overflow-y: auto"),
+        "the panel has more controls than fit: it must scroll, not hide them: {panel_css}"
     );
 
     // Escape closes the panel, so the keyboard has a way out.

@@ -39,10 +39,12 @@ pub fn install_engines() -> Result<(), Box<dyn Error>> {
     // pay for it (RNF1-quater).
     gx_core::export::install_rasterizer(Arc::new(gx_render_svg::ResvgRasterizer::new()));
 
-    // The export paints with the theme the human is looking at, and the theme
-    // lives here: `gx-mcp` reads it through `gx-core` and never depends on this
-    // crate (decision L7 of `f2-export.md`).
-    gx_core::export::install_theme(settings::Settings::load().theme());
+    // The export paints with the palette the human is looking at, and the
+    // palette lives here: `gx-mcp` reads it through `gx-core` and never
+    // depends on this crate (decision L7 of `f2-export.md`). The palette, not
+    // the theme, so the export also carries the colours the human changed
+    // (`f6-themes.md`, R7).
+    gx_core::export::install_palette(settings::Settings::load().palette());
 
     Ok(())
 }

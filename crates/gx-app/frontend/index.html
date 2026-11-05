@@ -147,23 +147,95 @@
         <span class="settings-value"></span>
       </div>
 
+      <!-- The colours of the drawing (`f6-themes.md`, R1, R2): the theme is the
+           base and each picker is the override of the human. Same convention
+           as the background and the grid above. -->
+      <div class="settings-field">
+        <label for="settings-node-fill">nodos</label>
+        <input id="settings-node-fill" type="color" />
+        <span class="settings-value"></span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-node-stroke">borde</label>
+        <input id="settings-node-stroke" type="color" />
+        <span class="settings-value"></span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-node-text">texto de nodo</label>
+        <input id="settings-node-text" type="color" />
+        <span class="settings-value"></span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-edge-stroke">aristas</label>
+        <input id="settings-edge-stroke" type="color" />
+        <span class="settings-value"></span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-edge-text">texto de arista</label>
+        <input id="settings-edge-text" type="color" />
+        <span class="settings-value"></span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-accent">acento</label>
+        <input id="settings-accent" type="color" />
+        <span class="settings-value"></span>
+      </div>
+
+      <!-- The one selector of the plan (PRD §8.5.2 RF22, `f6-themes.md` R5):
+           every theme is a chip with its name and a small palette beside it,
+           the four colours the theme paints (background, nodes, their text
+           and the accent). The page fills the dots from `PLAN_PRESETS`, so
+           the chips cannot drift from the presets. `sin grilla` is not a
+           theme: it is the grid of `plano` turned off, so it stays a preset
+           button and not a chip. -->
       <fieldset class="settings-theme">
         <legend>tema</legend>
         <label class="settings-radio">
           <input type="radio" name="settings-theme" value="dark" />
-          oscuro
+          plano
+          <span class="swatches" aria-hidden="true"></span>
         </label>
         <label class="settings-radio">
           <input type="radio" name="settings-theme" value="light" />
           claro
+          <span class="swatches" aria-hidden="true"></span>
+        </label>
+        <label class="settings-radio">
+          <input type="radio" name="settings-theme" value="brasa" />
+          brasa
+          <span class="swatches" aria-hidden="true"></span>
+        </label>
+        <label class="settings-radio">
+          <input type="radio" name="settings-theme" value="arcilla" />
+          arcilla
+          <span class="swatches" aria-hidden="true"></span>
+        </label>
+        <label class="settings-radio">
+          <input type="radio" name="settings-theme" value="aurora" />
+          aurora
+          <span class="swatches" aria-hidden="true"></span>
+        </label>
+        <label class="settings-radio">
+          <input type="radio" name="settings-theme" value="neblina" />
+          neblina
+          <span class="swatches" aria-hidden="true"></span>
+        </label>
+        <label class="settings-radio">
+          <input type="radio" name="settings-theme" value="pitaya" />
+          pitaya
+          <span class="swatches" aria-hidden="true"></span>
         </label>
       </fieldset>
 
-      <div class="settings-presets">
-        <button type="button" class="settings-preset" data-preset="plano">plano</button>
-        <button type="button" class="settings-preset" data-preset="claro">claro</button>
-        <button type="button" class="settings-preset" data-preset="sin grilla">sin grilla</button>
-      </div>
+      <!-- The theme chips are the one selector: `sin grilla` is not a look,
+           it is the grid of `plano` turned off, and the checkbox above does
+           that. The `PLAN_PRESETS` table stays: the chips read their
+           swatches from it and the contract test pins it to Rust. -->
     </section>
 
     <script src="plan.js"></script>
