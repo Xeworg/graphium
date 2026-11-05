@@ -12,7 +12,7 @@
 //! The crate has no dependency on the MCP layer, the window or the renderer:
 //! the rules are testable on their own.
 
-use crate::render::Theme;
+use crate::render::{Palette, Theme};
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
@@ -177,28 +177,41 @@ pub fn rasterizer() -> Option<Arc<dyn Rasterizer>> {
         .clone()
 }
 
-/// Where the theme of the plan lives.
+/// Where the palette of the plan lives.
 ///
-/// The theme that the human chose lives in `~/.graphium/settings.json` and
-/// belongs to the window (`gx-app`), but the export is drawn by `gx-mcp`,
-/// which does not depend on it (PRD §9.1). The window installs the theme it
-/// is painting with, the same way it installs the engines, and the export
-/// uses it: **el SVG exportado se parece a lo que el humano ve**.
-fn theme_slot() -> &'static RwLock<Theme> {
-    static SLOT: OnceLock<RwLock<Theme>> = OnceLock::new();
-    SLOT.get_or_init(|| RwLock::new(Theme::Dark))
+/// The colours that the human chose live in `~/.graphium/settings.json` and
+/// belong to the window (`gx-app`), but the export is drawn by `gx-mcp`,
+/// which does not depend on it (PRD §9.1). The window installs the palette it
+/// is painting with — the theme plus every colour the human changed — the
+/// same way it installs the engines, and the export uses it: **el SVG
+/// exportado se parece a lo que el humano ve** (`f6-themes.md`, R7).
+fn palette_slot() -> &'static RwLock<Palette> {
+    static SLOT: OnceLock<RwLock<Palette>> = OnceLock::new();
+    SLOT.get_or_init(|| RwLock::new(Palette::plano()))
 }
 
-/// Installs the theme of the plan.
-pub fn install_theme(theme: Theme) {
-    *theme_slot()
+/// Installs the palette of the plan.
+pub fn install_palette(palette: Palette) {
+    *palette_slot()
         .write()
-        .expect("the theme slot is not poisoned") = theme;
+        .expect("the palette slot is not poisoned") = palette;
+}
+
+/// The palette of the plan, `plano` when nothing installed one.
+pub fn plan_palette() -> Palette {
+    *palette_slot()
+        .read()
+        .expect("the palette slot is not poisoned")
+}
+
+/// Installs the palette of a theme, for a caller that only knows the theme.
+pub fn install_theme(theme: Theme) {
+    install_palette(Palette::for_theme(theme));
 }
 
 /// The theme of the plan, dark when nothing installed one.
 pub fn plan_theme() -> Theme {
-    *theme_slot().read().expect("the theme slot is not poisoned")
+    plan_palette().theme
 }
 
 /// Why a relative path does not name a file inside the exports root.
@@ -359,8 +372,10 @@ pub fn used_bytes(root: &Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_in_root, used_bytes, PathError, EXPORT_ROOT_QUOTA_BYTES, MAX_INLINE_BYTES,
+        install_palette, install_theme, plan_palette, plan_theme, resolve_in_root, used_bytes,
+        PathError, EXPORT_ROOT_QUOTA_BYTES, MAX_INLINE_BYTES,
     };
+    use crate::render::{Color, Palette, Theme};
     use std::path::{Path, PathBuf};
 
     fn temp_root(name: &str) -> PathBuf {
@@ -448,5 +463,23 @@ mod tests {
     fn the_limits_are_the_ones_of_the_prd() {
         assert_eq!(MAX_INLINE_BYTES, 1_048_576);
         assert_eq!(EXPORT_ROOT_QUOTA_BYTES, 209_715_200);
+    }
+
+    /// R7 (`f6-themes.md`): el export pinta con la paleta del plano —el tema
+    /// más los colores del humano—, no solo con el tema.
+    #[test]
+    fn the_export_keeps_the_palette_of_the_plan() {
+        let palette = Palette {
+            accent: Color::rgb(0x01, 0x02, 0x03),
+            ..Palette::neblina()
+        };
+        install_palette(palette);
+        assert_eq!(plan_palette(), palette, "el acento del humano viaja");
+        assert_eq!(plan_theme(), Theme::Neblina, "el tema sigue siendo la base");
+
+        // The theme alone is still enough for a caller that knows no colours.
+        install_theme(Theme::Aurora);
+        assert_eq!(plan_palette(), Palette::aurora());
+        install_theme(Theme::Dark);
     }
 }
