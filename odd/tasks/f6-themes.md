@@ -14,7 +14,9 @@ corte abre todos los colores y agrega cuatro temas nuevos con otros nombres.
   pi y uno en gentle ai dales otro nombre».
 - S4 (restricción del humano): «de esos worktrees los agentes no pueden hacer
   merge de la rama lo haremos luego de revisar y probar nosotros» — el worker no
-  commitea ni merguea; deja el árbol listo para revisión.
+  commitea ni merguea; deja el árbol listo para revisión. Integración (decisión
+  del 2026-11-05): feature → `staging` (revisión y prueba ahí) → PRs encadenados
+  → `main`; nunca directo a `main`.
 
 ### Derivados de S1/S2
 
@@ -63,12 +65,12 @@ corte abre todos los colores y agrega cuatro temas nuevos con otros nombres.
 
 ## Tasks
 
-- T1 (R6, R5): `Theme` + `Palette` de los cuatro temas nuevos en gx-core. Commit: pendiente.
-- T2 (R1, R2, R3, R4): overrides de color en `Settings` + pickers del panel + persistencia. Commit: pendiente.
-- T3 (R6): presets, radios del panel y tokens CSS de UI para los seis temas. Commit: pendiente.
-- T4 (R7): paleta efectiva en el export (RenderOpts aditivo). Commit: pendiente.
-- T5 (R8): tests de contrato y de paleta; suite verde. Commit: pendiente.
-- T6 (R9): `node --check`, docs (PRD RF22/RF25), resumen para revisión humana. Commit: pendiente.
+- T1 (R6, R5): `Theme` + `Palette` de los cuatro temas nuevos en gx-core. Commit: `f15337f`.
+- T2 (R1, R2, R3, R4): overrides de color en `Settings` + pickers del panel + persistencia. Commit: `8d34c2d`.
+- T3 (R6): presets, radios del panel y tokens CSS de UI para los seis temas. Commit: `8d34c2d`.
+- T4 (R7): paleta efectiva en el export (RenderOpts aditivo). Commits: `f15337f` (door + slot + test RED→GREEN del orquestador) + `1d08082` (cableado gx-mcp). El bloqueo de `engine.rs:148` lo resolvió el orquestador con test end-to-end: la paleta resuelta pinta los nodos, el camino por defecto sigue pintando el tema.
+- T5 (R8): tests de contrato y de paleta; suite verde. Evidencia: fmt + clippy -D warnings + test --workspace (31 binarios ok, 471 tests) tras el fix de T4.
+- T6 (R9): `node --check`, docs (PRD RF22/RF25), resumen para revisión humana. Commit: `1d08082`. La revisión en vivo de la UI queda para el humano sobre staging (S4).
 
 ## Log
 
@@ -81,3 +83,13 @@ corte abre todos los colores y agrega cuatro temas nuevos con otros nombres.
   dales otro nombre».
 - L2 (2026-11-05): el humano fijó el flujo: «de esos worktrees los agentes no
   pueden hacer merge de la rama lo haremos luego de revisar y probar nosotros».
+- L3 (2026-11-05): el humano fijó la integración: «no haremos merge a la rama
+  main directamente usaremos una rama primero a la que haremos merge y cuando
+  esa sea estable hacer pr encadenados» — la rama de integración es `staging`.
+- L4 (2026-11-05): implementación completa del worker (sin commit, 470 tests
+  verdes); el bloqueo de R7 (engine.rs fuera de su superficie) lo cerró el
+  orquestador con RED→GREEN en end_to_end. Rama commiteada en tres unidades
+  temáticas: core (`f15337f`), app (`8d34c2d`), mcp+docs (`1d08082`); el corte
+  base→core→app→mcp es la estrategia de entrega para los PRs encadenados.
+  Cambio visible intencional: el preset claro toma sus colores de
+  `Palette::claro()` para no separarse de la hoja de estilos ni del export.
