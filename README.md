@@ -47,8 +47,8 @@ Con el repositorio clonado, instala el binario en `$HOME/.local/bin` y la
 extensión en tu agente de IA:
 
 ```bash
-./install.sh          # compila e instala $HOME/.local/bin/graphium
-./install.sh agent    # instala la extensión en el agente (pi; pregunta en una tty)
+./install.sh          # compila, instala el binario y ofrece conectar tu agente
+./install.sh agent    # elige con un checklist en qué agentes instalar la extensión
 ./install.sh update   # actualiza binario y extensión si hay un release más nuevo
 ./install.sh uninstall
 ```
@@ -58,6 +58,24 @@ Sin clonar nada, una vez publicado el primer release:
 ```bash
 curl -fsSL https://github.com/Xeworg/graphium/releases/latest/download/install.sh | bash
 ```
+
+Al final de `./install.sh`, y en `./install.sh agent`, aparece un checklist con
+los hosts de agente que el instalador conoce (hoy `pi` y `gentle-shell`):
+
+- Arranca con los hosts detectados en la máquina ya marcados y muestra cuáles
+  ya tienen la extensión instalada (y su versión).
+- ↑/↓ mueve, espacio marca o desmarca, `a` marca/desmarca todos, Enter
+  confirma, y `q` (o Esc) sale sin instalar nada: así se saltea y se conecta el
+  agente más tarde.
+- Si la terminal no da para el checklist (TERM tonta, sin `tput`/terminfo)
+  pregunta con números, como antes.
+- Sin terminal (scripts, pipes) hay que pedir los agentes explícitos:
+  `./install.sh agent --env pi [--env gentle-shell]` o `./install.sh agent
+  --all`.
+
+Agregar un agente nuevo es una línea en el registro `AGENT_REGISTRY` de
+`install.sh` (nombre, variable de entorno y directorio por defecto): la ayuda,
+la detección, el estado, el checklist y la instalación salen de ahí.
 
 El binario abre una ventana (Tauri): necesita `webkit2gtk-4.1` en tiempo de
 ejecución; el instalador lo avisa si falta. Los tests del instalador corren
