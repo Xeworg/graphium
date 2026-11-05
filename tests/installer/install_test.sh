@@ -13,7 +13,7 @@ trap cleanup_scratch EXIT
 run_installer install >/dev/null
 assert_file "$SCRATCH_HOME/.local/bin/graphium"
 version="$("$SCRATCH_HOME/.local/bin/graphium" --version)"
-assert_contains "$version" "0.1.0"
+assert_contains "$version" "$(tree_version)"
 
 # Reinstalar sobre un binario existente no falla y sigue siendo el mismo
 # comando: correrlo de nuevo sobreescribe.

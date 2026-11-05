@@ -10,6 +10,18 @@ TESTS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$TESTS_DIR/../.." && pwd)"
 INSTALLER="$REPO_ROOT/install.sh"
 
+# Versión del árbol de trabajo: la lee de Cargo.toml para que un bump de
+# release no deje los tests del instalador desactualizados.
+tree_version() {
+  awk '
+    /^\[workspace\.package\]$/ { in_ws = 1; next }
+    /^\[/ { in_ws = 0 }
+    in_ws && /^version *= *"/ {
+      sub(/^version *= *"/, ""); sub(/".*$/, ""); print; exit
+    }
+  ' "$REPO_ROOT/Cargo.toml"
+}
+
 # Crea un HOME de scratch; el llamador lo borra con cleanup_scratch.
 SCRATCH_HOME=""
 new_scratch() {
