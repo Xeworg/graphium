@@ -99,6 +99,109 @@
   --code-bg: rgba(0, 0, 0, 0.06);
 }
 
+/* The four themes of F6 (`f6-themes.md`, R5). Each one is the whole palette -
+ * the drawing and the chrome of the panel -, and each name is the name of
+ * `Theme` in `gx-core::render` and of `settings.json`: one name per theme. */
+[data-theme="brasa"] {
+  --bg: #131316;
+  --grid-color: rgba(255, 255, 255, 0.16);
+  --node-fill: #1e1e24;
+  --node-stroke: #3d3d47;
+  --node-text: #f2e9e1;
+  --edge-stroke: #8f867c;
+  --edge-text: #cbbcab;
+  --accent: #f5a623;
+  --text: #f2e9e1;
+  --surface: #1c1c22;
+  --surface-border: #34343e;
+  --surface-shadow: rgba(0, 0, 0, 0.5);
+  --hairline: rgba(255, 255, 255, 0.32);
+  --code-bg: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="arcilla"] {
+  --bg: #faf6f0;
+  --grid-color: rgba(0, 0, 0, 0.09);
+  --node-fill: #fffdf9;
+  --node-stroke: #d9cbb7;
+  --node-text: #3a2f27;
+  --edge-stroke: #8a7a68;
+  --edge-text: #5c4d40;
+  --accent: #c05a3a;
+  --text: #3a2f27;
+  /* The five families, one step darker so the dot reads on the cream plan
+     (the same rule as the light theme). */
+  --family-pi: #2f6fd0;
+  --family-claude: #a25f1b;
+  --family-opencode: #2b7a53;
+  --family-ui: #6f6f7a;
+  --family-other: #6a5aa6;
+  --surface: #fffdf9;
+  --surface-border: #e2d7c6;
+  --surface-shadow: rgba(60, 40, 20, 0.18);
+  --hairline: rgba(0, 0, 0, 0.3);
+  --code-bg: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="aurora"] {
+  --bg: #0e1626;
+  --grid-color: rgba(200, 220, 255, 0.13);
+  --node-fill: #16213a;
+  --node-stroke: #2c3d5e;
+  --node-text: #e6ecf7;
+  --edge-stroke: #7288b0;
+  --edge-text: #a9bcd9;
+  --accent: #9a8cf0;
+  --text: #e6ecf7;
+  --surface: #141d31;
+  --surface-border: #2a3550;
+  --surface-shadow: rgba(0, 0, 0, 0.5);
+  --hairline: rgba(255, 255, 255, 0.3);
+  --code-bg: rgba(255, 255, 255, 0.07);
+}
+
+[data-theme="neblina"] {
+  --bg: #eef1f2;
+  --grid-color: rgba(0, 0, 0, 0.08);
+  --node-fill: #fafbfb;
+  --node-stroke: #cbd3d5;
+  --node-text: #22302f;
+  --edge-stroke: #6f8080;
+  --edge-text: #4c5c5d;
+  --accent: #2f8f86;
+  --text: #22302f;
+  --family-pi: #2f6fd0;
+  --family-claude: #a25f1b;
+  --family-opencode: #2b7a53;
+  --family-ui: #6f6f7a;
+  --family-other: #6a5aa6;
+  --surface: #f7f9f9;
+  --surface-border: #d5dcdd;
+  --surface-shadow: rgba(20, 30, 30, 0.16);
+  --hairline: rgba(0, 0, 0, 0.28);
+  --code-bg: rgba(0, 0, 0, 0.05);
+}
+
+/* `pitaya`: the night of a terminal with a rose accent and soft rose text,
+   the look of the shell this plan lives beside. Dark like the default, so
+   it inherits the family colours of `:root`. */
+[data-theme="pitaya"] {
+  --bg: #100e13;
+  --grid-color: rgba(255, 255, 255, 0.13);
+  --node-fill: #1b161c;
+  --node-stroke: #4d3a45;
+  --node-text: #f0dce4;
+  --edge-stroke: #94707f;
+  --edge-text: #c99fb0;
+  --accent: #e06a8d;
+  --text: #f0dce4;
+  --surface: #1a161d;
+  --surface-border: #352a33;
+  --surface-shadow: rgba(0, 0, 0, 0.55);
+  --hairline: rgba(255, 255, 255, 0.3);
+  --code-bg: rgba(255, 255, 255, 0.07);
+}
+
 /* Las clases que el renderer escribe y que el SVG de pie resuelve con su
  * `<style>` interno: en el canvas la CSP bloquea ese bloque, así que cada una
  * necesita su regla acá o el elemento sale con el color del navegador. Es la
@@ -915,6 +1018,10 @@ body {
   right: 12px;
   z-index: 30;
   width: 252px;
+  /* The panel of F6 has more controls than fit on a short window: it scrolls
+     instead of hiding the colours of the drawing (RF25, `f6-themes.md` R2). */
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -959,13 +1066,16 @@ body {
 
 .settings-field {
   display: grid;
-  grid-template-columns: 80px 1fr 46px;
+  /* The column of the labels sizes to its longest label, so `mostrar
+     grilla` fits on one line and its checkbox never reads cut. */
+  grid-template-columns: max-content 1fr 46px;
   align-items: center;
   gap: 8px;
 }
 
 .settings-field label {
   opacity: 0.85;
+  white-space: nowrap;
 }
 
 .settings-field input[type="color"] {
@@ -1013,8 +1123,9 @@ body {
   padding: 0;
   border: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 6px;
 }
 
 .settings-theme legend {
@@ -1024,46 +1135,50 @@ body {
   opacity: 0.85;
 }
 
+/* Every theme is a chip: the name and a small palette beside it, the four
+   colours the theme paints. The chip reads like the preset buttons below,
+   so one selector feels like one selector. */
 .settings-radio {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  cursor: pointer;
-}
-
-.settings-radio input {
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
-.settings-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding-top: 2px;
-  border-top: 1px solid var(--surface-border);
-}
-
-.settings-preset {
+  gap: 5px;
   padding: 3px 8px;
-  font: inherit;
   font-size: 12px;
   color: var(--text);
-  background: none;
   border: 1px solid var(--surface-border);
   border-radius: 999px;
   cursor: pointer;
 }
 
-.settings-preset:hover {
+.settings-radio:hover {
   border-color: var(--accent);
-  color: var(--accent);
+}
+
+.settings-radio input {
+  accent-color: var(--accent);
+  cursor: pointer;
+  margin: 0;
+}
+
+/* The palette beside the name: background, nodes, their text and accent. */
+.swatches {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 1px;
+}
+
+.swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  /* A hairline so the light dots also read on a light plan. */
+  box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.45);
 }
 
 /* Every control of the panel is reachable and visible with the keyboard. */
 .settings-toggle:focus-visible,
 .settings-close:focus-visible,
-.settings-preset:focus-visible,
 .settings-radio input:focus-visible,
 .settings-field input:focus-visible,
 .panel-toggle:focus-visible,

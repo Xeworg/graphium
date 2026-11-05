@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use gx_app::settings::{preset, Settings};
+use gx_core::render::{Color, Palette, Theme};
 
 fn temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("graphium-settings-{name}-{}", std::process::id()));
@@ -68,10 +69,59 @@ fn what_is_saved_is_loaded() {
         grid_angle_degrees: 30.0,
         grid_visible: false,
         theme: "light".to_string(),
+        node_fill: "#101820".to_string(),
+        accent: "#ff00ff".to_string(),
+        ..Settings::default()
     };
 
     settings.save_to(&path).expect("the settings are written");
     assert_eq!(Settings::load_from(&path), settings);
+}
+
+/// R2, R3: un color elegido a mano queda en `settings.json` y sobrevive al
+/// reinicio; el tema elegido sigue siendo la base de la paleta.
+#[test]
+fn a_colour_picked_by_the_human_survives_the_restart() {
+    let dir = temp_dir("overrides");
+    let path = dir.join("settings.json");
+    let settings = Settings {
+        theme: "aurora".to_string(),
+        accent: "#ff00ff".to_string(),
+        node_fill: "#101010".to_string(),
+        ..Settings::default()
+    };
+    settings.save_to(&path).expect("the settings are written");
+
+    let loaded = Settings::load_from(&path);
+    assert_eq!(loaded.accent, "#ff00ff", "el acento es del humano");
+    assert_eq!(loaded.node_fill, "#101010", "el relleno es del humano");
+    assert_eq!(loaded.palette().theme, Theme::Aurora);
+    assert_eq!(
+        loaded.palette().node_fill,
+        Color::from_hex("#101010").expect("a colour"),
+        "el override llega a la paleta"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// R4: un color roto en el archivo cae al valor del tema que el humano
+/// eligió, y un typo no tira la ventana ni pierde el resto del archivo.
+#[test]
+fn a_broken_colour_keeps_the_theme_of_the_file() {
+    let dir = temp_dir("broken-colour");
+    let path = dir.join("settings.json");
+    fs::write(
+        &path,
+        r##"{ "theme": "neblina", "node_text": "nope", "accent": "#zzzzzz" }"##,
+    )
+    .expect("the file is written");
+
+    let settings = Settings::load_from(&path);
+    let palette = Palette::neblina();
+    assert_eq!(settings.theme, "neblina", "el tema del archivo se queda");
+    assert_eq!(settings.node_text, palette.node_text.hex());
+    assert_eq!(settings.accent, palette.accent.hex());
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -91,6 +141,10 @@ fn a_broken_field_falls_back_to_its_default() {
     );
     assert_eq!(settings.grid_opacity, 1.0, "the opacity clamps to 1");
     assert_eq!(settings.theme, "dark", "the theme is dark or light");
+    assert_eq!(
+        settings.node_fill, "#2a2a30",
+        "un color que falta es el del tema por defecto"
+    );
     // The fields that were fine keep their value.
     assert_eq!(settings.grid_color, "#ffffff");
 }
