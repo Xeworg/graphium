@@ -5,9 +5,11 @@
 //! this module has no tool behind it: the window reads the file at start and
 //! writes it when the panel changes something.
 //!
-//! A broken field falls back to its default instead of taking the window
-//! down: the file is edited by hand, and a typo in one colour is not a
-//! reason to lose the plan.
+//! Every colour of the palette is a setting (`f6-themes.md`, R1, R2): the
+//! theme is the base and the fields below are the colours the human changed
+//! on top of it. A broken field falls back to the value of its theme instead
+//! of taking the window down: the file is edited by hand, and a typo in one
+//! colour is not a reason to lose the plan (R4).
 
 use std::fs;
 use std::io;
@@ -15,12 +17,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use gx_core::render::Theme;
+use gx_core::render::{Color, Palette, Theme};
 
-/// Background of the `plano` preset: the dark of the reference capture.
-const PLANO_BACKGROUND: &str = "#1b1b1b";
-/// Colour of the grid of the `plano` preset.
-const PLANO_GRID: &str = "#ffffff";
 /// Opacity of the grid of the `plano` preset (PRD §8.5.2: 14%).
 const PLANO_GRID_OPACITY: f64 = 0.14;
 /// Separations the panel lets the human choose, in plan units.
@@ -33,6 +31,18 @@ const DIAGONAL_RANGE: std::ops::RangeInclusive<f64> = 20.0..=200.0;
 /// cell stops being a rhombus and the geometry stops meaning what the PRD
 /// says it means.
 const ANGLE_RANGE: std::ops::RangeInclusive<f64> = 15.0..=75.0;
+
+/// The presets the panel offers, in the order it shows them: the three of F1
+/// and the four themes of F6 (`f6-themes.md`, R5, R6).
+pub const PRESET_NAMES: [&str; 7] = [
+    "plano",
+    "claro",
+    "sin grilla",
+    "brasa",
+    "arcilla",
+    "aurora",
+    "neblina",
+];
 
 /// What the human chose for the plan (PRD §7.1 RF25).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -50,8 +60,21 @@ pub struct Settings {
     pub grid_angle_degrees: f64,
     /// Whether the grid is painted at all.
     pub grid_visible: bool,
-    /// `dark` or `light` (PRD §8.5.2 RF22).
+    /// The base of the colours: `dark`, `light`, `brasa`, `arcilla`,
+    /// `aurora` or `neblina` (PRD §8.5.2 RF22, `f6-themes.md` R5).
     pub theme: String,
+    /// Fill of a node: `#rrggbb`.
+    pub node_fill: String,
+    /// Border of a node: `#rrggbb`.
+    pub node_stroke: String,
+    /// Label of a node: `#rrggbb`.
+    pub node_text: String,
+    /// Line of an edge: `#rrggbb`.
+    pub edge_stroke: String,
+    /// Label of an edge: `#rrggbb`.
+    pub edge_text: String,
+    /// Highlight of the drawing: markers, glyphs and the selected elements.
+    pub accent: String,
 }
 
 impl Default for Settings {
@@ -60,35 +83,79 @@ impl Default for Settings {
     }
 }
 
-/// The three presets of F1 (PRD §8.5.2).
+/// The presets of the plan (PRD §8.5.2 RF24, RF25; `f6-themes.md`, R6).
 pub mod presets {
-    use super::{Settings, PLANO_BACKGROUND, PLANO_GRID, PLANO_GRID_OPACITY};
+    use super::{Settings, PLANO_GRID_OPACITY};
+    use gx_core::render::{Palette, Theme};
 
-    /// The dark plan of the reference: dark background and a white grid.
-    pub fn plano() -> Settings {
+    /// The settings of a theme: the palette of the theme in the fields of the
+    /// panel, with the grid of the `plano` preset (`f6-themes.md`, R1, R6).
+    ///
+    /// The colours come from `Palette::for_theme`, so a theme has one look:
+    /// the preset, the stylesheet and the export cannot drift apart.
+    pub fn of_theme(theme: Theme) -> Settings {
+        let palette = Palette::for_theme(theme);
         Settings {
-            background: PLANO_BACKGROUND.to_string(),
-            grid_color: PLANO_GRID.to_string(),
-            grid_opacity: PLANO_GRID_OPACITY,
+            background: palette.bg.hex(),
+            grid_color: palette.grid.hex(),
+            grid_opacity: grid_opacity(theme),
             grid_diagonal: 59.0,
             grid_angle_degrees: 45.0,
             grid_visible: true,
-            theme: "dark".to_string(),
+            theme: theme.as_str().to_string(),
+            node_fill: palette.node_fill.hex(),
+            node_stroke: palette.node_stroke.hex(),
+            node_text: palette.node_text.hex(),
+            edge_stroke: palette.edge_stroke.hex(),
+            edge_text: palette.edge_text.hex(),
+            accent: palette.accent.hex(),
         }
+    }
+
+    /// The opacity of the grid of each theme: the 14% of the PRD for `plano`
+    /// and a value per theme so the mesh reads without turning into noise.
+    /// It is the suggestion of the theme, never a limit: RF25 lets the human
+    /// change it.
+    fn grid_opacity(theme: Theme) -> f64 {
+        match theme {
+            Theme::Dark => PLANO_GRID_OPACITY,
+            Theme::Light => 0.10,
+            Theme::Brasa => 0.16,
+            Theme::Arcilla => 0.10,
+            Theme::Aurora => 0.13,
+            Theme::Neblina => 0.10,
+        }
+    }
+
+    /// The dark plan of the reference: dark background and a white grid.
+    pub fn plano() -> Settings {
+        of_theme(Theme::Dark)
     }
 
     /// The light theme: a real theme, not a white background. Nodes, labels
     /// and arrows keep their contrast, so the drawing is still readable.
     pub fn claro() -> Settings {
-        Settings {
-            background: "#f4f4f5".to_string(),
-            grid_color: "#1b1b1b".to_string(),
-            grid_opacity: 0.10,
-            grid_diagonal: 59.0,
-            grid_angle_degrees: 45.0,
-            grid_visible: true,
-            theme: "light".to_string(),
-        }
+        of_theme(Theme::Light)
+    }
+
+    /// `brasa` (`f6-themes.md`, R5): a terminal dark with an amber accent.
+    pub fn brasa() -> Settings {
+        of_theme(Theme::Brasa)
+    }
+
+    /// `arcilla` (`f6-themes.md`, R5): warm cream with a terracotta accent.
+    pub fn arcilla() -> Settings {
+        of_theme(Theme::Arcilla)
+    }
+
+    /// `aurora` (`f6-themes.md`, R5): deep blue with a violet accent.
+    pub fn aurora() -> Settings {
+        of_theme(Theme::Aurora)
+    }
+
+    /// `neblina` (`f6-themes.md`, R5): soft grey with a teal accent.
+    pub fn neblina() -> Settings {
+        of_theme(Theme::Neblina)
     }
 
     /// The dark plan without the grid.
@@ -100,12 +167,17 @@ pub mod presets {
     }
 }
 
-/// A preset by name, or `None` when the name is not one of the three.
+/// A preset by name, or `None` when the name is not one of the presets of
+/// `PRESET_NAMES`.
 pub fn preset(name: &str) -> Option<Settings> {
     match name.trim().to_lowercase().as_str() {
         "plano" => Some(presets::plano()),
         "claro" => Some(presets::claro()),
         "sin grilla" | "sin_grilla" | "singrilla" => Some(presets::sin_grilla()),
+        "brasa" => Some(presets::brasa()),
+        "arcilla" => Some(presets::arcilla()),
+        "aurora" => Some(presets::aurora()),
+        "neblina" => Some(presets::neblina()),
         _ => None,
     }
 }
@@ -141,12 +213,20 @@ impl Settings {
         parsed.sanitized()
     }
 
-    /// Keeps the sane fields and replaces the rest with their defaults.
-    fn sanitized(self) -> Settings {
+    /// Keeps the sane fields and replaces the rest with a value of the theme.
+    ///
+    /// The theme is decided first, because it is the base of every colour: a
+    /// colour that cannot be read falls back to the palette of the theme the
+    /// human chose, never to the default theme (`f6-themes.md`, R4). The
+    /// fields that are not colours (the opacity of the grid, its geometry)
+    /// keep their own default.
+    pub fn sanitized(self) -> Settings {
+        let theme = Theme::parse(&self.theme).unwrap_or_else(|| Settings::default().theme());
+        let palette = Palette::for_theme(theme);
         let fallback = Settings::default();
         Settings {
-            background: color_or(self.background, &fallback.background),
-            grid_color: color_or(self.grid_color, &fallback.grid_color),
+            background: color_or(self.background, &palette.bg.hex()),
+            grid_color: color_or(self.grid_color, &palette.grid.hex()),
             grid_opacity: if self.grid_opacity.is_finite() {
                 self.grid_opacity.clamp(0.0, 1.0)
             } else {
@@ -159,23 +239,62 @@ impl Settings {
                 fallback.grid_angle_degrees,
             ),
             grid_visible: self.grid_visible,
-            theme: if self.theme == "light" || self.theme == "dark" {
-                self.theme
-            } else {
-                fallback.theme
-            },
+            theme: theme.as_str().to_string(),
+            node_fill: color_or(self.node_fill, &palette.node_fill.hex()),
+            node_stroke: color_or(self.node_stroke, &palette.node_stroke.hex()),
+            node_text: color_or(self.node_text, &palette.node_text.hex()),
+            edge_stroke: color_or(self.edge_stroke, &palette.edge_stroke.hex()),
+            edge_text: color_or(self.edge_text, &palette.edge_text.hex()),
+            accent: color_or(self.accent, &palette.accent.hex()),
         }
     }
 
     /// The theme of the plan as the renderer understands it.
     ///
-    /// `sanitised()` already reduced the field to `dark` or `light`, so this is
-    /// a mapping and never a validation (PRD §8.5.2 RF22).
+    /// `sanitized()` already reduced the field to the name of a theme, so this
+    /// is a mapping and never a validation (PRD §8.5.2 RF22).
     pub fn theme(&self) -> Theme {
-        if self.theme == "light" {
-            Theme::Light
-        } else {
-            Theme::Dark
+        Theme::parse(&self.theme).unwrap_or(Theme::Dark)
+    }
+
+    /// The palette the plan paints with: the theme the human chose as the
+    /// base, with every colour they changed on top (PRD §8.5.2, R1, R2).
+    ///
+    /// The opacity of the grid is the alpha of its colour, so the palette
+    /// carries one colour per token and no opacity anywhere.
+    pub fn palette(&self) -> Palette {
+        let base = Palette::for_theme(self.theme());
+        Palette {
+            theme: base.theme,
+            bg: parsed(&self.background, base.bg),
+            grid: parsed(&self.grid_color, base.grid).with_opacity(self.grid_opacity),
+            node_fill: parsed(&self.node_fill, base.node_fill),
+            node_stroke: parsed(&self.node_stroke, base.node_stroke),
+            node_text: parsed(&self.node_text, base.node_text),
+            edge_stroke: parsed(&self.edge_stroke, base.edge_stroke),
+            edge_text: parsed(&self.edge_text, base.edge_text),
+            accent: parsed(&self.accent, base.accent),
+        }
+    }
+
+    /// The settings with the colours of the theme they name (`f6-themes.md`,
+    /// R3): choosing another theme makes it the base again, and the colours
+    /// the human had picked for the previous one are replaced by its palette.
+    ///
+    /// The geometry of the grid and its opacity are not colours, so they stay
+    /// exactly where the human left them.
+    pub fn with_theme_palette(self) -> Settings {
+        let palette = Palette::for_theme(self.theme());
+        Settings {
+            background: palette.bg.hex(),
+            grid_color: palette.grid.hex(),
+            node_fill: palette.node_fill.hex(),
+            node_stroke: palette.node_stroke.hex(),
+            node_text: palette.node_text.hex(),
+            edge_stroke: palette.edge_stroke.hex(),
+            edge_text: palette.edge_text.hex(),
+            accent: palette.accent.hex(),
+            ..self
         }
     }
 
@@ -208,7 +327,7 @@ impl Settings {
     }
 }
 
-/// A `#rrggbb` colour, or the fallback.
+/// A `#rrggbb` colour, or the value of the theme.
 fn color_or(value: String, fallback: &str) -> String {
     if is_color(&value) {
         value
@@ -217,8 +336,13 @@ fn color_or(value: String, fallback: &str) -> String {
     }
 }
 
+/// A colour of the file, or the one of the theme when the text is not one.
+fn parsed(value: &str, fallback: Color) -> Color {
+    Color::from_hex(value).unwrap_or(fallback)
+}
+
 fn is_color(value: &str) -> bool {
-    value.len() == 7 && value.starts_with('#') && value[1..].chars().all(|c| c.is_ascii_hexdigit())
+    Color::from_hex(value).is_some()
 }
 
 fn clamp_or(value: f64, range: &std::ops::RangeInclusive<f64>, fallback: f64) -> f64 {
@@ -231,8 +355,8 @@ fn clamp_or(value: f64, range: &std::ops::RangeInclusive<f64>, fallback: f64) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{preset, Settings};
-    use gx_core::render::Theme;
+    use super::{preset, presets, Settings, PRESET_NAMES};
+    use gx_core::render::{Color, Palette, Theme};
 
     /// L7 (`f2-export.md`): el tema del plano es el que pinta el export. El
     /// campo ya está saneado, así que el mapeo es total: nada queda sin tema.
@@ -240,6 +364,13 @@ mod tests {
     fn the_settings_carry_the_theme_of_the_export() {
         assert_eq!(Settings::default().theme(), Theme::Dark);
         assert_eq!(preset("claro").expect("claro").theme(), Theme::Light);
+        for theme in Theme::ALL {
+            let settings = Settings {
+                theme: theme.as_str().to_string(),
+                ..Settings::default()
+            };
+            assert_eq!(settings.theme(), theme, "{theme:?} es un tema del panel");
+        }
     }
 
     #[test]
@@ -257,6 +388,21 @@ mod tests {
         assert_eq!(json["background"], "#1b1b1b");
         assert_eq!(json["grid_visible"], true);
         assert_eq!(json["theme"], "dark");
+        // R2: todo color de la paleta viaja en `settings.json`, o el override
+        // del humano no sobrevive al reinicio.
+        for key in [
+            "node_fill",
+            "node_stroke",
+            "node_text",
+            "edge_stroke",
+            "edge_text",
+            "accent",
+        ] {
+            assert!(
+                json[key].is_string(),
+                "el color `{key}` tiene que estar en el archivo: {json}"
+            );
+        }
     }
 
     #[test]
@@ -264,5 +410,128 @@ mod tests {
         assert_eq!(preset("claro").expect("claro").theme, "light");
         assert!(!preset("sin grilla").expect("sin grilla").grid_visible);
         assert_eq!(preset("sin_grilla").expect("sin_grilla").theme, "dark");
+    }
+
+    /// R5, R6: los cuatro temas nuevos tienen preset, el preset pinta la
+    /// paleta de su tema (un solo look, una sola fuente) y el panel los
+    /// ofrece junto a los tres de F1.
+    #[test]
+    fn every_theme_has_a_preset_that_paints_its_palette() {
+        for theme in Theme::ALL {
+            let settings = presets::of_theme(theme);
+            let palette = Palette::for_theme(theme);
+            assert_eq!(settings.theme, theme.as_str());
+            assert_eq!(settings.background, palette.bg.hex(), "{theme:?}");
+            assert_eq!(settings.grid_color, palette.grid.hex(), "{theme:?}");
+            assert_eq!(settings.node_fill, palette.node_fill.hex(), "{theme:?}");
+            assert_eq!(settings.node_stroke, palette.node_stroke.hex(), "{theme:?}");
+            assert_eq!(settings.node_text, palette.node_text.hex(), "{theme:?}");
+            assert_eq!(settings.edge_stroke, palette.edge_stroke.hex(), "{theme:?}");
+            assert_eq!(settings.edge_text, palette.edge_text.hex(), "{theme:?}");
+            assert_eq!(settings.accent, palette.accent.hex(), "{theme:?}");
+            assert!(settings.grid_visible, "{theme:?} muestra la grilla");
+            assert_eq!(
+                settings.clone().sanitized(),
+                settings,
+                "{theme:?} ya está sano"
+            );
+        }
+
+        for name in PRESET_NAMES {
+            let from_name = preset(name).unwrap_or_else(|| panic!("el preset {name}"));
+            assert!(
+                Theme::parse(&from_name.theme).is_some(),
+                "el preset {name} nombra un tema"
+            );
+        }
+        assert_eq!(preset(" brassa "), None);
+    }
+
+    /// R1, R2: la paleta del plano es el tema más los colores del humano, y
+    /// la opacidad de la grilla se vuelve el alfa de su color.
+    #[test]
+    fn the_palette_is_the_theme_with_the_colours_of_the_human() {
+        let settings = Settings {
+            accent: "#ff0000".to_string(),
+            node_text: "#00ff00".to_string(),
+            grid_opacity: 0.5,
+            ..presets::of_theme(Theme::Aurora)
+        };
+        let palette = settings.palette();
+        assert_eq!(palette.theme, Theme::Aurora);
+        assert_eq!(palette.accent, Color::rgb(0xff, 0x00, 0x00));
+        assert_eq!(palette.node_text, Color::rgb(0x00, 0xff, 0x00));
+        assert_eq!(
+            palette.bg,
+            Palette::aurora().bg,
+            "el tema sigue siendo la base"
+        );
+        assert_eq!(palette.grid.a, 128, "la opacidad es el alfa de la grilla");
+    }
+
+    /// R4: un color que no se puede leer cae al valor del tema que el humano
+    /// eligió, no al tema por defecto.
+    #[test]
+    fn a_broken_colour_falls_back_to_the_palette_of_the_theme() {
+        let settings = Settings {
+            theme: "arcilla".to_string(),
+            background: "no-es-un-color".to_string(),
+            node_fill: "#12".to_string(),
+            accent: String::new(),
+            ..Settings::default()
+        }
+        .sanitized();
+        assert_eq!(settings.theme, "arcilla", "un typo no cambia el tema");
+        assert_eq!(settings.background, Palette::arcilla().bg.hex());
+        assert_eq!(settings.node_fill, Palette::arcilla().node_fill.hex());
+        assert_eq!(settings.accent, Palette::arcilla().accent.hex());
+        assert!(
+            (settings.grid_opacity - Settings::default().grid_opacity).abs() < 1e-9,
+            "la grilla sigue en su default"
+        );
+    }
+
+    /// R3: elegir otro tema lo vuelve la base: los colores que el humano
+    /// había elegido se reemplazan por la paleta del tema nuevo, y la
+    /// geometría de la grilla (que no es un color) se queda como estaba.
+    #[test]
+    fn another_theme_resets_the_colours_but_not_the_grid() {
+        let settings = Settings {
+            theme: "brasa".to_string(),
+            background: "#123456".to_string(),
+            node_fill: "#123456".to_string(),
+            accent: "#abcdef".to_string(),
+            grid_visible: false,
+            grid_diagonal: 120.0,
+            grid_angle_degrees: 30.0,
+            grid_opacity: 0.5,
+            ..Settings::default()
+        };
+        let reset = settings.with_theme_palette();
+        let palette = Palette::brasa();
+        assert_eq!(reset.theme, "brasa");
+        assert_eq!(reset.background, palette.bg.hex());
+        assert_eq!(reset.node_fill, palette.node_fill.hex());
+        assert_eq!(reset.accent, palette.accent.hex());
+        assert_eq!(reset.grid_color, palette.grid.hex());
+        assert!(!reset.grid_visible);
+        assert!((reset.grid_diagonal - 120.0).abs() < 1e-9);
+        assert!((reset.grid_angle_degrees - 30.0).abs() < 1e-9);
+        assert!((reset.grid_opacity - 0.5).abs() < 1e-9);
+    }
+
+    /// R5: los nombres de los temas nuevos no son de marca y la UI los
+    /// escribe en minúsculas, como `plano` y `claro`.
+    #[test]
+    fn the_new_theme_names_are_not_brand_names_and_are_lowercase() {
+        for name in ["brasa", "arcilla", "aurora", "neblina"] {
+            assert_eq!(name, name.to_lowercase());
+            assert!(preset(name).is_some(), "el preset {name} existe");
+            assert!(Settings::default().sanitized().theme != name);
+        }
+        for brand in ["opencode", "claude", "pi", "gentle"] {
+            assert_eq!(preset(brand), None, "`{brand}` no es un nombre de tema");
+            assert_eq!(Theme::parse(brand), None, "`{brand}` no es un tema");
+        }
     }
 }

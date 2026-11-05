@@ -147,6 +147,45 @@
         <span class="settings-value"></span>
       </div>
 
+      <!-- The colours of the drawing (`f6-themes.md`, R1, R2): the theme is the
+           base and each picker is the override of the human. Same convention
+           as the background and the grid above. -->
+      <div class="settings-field">
+        <label for="settings-node-fill">nodos</label>
+        <input id="settings-node-fill" type="color" />
+        <span class="settings-value"></span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-node-stroke">borde</label>
+        <input id="settings-node-stroke" type="color" />
+        <span class="settings-value"></span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-node-text">texto de nodo</label>
+        <input id="settings-node-text" type="color" />
+        <span class="settings-value"></span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-edge-stroke">aristas</label>
+        <input id="settings-edge-stroke" type="color" />
+        <span class="settings-value"></span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-edge-text">texto de arista</label>
+        <input id="settings-edge-text" type="color" />
+        <span class="settings-value"></span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-accent">acento</label>
+        <input id="settings-accent" type="color" />
+        <span class="settings-value"></span>
+      </div>
+
       <fieldset class="settings-theme">
         <legend>tema</legend>
         <label class="settings-radio">
@@ -157,12 +196,32 @@
           <input type="radio" name="settings-theme" value="light" />
           claro
         </label>
+        <label class="settings-radio">
+          <input type="radio" name="settings-theme" value="brasa" />
+          brasa
+        </label>
+        <label class="settings-radio">
+          <input type="radio" name="settings-theme" value="arcilla" />
+          arcilla
+        </label>
+        <label class="settings-radio">
+          <input type="radio" name="settings-theme" value="aurora" />
+          aurora
+        </label>
+        <label class="settings-radio">
+          <input type="radio" name="settings-theme" value="neblina" />
+          neblina
+        </label>
       </fieldset>
 
       <div class="settings-presets">
         <button type="button" class="settings-preset" data-preset="plano">plano</button>
         <button type="button" class="settings-preset" data-preset="claro">claro</button>
         <button type="button" class="settings-preset" data-preset="sin grilla">sin grilla</button>
+        <button type="button" class="settings-preset" data-preset="brasa">brasa</button>
+        <button type="button" class="settings-preset" data-preset="arcilla">arcilla</button>
+        <button type="button" class="settings-preset" data-preset="aurora">aurora</button>
+        <button type="button" class="settings-preset" data-preset="neblina">neblina</button>
       </div>
     </section>
 

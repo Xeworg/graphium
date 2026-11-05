@@ -99,6 +99,89 @@
   --code-bg: rgba(0, 0, 0, 0.06);
 }
 
+/* The four themes of F6 (`f6-themes.md`, R5). Each one is the whole palette -
+ * the drawing and the chrome of the panel -, and each name is the name of
+ * `Theme` in `gx-core::render` and of `settings.json`: one name per theme. */
+[data-theme="brasa"] {
+  --bg: #131316;
+  --grid-color: rgba(255, 255, 255, 0.16);
+  --node-fill: #1e1e24;
+  --node-stroke: #3d3d47;
+  --node-text: #f2e9e1;
+  --edge-stroke: #8f867c;
+  --edge-text: #cbbcab;
+  --accent: #f5a623;
+  --text: #f2e9e1;
+  --surface: #1c1c22;
+  --surface-border: #34343e;
+  --surface-shadow: rgba(0, 0, 0, 0.5);
+  --hairline: rgba(255, 255, 255, 0.32);
+  --code-bg: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="arcilla"] {
+  --bg: #faf6f0;
+  --grid-color: rgba(0, 0, 0, 0.09);
+  --node-fill: #fffdf9;
+  --node-stroke: #d9cbb7;
+  --node-text: #3a2f27;
+  --edge-stroke: #8a7a68;
+  --edge-text: #5c4d40;
+  --accent: #c05a3a;
+  --text: #3a2f27;
+  /* The five families, one step darker so the dot reads on the cream plan
+     (the same rule as the light theme). */
+  --family-pi: #2f6fd0;
+  --family-claude: #a25f1b;
+  --family-opencode: #2b7a53;
+  --family-ui: #6f6f7a;
+  --family-other: #6a5aa6;
+  --surface: #fffdf9;
+  --surface-border: #e2d7c6;
+  --surface-shadow: rgba(60, 40, 20, 0.18);
+  --hairline: rgba(0, 0, 0, 0.3);
+  --code-bg: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="aurora"] {
+  --bg: #0e1626;
+  --grid-color: rgba(200, 220, 255, 0.13);
+  --node-fill: #16213a;
+  --node-stroke: #2c3d5e;
+  --node-text: #e6ecf7;
+  --edge-stroke: #7288b0;
+  --edge-text: #a9bcd9;
+  --accent: #9a8cf0;
+  --text: #e6ecf7;
+  --surface: #141d31;
+  --surface-border: #2a3550;
+  --surface-shadow: rgba(0, 0, 0, 0.5);
+  --hairline: rgba(255, 255, 255, 0.3);
+  --code-bg: rgba(255, 255, 255, 0.07);
+}
+
+[data-theme="neblina"] {
+  --bg: #eef1f2;
+  --grid-color: rgba(0, 0, 0, 0.08);
+  --node-fill: #fafbfb;
+  --node-stroke: #cbd3d5;
+  --node-text: #22302f;
+  --edge-stroke: #6f8080;
+  --edge-text: #4c5c5d;
+  --accent: #2f8f86;
+  --text: #22302f;
+  --family-pi: #2f6fd0;
+  --family-claude: #a25f1b;
+  --family-opencode: #2b7a53;
+  --family-ui: #6f6f7a;
+  --family-other: #6a5aa6;
+  --surface: #f7f9f9;
+  --surface-border: #d5dcdd;
+  --surface-shadow: rgba(20, 30, 30, 0.16);
+  --hairline: rgba(0, 0, 0, 0.28);
+  --code-bg: rgba(0, 0, 0, 0.05);
+}
+
 /* Las clases que el renderer escribe y que el SVG de pie resuelve con su
  * `<style>` interno: en el canvas la CSP bloquea ese bloque, así que cada una
  * necesita su regla acá o el elemento sale con el color del navegador. Es la
@@ -915,6 +998,10 @@ body {
   right: 12px;
   z-index: 30;
   width: 252px;
+  /* The panel of F6 has more controls than fit on a short window: it scrolls
+     instead of hiding the colours of the drawing (RF25, `f6-themes.md` R2). */
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;

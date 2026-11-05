@@ -317,6 +317,16 @@ pub fn build(keep_alive: bool, start_window: bool) -> (tauri::App<tauri::Wry>, A
         let Ok(settings) = serde_json::from_str::<Settings>(event.payload()) else {
             return;
         };
+        // Picking another theme makes it the base again: the colours the
+        // human had picked for the previous theme are replaced by the palette
+        // of the new one (`f6-themes.md`, R3). The decision lives here and not
+        // in the page, which never invents a colour (S19).
+        let settings = settings.sanitized();
+        let settings = if settings.theme != Settings::load().theme {
+            settings.with_theme_palette()
+        } else {
+            settings
+        };
         if settings.save().is_err() {
             return;
         }
@@ -324,9 +334,9 @@ pub fn build(keep_alive: bool, start_window: bool) -> (tauri::App<tauri::Wry>, A
         // comes back, so a rejected field never leaves the UI lying.
         let settings = Settings::load();
         settings_state.set_settings(settings.clone());
-        // The export follows the theme of the plan: the human changed what it
-        // sees, so the next export paints with it (decision L7).
-        gx_core::export::install_theme(settings.theme());
+        // The export follows the palette of the plan: the human changed what
+        // they see, so the next export paints with it (decision L7).
+        gx_core::export::install_palette(settings.palette());
         let _ = settings_handle.emit("graphium://settings", settings);
     });
 
