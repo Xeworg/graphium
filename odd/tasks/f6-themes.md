@@ -93,3 +93,15 @@ corte abre todos los colores y agrega cuatro temas nuevos con otros nombres.
   base→core→app→mcp es la estrategia de entrega para los PRs encadenados.
   Cambio visible intencional: el preset claro toma sus colores de
   `Palette::claro()` para no separarse de la hoja de estilos ni del export.
+
+- L7 (2026-11-05, corte del selector): «esta bien solo mejora el selector de tema
+  [captura] tiene basicamente dos selectores seria mejor que tenga, el nombre y
+  una pequena paleta de colores a la par del nombre, tambien me gustaria uno
+  inspirado en los colores de gentle shell aca te dejo una foto [...] dale otro
+  nombre claro esta». Un selector único: chip por tema con nombre + 4 swatches
+  (fondo, nodos, texto, acento) llenados desde `PLAN_PRESETS`; «sin grilla» queda
+  como único preset (es grilla, no tema). Tema nuevo `pitaya` con los colores
+  muestreados de la captura de Gentle Shell (los píxeles no tienen verde: texto
+  rosa pálido `#d29db4` sobre `#050506`, acentos `#d7779c`/`#f59da8`). Rama
+  `feature/theme-selector-pitaya` (`e0564f9` código, docs después), integrada a
+  `staging`; gates: fmt + clippy + 492 tests + node --check.
