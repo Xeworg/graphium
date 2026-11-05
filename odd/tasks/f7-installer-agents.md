@@ -54,11 +54,11 @@ directo, y que la lista de agentes sea un registro extensible.
 
 ## Tasks
 
-- T1 (R1): registro único de agentes; eliminar los hardcodeos. Commit: pendiente.
-- T2 (R2, R3): selector checklist con fallback numérico. Commit: pendiente.
-- T3 (R5, R6): `install` ofrece la elección al final, con resumen previo. Commit: pendiente.
-- T4 (R7): tests nuevos + suite verde. Commit: pendiente.
-- T5 (R8): ayuda y docs; resumen para revisión humana. Commit: pendiente.
+- T1 (R1): registro único de agentes; eliminar los hardcodeos. Commit: `6c609fd`.
+- T2 (R2, R3): selector checklist con fallback numérico. Commit: `6c609fd`.
+- T3 (R5, R6): `install` ofrece la elección al final, con resumen previo. Commit: `6c609fd`.
+- T4 (R7): tests nuevos + suite verde. Commit: `170c6e2`. Evidencia: suite 7/7 verde (agents_test, agent_prompt_test nuevos); shellcheck no disponible en esta máquina; hallazgo del worker: fijar CARGO_HOME real baja el suite de ~13 min a ~5 s.
+- T5 (R8): ayuda y docs; resumen para revisión humana. Commit: `27c29e9`. La prueba manual de la TUI queda para el humano (R9/S4).
 
 ## Log
 
@@ -70,6 +70,10 @@ directo, y que la lista de agentes sea un registro extensible.
   agregando».
 - L2 (2026-11-05): el humano fijó el flujo: «de esos worktrees los agentes no
   pueden hacer merge de la rama lo haremos luego de revisar y probar nosotros».
-- L3 (2026-11-05): el humano fijó la integración: «no haremos merge a la rama
-  main directamente usaremos una rama primero a la que haremos merge y cuando
-  esa sea estable hacer pr encadenados» — la rama de integración es `staging`.
+- L3 (2026-11-05): el humano fijó la integración: feature → `staging` →
+  PRs encadenados → `main`; nunca directo a `main`.
+- L4 (2026-11-05): implementación completa del worker (sin commit); el
+  orquestador la empaquetó en tres unidades: instalador (`6c609fd`), tests
+  (`170c6e2`), docs (`27c29e9`). Pendiente abierto: la nota de `ln -s` manual
+  en docs/QUICKSTART.md quedó fuera de la superficie del worker; revisar en la
+  integración.
