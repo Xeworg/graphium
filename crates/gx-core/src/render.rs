@@ -87,17 +87,19 @@ pub enum Theme {
     Arcilla,
     Aurora,
     Neblina,
+    Pitaya,
 }
 
 impl Theme {
     /// Every theme, in the order the panel lists them.
-    pub const ALL: [Theme; 6] = [
+    pub const ALL: [Theme; 7] = [
         Theme::Dark,
         Theme::Light,
         Theme::Brasa,
         Theme::Arcilla,
         Theme::Aurora,
         Theme::Neblina,
+        Theme::Pitaya,
     ];
 
     /// The name of the theme: the value of `settings.json`, the radio of the
@@ -110,6 +112,7 @@ impl Theme {
             Theme::Arcilla => "arcilla",
             Theme::Aurora => "aurora",
             Theme::Neblina => "neblina",
+            Theme::Pitaya => "pitaya",
         }
     }
 
@@ -122,6 +125,7 @@ impl Theme {
             "arcilla" => Some(Theme::Arcilla),
             "aurora" => Some(Theme::Aurora),
             "neblina" => Some(Theme::Neblina),
+            "pitaya" => Some(Theme::Pitaya),
             _ => None,
         }
     }
@@ -182,6 +186,7 @@ impl Palette {
             Theme::Arcilla => Self::arcilla(),
             Theme::Aurora => Self::aurora(),
             Theme::Neblina => Self::neblina(),
+            Theme::Pitaya => Self::pitaya(),
         }
     }
 
@@ -244,6 +249,22 @@ impl Palette {
             edge_stroke: Color::rgb(0x6f, 0x80, 0x80),
             edge_text: Color::rgb(0x4c, 0x5c, 0x5d),
             accent: Color::rgb(0x2f, 0x8f, 0x86),
+        }
+    }
+
+    /// `pitaya`: the night of a terminal, a rose accent and soft rose text —
+    /// the look of the shell this plan lives beside.
+    pub fn pitaya() -> Self {
+        Self {
+            theme: Theme::Pitaya,
+            bg: Color::rgb(0x10, 0x0e, 0x13),
+            grid: Color::rgba(0xff, 0xff, 0xff, 34),
+            node_fill: Color::rgb(0x1b, 0x16, 0x1c),
+            node_stroke: Color::rgb(0x4d, 0x3a, 0x45),
+            node_text: Color::rgb(0xf0, 0xdc, 0xe4),
+            edge_stroke: Color::rgb(0x94, 0x70, 0x7f),
+            edge_text: Color::rgb(0xc9, 0x9f, 0xb0),
+            accent: Color::rgb(0xe0, 0x6a, 0x8d),
         }
     }
 }
@@ -437,12 +458,16 @@ mod tests {
         (hi + 0.05) / (lo + 0.05)
     }
 
-    /// R5, R6: the four new themes are ordinary themes, named in lowercase
+    /// R5, R6: the five new themes are ordinary themes, named in lowercase
     /// like `plano` and `claro`, and they travel as snake_case in JSON: the
     /// name is the one `settings.json` and `[data-theme]` use.
     #[test]
-    fn the_six_themes_are_named_in_lowercase() {
-        assert_eq!(Theme::ALL.len(), 6, "F6 adds four themes to dark and light");
+    fn the_seven_themes_are_named_in_lowercase() {
+        assert_eq!(
+            Theme::ALL.len(),
+            7,
+            "F6 adds four themes and the selector adds pitaya"
+        );
         for theme in Theme::ALL {
             let name = theme.as_str();
             assert_eq!(
@@ -457,7 +482,7 @@ mod tests {
                 "the settings file and the stylesheet share one name per theme"
             );
         }
-        for name in ["brasa", "arcilla", "aurora", "neblina"] {
+        for name in ["brasa", "arcilla", "aurora", "neblina", "pitaya"] {
             assert!(Theme::parse(name).is_some(), "the new theme {name} exists");
         }
         // `claro` is the preset, `light` is the theme (F1, S18).

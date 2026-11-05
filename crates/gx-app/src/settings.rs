@@ -33,8 +33,8 @@ const DIAGONAL_RANGE: std::ops::RangeInclusive<f64> = 20.0..=200.0;
 const ANGLE_RANGE: std::ops::RangeInclusive<f64> = 15.0..=75.0;
 
 /// The presets the panel offers, in the order it shows them: the three of F1
-/// and the four themes of F6 (`f6-themes.md`, R5, R6).
-pub const PRESET_NAMES: [&str; 7] = [
+/// and the five themes of F6 plus `pitaya` (`f6-themes.md`, R5, R6).
+pub const PRESET_NAMES: [&str; 8] = [
     "plano",
     "claro",
     "sin grilla",
@@ -42,6 +42,7 @@ pub const PRESET_NAMES: [&str; 7] = [
     "arcilla",
     "aurora",
     "neblina",
+    "pitaya",
 ];
 
 /// What the human chose for the plan (PRD §7.1 RF25).
@@ -61,7 +62,7 @@ pub struct Settings {
     /// Whether the grid is painted at all.
     pub grid_visible: bool,
     /// The base of the colours: `dark`, `light`, `brasa`, `arcilla`,
-    /// `aurora` or `neblina` (PRD §8.5.2 RF22, `f6-themes.md` R5).
+    /// `aurora`, `neblina` or `pitaya` (PRD §8.5.2 RF22, `f6-themes.md` R5).
     pub theme: String,
     /// Fill of a node: `#rrggbb`.
     pub node_fill: String,
@@ -124,6 +125,7 @@ pub mod presets {
             Theme::Arcilla => 0.10,
             Theme::Aurora => 0.13,
             Theme::Neblina => 0.10,
+            Theme::Pitaya => 0.13,
         }
     }
 
@@ -158,6 +160,12 @@ pub mod presets {
         of_theme(Theme::Neblina)
     }
 
+    /// `pitaya`: a near-black night with a rose accent and soft rose text,
+    /// the look of the shell this plan lives beside.
+    pub fn pitaya() -> Settings {
+        of_theme(Theme::Pitaya)
+    }
+
     /// The dark plan without the grid.
     pub fn sin_grilla() -> Settings {
         Settings {
@@ -178,6 +186,7 @@ pub fn preset(name: &str) -> Option<Settings> {
         "arcilla" => Some(presets::arcilla()),
         "aurora" => Some(presets::aurora()),
         "neblina" => Some(presets::neblina()),
+        "pitaya" => Some(presets::pitaya()),
         _ => None,
     }
 }
@@ -524,7 +533,7 @@ mod tests {
     /// escribe en minúsculas, como `plano` y `claro`.
     #[test]
     fn the_new_theme_names_are_not_brand_names_and_are_lowercase() {
-        for name in ["brasa", "arcilla", "aurora", "neblina"] {
+        for name in ["brasa", "arcilla", "aurora", "neblina", "pitaya"] {
             assert_eq!(name, name.to_lowercase());
             assert!(preset(name).is_some(), "el preset {name} existe");
             assert!(Settings::default().sanitized().theme != name);
