@@ -194,18 +194,18 @@ Ni `gx-mcp` ni `gx-app` cambian (O7). Esfuerzo típico: **1 jornada** si reusa s
 
 La ventana no es "un diagrama": es un **plano** por el que el humano se desplaza, con los diagramas colocados encima como objetos. El fondo es una **grilla** tipo plano de dibujo.
 
-- **RF24 — Fondo con grilla (F1).** Grilla de dos familias de líneas diagonales, 1 px, sobre un color base. Defaults tomados de la referencia visual: base `#1b1b1b`, línea `#ffffff` a 14% de opacidad, **separación 59 px**, **ángulo 45°**. Presets: `plano` (oscuro, el de la referencia), `claro`, `sin grilla`.
+- **RF24 — Fondo con grilla (F1).** Grilla de dos familias de líneas diagonales, 1 px, sobre un color base. Defaults tomados de la referencia visual: base `#1b1b1b`, línea `#ffffff` a 14% de opacidad, **separación 59 px**, **ángulo 45°**. Presets: `plano` (oscuro, el de la referencia), `claro`, `sin grilla`, `brasa`, `arcilla`, `aurora` y `neblina` (F6).
   - **Geometría de la celda.** Las dos familias se desvían **45° de la vertical** (en CSS, gradientes a `45deg` y `135deg`), de modo que las celdas son **rombos con las dos diagonales iguales de 59 px**: un cuadrado girado, que se lee como rombo y no como una retícula rayada. Cada familia tiene el **mismo paso perpendicular** —41.72 px, `59 · sin(45°)`—, por lo que **todas las celdas son congruentes**.
   - **Continuidad.** La retícula es un enrejado rígido: la fase de cada familia es el desplazamiento de cámara proyectado sobre **su propia normal**, nunca un offset único para las dos. Con un offset compartido, las familias se desfasan al mover la cámara y las celdas dejan de ser iguales (verificado: 784 píxeles fuera de fase con offset único contra 94 con la fase por familia).
   - **Separación 59 px = diagonal del rombo**, no paso entre líneas: el paso perpendicular real es 41.72 px y queda derivado de ella.
   - **El ángulo es un parámetro**: `--grid-angle` (con `--grid-sin` y `--grid-cos` derivados por el frontend) para que RF25 deje al humano cambiarlo sin tocar la hoja de estilos.
-- **RF25 — El usuario controla los colores (F1).** Panel de ajustes en la ventana (engranaje) con: color de fondo, color de grilla, opacidad, separación, ángulo y mostrar/ocultar grilla. Se persiste en `~/.graphium/settings.json`; **el agente no cambia estos ajustes** (el color es decisión del humano). El tema claro/oscuro (RF22) se apoya en el mismo archivo.
+- **RF25 — El usuario controla los colores (F1, F6).** Panel de ajustes en la ventana (engranaje) con: color de fondo, color de grilla, opacidad, separación, ángulo y mostrar/ocultar grilla, **más el tema (RF22) y los colores del dibujo: relleno, borde y texto de nodo, arista, texto de arista y acento**. Todo se persiste en `~/.graphium/settings.json`; **el agente no cambia estos ajustes** (el color es decisión del humano). El tema elegido es la **base** de la paleta y cada color es un **override** del humano: elegir otro tema reemplaza los overrides por la paleta del tema nuevo, y un color inválido en el archivo cae al valor de su tema (no tira la ventana).
 - **RF26 — Varios diagramas en el plano (F2).** Cada diagrama abierto es un objeto con posición. Panel lateral izquierdo con la lista de abiertos (título, kind, actualizado) y botón de cerrar por ítem; al elegir un ítem, la **cámara se desplaza hasta ese diagrama**.
 - **RF27 — Colocación y foco (F2).** Un diagrama nuevo aparece **en el centro de la vista actual**; si ya hay otro diagrama ahí, se separa en cascada hasta encontrar hueco — **nunca se superponen**. Al crearse con el programa abierto, la cámara hace **pan hasta el diagrama nuevo**. `opts.focus: {id, depth?}` centra un nodo y opcionalmente su vecindad (depth N, default 1).
 - **RF28 — Cerrar es cerrar un diagrama (F2).** Cerrar un diagrama (panel lateral o `×` sobre el objeto) lo saca del plano y **libera su slot**, no su identificador: el `diagram_id` queda **invalidado y nunca se reutiliza** (RF28.1, §11.1); cerrar **no** cierra la ventana ni mata la sesión MCP. Cerrar la ventana entera tampoco (§8.6).
 - **Límite de alcance.** El humano **no** arrastra ni redimensiona diagramas (se mantiene el no-objetivo de editor visual, §3): solo pan, zoom, enfocar y cerrar.
 - **La grilla es chrome del frontend**, no parte del SVG: los exports (RF10) salen limpios y el determinismo O8 no se ve afectado.
-- **Presets de color.** F1 ofrece `plano` (oscuro, el de la referencia), `claro` y `sin grilla`. El preset `claro` **no** es solo un fondo blanco: el render parametriza la paleta (§8.5.2), de modo que nodos, labels y flechas mantienen contraste correcto en ambos temas.
+- **Presets de color.** F1 ofrece `plano` (oscuro, el de la referencia), `claro` y `sin grilla`; F6 agrega un preset por tema nuevo: `brasa`, `arcilla`, `aurora` y `neblina`. El preset `claro` **no** es solo un fondo blanco: el render parametriza la paleta (§8.5.2), de modo que nodos, labels y flechas mantienen contraste correcto en todos los temas.
 
 ### 7.2 Cámara, geometría y estados del plano
 
@@ -288,7 +288,7 @@ El producto escala con reglas, no con buena voluntad. Esta sección fija los pre
 - **RF17.** Kinds `mindmap`, `deployment`, `timeline`.
 - **RF18.** Interactividad: click en nodo → evento a la tool (opt-in `opts.interactive`); hover highlight.
 - **RF21.** Modo `watch`: re-render al cambiar un `.graphium.json`.
-- **RF22.** Temas claro/oscuro (clases CSS sobre el mismo SVG). **Promovido a F1** (§8.5.2): el preset `claro` es un tema real desde el MVP.
+- **RF22.** Temas de la paleta (clases CSS sobre el mismo SVG): `dark` (oscuro), `light` (claro), `brasa` (terminal oscuro, acento ámbar), `arcilla` (crema cálida, acento terracota), `aurora` (azul profundo, acento violeta) y `neblina` (gris suave, acento verde azulado). **Promovido a F1** (§8.5.2): el preset `claro` es un tema real desde el MVP; los cuatro últimos son de F6, con nombres que no son de marca.
 - **RF23.** Extracción de subgrafo para grafos enormes: `opts.extract: {around: <id>, depth: n}` renderiza solo la vecindad (complemento de RF20). **Promovido a F1** (§7.3).
 
 ### No funcionales
@@ -405,13 +405,15 @@ El render recibe una `Palette` activa; **no** lee el filesystem, el entorno ni l
 ```rust
 pub struct Palette { theme: Theme, bg: Color, grid: Color, node_fill: Color, node_stroke: Color,
                      node_text: Color, edge_stroke: Color, edge_text: Color, accent: Color }
-pub enum Theme { Dark, Light }
+pub enum Theme { Dark, Light, Brasa, Arcilla, Aurora, Neblina }
 ```
 
 - El SVG lleva **clases CSS por token** (`class="node-fill"`, `class="edge-stroke"`, …) y un bloque `<style>` con la **paleta resuelta**, para que el archivo exportado se vea igual fuera de la app; en el canvas el tema se aplica por variable CSS sobre esas clases.
-- Presets F1: `plano` (dark, `#1b1b1b` + grilla blanca 14%) · `claro` (light) · `sin grilla` (dark sin grilla).
-- El export `svg` incluye la paleta resuelta; el export `png` rasteriza con esa paleta.
-- El preset `claro` es un **tema real**, no un fondo blanco: nodos, labels y flechas mantienen contraste (decision del usuario, 2026-11-03).
+- **Un nombre por tema**, en minúsculas: es el valor de `theme` en `settings.json`, el `value` del radio del panel y el selector `[data-theme="…"]` de la hoja de estilos (`dark` es el `:root`). `claro` es el preset, `light` el tema.
+- Presets: `plano` (dark, `#1b1b1b` + grilla blanca 14%) · `claro` (light) · `sin grilla` (dark sin grilla) · `brasa` · `arcilla` · `aurora` · `neblina`. El preset de un tema es **su paleta**: los dos lados salen de `Palette::for_theme`, así que el preset, la hoja de estilos y el export no pueden separarse.
+- **La paleta completa es del humano (F6).** `Settings` guarda los nueve colores además del tema: el tema es la **base** y cada campo es el override del humano (RF25). `Settings::palette()` compone los dos; un color inválido cae al valor del tema elegido y elegir otro tema reemplaza los overrides por su paleta.
+- El export `svg` incluye la paleta resuelta; el export `png` rasteriza con esa paleta. El export **pinta con la paleta efectiva**, no solo con el tema: la ventana la instala en `gx-core::export` y `RenderOpts` la lleva en un campo opcional (`palette`), aditivo para los consumidores existentes.
+- Cada tema mantiene el contraste legible de un tema real: texto de nodo sobre relleno y arista/acento sobre el fondo (decision del usuario, 2026-11-03; F6 lo verifica con un test de paleta por tema).
 
 ### 8.6 Proceso, concurrencia y ciclo de vida
 
