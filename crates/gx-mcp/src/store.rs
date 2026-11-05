@@ -6,7 +6,7 @@
 //! (PRD §8.5), and `diagram_id` is monotonic and never reused (PRD §11.1,
 //! RF28.1).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -42,10 +42,93 @@ pub struct DiagramRecord {
     pub open: bool,
 }
 
+/// How many versions of its source document a diagram keeps (RF14; feature
+/// doc `f2-cierre.md`, S3).
+///
+/// The oldest one is discarded when the cap is reached: the history is a
+/// navigation aid, not an archive. The memory is cheap because a version is
+/// the JSON text the agent sent, not an IR or a drawing.
+pub const MAX_VERSIONS: usize = 20;
+
+/// One version of the source document, without the document itself: what
+/// `list_diagram_versions` reports (RF14).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionSummary {
+    /// Monotonic number of the version inside its diagram, from `1`. It keeps
+    /// counting after the oldest version is discarded, so a number always
+    /// names the same document.
+    pub version: u64,
+    /// The revision of the diagram when this version was written.
+    pub revision: u64,
+    /// ISO-8601 timestamp of the render or update that created it.
+    pub updated_at: String,
+    /// Size of the document in bytes.
+    pub bytes: usize,
+}
+
+/// A version with its document, for `get_diagram_version` (RF14).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagramVersion {
+    pub summary: VersionSummary,
+    /// The source document, normalized, exactly as `get_diagram` would return
+    /// it. Read-only: restoring a version is a render or an update that
+    /// creates a new version, never a tool that rewrites the history.
+    pub document: String,
+}
+
+impl DiagramVersion {
+    fn new(summary: &DiagramSummary, document: &str, version: u64) -> Self {
+        Self {
+            summary: VersionSummary {
+                version,
+                revision: summary.revision,
+                updated_at: summary.updated_at.clone(),
+                bytes: document.len(),
+            },
+            document: document.to_string(),
+        }
+    }
+}
+
+/// A diagram of the store: its public record and its read-only history.
+#[derive(Debug)]
+struct StoredDiagram {
+    record: DiagramRecord,
+    /// Oldest first; the last one is the current document (RF14).
+    versions: VecDeque<DiagramVersion>,
+}
+
+impl StoredDiagram {
+    fn new(record: DiagramRecord) -> Self {
+        let mut versions = VecDeque::new();
+        note_version(&mut versions, &record.summary, &record.document);
+        Self { record, versions }
+    }
+
+    /// Writes one more version, keeping the cap and discarding the oldest.
+    fn push_version(&mut self) {
+        note_version(
+            &mut self.versions,
+            &self.record.summary,
+            &self.record.document,
+        );
+    }
+}
+
+/// Appends a version of `document`, numbered after the last one, and keeps at
+/// most [`MAX_VERSIONS`].
+fn note_version(versions: &mut VecDeque<DiagramVersion>, summary: &DiagramSummary, document: &str) {
+    let number = versions.back().map_or(0, |last| last.summary.version) + 1;
+    versions.push_back(DiagramVersion::new(summary, document, number));
+    while versions.len() > MAX_VERSIONS {
+        versions.pop_front();
+    }
+}
+
 /// The diagrams of the plan.
 #[derive(Debug, Default)]
 pub struct DiagramStore {
-    documents: Mutex<BTreeMap<String, DiagramRecord>>,
+    documents: Mutex<BTreeMap<String, StoredDiagram>>,
     /// Last id handed out. Ids are never reused, so it only grows.
     last_id: AtomicU64,
 }
@@ -62,6 +145,7 @@ impl DiagramStore {
     }
 
     /// Stores a diagram with its document, stamped with the current UTC time.
+    /// The document is the first version of its history (RF14).
     pub fn insert(
         &self,
         diagram_id: String,
@@ -94,7 +178,7 @@ impl DiagramStore {
         self.documents
             .lock()
             .expect("the diagram store is not poisoned")
-            .insert(summary.diagram_id.clone(), record);
+            .insert(summary.diagram_id.clone(), StoredDiagram::new(record));
         // The session learns which diagrams it has without scanning the store
         // (D4): this is where a diagram starts existing, so every path that
         // creates one — a tool of either transport, a restored plan — is
@@ -104,6 +188,9 @@ impl DiagramStore {
     }
 
     /// Replaces the document of a diagram and grows its revision.
+    ///
+    /// The new document is one more version of its history (RF14); the oldest
+    /// one is discarded past [`MAX_VERSIONS`].
     ///
     /// Returns the new summary, or `None` when the diagram does not exist.
     pub fn replace(
@@ -116,12 +203,14 @@ impl DiagramStore {
             .documents
             .lock()
             .expect("the diagram store is not poisoned");
-        let record = documents.get_mut(diagram_id)?;
-        record.summary.revision += 1;
-        record.summary.updated_at = now_iso8601();
-        record.summary.title = title;
-        record.document = document;
-        Some(record.summary.clone())
+        let stored = documents.get_mut(diagram_id)?;
+        stored.record.summary.revision += 1;
+        stored.record.summary.updated_at = now_iso8601();
+        stored.record.summary.title = title;
+        stored.record.document = document;
+        // Every accepted update is a version of the source document (RF14).
+        stored.push_version();
+        Some(stored.record.summary.clone())
     }
 
     /// Every diagram **on the plan**, ordered by `diagram_id`.
@@ -133,8 +222,8 @@ impl DiagramStore {
             .lock()
             .expect("the diagram store is not poisoned")
             .values()
-            .filter(|record| record.open)
-            .map(|record| record.summary.clone())
+            .filter(|stored| stored.record.open)
+            .map(|stored| stored.record.summary.clone())
             .collect()
     }
 
@@ -144,7 +233,7 @@ impl DiagramStore {
             .lock()
             .expect("the diagram store is not poisoned")
             .values()
-            .filter(|record| record.open)
+            .filter(|stored| stored.record.open)
             .count()
     }
 
@@ -164,10 +253,10 @@ impl DiagramStore {
             .documents
             .lock()
             .expect("the diagram store is not poisoned");
-        let record = documents.get_mut(diagram_id)?;
-        record.summary.pos = Some(pos);
-        record.summary.bbox = Some(bbox);
-        Some(record.summary.clone())
+        let stored = documents.get_mut(diagram_id)?;
+        stored.record.summary.pos = Some(pos);
+        stored.record.summary.bbox = Some(bbox);
+        Some(stored.record.summary.clone())
     }
 
     /// Takes a diagram out of the plan without deleting its document.
@@ -183,9 +272,9 @@ impl DiagramStore {
                 .lock()
                 .expect("the diagram store is not poisoned");
             match documents.get_mut(diagram_id) {
-                Some(record) if record.open => {
-                    record.open = false;
-                    Some(record.summary.session_id.clone())
+                Some(stored) if stored.record.open => {
+                    stored.record.open = false;
+                    Some(stored.record.summary.session_id.clone())
                 }
                 _ => None,
             }
@@ -211,8 +300,8 @@ impl DiagramStore {
             .lock()
             .expect("the diagram store is not poisoned")
             .get(diagram_id)
-            .filter(|record| record.open)
-            .map(|record| record.summary.clone())
+            .filter(|stored| stored.record.open)
+            .map(|stored| stored.record.summary.clone())
     }
 
     /// A diagram with its document.
@@ -221,8 +310,44 @@ impl DiagramStore {
             .lock()
             .expect("the diagram store is not poisoned")
             .get(diagram_id)
-            .filter(|record| record.open)
-            .cloned()
+            .filter(|stored| stored.record.open)
+            .map(|stored| stored.record.clone())
+    }
+
+    /// The versions of the source document of a diagram, oldest first (RF14).
+    ///
+    /// `None` when the diagram is not on the plan: a closed diagram is
+    /// invisible to the tools, its history included. The documents are not
+    /// copied here; `list_diagram_versions` needs their metadata only.
+    pub fn versions(&self, diagram_id: &str) -> Option<Vec<VersionSummary>> {
+        self.documents
+            .lock()
+            .expect("the diagram store is not poisoned")
+            .get(diagram_id)
+            .filter(|stored| stored.record.open)
+            .map(|stored| {
+                stored
+                    .versions
+                    .iter()
+                    .map(|version| version.summary.clone())
+                    .collect()
+            })
+    }
+
+    /// One version of the source document, with its document (RF14).
+    pub fn version(&self, diagram_id: &str, version: u64) -> Option<DiagramVersion> {
+        self.documents
+            .lock()
+            .expect("the diagram store is not poisoned")
+            .get(diagram_id)
+            .filter(|stored| stored.record.open)
+            .and_then(|stored| {
+                stored
+                    .versions
+                    .iter()
+                    .find(|candidate| candidate.summary.version == version)
+                    .cloned()
+            })
     }
 
     /// The ids currently on the plan, for the `known_ids[]` of the errors.
@@ -231,8 +356,8 @@ impl DiagramStore {
             .lock()
             .expect("the diagram store is not poisoned")
             .values()
-            .filter(|record| record.open)
-            .map(|record| record.summary.diagram_id.clone())
+            .filter(|stored| stored.record.open)
+            .map(|stored| stored.record.summary.diagram_id.clone())
             .collect()
     }
 
@@ -247,10 +372,10 @@ impl DiagramStore {
                 .expect("the diagram store is not poisoned");
             let removed: Vec<String> = documents
                 .iter()
-                .filter(|(_, record)| record.summary.session_id == session_id)
+                .filter(|(_, stored)| stored.record.summary.session_id == session_id)
                 .map(|(diagram_id, _)| diagram_id.clone())
                 .collect();
-            documents.retain(|_, record| record.summary.session_id != session_id);
+            documents.retain(|_, stored| stored.record.summary.session_id != session_id);
             removed
         };
         let registry = crate::session::session_registry();
@@ -271,10 +396,10 @@ impl DiagramStore {
                 .expect("the diagram store is not poisoned");
             let removed: Vec<(String, String)> = documents
                 .values()
-                .map(|record| {
+                .map(|stored| {
                     (
-                        record.summary.session_id.clone(),
-                        record.summary.diagram_id.clone(),
+                        stored.record.summary.session_id.clone(),
+                        stored.record.summary.diagram_id.clone(),
                     )
                 })
                 .collect();
@@ -577,5 +702,105 @@ mod tests {
         assert_eq!(placed.bbox, Some(bbox));
         assert_eq!(store.get("d-0001").expect("existe").pos, Some(pos));
         assert!(store.place("d-9999", pos, bbox).is_none());
+    }
+
+    /// RF14 (S3 of `f2-cierre.md`): cada render y cada update del documento
+    /// fuente deja una versión, numerada desde 1 y con su revisión.
+    #[test]
+    fn every_render_and_every_update_writes_a_version() {
+        let store = DiagramStore::new();
+        summary(&store, "d-0001");
+
+        let versions = store
+            .versions("d-0001")
+            .expect("el diagrama está en el plano");
+        assert_eq!(versions.len(), 1, "el insert es la primera versión");
+        assert_eq!(versions[0].version, 1);
+        assert_eq!(versions[0].revision, 1);
+        assert_eq!(versions[0].bytes, 2, "`{{}}` mide dos bytes");
+        assert_eq!(store.version("d-0001", 1).expect("existe").document, "{}");
+
+        store
+            .replace("d-0001", "t2".to_string(), "{\"title\":2}".to_string())
+            .expect("el diagrama existe");
+
+        let versions = store.versions("d-0001").expect("sigue en el plano");
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[1].version, 2);
+        assert_eq!(versions[1].revision, 2);
+        assert_eq!(
+            store.version("d-0001", 2).expect("existe").document,
+            "{\"title\":2}"
+        );
+        // La última versión es el documento actual.
+        assert_eq!(
+            store.record("d-0001").expect("existe").document,
+            "{\"title\":2}"
+        );
+        assert!(
+            store.version("d-0001", 3).is_none(),
+            "una versión que no existe no se inventa"
+        );
+    }
+
+    /// RF14: el historial guarda como máximo 20 versiones por diagrama y
+    /// descarta la más vieja; la numeración no vuelve atrás, así que un número
+    /// siempre nombra el mismo documento.
+    #[test]
+    fn the_history_keeps_twenty_versions_and_discards_the_oldest() {
+        let store = DiagramStore::new();
+        summary(&store, "d-0001");
+        assert_eq!(super::MAX_VERSIONS, 20);
+
+        for number in 2..=super::MAX_VERSIONS as u64 + 2 {
+            store
+                .replace("d-0001", "t".to_string(), format!("{{\"n\":{number}}}"))
+                .expect("el diagrama existe");
+        }
+
+        let versions = store.versions("d-0001").expect("sigue en el plano");
+        assert_eq!(versions.len(), super::MAX_VERSIONS);
+        assert_eq!(
+            versions.first().expect("hay versiones").version,
+            3,
+            "las dos más viejas se descartaron"
+        );
+        assert_eq!(
+            versions.last().expect("hay versiones").version,
+            22,
+            "la numeración sigue contando"
+        );
+        assert!(store.version("d-0001", 2).is_none(), "la vieja se fue");
+        assert!(store.version("d-0001", 3).is_some(), "la tercera queda");
+        assert_eq!(
+            store.version("d-0001", 22).expect("existe").document,
+            "{\"n\":22}"
+        );
+        assert_eq!(store.record("d-0001").expect("existe").summary.revision, 22);
+    }
+
+    /// RF14: leer el historial no escribe nada y un diagrama cerrado no deja
+    /// ver sus versiones, igual que no deja ver su documento (PRD §11.1).
+    #[test]
+    fn reading_the_history_changes_nothing_and_a_closed_diagram_hides_it() {
+        let store = DiagramStore::new();
+        summary(&store, "d-0001");
+        store
+            .replace("d-0001", "t2".to_string(), "{\"v\":2}".to_string())
+            .expect("el diagrama existe");
+        let before = store.record("d-0001").expect("existe");
+
+        let _ = store.versions("d-0001");
+        let _ = store.version("d-0001", 1);
+
+        let after = store.record("d-0001").expect("existe");
+        assert_eq!(before, after, "leer no cambia el documento ni la revisión");
+
+        assert!(store.close("d-0001"));
+        assert!(store.versions("d-0001").is_none(), "cerrado no se lista");
+        assert!(
+            store.version("d-0001", 1).is_none(),
+            "cerrado no se lee ni su historial"
+        );
     }
 }
