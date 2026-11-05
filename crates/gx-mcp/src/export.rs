@@ -322,14 +322,11 @@ fn resolve_diagram(
 /// The lifecycle errors are built by `contract`, which owns the wording of
 /// `unknown_diagram` and `not_owner` (with `known_ids[]`): the export answers
 /// with the payload of `tools`, so the two copies of the type are joined in
-/// one place instead of duplicating the messages.
+/// one place ([`crate::tools::contract_payload`]) instead of duplicating the
+/// messages.
 fn contract_error(payload: crate::contract::ErrorPayload) -> ErrorPayload {
-    ErrorPayload {
-        path: payload.path,
-        code: payload.code,
-        message: payload.message,
-        hint: payload.hint,
-    }
+    let path = payload.path.clone();
+    crate::tools::contract_payload(payload, &path)
 }
 
 /// The error of a session without open diagrams (PRD §11.1, S4).
