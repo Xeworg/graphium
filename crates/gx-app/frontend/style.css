@@ -182,6 +182,26 @@
   --code-bg: rgba(0, 0, 0, 0.05);
 }
 
+/* `pitaya`: the night of a terminal with a rose accent and soft rose text,
+   the look of the shell this plan lives beside. Dark like the default, so
+   it inherits the family colours of `:root`. */
+[data-theme="pitaya"] {
+  --bg: #100e13;
+  --grid-color: rgba(255, 255, 255, 0.13);
+  --node-fill: #1b161c;
+  --node-stroke: #4d3a45;
+  --node-text: #f0dce4;
+  --edge-stroke: #94707f;
+  --edge-text: #c99fb0;
+  --accent: #e06a8d;
+  --text: #f0dce4;
+  --surface: #1a161d;
+  --surface-border: #352a33;
+  --surface-shadow: rgba(0, 0, 0, 0.55);
+  --hairline: rgba(255, 255, 255, 0.3);
+  --code-bg: rgba(255, 255, 255, 0.07);
+}
+
 /* Las clases que el renderer escribe y que el SVG de pie resuelve con su
  * `<style>` interno: en el canvas la CSP bloquea ese bloque, así que cada una
  * necesita su regla acá o el elemento sale con el color del navegador. Es la
@@ -1100,8 +1120,9 @@ body {
   padding: 0;
   border: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 6px;
 }
 
 .settings-theme legend {
@@ -1111,16 +1132,45 @@ body {
   opacity: 0.85;
 }
 
+/* Every theme is a chip: the name and a small palette beside it, the four
+   colours the theme paints. The chip reads like the preset buttons below,
+   so one selector feels like one selector. */
 .settings-radio {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--text);
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
   cursor: pointer;
+}
+
+.settings-radio:hover {
+  border-color: var(--accent);
 }
 
 .settings-radio input {
   accent-color: var(--accent);
   cursor: pointer;
+  margin: 0;
+}
+
+/* The palette beside the name: background, nodes, their text and accent. */
+.swatches {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 1px;
+}
+
+.swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  /* A hairline so the light dots also read on a light plan. */
+  box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.45);
 }
 
 .settings-presets {

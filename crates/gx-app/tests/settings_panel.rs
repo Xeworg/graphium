@@ -188,7 +188,7 @@ fn the_panel_has_a_control_for_every_setting() {
 }
 
 #[test]
-fn the_theme_switch_offers_the_six_themes_of_the_settings() {
+fn the_theme_switch_offers_the_seven_themes_of_the_settings() {
     let theme = slice_between(HTML, "name=\"settings-theme\"", "</fieldset>");
     for name in Theme::ALL {
         assert!(
@@ -313,6 +313,7 @@ fn the_presets_of_the_page_are_the_presets_of_rust() {
         (Theme::Arcilla, "arcilla"),
         (Theme::Aurora, "aurora"),
         (Theme::Neblina, "neblina"),
+        (Theme::Pitaya, "pitaya"),
     ] {
         let from_page = table
             .get(name)
@@ -323,6 +324,50 @@ fn the_presets_of_the_page_are_the_presets_of_rust() {
             as_settings,
             presets::of_theme(theme),
             "the preset {name} is the look of {theme:?}"
+        );
+    }
+}
+
+/// The theme switch is the one selector: each theme shows its name and a
+/// small palette beside it (the colours the theme paints), so the human
+/// sees the look before choosing it. The dots are filled by the page from
+/// `PLAN_PRESETS` — one source of truth, the table of the presets.
+#[test]
+fn the_theme_switch_shows_a_palette_beside_every_name() {
+    let theme = slice_between(HTML, "<fieldset class=\"settings-theme\">", "</fieldset>");
+    for name in Theme::ALL {
+        let value = format!("value=\"{}\"", name.as_str());
+        let at = theme
+            .find(&value)
+            .unwrap_or_else(|| panic!("the theme switch offers `{}`", name.as_str()));
+        let label_start = theme[..at]
+            .rfind("<label")
+            .expect("the radio sits in a label");
+        let label_end = at + theme[at..].find("</label>").expect("the label closes");
+        let label = &theme[label_start..label_end];
+        assert!(
+            label.contains("class=\"swatches\""),
+            "the label of `{}` shows a palette beside its name: {label}",
+            name.as_str()
+        );
+    }
+    // The page paints the dots from the presets table, one source of truth.
+    assert!(
+        JS.contains("THEME_PRESETS"),
+        "the page maps every theme to its preset to paint the swatches"
+    );
+    for (theme, preset) in [
+        ("dark", "plano"),
+        ("light", "claro"),
+        ("brasa", "brasa"),
+        ("arcilla", "arcilla"),
+        ("aurora", "aurora"),
+        ("neblina", "neblina"),
+        ("pitaya", "pitaya"),
+    ] {
+        assert!(
+            JS.contains(&format!("\"{theme}\": \"{preset}\"")),
+            "THEME_PRESETS maps {theme} to {preset}"
         );
     }
 }

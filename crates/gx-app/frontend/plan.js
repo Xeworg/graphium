@@ -50,7 +50,7 @@ const SETTINGS_KEYS = [
 // The themes of the plan (`Theme` in `crates/gx-core/src/render.rs`), in the
 // order the panel lists them. The stylesheet answers to the same name with a
 // `[data-theme="…"]` block (PRD §8.5.2 RF22, `f6-themes.md` R5).
-const THEMES = ["dark", "light", "brasa", "arcilla", "aurora", "neblina"];
+const THEMES = ["dark", "light", "brasa", "arcilla", "aurora", "neblina", "pitaya"];
 
 // The presets of F1 and of the four themes of F6 (PRD §8.5.2). Rust owns them
 // (`settings::presets`): this table only fills the controls, and the contract
@@ -160,8 +160,58 @@ const PLAN_PRESETS = {
     "node_stroke": "#cbd3d5",
     "node_text": "#22302f",
     "theme": "neblina"
+  },
+  "pitaya": {
+    "accent": "#e06a8d",
+    "background": "#100e13",
+    "edge_stroke": "#94707f",
+    "edge_text": "#c99fb0",
+    "grid_angle_degrees": 45,
+    "grid_color": "#ffffff",
+    "grid_diagonal": 59,
+    "grid_opacity": 0.13,
+    "grid_visible": true,
+    "node_fill": "#1b161c",
+    "node_stroke": "#4d3a45",
+    "node_text": "#f0dce4",
+    "theme": "pitaya"
   }
 };
+
+// One name per look: the chip of a theme shows the palette of its preset.
+// `dark` is the theme, `plano` is the look the panel calls it.
+const THEME_PRESETS = {
+  "dark": "plano",
+  "light": "claro",
+  "brasa": "brasa",
+  "arcilla": "arcilla",
+  "aurora": "aurora",
+  "neblina": "neblina",
+  "pitaya": "pitaya"
+};
+
+/**
+ * Fills the palette of dots beside every theme name: four swatches — the
+ * background, the nodes, their text and the accent — read from
+ * `PLAN_PRESETS`, the same table the presets use, so the chips and the
+ * presets cannot drift apart.
+ */
+function fillSwatches() {
+  for (const label of document.querySelectorAll("label.settings-radio")) {
+    const input = label.querySelector('input[name="settings-theme"]');
+    const preset = input && PLAN_PRESETS[THEME_PRESETS[input.value]];
+    const swatches = label.querySelector(".swatches");
+    if (!preset || !swatches || swatches.childElementCount > 0) {
+      continue;
+    }
+    for (const key of ["background", "node_fill", "node_text", "accent"]) {
+      const dot = document.createElement("span");
+      dot.className = "swatch";
+      dot.style.background = preset[key];
+      swatches.appendChild(dot);
+    }
+  }
+}
 
 const plan = document.getElementById("plan");
 const diagrams = document.getElementById("diagrams");
@@ -703,6 +753,8 @@ for (const button of presetButtons) {
     notifySettings(next);
   });
 }
+
+fillSwatches();
 
 // --- Panel of open diagrams (PRD §7 RF26, RF28, S1, S3) -----------------
 
