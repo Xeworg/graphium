@@ -1545,8 +1545,12 @@ function createCloneObject(clone) {
   container.culled = true;
   container.rect = { x: 0, y: 0, w: 0, h: 0 };
   container.cloneState = clone;
+  // The `×` lives INSIDE the toolbar pill (L8): one control anchored to the
+  // corner of the object — the pill grows inward and wraps when the object is
+  // narrow, so nothing sticks out of the box the human sees.
   container.cloneTools = createCloneTools(container);
-  content.append(container.cloneTools, createCloneClose(container));
+  container.cloneTools.append(createCloneClose(container));
+  content.append(container.cloneTools);
   container.append(box, content);
   return container;
 }
