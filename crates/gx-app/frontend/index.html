@@ -37,13 +37,14 @@
 
     <!-- The panel of the sessions (S1, S3, D3), separated from the panel of
          diagrams: its own button sits in the bottom-left corner and its own
-         panel opens above it. It is the switcher of plans: one row per live
-         session, with the colour of its family, its label, its project, its
-         state and how many diagrams it has, and the plan on screen marked in
-         it. Each session draws on its own plan and the plan shows one at a
-         time (A2 of `f8-planos.md`): choosing a row brings its plan on screen
-         and the others leave it, without closing anything (D5). It is built
-         only from `graphium://state`, like the list of diagrams. -->
+         panel opens above it. It is the switcher of plans: the plan of the
+         human first («Mi plano», always, `f8-planos.md` B1/S4) and then one row
+         per live session, with the colour of its family, its label, its
+         project, its state and how many diagrams it has, and the plan on screen
+         marked in it. Each session draws on its own plan and the plan shows one
+         at a time (A2 of `f8-planos.md`): choosing a row brings its plan on
+         screen and the others leave it, without closing anything (D5). It is
+         built only from `graphium://state`, like the list of diagrams. -->
     <button
       id="sessions-toggle"
       class="sessions-toggle"
@@ -58,7 +59,7 @@
 
     <aside id="sessions-panel" class="sessions-panel hidden" aria-label="sesiones">
       <h2 class="panel-title">sesiones</h2>
-      <div id="session-list" class="session-list" role="group" aria-label="sesiones"></div>
+      <div id="session-list" class="session-list" role="group" aria-label="planos"></div>
       <p id="session-notice" class="session-notice hidden" role="status"></p>
     </aside>
 
@@ -66,6 +67,18 @@
     <div id="empty" class="empty">
       <p class="empty-title">esperando al agente…</p>
       <p class="empty-hint">conectá un cliente MCP y corré <code>graphium mcp-config</code></p>
+    </div>
+
+    <!-- State 1 of the plan of the human (B1 of `f8-planos.md`, S2/S4): the
+         surface is theirs and nobody draws on it for them, so the empty state
+         says how to fill it. Only one of the two empty states paints at a
+         time, and the page decides with the plan on screen. -->
+    <div id="empty-user" class="empty hidden">
+      <p class="empty-title">tu plano está vacío</p>
+      <p class="empty-hint">
+        cloná un diagrama desde el panel de diagramas abiertos con <code>⧉</code> para
+        analizarlo acá
+      </p>
     </div>
 
     <!-- State 3: error banner. -->

@@ -442,7 +442,9 @@ body {
 
 /* El `×` vive **dentro** del rectángulo de su objeto, contra la esquina. Si
  * colgara afuera, el puntero tendría que salir del objeto para alcanzarlo y
- * el botón se escondería justo cuando uno va a apretarlo. */
+ * el botón se escondería justo cuando uno va a apretarlo. El `×` de un clon
+ * (`.clone-close`, L6 de `f8-planos.md`) usa esta misma regla: cierra la
+ * instancia de vista del plano del humano, no un diagrama de la sesión. */
 .diagram-close {
   position: absolute;
   top: 4px;
@@ -505,6 +507,25 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The object of a clone (B1 of `f8-planos.md`, S4): it reads as something the
+ * hand can grab, because dragging it is how the human places it on their own
+ * plan (B3). The background keeps panning the camera, as it always did. */
+.diagram.clone {
+  cursor: grab;
+}
+
+.plan.dragging .diagram.clone {
+  cursor: grabbing;
+}
+
+/* The content **is** the rectangle the owner keeps: the drawing centers inside
+ * it, so the object moves as one piece and the tools hang from its corner. */
+.diagram.clone > .content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* State 1: empty plan. */
@@ -804,6 +825,25 @@ body {
   opacity: 1;
 }
 
+/* The button that clones a diagram onto the plan of the human (B1 of
+ * `f8-planos.md`, S2): the same grammar as the `×`, one glyph wide. */
+.panel-item-clone {
+  padding: 0 8px;
+  font-size: 14px;
+  line-height: 1;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.panel-item-clone:hover {
+  color: var(--accent);
+  opacity: 1;
+}
+
 /* The history of the diagram (RF14): «◀ v3/7 ▶» under the item, in the
    row the meta opens. The steps are small like the close button. */
 .panel-item-versions {
@@ -839,6 +879,95 @@ body {
 }
 
 .panel-item-version-step:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+/* The tools of a clone (B2, B3 of `f8-planos.md`, S4): the history of the
+ * original and «Actualizar el clon», against the corner of the object and out of
+ * the way until the pointer arrives, like the `×` of a diagram. They paint with
+ * the tokens of the theme (RF22, S18) and leave the corner to the `×` that
+ * removes the clone, so the two hang from the same place a diagram's `×` does
+ * (L6). */
+.diagram-clone-tools {
+  position: absolute;
+  top: 4px;
+  /* L8, one row: the pill is compact (11px, tight paddings) and never wraps —
+     a wrapped control fell on top of its neighbor. When the object is
+     narrower than the pill, `fitCloneTools` hangs it over the top edge,
+     centered (`.overhang` below). */
+  right: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.diagram.clone:hover .diagram-clone-tools,
+.diagram.clone:focus-within .diagram-clone-tools {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The pill of a narrow object (L8): it is wider than the object itself, so it
+   centers over the top edge and hangs over it symmetrically — the minimal
+   overflow that keeps one row and every control reachable. */
+.diagram-clone-tools.overhang {
+  top: -12px;
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* The history of the clone is the one of the panel, without the padding of a
+ * row of the panel: it lives inside its own border. */
+.diagram-clone-tools .clone-versions {
+  flex: none;
+  padding: 0;
+}
+
+.clone-refresh {
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.clone-refresh:hover {
+  color: var(--accent);
+}
+
+/* The `×` inside the pill: it drops the circle of the object's `×` (the pill
+   is the button's frame now) and shows exactly when the pill shows. It also
+   joins the row: `position: static` overrides the absolute anchor of
+   `.diagram-close`, which otherwise pins it over the refresh button (L10). */
+.diagram-clone-tools .clone-close {
+  position: static;
+  opacity: 1;
+  pointer-events: auto;
+  width: auto;
+  height: auto;
+  padding: 0 6px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+}
+
+.clone-refresh:disabled {
   opacity: 0.25;
   cursor: default;
 }
@@ -898,6 +1027,21 @@ body {
  * human knows why its diagrams are about to go, but it reads dimmer. */
 .session-row.in-grace {
   opacity: 0.72;
+}
+
+/* The plan of the human (B1 of `f8-planos.md`, S4): the first row of the
+ * switcher, always there and separated from the sessions, which are another
+ * kind of plan. It paints with the tokens of the theme like the rest of the
+ * switcher (RF22, S18). */
+.session-row.user-plan {
+  margin-bottom: 4px;
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+
+/* Nobody else draws on the user plan, so its dot is not a family: it is the
+ * accent of the theme. */
+.session-dot.user-plan-dot {
+  background: var(--accent);
 }
 
 .session-dot {
@@ -1199,6 +1343,8 @@ body {
 .sessions-toggle:focus-visible,
 .panel-item-open:focus-visible,
 .panel-item-close:focus-visible,
+.panel-item-clone:focus-visible,
+.clone-refresh:focus-visible,
 .session-row:focus-visible,
 .diagram-close:focus-visible {
   outline: 2px solid var(--accent);

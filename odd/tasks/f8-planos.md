@@ -59,13 +59,21 @@ prueba en vivo del corte `f2-cierre` T5 (2026-11-05).
 - A2 (S1, V1): el selector pasa de filtro a conmutador: un plano a la vez,
   «Todas» muere, cámara por plano. Contratos del frontend actualizados.
 - A3 (S2, V1): docs — PRD (RF30 y §11.1) y este documento.
-- B1 (S2, S4): plano del usuario — modelo en el dueño (instancias de vista),
-  conmutador con fila propia, clonar desde el panel.
+- B1 (S2, S4, V2): plano del usuario — modelo en el dueño (instancias de vista,
+  conmutador con fila propia, clonar desde el panel). Commits: `247c05d` +
+  `c896b90`. El clon se dibuja con el documento actual del original vía el
+  render read-only de gx-mcp; sin `render_diagram_view` nueva: dos
+  promociones `pub` bastaron.
 - B2 (S3, S4, V2): refrescar el clon con la versión actual del original;
-  deshabilitado si el original ya no está.
-- B3 (S1, S4, V2): mover el clon arrastrando el objeto; navegación de
-  versiones en el clon con recálculo de posición.
-- B4 (S2, V2): docs — PRD y este documento.
+  deshabilitado si el original ya no está (`updatable` en el estado).
+  Commit: `c896b90`. El clon navega las versiones del original con
+  «◀ vN/M ▶» y el plano del usuario RECALCULA la posición cuando la versión
+  vista es más grande que la foto (cascade contra clones propios); los
+  planos de sesión conservan el preview in-place de T5.
+- B3 (S1, S4, V2): mover el clon arrastrando el objeto (posición persistida
+  en el dueño, como la cámara; solo en el plano del usuario). Commit:
+  `c896b90`.
+- B4 (S2, V2): docs — PRD RF30 y §11.1. Commit: `2ff1bb6`.
 
 ## Log
 
@@ -83,3 +91,55 @@ prueba en vivo del corte `f2-cierre` T5 (2026-11-05).
   pueda actualizarlo si este fue actualizado».
 - L3 (2026-11-05): «dale» — se abre el corte con A (aislamiento + conmutador)
   primero y B (plano del usuario) después.
+- L6 (2026-11-05, verbatim): «ok, al precionar el boton de clonar se clona
+  varias veces en mi plano, no se puede cerrar el diagrama. al intentarlo en
+  diagramas abiertos este no se borra de mi plano se borra del principal
+  comportamiento normal pero en si no veo una forma de borrar los planos de
+  mi plano». Dos defectos del corte B: (1) `create_clone` no deduplica —
+  cada clic crea otro clon del mismo original; (2) no existe la vía de
+  borrar un clon del plano del usuario (hueco del spec S4). Fix acordado:
+  un clon por original (volver a clonar enfoca el existente) y «×» para
+  borrar el clon; cerrar el original NO borra el clon (foto), pero el
+  humano sí puede.
+- L7 (2026-11-05): L6 corregida por worker (`mw4g9704-j-o8q7`), verificada
+  y empaquetada por el orquestador: commit `306d5e4`. Dedupe por
+  `origin_diagram_id` (chequeado antes del store: un clon foto responde
+  aunque su original cerró), `ClonePaint` con `svg: Option` + `bring`,
+  `PlanState::remove_clone` + `graphium://clone-remove`, «×» del clon con
+  la gramática `.diagram-close`. Tests nuevos: `user_plan.rs` y
+  `user_plan_page.rs`; suite 36 binarios verdes. Re-test del humano
+  pendiente (fase 3 del plan acordado).
+- L8 (2026-11-05, verbatim): «un pequeno detalle estetico y es el que se
+  sale de la caja … la x». En clones angostos, el toolbar de versiones más
+  la «×» se desbordaba del rectángulo punteado del objeto. Corregido
+  inline por el orquestador: la «×» vive DENTRO del pill del toolbar — un
+  solo control anclado a la esquina (`right: 4px`), que crece hacia
+  adentro con `flex-wrap` + `max-width` y se parte en filas si el objeto es
+  más angosto que los controles. Contrato actualizado: la regla vieja
+  «la barra deja lugar a la ×» se reemplaza por anclaje a esquina, wrap y
+  visibilidad de la × dentro del pill. Commit: `025dbba`.
+- L9 (2026-11-06, verbatim): «si es que le cayo por encima» (con screenshot:
+  en un clon angosto, el `↻` wrapped caía sobre el `▶`). El wrap de L8 apilaba
+  los controles uno encima del otro. Corregido inline por el orquestador:
+  pill compacto de UNA fila — sin `flex-wrap` ni `max-width`, `font-size:
+  11px`, `white-space: nowrap`, paddings apretados — y el indicador pasa a
+  «2/2» sin la «v» (el del panel conserva «v3/7»). Un objeto más angosto que
+  el pill ya no lo parte: `fitCloneTools` (medición `offsetWidth` vs
+  `clientWidth`, llamada al final de `updateCloneTools`) le agrega la clase
+  `.overhang`, que cuelga el pill centrado sobre el borde superior (`top:
+  -12px`, `left: 50%`, `translateX(-50%)`) — desborde simétrico mínimo.
+  Contrato actualizado: la assertion `flex-wrap` de L8 se revierte; ahora se
+  pide una fila compacta a 11px, sin wrap, y la regla `.overhang` con
+  `translateX(-50%)`. Verificación: RED observado (2 assertions nuevas),
+  GREEN, `cargo fmt` + `cargo clippy --workspace --all-targets` +
+  `cargo test --workspace` verdes (36 binarios).
+- L10 (2026-11-06, verbatim): «ha quedado mal» (screenshot: en el clon
+  angosto el pill del overhang mostraba un solo glifo enmarañado). Causa:
+  el override `.diagram-clone-tools .clone-close` (L8) nunca reseteó el
+  `position: absolute` que la «×» hereda de `.diagram-close` — la «×» se
+  anclaba a la esquina del pill y caía encima del `↻`, fuera de la fila.
+  Fix: `position: static` en el override, la «×» entra en la fila del pill.
+  Contrato: las assertions de L8 ganan la regla `position: static`. Commit:
+  `d46a4ea`. Slice boundary: la rama pasa las ~400 líneas desde
+  `origin/main` — antes del próximo commit, estrategia de entrega (merge a
+  staging + PRs encadenados).
