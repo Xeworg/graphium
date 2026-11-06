@@ -443,3 +443,108 @@ Por ese principio:
   sesión → ruta canónica del worktree) pasa a ser load-bearing del routing
   del libro, y el análisis de multi-proyecto (P7) hereda la recomendación:
   libros por raíz canónica, sin consultas cross-proyecto en v1.
+
+## 10. Borrador del schema v1 (propuesta, no contrato)
+
+Idea B del análisis de schema (§7), sobre D4 (`~/.graphium/books/<key>/`).
+Sin CST, sin contenidos de archivo, sin cierres transitivos materializados,
+sin tabla de file-edges (el mapa es `GROUP BY` on-the-fly).
+
+```sql
+-- PRAGMA user_version = 1   (migración: mismatch → delete-and-reindex;
+--                             el libro es derivado, no hay escalera)
+
+CREATE TABLE meta (
+  key   TEXT PRIMARY KEY,   -- 'schema_version', 'worktree_root' (canónica),
+                            -- 'git_dir', 'head_sha', 'first_root_commit',
+                            -- 'created_at', 'nonce', 'owner_uid', 'lang_pack'
+  value TEXT NOT NULL
+);  -- marcador trust-on-first-byte (§8-A): sin fila 'nonce' válida
+    -- la base se ignora y se reconstruye, nunca se abre en escritura
+
+CREATE TABLE file (
+  id           INTEGER PRIMARY KEY,
+  path         TEXT NOT NULL UNIQUE,  -- relativa a la raíz del worktree, '/'
+  lang         TEXT NOT NULL,         -- 'rust' | 'typescript' | 'python' | 'go' | 'java'
+  content_hash TEXT NOT NULL,         -- sha256 de los bytes al indexar
+  size         INTEGER NOT NULL,
+  mtime_ns     INTEGER NOT NULL,
+  indexed_at   TEXT NOT NULL          -- ISO-8601 UTC; viaja en toda respuesta
+);
+
+-- Los ids de symbol se asignan en bloques contiguos por archivo (un capítulo
+-- es un rango): borrar un archivo es un BETWEEN, y las estadísticas por
+-- capítulo no necesitan GROUP BY sobre la tabla grande.
+CREATE TABLE symbol (
+  id         INTEGER PRIMARY KEY,
+  file_id    INTEGER NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+  parent_id  INTEGER REFERENCES symbol(id),  -- contención (árbol del archivo)
+  kind       TEXT NOT NULL,  -- 'fn'|'method'|'type'|'class'|'trait'|'impl'|'module'|'const'
+  name       TEXT NOT NULL,  -- nombre simple: 'render_with'
+  qname      TEXT NOT NULL,  -- calificado: 'gx_mcp::tools::render_with'
+  start_line INTEGER NOT NULL, start_col INTEGER NOT NULL,
+  end_line   INTEGER NOT NULL, end_col   INTEGER NOT NULL,
+  start_byte INTEGER NOT NULL, end_byte INTEGER NOT NULL
+);
+CREATE INDEX symbol_file   ON symbol(file_id);
+CREATE INDEX symbol_name   ON symbol(name);
+CREATE INDEX symbol_qname  ON symbol(qname);
+CREATE INDEX symbol_parent ON symbol(parent_id);
+
+CREATE TABLE edge (
+  id       INTEGER PRIMARY KEY,
+  src_id   INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+  dst_id   INTEGER REFERENCES symbol(id),  -- resuelta solo si única; NULL si ambigua
+  dst_name TEXT NOT NULL,                  -- el objetivo textual, SIEMPRE presente
+  kind     TEXT NOT NULL,                  -- 'calls'|'imports'|'inherits'|'uses'|'type_ref'
+  exact    INTEGER NOT NULL,               -- 1 = resuelta única; 0 = heurística (exact:false)
+  file_id  INTEGER NOT NULL REFERENCES file(id) ON DELETE CASCADE  -- dónde se halló
+);
+CREATE INDEX edge_src      ON edge(src_id);
+CREATE INDEX edge_dst      ON edge(dst_id);
+CREATE INDEX edge_dst_name ON edge(dst_name);   -- la resolución por nombre es el join caliente
+CREATE INDEX edge_file     ON edge(file_id);
+
+-- FTS5 con contenido EXTERNO sobre symbol (symbol.id es rowid):
+--   DELETE FROM symbol_fts WHERE rowid IN (SELECT id FROM symbol WHERE file_id=?)
+--   y SIEMPRE borrar acá antes que en symbol; external-content no soporta
+--   REPLACE: el ciclo por archivo es DELETE → INSERT, jamás REPLACE.
+-- El texto de búsqueda es DERIVADO al indexar (unicode61 no parte camelCase):
+--   search_text = 'renderWith render with RenderWith'  (variantes partidas)
+-- tokenchars '_' mantiene snake_case entero. Tradeoff aceptado (§7): sin
+-- texto almacenado no hay snippet()/highlight() — el file:line sale de symbol.
+CREATE VIRTUAL TABLE symbol_fts USING fts5(
+  name, qname, search_text,
+  content='symbol', content_rowid='id',
+  tokenize='unicode61 tokenchars _'
+);
+```
+
+### Cómo se sirven las tres tools con este schema
+
+- **`code_search(q)`** → `symbol_fts MATCH` (frase, no AND: los
+  identificadores son frases de tokens derivados) → join a `symbol`/`file`
+  → `{file:line, kind, qname, content_hash, indexed_at}`. Ambiguo →
+  `candidates[]` con código de ambigüedad (P3, condición 2).
+- **`code_structure(file|symbol)`** → `symbol WHERE file_id=?` ordenado por
+  spans (el árbol de contención lo reconstruye el app con `parent_id`).
+- **`code_impact(symbol)`** → BFS **en Rust**, no `WITH RECURSIVE`: cada
+  salto es un `SELECT` indexado por `dst_id` (o `dst_name` para las
+  `exact=0`), con visited-set en memoria (guardia de ciclos explícita —
+  SQLite no documenta límite de iteración), `depth ≤ 3` y `LIMIT` por nivel;
+  budget de respuesta fijado a los techos del kind `graph` (300/600) con
+  paginación por cursor.
+- **Mapa de archivos (P6)** → `SELECT f1.path, f2.path, COUNT(*) FROM edge
+  JOIN symbol src ... JOIN file f1, f2 ... GROUP BY` on-the-fly; sin tabla
+  materializada en v1 (se memoiza más adelante si el costo lo justifica).
+
+### Presupuesto y límites declarados
+
+- ~150 MB para 5k archivos (estimación del análisis de schema, no medición).
+- Toda mutación: `BEGIN IMMEDIATE` + `SAVEPOINT` por archivo (un parseo malo
+  cuesta un capítulo, no el lote), lotes de ≤32 archivos.
+- `journal_mode` decidido en el arranque por el probe (§9-D4): WAL solo si
+  el root no es remoto/sincronizado; si no, `DELETE` + aviso.
+- Lo que **no** está y por qué: contenidos de archivo (el libro no duplica
+  el código), CST completo (§3 descarte 2), file-edges materializadas
+  (GROUP BY basta en v1), closure transitivo (depth ≤ 3 explícito).
