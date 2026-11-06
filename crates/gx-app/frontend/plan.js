@@ -808,6 +808,13 @@ function panelItem(diagram) {
   close.addEventListener("click", () => emitClose(diagram.diagram_id));
 
   item.append(open, close);
+
+  // The history of the diagram (RF14, L5): «◀ v3/7 ▶» when the store keeps
+  // more than one version. Navigating draws the chosen version on the plan,
+  // read-only; the newest brings the live drawing back.
+  if (diagram.version_count > 1) {
+    item.append(versionNav(diagram));
+  }
   return item;
 }
 
@@ -882,6 +889,150 @@ function selectDiagram(diagramId) {
   selectedId = diagramId;
   renderPanel();
   focusDiagram(diagram);
+}
+
+// --- History of versions (RF14; f2-cierre.md, T5) ------------------------
+
+// The version of the history the human is looking at, per diagram: the
+// absolute number of the version while a preview is on the plan, and
+// nothing when the live drawing is. The page never writes the store: Rust
+// renders the version read-only and answers with `graphium://version-paint`.
+const viewedVersion = new Map(); // diagram_id -> version number
+
+/**
+ * One step of the history: ◀ walks back, ▶ walks forward, from the version
+ * in view or from the live drawing when the human was not browsing.
+ */
+function versionStep(diagram, step) {
+  const at = viewedVersion.get(diagram.diagram_id) ?? diagram.current_version;
+  viewVersion(diagram, at + step);
+}
+
+/**
+ * The history of the diagram the panel item shows (RF14, L5): «◀ v3/7 ▶».
+ *
+ * The number is the position of the version inside the ones the store
+ * keeps (`oldest_version..=current_version`, absolute and consecutive), so
+ * a history at its cap reads «v20/20». Without a version in view the
+ * indicator names the live drawing, which is the last position. A version
+ * the history discarded cannot be shown: the view falls back to the live
+ * drawing instead of pointing at a number that no longer exists.
+ */
+function versionNav(diagram) {
+  const nav = document.createElement("div");
+  nav.className = "panel-item-versions";
+
+  const viewed = viewedVersion.get(diagram.diagram_id) ?? null;
+  const at =
+    viewed !== null &&
+    viewed >= diagram.oldest_version &&
+    viewed <= diagram.current_version
+      ? viewed
+      : diagram.current_version;
+
+  const prev = document.createElement("button");
+  prev.type = "button";
+  prev.className = "panel-item-version-step";
+  prev.textContent = "◀";
+  prev.setAttribute("aria-label", `versión anterior de ${diagram.title}`);
+  prev.disabled = at <= diagram.oldest_version;
+  prev.addEventListener("click", () => versionStep(diagram, -1));
+
+  const label = document.createElement("span");
+  label.className = "panel-item-version-label";
+  label.textContent = `v${at - diagram.oldest_version + 1}/${diagram.version_count}`;
+
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "panel-item-version-step";
+  next.textContent = "▶";
+  next.setAttribute("aria-label", `versión siguiente de ${diagram.title}`);
+  next.disabled = at >= diagram.current_version;
+  next.addEventListener("click", () => versionStep(diagram, 1));
+
+  nav.append(prev, label, next);
+  return nav;
+}
+
+/**
+ * Asks Rust to draw one version of the history on the plan (RF14, L5).
+ *
+ * Read-only on purpose: Rust renders the version without the hook, the
+ * store keeps every fact it had, and the object never moves — the preview
+ * takes the place the live drawing had. Walking back to the newest version
+ * restores the live drawing the page already holds, so the indicator reads
+ * «v7/7» without a render at all.
+ */
+function viewVersion(diagram, version) {
+  const target = Math.min(
+    diagram.current_version,
+    Math.max(diagram.oldest_version, version),
+  );
+  if (target === diagram.current_version) {
+    viewedVersion.delete(diagram.diagram_id);
+    restoreLive(objects.get(diagram.diagram_id));
+  } else {
+    viewedVersion.set(diagram.diagram_id, target);
+    emit("graphium://version-view", {
+      diagram_id: diagram.diagram_id,
+      version: target,
+    });
+  }
+  // The indicator of the item follows the view at once: a click is answered
+  // even when the render of the preview takes a moment.
+  renderPanel();
+}
+
+/**
+ * Paints the preview of a version where the live drawing was (L5): the
+ * object keeps its rectangle on the plan — the culling keeps testing the
+ * rectangle Rust placed — and the preview centers on it, so the plan never
+ * changes shape because of the history. The live drawing stays reachable
+ * on the object for the restore.
+ */
+function paintPreview(element, svg) {
+  element.svg.remove();
+  if (element.previewSvg) {
+    element.previewSvg.remove();
+  }
+  const width = Number.parseFloat(svg.getAttribute("width") || "0");
+  const height = Number.parseFloat(svg.getAttribute("height") || "0");
+  const center = {
+    x: element.rect.x + element.rect.w / 2,
+    y: element.rect.y + element.rect.h / 2,
+  };
+  element.content.style.left = `${center.x - width / 2}px`;
+  element.content.style.top = `${center.y - height / 2}px`;
+  element.content.style.width = `${width}px`;
+  element.content.style.height = `${height}px`;
+  // The `×` and the badge are the last children of `.content`: the drawing
+  // goes first, the way insertDiagram leaves it.
+  element.content.prepend(svg);
+  element.previewSvg = svg;
+}
+
+/** Brings the live drawing back: the preview leaves the plan. */
+function restoreLive(element) {
+  if (!element || !element.previewSvg) {
+    return;
+  }
+  element.previewSvg.remove();
+  element.previewSvg = null;
+  // The styles of the live drawing come from the rectangle Rust placed:
+  // the SVG sits one padding inside the object, as at insert time.
+  const width = element.rect.w - 2 * OBJECT_PADDING;
+  const height = element.rect.h - 2 * OBJECT_PADDING;
+  const center = {
+    x: element.rect.x + element.rect.w / 2,
+    y: element.rect.y + element.rect.h / 2,
+  };
+  element.content.style.left = `${center.x - width / 2}px`;
+  element.content.style.top = `${center.y - height / 2}px`;
+  element.content.style.width = `${width}px`;
+  element.content.style.height = `${height}px`;
+  if (!element.svg.isConnected) {
+    element.content.prepend(element.svg);
+  }
 }
 
 // --- Selector of sessions (S1, S3, D3, D5) ------------------------------
@@ -1145,6 +1296,15 @@ function worldCenter() {
 }
 
 function insertDiagram(payload) {
+  // A re-render of the same id (`opts.replace_id`, `update_diagram`)
+  // replaces the object: the old container leaves the plan, or two
+  // drawings would overlap under one id. With it leaves the preview the
+  // human was viewing — the newest version is newer now.
+  const previous = objects.get(payload.diagram_id);
+  if (previous) {
+    previous.remove();
+    viewedVersion.delete(payload.diagram_id);
+  }
   const container = document.createElement("div");
   container.className = "diagram";
 
@@ -1381,9 +1541,15 @@ function materializeObject(element) {
     return;
   }
   element.culled = false;
-  // The `×` of the object is the last child of `.content`: the drawing goes
-  // before it, the way `insertDiagram` left it.
-  element.content.prepend(element.svg);
+  // The version the human is viewing is the drawing of the object while it
+  // lasts (L5): coming back into the view mounts the preview, not the live
+  // drawing under it. The `×` of the object is the last child of
+  // `.content`: the drawing goes before it, the way `insertDiagram` left it.
+  if (element.previewSvg) {
+    element.content.prepend(element.previewSvg);
+  } else {
+    element.content.prepend(element.svg);
+  }
   element.box.classList.add("hidden");
 }
 
@@ -1522,6 +1688,29 @@ function hidePending() {
   window.clearTimeout(showPending.timer);
 }
 
+listen("graphium://version-paint", (event) => {
+  const payload = event.payload || {};
+  const element = objects.get(payload.diagram_id);
+  if (!element) {
+    // The diagram closed while the render of the preview ran: there is
+    // nothing to paint on.
+    return;
+  }
+  // Only the version the human still asked for paints: walking fast
+  // through the history must not leave an older answer under a newer one.
+  const viewed = viewedVersion.get(payload.diagram_id) ?? null;
+  if (viewed === null || viewed !== Number(payload.version)) {
+    return;
+  }
+  const holder = document.createElement("div");
+  holder.innerHTML = payload.svg;
+  const svg = holder.querySelector("svg");
+  if (!svg) {
+    return;
+  }
+  paintPreview(element, svg);
+});
+
 // --- Wiring -------------------------------------------------------------
 
 listen("graphium://ready", () => {});
@@ -1552,6 +1741,31 @@ listen("graphium://error", (event) => {
   hidePending();
   showError(event.payload || {});
 });
+/**
+ * ←/→ walk the history of the selected diagram, like the arrows of its
+ * panel item. A field that holds the keyboard (the settings panel) keeps
+ * its arrows: the history never steals them from the human.
+ */
+window.addEventListener("keydown", (event) => {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+    return;
+  }
+  const target = event.target;
+  if (target instanceof HTMLElement && target.matches("input, textarea, select")) {
+    return;
+  }
+  if (selectedId === null) {
+    return;
+  }
+  const diagram = state.diagrams.find((entry) => entry.diagram_id === selectedId);
+  if (!diagram || !(diagram.version_count > 1)) {
+    return;
+  }
+  const at = viewedVersion.get(selectedId) ?? diagram.current_version;
+  viewVersion(diagram, event.key === "ArrowLeft" ? at - 1 : at + 1);
+  event.preventDefault();
+});
+
 listen("graphium://settings", (event) => {
   const next = settingsFromPayload(event.payload);
   // While the human is still moving a control the panel is the truth: the

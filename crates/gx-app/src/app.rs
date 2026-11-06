@@ -166,6 +166,17 @@ struct StateEntry {
     /// Size of the object, padding included (PRD §7.2).
     #[serde(skip_serializing_if = "Option::is_none")]
     bbox: Option<gx_core::geom::Size>,
+    /// Newest version of the source document the history keeps (RF14). The
+    /// numbers are absolute and consecutive: the store discards the oldest
+    /// version past its cap without restarting the numbering, so the range
+    /// `oldest_version..=current_version` names every saved version and the
+    /// panel positions any of them without asking twice.
+    current_version: u64,
+    oldest_version: u64,
+    /// How many versions the history keeps, capped at `MAX_VERSIONS` (RF14).
+    /// It is the «7» of the indicator «v3/7»; the «3» is the position of a
+    /// version inside `oldest_version..=current_version`.
+    version_count: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -189,14 +200,22 @@ fn state_entries() -> Vec<StateEntry> {
     gx_mcp::store::diagram_store()
         .list()
         .into_iter()
-        .map(|summary| StateEntry {
-            diagram_id: summary.diagram_id,
-            title: summary.title,
-            kind: summary.kind,
-            updated_at: summary.updated_at,
-            session_id: summary.session_id,
-            pos: summary.pos,
-            bbox: summary.bbox,
+        .map(|summary| {
+            let versions = gx_mcp::store::diagram_store()
+                .versions(&summary.diagram_id)
+                .unwrap_or_default();
+            StateEntry {
+                diagram_id: summary.diagram_id,
+                title: summary.title,
+                kind: summary.kind,
+                updated_at: summary.updated_at,
+                session_id: summary.session_id,
+                pos: summary.pos,
+                bbox: summary.bbox,
+                current_version: versions.last().map_or(0, |version| version.version),
+                oldest_version: versions.first().map_or(0, |version| version.version),
+                version_count: versions.len(),
+            }
         })
         .collect()
 }
@@ -298,6 +317,42 @@ pub fn build(keep_alive: bool, start_window: bool) -> (tauri::App<tauri::Wry>, A
             serde_json::json!({ "diagram_id": payload.diagram_id }),
         );
         let _ = close_handle.emit("graphium://state", plan_payload());
+    });
+
+    // Viewing a saved version of the history belongs to the human (RF14; T5
+    // of `f2-cierre.md`): the panel asks, Rust draws the version read-only.
+    // The preview renders without the hook, stores nothing and writes no
+    // version — the plan only borrows the drawing the version had when it
+    // was current. The answer goes back as its own event, so the page can
+    // swap the drawing in place without moving the object on the plan.
+    let version_handle = handle.clone();
+    handle.listen("graphium://version-view", move |event| {
+        #[derive(Deserialize)]
+        struct VersionViewPayload {
+            diagram_id: String,
+            version: u64,
+        }
+        let Ok(payload) = serde_json::from_str::<VersionViewPayload>(event.payload()) else {
+            return;
+        };
+        match gx_mcp::tools::render_version_view(&payload.diagram_id, payload.version) {
+            Ok(svg) => {
+                let _ = version_handle.emit(
+                    "graphium://version-paint",
+                    serde_json::json!({
+                        "diagram_id": payload.diagram_id,
+                        "version": payload.version,
+                        "svg": svg,
+                    }),
+                );
+            }
+            Err(error) => {
+                // A version the history does not keep (or a diagram that
+                // closed while the human browsed it) is answered in the
+                // banner the plan already shows, where the human reads it.
+                let _ = version_handle.emit("graphium://error", error);
+            }
+        }
     });
 
     let ready_state = Arc::clone(&state);
@@ -565,6 +620,9 @@ mod tests {
             session_id: "stdio".to_string(),
             pos: Some(gx_core::geom::Point::new(120.0, -40.0)),
             bbox: Some(gx_core::geom::Size::new(320.0, 180.0)),
+            current_version: 3,
+            oldest_version: 1,
+            version_count: 3,
         };
 
         let json = serde_json::to_value(&entry).expect("the state serializes");
@@ -588,12 +646,53 @@ mod tests {
             session_id: "stdio".to_string(),
             pos: None,
             bbox: None,
+            current_version: 1,
+            oldest_version: 1,
+            version_count: 1,
         };
 
         let json = serde_json::to_value(&entry).expect("the state serializes");
 
         assert!(json.get("pos").is_none(), "{json}");
         assert!(json.get("bbox").is_none(), "{json}");
+    }
+
+    /// RF14 (T5 de `f2-cierre.md`): el panel muestra el indicador «v3/7» y
+    /// navega el historial, así que el estado tiene que traer qué versiones
+    /// guarda cada diagrama: la más vieja que sobrevive, la actual y cuántas
+    /// hay. Los números son absolutos y consecutivos (el store descarta la
+    /// más vieja sin reiniciar la numeración), así que el rango bastan para
+    /// posicionar cualquier versión y para armar el «3» de «v3/7».
+    #[test]
+    fn the_state_of_the_plan_carries_the_version_history_of_each_diagram() {
+        let store = gx_mcp::store::diagram_store();
+        let diagram_id = store.next_id();
+        store.insert(
+            diagram_id.clone(),
+            "flujo".to_string(),
+            "graph".to_string(),
+            "stdio-historial".to_string(),
+            "{}".to_string(),
+        );
+        store.replace(
+            &diagram_id,
+            "flujo".to_string(),
+            "{\"version\":1,\"kind\":\"graph\"}".to_string(),
+        );
+
+        let payload = serde_json::to_value(super::plan_payload()).expect("the state serializes");
+        let entry = payload["diagrams"]
+            .as_array()
+            .expect("the state carries the diagrams")
+            .iter()
+            .find(|entry| entry["diagram_id"].as_str() == Some(diagram_id.as_str()))
+            .expect("the diagram is on the plan");
+        assert_eq!(
+            entry["oldest_version"], 1,
+            "el insert es la primera versión"
+        );
+        assert_eq!(entry["current_version"], 2, "el replace es la segunda");
+        assert_eq!(entry["version_count"], 2);
     }
 
     /// The identity a session declares, resolved the way the transports
