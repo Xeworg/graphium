@@ -107,7 +107,9 @@ análisis en specs y tareas; los § que cita viven en el doc de ideas.
 - T4 (C3) (S2, S8, D4): pulido de worktrees, prune con cap en idle-exit,
   `graphium books list|prune`, hooks opcionales. Más: envelope de respuesta en
   tokens con asignación por relevancia y acantilado a punteros (modelo
-  CodeGraph, L7).
+  CodeGraph, L7); feature-flags por lenguaje para el techo RNF1-quater (L9);
+  y el fix del flake de timing de `progress` en gx-mcp (falla 1 de N corridas
+  bajo recompilación pesada — visto en el merge de C2).
 - T5 (respuesta acotada; S5, S7, D3, L7): los cuatro nombres de tool no
   cambian. `code_structure` responde **outline por defecto** (solo nivel
   superior; el árbol se reordena con `after_line`/`limit`, rango monotónico)
