@@ -250,6 +250,7 @@ export class Panel extends View {
 
 /// S3/L5: the TypeScript module prunes the declarations of a chapter, with the
 /// language's nesting (`Module.Class.method`) and a span the book can answer.
+#[cfg(feature = "lang-typescript")]
 #[test]
 fn typescript_declares_the_symbols_of_a_chapter_with_its_nesting() {
     let parsed = parse("src/tools.ts", TYPESCRIPT.as_bytes(), 0).expect("the TypeScript grammar");
@@ -300,6 +301,7 @@ fn typescript_declares_the_symbols_of_a_chapter_with_its_nesting() {
 /// S7/D3: the four relation kinds out of TypeScript — the import, the call by
 /// name as written, `extends`/`implements` and the type references — and never
 /// an edge out of a comment or a string.
+#[cfg(feature = "lang-typescript")]
 #[test]
 fn typescript_relations_are_the_four_kinds_and_never_prose() {
     let parsed = parse("src/tools.ts", TYPESCRIPT.as_bytes(), 0).expect("the grammar");
@@ -356,6 +358,7 @@ fn typescript_relations_are_the_four_kinds_and_never_prose() {
 
 /// S3: the same module answers `.tsx`, and the JSX of the chapter is markup,
 /// not a relation.
+#[cfg(feature = "lang-typescript")]
 #[test]
 fn typescript_answers_tsx_and_jsx_is_not_a_relation() {
     let parsed = parse("src/view.tsx", TSX.as_bytes(), 0).expect("the TSX grammar");
@@ -440,6 +443,7 @@ def quiet() -> str:
 /// S3/L5: the Python module prunes the declarations of a chapter — the class,
 /// its methods (one of them decorated) and the module-level constant — with the
 /// language's nesting (`Module.Class.method`).
+#[cfg(feature = "lang-python")]
 #[test]
 fn python_declares_the_symbols_of_a_chapter_with_its_nesting() {
     let parsed = parse("src/store.py", PYTHON.as_bytes(), 0).expect("the Python grammar");
@@ -479,6 +483,7 @@ fn python_declares_the_symbols_of_a_chapter_with_its_nesting() {
 
 /// S7/D3: `import`/`from … import`, the call by name as written, the base class
 /// and the annotations of the chapter — and never an edge out of prose.
+#[cfg(feature = "lang-python")]
 #[test]
 fn python_relations_are_the_four_kinds_and_never_prose() {
     let parsed = parse("src/store.py", PYTHON.as_bytes(), 0).expect("the grammar");
@@ -576,6 +581,7 @@ func quiet() string {
 /// S3/L5: the Go module prunes the package scope — funcs, methods hanging from
 /// their receiver, the declared types and the package constants — with the
 /// package as the prefix of every `qname`.
+#[cfg(feature = "lang-go")]
 #[test]
 fn go_declares_the_symbols_of_a_chapter_with_its_nesting() {
     let parsed = parse("internal/store/store.go", GO.as_bytes(), 0).expect("the Go grammar");
@@ -619,6 +625,7 @@ fn go_declares_the_symbols_of_a_chapter_with_its_nesting() {
 
 /// S7/D3: the import path segment, the call by name as written, the struct and
 /// interface embedding, and the type references — never an edge out of prose.
+#[cfg(feature = "lang-go")]
 #[test]
 fn go_relations_are_the_four_kinds_and_never_prose() {
     let parsed = parse("internal/store/store.go", GO.as_bytes(), 0).expect("the grammar");
@@ -716,6 +723,7 @@ final class Quiet {
 /// S3/L5: the Java module prunes the types of a chapter — the interface, the
 /// classes with their constructors and methods, the enum and the record — and
 /// the prefix of every `qname` is the `package` the file declares.
+#[cfg(feature = "lang-java")]
 #[test]
 fn java_declares_the_symbols_of_a_chapter_with_its_nesting() {
     let parsed = parse("src/Store.java", JAVA.as_bytes(), 0).expect("the Java grammar");
@@ -772,6 +780,7 @@ fn java_declares_the_symbols_of_a_chapter_with_its_nesting() {
 
 /// S7/D3: the import, the call by name as written, `extends`/`implements` and
 /// the type references — never an edge out of a comment or a string literal.
+#[cfg(feature = "lang-java")]
 #[test]
 fn java_relations_are_the_four_kinds_and_never_prose() {
     let parsed = parse("src/Store.java", JAVA.as_bytes(), 0).expect("the grammar");
@@ -867,6 +876,13 @@ pub fn call_open_store() -> u8 {
 /// containment tree of each one and walks an edge **across** languages, by
 /// name: the call in Python/Go/Java/Rust resolves to the TypeScript
 /// declaration, and the answer says in which file each caller lives.
+#[cfg(all(
+    feature = "lang-rust",
+    feature = "lang-typescript",
+    feature = "lang-python",
+    feature = "lang-go",
+    feature = "lang-java"
+))]
 #[test]
 fn a_mixed_tree_answers_across_the_five_languages() {
     let scratch = Scratch::new("mixed");
@@ -976,6 +992,13 @@ pub fn close(store: &DiagramStore) -> u8 {
 /// to a declaration. The numbers below are the ones published in `docs/PRD.md`
 /// — **measured on these fixtures, not promises** — and the floors keep a
 /// regression from passing silently.
+#[cfg(all(
+    feature = "lang-rust",
+    feature = "lang-typescript",
+    feature = "lang-python",
+    feature = "lang-go",
+    feature = "lang-java"
+))]
 #[test]
 fn the_resolution_rate_of_each_language_is_measured_on_the_fixtures() {
     let scratch = Scratch::new("resolution");
@@ -1048,6 +1071,13 @@ fn the_resolution_rate_of_each_language_is_measured_on_the_fixtures() {
 
 /// S3/L5: the registry answers the four new extensions with the language the
 /// table `file` stores (`.ts`/`.tsx` share one module).
+#[cfg(all(
+    feature = "lang-rust",
+    feature = "lang-typescript",
+    feature = "lang-python",
+    feature = "lang-go",
+    feature = "lang-java"
+))]
 #[test]
 fn the_registry_answers_the_four_new_languages() {
     for (path, lang) in [

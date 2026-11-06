@@ -10,9 +10,19 @@ repository.workspace = true
 [dependencies]
 gx-core = { workspace = true }
 gx-kinds = { workspace = true }
+# The grammars of the book are features of `gx-index` (T4/C3): the tools forward
+# them so a slim `graphium` build is actually slim.
 gx-index = { workspace = true }
 rmcp = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+
+[features]
+default = ["lang-rust", "lang-typescript", "lang-python", "lang-go", "lang-java"]
+lang-rust = ["gx-index/lang-rust"]
+lang-typescript = ["gx-index/lang-typescript"]
+lang-python = ["gx-index/lang-python"]
+lang-go = ["gx-index/lang-go"]
+lang-java = ["gx-index/lang-java"]

@@ -16,8 +16,22 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 tree-sitter = { workspace = true }
-tree-sitter-rust = { workspace = true }
-tree-sitter-typescript = { workspace = true }
-tree-sitter-python = { workspace = true }
-tree-sitter-go = { workspace = true }
-tree-sitter-java = { workspace = true }
+# The grammars are optional on purpose (T4/C3, the lever of RNF1-quater): each
+# one is a feature, all five are on by default, so a build that does not need a
+# language pays neither its code nor its grammar in the binary.
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-python = { workspace = true, optional = true }
+tree-sitter-go = { workspace = true, optional = true }
+tree-sitter-java = { workspace = true, optional = true }
+
+[features]
+# Default-on: the book ships the five languages of C2, so existing users see no
+# change (T4/C3). A slim build says which ones it wants:
+# `--no-default-features --features "lang-rust,lang-typescript"`.
+default = ["lang-rust", "lang-typescript", "lang-python", "lang-go", "lang-java"]
+lang-rust = ["dep:tree-sitter-rust"]
+lang-typescript = ["dep:tree-sitter-typescript"]
+lang-python = ["dep:tree-sitter-python"]
+lang-go = ["dep:tree-sitter-go"]
+lang-java = ["dep:tree-sitter-java"]
