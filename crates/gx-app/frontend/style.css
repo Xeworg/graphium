@@ -952,8 +952,11 @@ body {
 }
 
 /* The `×` inside the pill: it drops the circle of the object's `×` (the pill
-   is the button's frame now) and shows exactly when the pill shows. */
+   is the button's frame now) and shows exactly when the pill shows. It also
+   joins the row: `position: static` overrides the absolute anchor of
+   `.diagram-close`, which otherwise pins it over the refresh button (L10). */
 .diagram-clone-tools .clone-close {
+  position: static;
   opacity: 1;
   pointer-events: auto;
   width: auto;
