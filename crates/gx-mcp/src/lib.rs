@@ -29,7 +29,8 @@ pub mod book {
 
     use crate::contract::ErrorPayload;
 
-    /// The book is off for this project: `GRAPHIUM_BOOK` is not `on` (S5).
+    /// The book is only off when the owner opted out: `GRAPHIUM_BOOK=off`
+    /// (S5, L5 — the book is on by default).
     pub const DISABLED_CODE: &str = "book_disabled";
     /// The book could not be opened: the answer is an error, never a silent
     /// empty result that the agent would read as «the symbol does not exist».
@@ -37,6 +38,13 @@ pub mod book {
     /// The query fits more than one declaration: `candidates[]` names them
     /// (P3, condition 2).
     pub const AMBIGUOUS_CODE: &str = "ambiguous_symbol";
+
+    /// How deep a walk goes when the agent does not say.
+    pub const DEFAULT_DEPTH: u32 = 1;
+
+    /// The direction `code_impact` follows when the agent does not say: a
+    /// change affects what points at the symbol.
+    pub const DEFAULT_DIRECTION: &str = "in";
 
     /// The project of the session: the record of the session, never the cwd
     /// of the process (D4, ideas §7 explore 3).
@@ -48,7 +56,7 @@ pub mod book {
     }
 
     /// The configuration of the book of the owner: `GRAPHIUM_BOOK` and the
-    /// books root, read once (S5, D4).
+    /// books root, read once (S5, D4). An absent flag means **on**.
     pub fn config_from_env() -> gx_index::BooksConfig {
         gx_index::BooksConfig::from_env()
     }
@@ -82,119 +90,582 @@ pub mod book {
         project: Option<&str>,
         query: &str,
     ) -> Value {
-        let query = query.trim();
-        if query.is_empty() {
-            return failure(
-                "query",
-                "invalid_value",
-                "`query` is empty",
-                Some("send a symbol name, for example `render_diagram`"),
-            );
-        }
-        if query.chars().count() > gx_index::search::MAX_QUERY_CHARS {
-            return failure(
-                "query",
-                "invalid_value",
-                &format!(
-                    "`query` is longer than {} characters",
-                    gx_index::search::MAX_QUERY_CHARS
-                ),
-                Some("send the name of one symbol, not a sentence"),
-            );
-        }
-        if !config.is_enabled() {
-            return failure(
-                "book",
-                DISABLED_CODE,
-                "the book of the project is off for this project",
-                Some("the book is enabled with GRAPHIUM_BOOK=on; ask the human to turn it on for this project"),
-            );
-        }
-        let Some(project) = project.filter(|project| !project.trim().is_empty()) else {
-            return failure(
-                "session.project",
-                "invalid_value",
-                "the session has no project: the book cannot be resolved without one",
-                Some("the client declares the project with GRAPHIUM_PROJECT or through its working directory"),
-            );
+        let query = match text_argument(query, "query") {
+            Ok(query) => query,
+            Err(response) => return response,
         };
-
-        let handle = match gx_index::service::ensure(config, std::path::Path::new(project)) {
-            Ok(handle) => handle,
-            Err(error) => {
-                return failure("book", UNAVAILABLE_CODE, &error.to_string(), None);
-            }
+        let opened = match open(config, project) {
+            Ok(opened) => opened,
+            Err(response) => return response,
         };
-        let book = handle.book();
+        let book = opened.handle.book();
         let outcome = match book.search(&gx_index::SearchRequest {
             query: query.to_string(),
         }) {
             Ok(outcome) => outcome,
+            Err(error) => return failure("book", UNAVAILABLE_CODE, &error.to_string(), None),
+        };
+
+        let mut base = base(&opened);
+        base["query"] = json!(query);
+        match outcome {
+            gx_index::SearchOutcome::Empty => {
+                base["ok"] = json!(true);
+                base["results"] = json!([]);
+                base["count"] = json!(0);
+                base
+            }
+            gx_index::SearchOutcome::Hits(hits) => {
+                let results: Vec<Value> = hits.iter().map(hit_json).collect();
+                base["ok"] = json!(true);
+                base["count"] = json!(results.len());
+                base["results"] = json!(results);
+                base
+            }
+            gx_index::SearchOutcome::Ambiguous(candidates) => {
+                ambiguous_answer(base, "query", query, &candidates)
+            }
+        }
+    }
+
+    /// Runs `code_structure` for the session with the configuration of the owner.
+    pub fn code_structure(session_id: &str, file: Option<&str>, symbol: Option<&str>) -> Value {
+        let config = gx_index::BooksConfig::from_env();
+        code_structure_with(&config, project_of(session_id).as_deref(), file, symbol)
+    }
+
+    /// Runs `code_structure` with an explicit configuration and project (S5).
+    ///
+    /// The structure of a chapter is its containment tree: the declarations of
+    /// one file, ordered by span, with the `parent_id` of each one translated
+    /// to the qname of the parent, so the agent can rebuild the tree without
+    /// another call.
+    pub fn code_structure_with(
+        config: &gx_index::BooksConfig,
+        project: Option<&str>,
+        file: Option<&str>,
+        symbol: Option<&str>,
+    ) -> Value {
+        let file = file.map(str::trim).filter(|text| !text.is_empty());
+        let symbol = symbol.map(str::trim).filter(|text| !text.is_empty());
+        match (file, symbol) {
+            (Some(_), Some(_)) => {
+                return failure(
+                    "file",
+                    "invalid_value",
+                    "send one of `file` or `symbol`, not both",
+                    Some("`file` reads a whole chapter; `symbol` reads the chapter that declares one symbol"),
+                );
+            }
+            (None, None) => {
+                return failure(
+                    "file",
+                    "invalid_value",
+                    "`file` or `symbol` is required",
+                    Some("send `file` (a path relative to the project root, with `/`) or `symbol` (a name, as `code_search` takes it)"),
+                );
+            }
+            _ => {}
+        }
+        let symbol = match symbol {
+            Some(symbol) => match text_argument(symbol, "symbol") {
+                Ok(symbol) => Some(symbol),
+                Err(response) => return response,
+            },
+            None => None,
+        };
+        let opened = match open(config, project) {
+            Ok(opened) => opened,
+            Err(response) => return response,
+        };
+        let book = opened.handle.book();
+        let base = base(&opened);
+
+        let (structure, asked) = match symbol {
+            Some(symbol) => {
+                let hit = match one_symbol(book, base.clone(), symbol, "symbol") {
+                    Ok(hit) => hit,
+                    Err(answer) => return answer,
+                };
+                let structure = book.structure_of_symbol(hit.id);
+                (structure, Some(hit))
+            }
+            None => {
+                let file = file.expect("a selector was required above");
+                (book.structure_at_path(file), None)
+            }
+        };
+        let structure = match structure {
+            Ok(Some(structure)) => structure,
+            Ok(None) => {
+                return failure_with(
+                    base,
+                    if file.is_some() { "file" } else { "symbol" },
+                    "invalid_value",
+                    "the book has no chapter there",
+                    Some("paths are relative to the project root with `/` separators; `progress.state == \"indexing\"` means the first pass is still running"),
+                );
+            }
             Err(error) => {
-                return failure("book", UNAVAILABLE_CODE, &error.to_string(), None);
+                return failure_with(base, "book", UNAVAILABLE_CODE, &error.to_string(), None);
             }
         };
 
+        let mut response = base;
+        response["ok"] = json!(true);
+        response["file"] = json!(structure.file);
+        response["lang"] = json!(structure.lang);
+        response["content_hash"] = json!(structure.content_hash);
+        response["indexed_at"] = json!(gx_index::book::iso8601_utc(structure.indexed_at));
+        response["count"] = json!(structure.symbols.len());
+        response["symbols"] = json!(structure_symbols_json(&structure.symbols));
+        if let Some(hit) = asked {
+            response["symbol"] = hit_json(&hit);
+        }
+        response
+    }
+
+    /// Runs `code_impact` for the session with the configuration of the owner.
+    pub fn code_impact(
+        session_id: &str,
+        symbol: &str,
+        depth: Option<u32>,
+        direction: Option<&str>,
+    ) -> Value {
+        let config = gx_index::BooksConfig::from_env();
+        code_impact_with(
+            &config,
+            project_of(session_id).as_deref(),
+            symbol,
+            depth,
+            direction,
+        )
+    }
+
+    /// Runs `code_impact` with an explicit configuration and project (S7, D3).
+    ///
+    /// The walk is bounded on purpose: `depth` is clamped to the 3 hops of the
+    /// design and the answer is capped at the ceilings of the `graph` kind
+    /// (300 nodes / 600 edges), so it always fits in a document the agent can
+    /// render. A cycle is answered once per symbol, never followed twice.
+    pub fn code_impact_with(
+        config: &gx_index::BooksConfig,
+        project: Option<&str>,
+        symbol: &str,
+        depth: Option<u32>,
+        direction: Option<&str>,
+    ) -> Value {
+        let symbol = match text_argument(symbol, "symbol") {
+            Ok(symbol) => symbol,
+            Err(response) => return response,
+        };
+        let direction = match direction_argument(direction) {
+            Ok(direction) => direction,
+            Err(response) => return response,
+        };
+        let opened = match open(config, project) {
+            Ok(opened) => opened,
+            Err(response) => return response,
+        };
+        let book = opened.handle.book();
+        let base = base(&opened);
+        let hit = match one_symbol(book, base.clone(), symbol, "symbol") {
+            Ok(hit) => hit,
+            Err(answer) => return answer,
+        };
+        let request = gx_index::ImpactRequest {
+            start: hit.id,
+            depth: depth.unwrap_or(DEFAULT_DEPTH),
+            direction,
+        };
+        let impact = match book.impact(&request) {
+            Ok(Some(impact)) => impact,
+            Ok(None) => {
+                return failure_with(
+                    base,
+                    "symbol",
+                    "invalid_value",
+                    "the symbol is no longer in the book",
+                    Some("the indexer replaced the chapter since the search: call the tool again"),
+                );
+            }
+            Err(error) => {
+                return failure_with(base, "book", UNAVAILABLE_CODE, &error.to_string(), None);
+            }
+        };
+
+        let mut response = base;
+        response["ok"] = json!(true);
+        response["symbol"] = hit_json(&hit);
+        response["direction"] = json!(direction.as_str());
+        response["depth"] = json!(impact.depth);
+        response["budget"] = json!({
+            "max_nodes": gx_index::impact::MAX_NODES,
+            "max_edges": gx_index::impact::MAX_EDGES,
+        });
+        response["truncated"] = json!(impact.truncated);
+        response["unresolved"] = json!(impact.unresolved);
+        response["count"] = json!(impact.nodes.len());
+        response["nodes"] = json!(nodes_json(&impact.nodes));
+        response["edges"] = json!(edges_json(&impact.edges));
+        response
+    }
+
+    /// Runs `code_diagram` for the session with the configuration of the owner.
+    pub fn code_diagram(session_id: &str, symbol: &str, depth: Option<u32>) -> Value {
+        let config = gx_index::BooksConfig::from_env();
+        code_diagram_with(&config, project_of(session_id).as_deref(), symbol, depth)
+    }
+
+    /// Builds the `graph` document of one symbol's neighbourhood (S5).
+    ///
+    /// The answer is a **document**, not a paint: the agent sends `diagram` to
+    /// `render_diagram` (or to `validate_diagram` first) unchanged. The
+    /// document never leaves with a density the kind would reject, so it is
+    /// renderable as it arrives.
+    pub fn code_diagram_with(
+        config: &gx_index::BooksConfig,
+        project: Option<&str>,
+        symbol: &str,
+        depth: Option<u32>,
+    ) -> Value {
+        let symbol = match text_argument(symbol, "symbol") {
+            Ok(symbol) => symbol,
+            Err(response) => return response,
+        };
+        let opened = match open(config, project) {
+            Ok(opened) => opened,
+            Err(response) => return response,
+        };
+        let book = opened.handle.book();
+        let base = base(&opened);
+        let hit = match one_symbol(book, base.clone(), symbol, "symbol") {
+            Ok(hit) => hit,
+            Err(answer) => return answer,
+        };
+        let request = gx_index::ImpactRequest {
+            start: hit.id,
+            depth: depth.unwrap_or(DEFAULT_DEPTH),
+            direction: gx_index::Direction::Both,
+        };
+        let impact = match book.impact(&request) {
+            Ok(Some(impact)) => impact,
+            Ok(None) => {
+                return failure_with(
+                    base,
+                    "symbol",
+                    "invalid_value",
+                    "the symbol is no longer in the book",
+                    Some("the indexer replaced the chapter since the search: call the tool again"),
+                );
+            }
+            Err(error) => {
+                return failure_with(base, "book", UNAVAILABLE_CODE, &error.to_string(), None);
+            }
+        };
+
+        let nodes: Vec<Value> = impact
+            .nodes
+            .iter()
+            .map(|node| json!({ "id": node_id(node.id), "label": node.qname }))
+            .collect();
+        // The `graph` kind rejects a density over 3.0 at render time: the
+        // document is trimmed here so it never needs a repair before drawing.
+        let ceiling = impact
+            .nodes
+            .len()
+            .saturating_mul(MAX_DENSITY)
+            .min(gx_index::impact::MAX_EDGES);
+        let edges: Vec<Value> = impact
+            .edges
+            .iter()
+            .take(ceiling)
+            .map(|edge| {
+                json!({
+                    "from": node_id(edge.from),
+                    "to": node_id(edge.to),
+                    "label": edge.kind,
+                })
+            })
+            .collect();
+        let dropped = impact.edges.len().saturating_sub(edges.len());
+        let document = json!({
+            "version": 1,
+            "kind": "graph",
+            "title": format!("{} — relations", hit.qname),
+            "nodes": nodes,
+            "edges": edges,
+        });
+
+        let mut response = base;
+        response["ok"] = json!(true);
+        response["symbol"] = hit_json(&hit);
+        response["direction"] = json!(gx_index::Direction::Both.as_str());
+        response["depth"] = json!(impact.depth);
+        response["truncated"] = json!(impact.truncated || dropped > 0);
+        response["nodes"] = json!(document["nodes"].as_array().map(Vec::len));
+        response["edges"] = json!(document["edges"].as_array().map(Vec::len));
+        response["diagram"] = document;
+        response
+    }
+
+    /// The most edges a `graph` document may carry for each node: the density
+    /// ceiling of the kind (PRD §7.3).
+    const MAX_DENSITY: usize = 3;
+
+    /// One open book and the project it belongs to.
+    struct Opened {
+        handle: std::sync::Arc<gx_index::service::BookHandle>,
+        project: String,
+    }
+
+    /// The book of the session's project, or the answer that says why not.
+    fn open(config: &gx_index::BooksConfig, project: Option<&str>) -> Result<Opened, Value> {
+        if !config.is_enabled() {
+            return Err(failure(
+                "book",
+                DISABLED_CODE,
+                "the book of the project is off: the owner opted out",
+                Some("the book is on by default; only GRAPHIUM_BOOK=off turns it off, and the human decides that"),
+            ));
+        }
+        let Some(project) = project.filter(|project| !project.trim().is_empty()) else {
+            return Err(failure(
+                "session.project",
+                "invalid_value",
+                "the session has no project: the book cannot be resolved without one",
+                Some("the client declares the project with GRAPHIUM_PROJECT or through its working directory"),
+            ));
+        };
+        match gx_index::service::ensure(config, std::path::Path::new(project)) {
+            Ok(handle) => Ok(Opened {
+                handle,
+                project: project.to_string(),
+            }),
+            Err(error) => Err(failure("book", UNAVAILABLE_CODE, &error.to_string(), None)),
+        }
+    }
+
+    /// The fields every answer of the book carries (S5/S7): the book that
+    /// answered, the project it is the book of, and how far the first pass is.
+    fn base(opened: &Opened) -> Value {
+        let book = opened.handle.book();
         let progress = book.progress().unwrap_or_default();
-        let base = json!({
-            "query": query,
+        json!({
             "book_key": book.key(),
             "root": book.location().root_string(),
-            "project": project,
+            "project": opened.project,
             "progress": {
                 "state": progress.state,
                 "files_total": progress.files_total,
                 "files_done": progress.files_done,
                 "symbols": progress.symbols,
             },
-        });
+        })
+    }
 
-        match outcome {
-            gx_index::SearchOutcome::Empty => {
-                let mut response = base;
-                response["ok"] = json!(true);
-                response["results"] = json!([]);
-                response["count"] = json!(0);
-                response
-            }
-            gx_index::SearchOutcome::Hits(hits) => {
-                let results: Vec<Value> = hits.iter().map(hit_json).collect();
-                let mut response = base;
-                response["ok"] = json!(true);
-                response["count"] = json!(results.len());
-                response["results"] = json!(results);
-                response
-            }
-            gx_index::SearchOutcome::Ambiguous(candidates) => {
-                let candidates: Vec<Value> = candidates
-                    .iter()
-                    .map(|candidate| {
-                        json!({
-                            "name": candidate.name,
-                            "kind": candidate.kind,
-                            "qname": candidate.qname,
-                            "file": candidate.file,
-                            "line": candidate.line,
-                            "occurrences": candidate.occurrences,
-                        })
-                    })
-                    .collect();
-                let mut response = base;
-                response["ok"] = json!(false);
-                response["candidates"] = json!(candidates);
-                response["errors"] = json!([ErrorPayload {
-                    path: "query".to_string(),
-                    code: AMBIGUOUS_CODE.to_string(),
-                    message: format!(
-                        "`{query}` fits more than one declaration: no single answer would be honest"
-                    ),
-                    hint: Some(
-                        "send the qname words of one candidate (for example `gx_mcp tools render`) to narrow the search".to_string()
-                    ),
-                }]);
-                response
-            }
+    /// A text argument: trimmed, non-empty and not a sentence.
+    fn text_argument<'a>(value: &'a str, field: &str) -> Result<&'a str, Value> {
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(failure(
+                field,
+                "invalid_value",
+                &format!("`{field}` is empty"),
+                Some("send a symbol name, for example `render_diagram`"),
+            ));
         }
+        if value.chars().count() > gx_index::search::MAX_QUERY_CHARS {
+            return Err(failure(
+                field,
+                "invalid_value",
+                &format!(
+                    "`{field}` is longer than {} characters",
+                    gx_index::search::MAX_QUERY_CHARS
+                ),
+                Some("send the name of one symbol, not a sentence"),
+            ));
+        }
+        Ok(value)
+    }
+
+    /// The direction of a walk, from its three names.
+    fn direction_argument(raw: Option<&str>) -> Result<gx_index::Direction, Value> {
+        let text = raw
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .unwrap_or(DEFAULT_DIRECTION);
+        gx_index::Direction::parse(text).ok_or_else(|| {
+            failure(
+                "direction",
+                "invalid_value",
+                &format!("`{text}` is not a direction"),
+                Some("send `in` (the default: the edges that point at the symbol), `out` (what it reaches) or `both`"),
+            )
+        })
+    }
+
+    /// The one declaration a question names, or the answer that says why it is
+    /// not one (P3, condition 2). `base` is consumed because every failure
+    /// carries it: the agent always learns which book answered.
+    fn one_symbol(
+        book: &gx_index::Book,
+        base: Value,
+        symbol: &str,
+        field: &str,
+    ) -> Result<gx_index::SymbolHit, Value> {
+        let outcome = match book.search(&gx_index::SearchRequest {
+            query: symbol.to_string(),
+        }) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                return Err(failure_with(
+                    base,
+                    "book",
+                    UNAVAILABLE_CODE,
+                    &error.to_string(),
+                    None,
+                ));
+            }
+        };
+        match outcome {
+            gx_index::SearchOutcome::Hits(hits) => match hits.into_iter().next() {
+                Some(hit) => Ok(hit),
+                None => Err(failure_with(
+                    base,
+                    field,
+                    "invalid_value",
+                    &format!("no declaration matches `{symbol}`"),
+                    Some("use `code_search` first: it lists the declarations the book has"),
+                )),
+            },
+            gx_index::SearchOutcome::Ambiguous(candidates) => {
+                Err(ambiguous_answer(base, field, symbol, &candidates))
+            }
+            gx_index::SearchOutcome::Empty => Err(failure_with(
+                base,
+                field,
+                "invalid_value",
+                &format!("no declaration matches `{symbol}`"),
+                Some("use `code_search` first: it lists the declarations the book has"),
+            )),
+        }
+    }
+
+    /// One candidate as the agent reads it: the same shape `code_search` uses.
+    fn candidate_json(candidate: &gx_index::SymbolCandidate) -> Value {
+        json!({
+            "name": candidate.name,
+            "kind": candidate.kind,
+            "qname": candidate.qname,
+            "file": candidate.file,
+            "line": candidate.line,
+            "occurrences": candidate.occurrences,
+        })
+    }
+
+    /// The answer of a question whose subject fits more than one declaration.
+    fn ambiguous_answer(
+        base: Value,
+        field: &str,
+        query: &str,
+        candidates: &[gx_index::SymbolCandidate],
+    ) -> Value {
+        let candidates: Vec<Value> = candidates.iter().map(candidate_json).collect();
+        let mut response = base;
+        response["ok"] = json!(false);
+        response["candidates"] = json!(candidates);
+        response["errors"] = json!([ErrorPayload {
+            path: field.to_string(),
+            code: AMBIGUOUS_CODE.to_string(),
+            message: format!(
+                "`{query}` fits more than one declaration: no single answer would be honest"
+            ),
+            hint: Some(
+                "send the qname words of one candidate (for example `gx_mcp tools render`) to narrow the search".to_string()
+            ),
+        }]);
+        response
+    }
+
+    /// A failure that still carries the book it was asked about.
+    fn failure_with(
+        mut base: Value,
+        path: &str,
+        code: &str,
+        message: &str,
+        hint: Option<&str>,
+    ) -> Value {
+        base["ok"] = json!(false);
+        base["errors"] = json!([ErrorPayload {
+            path: path.to_string(),
+            code: code.to_string(),
+            message: message.to_string(),
+            hint: hint.map(str::to_string),
+        }]);
+        base
+    }
+
+    /// The id of a symbol inside an answer: stable inside the book, and unique
+    /// even when two chapters carry the same qname.
+    fn node_id(id: i64) -> String {
+        format!("s{id}")
+    }
+
+    /// The nodes of a walk as the agent reads them.
+    fn nodes_json(nodes: &[gx_index::ImpactNode]) -> Vec<Value> {
+        nodes
+            .iter()
+            .map(|node| {
+                json!({
+                    "id": node_id(node.id),
+                    "name": node.name,
+                    "kind": node.kind,
+                    "qname": node.qname,
+                    "file": node.file,
+                    "line": node.line,
+                    "depth": node.depth,
+                })
+            })
+            .collect()
+    }
+
+    /// The edges of a walk as the agent reads them.
+    fn edges_json(edges: &[gx_index::ImpactEdge]) -> Vec<Value> {
+        edges
+            .iter()
+            .map(|edge| {
+                json!({
+                    "from": node_id(edge.from),
+                    "to": node_id(edge.to),
+                    "kind": edge.kind,
+                })
+            })
+            .collect()
+    }
+
+    /// The declarations of a chapter, with the parent as the qname it belongs
+    /// to: the tree is rebuildable from this list alone.
+    fn structure_symbols_json(symbols: &[gx_index::StructureSymbol]) -> Vec<Value> {
+        let qnames: std::collections::BTreeMap<i64, &str> = symbols
+            .iter()
+            .map(|symbol| (symbol.id, symbol.qname.as_str()))
+            .collect();
+        symbols
+            .iter()
+            .map(|symbol| {
+                json!({
+                    "name": symbol.name,
+                    "kind": symbol.kind,
+                    "qname": symbol.qname,
+                    "line": symbol.line,
+                    "column": symbol.column,
+                    "end_line": symbol.end_line,
+                    "end_column": symbol.end_column,
+                    "parent": symbol.parent.and_then(|parent| qnames.get(&parent).copied()),
+                })
+            })
+            .collect()
     }
 
     /// One hit as the agent reads it: `file:line` plus what S7 requires.
@@ -540,10 +1011,11 @@ word has to match (`render config` finds a symbol whose name carries both); \
 CamelCase and snake_case are both indexed. When the query fits more than one \
 declaration the tool answers `ok: false` with code `ambiguous_symbol` and \
 `candidates[]` (`name`, `kind`, `qname`, `file`, `line`, `occurrences`): send \
-the words of one candidate's qname to narrow it, never guess. A project \
-without `GRAPHIUM_BOOK=on` answers `book_disabled` and a book that cannot be \
-opened answers `book_unavailable`. `progress.state == \"indexing\"` means the \
-first pass is still running, so a missing symbol may be added in a moment.";
+the words of one candidate's qname to narrow it, never guess. The book is on \
+by default: `book_disabled` only answers when the owner opted out with \
+`GRAPHIUM_BOOK=off`, and a book that cannot be opened answers \
+`book_unavailable`. `progress.state == \"indexing\"` means the first pass is \
+still running, so a missing symbol may be added in a moment.";
 
 /// Parameters of the `code_search` tool (F9, C0).
 #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
@@ -551,6 +1023,95 @@ first pass is still running, so a missing symbol may be added in a moment.";
 pub struct CodeSearchParams {
     /// The symbol to look for: one or more words of its name or qname.
     pub query: String,
+}
+
+/// Description of the `code_structure` tool, written for the agent (S5, S7).
+const CODE_STRUCTURE_DESCRIPTION: &str = "\
+Read the structure of one chapter of the book: the declarations of a file, \
+ordered by span, each with `name`, `kind`, `qname`, `line`, `column`, \
+`end_line`, `end_column` and `parent` (the qname of the declaration that \
+contains it), so the containment tree is rebuildable from one answer. Ask with \
+`file` (a path relative to the project root, with `/` separators) or with \
+`symbol` (a name, as `code_search` takes it): exactly one of the two, and a \
+symbol that fits more than one declaration answers `ok: false` with code \
+`ambiguous_symbol` and `candidates[]`. The answer carries the `content_hash` \
+and `indexed_at` of the chapter plus the `book_key` of the book that answered. \
+`progress.state == \"indexing\"` means the first pass is still running. The \
+book is on by default: `book_disabled` only answers when the owner opted out \
+with `GRAPHIUM_BOOK=off`, and an unopenable book answers `book_unavailable`. \
+Read-only: it never touches the plan.";
+
+/// Parameters of the `code_structure` tool (F9, C1).
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeStructureParams {
+    /// The path of the chapter, relative to the project root, with `/`.
+    #[serde(default)]
+    pub file: Option<String>,
+    /// The symbol whose chapter to read: a name, as `code_search` takes it.
+    #[serde(default)]
+    pub symbol: Option<String>,
+}
+
+/// Description of the `code_impact` tool, written for the agent (S5, S7, D3).
+const CODE_IMPACT_DESCRIPTION: &str = "\
+Walk the connections of one symbol in the book: who points at it, what it \
+reaches, or both. `direction` is `in` (default: the edges that point at the \
+symbol, so what a change would affect), `out` (what the symbol calls, imports \
+or uses) or `both`. The edges are **syntactic, not typed** (a call by name, an \
+import by its bound segment, an `impl Trait for Type`, a type reference), so a \
+common name may be a false positive and `unresolved` counts the targets the \
+book could not pin to one declaration. The walk has three guards and the \
+answer states them: `depth` is clamped to 3 hops, a cycle is answered once \
+per symbol and never followed twice, and the answer is capped at the ceilings \
+of the `graph` kind (300 nodes / 600 edges) with `truncated: true` when the \
+cap bites. Every node carries `file`, `line` and the hop it was reached at; \
+the symbol you asked about travels with `content_hash` and `indexed_at`, plus \
+the `book_key` of the book. A name that fits more than one declaration \
+answers `ok: false` with `ambiguous_symbol` and `candidates[]`; the book is \
+on by default, so `book_disabled` only comes from an explicit \
+`GRAPHIUM_BOOK=off`. Read-only: it never touches the plan.";
+
+/// Parameters of the `code_impact` tool (F9, C1).
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeImpactParams {
+    /// The symbol to start from: a name, as `code_search` takes it.
+    pub symbol: String,
+    /// Hops to follow: 1 by default, clamped to 3.
+    #[serde(default)]
+    pub depth: Option<u32>,
+    /// `in` (default), `out` or `both`.
+    #[serde(default)]
+    pub direction: Option<String>,
+}
+
+/// Description of the `code_diagram` tool, written for the agent (S5).
+const CODE_DIAGRAM_DESCRIPTION: &str = "\
+Build the diagram of one symbol's neighbourhood from the book, without reading \
+any file. The answer is a complete `graph` document (`version: 1`, `kind: \
+\"graph\"`, one node per symbol with its `qname` as the label, one edge per \
+connection labelled with its kind) in `diagram`: send it to `render_diagram` \
+as it is, or to `validate_diagram` first. The document respects the contract of \
+the kind (at most 300 nodes, 600 edges and a density of 3), so it is \
+renderable with no repair. The walk is the same as `code_impact` with \
+`direction: both` and `depth` clamped to 3 hops; `truncated` says whether a \
+guard cut it. The edges are syntactic, not typed (D3): the picture is the \
+book's reading of the code, not a compiler's. The start symbol travels with \
+`content_hash`, `indexed_at` and the `book_key` of the book; an ambiguous name \
+answers `ok: false` with `ambiguous_symbol` and `candidates[]`, and the book is \
+on by default (`book_disabled` only with an explicit `GRAPHIUM_BOOK=off`). \
+It never renders and never touches the plan: the diagram is a document.";
+
+/// Parameters of the `code_diagram` tool (F9, C1).
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeDiagramParams {
+    /// The symbol to draw the neighbourhood of: a name, as `code_search` takes it.
+    pub symbol: String,
+    /// Hops to follow: 1 by default, clamped to 3.
+    #[serde(default)]
+    pub depth: Option<u32>,
 }
 
 /// The MCP server of Graphium.
@@ -889,6 +1450,94 @@ impl GraphiumServer {
                 .map_err(|error| {
                     ErrorData::internal_error(format!("the search task failed: {error}"), None)
                 })?;
+        structured(response)
+    }
+
+    #[tool(
+        name = "code_structure",
+        description = CODE_STRUCTURE_DESCRIPTION,
+        annotations(
+            title = "Read the structure of a chapter of the book",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn code_structure(
+        &self,
+        Parameters(params): Parameters<CodeStructureParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session_id = self.session_id.clone();
+        // Reading the book opens it in the owner's process: off the async loop.
+        let response = tokio::task::spawn_blocking(move || {
+            book::code_structure(
+                &session_id,
+                params.file.as_deref(),
+                params.symbol.as_deref(),
+            )
+        })
+        .await
+        .map_err(|error| {
+            ErrorData::internal_error(format!("the structure task failed: {error}"), None)
+        })?;
+        structured(response)
+    }
+
+    #[tool(
+        name = "code_impact",
+        description = CODE_IMPACT_DESCRIPTION,
+        annotations(
+            title = "Walk the connections of a symbol",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn code_impact(
+        &self,
+        Parameters(params): Parameters<CodeImpactParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session_id = self.session_id.clone();
+        let response = tokio::task::spawn_blocking(move || {
+            book::code_impact(
+                &session_id,
+                &params.symbol,
+                params.depth,
+                params.direction.as_deref(),
+            )
+        })
+        .await
+        .map_err(|error| {
+            ErrorData::internal_error(format!("the impact task failed: {error}"), None)
+        })?;
+        structured(response)
+    }
+
+    #[tool(
+        name = "code_diagram",
+        description = CODE_DIAGRAM_DESCRIPTION,
+        annotations(
+            title = "Build the diagram of a symbol from the book",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn code_diagram(
+        &self,
+        Parameters(params): Parameters<CodeDiagramParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session_id = self.session_id.clone();
+        let response = tokio::task::spawn_blocking(move || {
+            book::code_diagram(&session_id, &params.symbol, params.depth)
+        })
+        .await
+        .map_err(|error| {
+            ErrorData::internal_error(format!("the diagram task failed: {error}"), None)
+        })?;
         structured(response)
     }
 }
@@ -1609,17 +2258,36 @@ mod tests {
         assert_eq!(empty["results"].as_array().map(Vec::len), Some(0));
     }
 
-    /// S5: without `GRAPHIUM_BOOK=on` the tool answers its own code and never
+    /// S5/L5: the book is **on by default** — an absent flag with a books root
+    /// answers normally, with no `GRAPHIUM_BOOK=on` anywhere.
+    #[test]
+    fn the_book_answers_when_the_flag_is_absent() {
+        let scratch = BookScratch::new("default-on");
+        scratch.write("src/tools.rs", "pub fn render_diagram() {}\n");
+        let project = scratch.root().to_string_lossy().to_string();
+        // The first pass runs inside the watcher thread: finish it here so the
+        // answer is about the flag and not about a pass in flight.
+        scratch.indexed();
+        // `None` is what an environment without GRAPHIUM_BOOK gives.
+        let config = gx_index::BooksConfig::from_parts(None, Some(scratch.base.join("books")));
+        assert!(config.is_enabled(), "an absent flag keeps the book on");
+
+        let response = crate::book::code_search_with(&config, Some(&project), "render_diagram");
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["count"], 1, "{response}");
+        assert_eq!(response["progress"]["state"], "indexed", "{response}");
+    }
+
+    /// S5/L5: only the explicit opt-out answers `book_disabled`, and it never
     /// touches the books root.
     #[test]
     fn the_disabled_path_answers_book_disabled() {
         let scratch = BookScratch::new("disabled");
         let project = scratch.root().to_string_lossy().to_string();
-        let response = crate::book::code_search_with(
-            &gx_index::BooksConfig::disabled(),
-            Some(&project),
-            "anything",
-        );
+        let config =
+            gx_index::BooksConfig::from_parts(Some("off".into()), Some(scratch.base.join("books")));
+        assert!(!config.is_enabled(), "GRAPHIUM_BOOK=off is the opt-out");
+        let response = crate::book::code_search_with(&config, Some(&project), "anything");
         assert_eq!(response["ok"], false, "{response}");
         assert_eq!(
             response["errors"][0]["code"],
@@ -1712,5 +2380,394 @@ mod tests {
             crate::dispatch::TOOL_NAMES.contains(&"code_search"),
             "the tool has to be in the index of the server"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // F9, C1 — `code_structure`, `code_impact` and `code_diagram`
+    // -----------------------------------------------------------------
+
+    /// S5/S7: `code_structure` answers the containment tree of a chapter and
+    /// the same tree when the question names one symbol, with `file:line`,
+    /// `content_hash`, `indexed_at` and the `book_key` of the book.
+    #[test]
+    fn the_code_structure_contract_answers_a_file_and_a_symbol() {
+        let scratch = BookScratch::new("structure");
+        scratch.write(
+            "src/tools.rs",
+            "pub fn render_diagram() {}\npub struct Session;\n",
+        );
+        let handle = scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let by_file = crate::book::code_structure_with(
+            &scratch.config(),
+            Some(&project),
+            Some("src/tools.rs"),
+            None,
+        );
+        assert_eq!(by_file["ok"], true, "{by_file}");
+        assert_eq!(by_file["book_key"], handle.book().key(), "{by_file}");
+        assert_eq!(by_file["file"], "src/tools.rs", "{by_file}");
+        assert_eq!(by_file["count"], 2, "{by_file}");
+        assert_eq!(by_file["progress"]["state"], "indexed", "{by_file}");
+        assert!(
+            by_file["content_hash"]
+                .as_str()
+                .is_some_and(|hash| hash.len() == 64),
+            "{by_file}"
+        );
+        assert!(
+            by_file["indexed_at"]
+                .as_str()
+                .is_some_and(|at| at.ends_with('Z')),
+            "{by_file}"
+        );
+        let symbols = by_file["symbols"].as_array().expect("the symbols travel");
+        assert_eq!(symbols[0]["name"], "render_diagram", "{by_file}");
+        assert_eq!(symbols[0]["qname"], "tools::render_diagram", "{by_file}");
+        assert_eq!(symbols[0]["line"], 1, "{by_file}");
+        assert!(symbols[0]["parent"].is_null(), "{by_file}");
+
+        let by_symbol = crate::book::code_structure_with(
+            &scratch.config(),
+            Some(&project),
+            None,
+            Some("render_diagram"),
+        );
+        assert_eq!(by_symbol["ok"], true, "{by_symbol}");
+        assert_eq!(by_symbol["file"], "src/tools.rs", "{by_symbol}");
+        assert_eq!(by_symbol["symbol"]["name"], "render_diagram", "{by_symbol}");
+        assert_eq!(by_symbol["count"], 2, "{by_symbol}");
+    }
+
+    /// S5: the tool takes exactly one selector, and an unknown path is an
+    /// error with a hint instead of an empty chapter that reads as «no
+    /// symbols».
+    #[test]
+    fn code_structure_rejects_zero_or_two_selectors_and_unknown_files() {
+        let scratch = BookScratch::new("structure-args");
+        scratch.write("src/one.rs", "pub fn one() {}\n");
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let none = crate::book::code_structure_with(&scratch.config(), Some(&project), None, None);
+        assert_eq!(none["ok"], false, "{none}");
+        assert_eq!(none["errors"][0]["code"], "invalid_value", "{none}");
+
+        let both = crate::book::code_structure_with(
+            &scratch.config(),
+            Some(&project),
+            Some("src/one.rs"),
+            Some("one"),
+        );
+        assert_eq!(both["ok"], false, "{both}");
+        assert_eq!(both["errors"][0]["code"], "invalid_value", "{both}");
+
+        let unknown = crate::book::code_structure_with(
+            &scratch.config(),
+            Some(&project),
+            Some("src/nope.rs"),
+            None,
+        );
+        assert_eq!(unknown["ok"], false, "{unknown}");
+        assert_eq!(unknown["errors"][0]["code"], "invalid_value", "{unknown}");
+        assert_eq!(unknown["errors"][0]["path"], "file", "{unknown}");
+        assert!(unknown["errors"][0]["hint"].is_string(), "{unknown}");
+
+        let no_symbol = crate::book::code_structure_with(
+            &scratch.config(),
+            Some(&project),
+            None,
+            Some("nothing_like_this"),
+        );
+        assert_eq!(no_symbol["ok"], false, "{no_symbol}");
+        assert_eq!(no_symbol["errors"][0]["path"], "symbol", "{no_symbol}");
+    }
+
+    /// P3, condition 2: a name that fits more than one declaration is never
+    /// answered with one confident structure.
+    #[test]
+    fn code_structure_answers_ambiguous_symbol() {
+        let scratch = BookScratch::new("structure-ambiguous");
+        scratch.write("src/one.rs", "pub fn parse() {}\n");
+        scratch.write("src/two.rs", "pub fn parse() {}\n");
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response = crate::book::code_structure_with(
+            &scratch.config(),
+            Some(&project),
+            None,
+            Some("parse"),
+        );
+        assert_eq!(response["ok"], false, "{response}");
+        assert_eq!(
+            response["errors"][0]["code"],
+            crate::book::AMBIGUOUS_CODE,
+            "{response}"
+        );
+        let candidates = response["candidates"]
+            .as_array()
+            .expect("the candidates travel");
+        assert_eq!(candidates.len(), 2, "{response}");
+    }
+
+    /// S7/D3: the impact walk follows the syntactic edges in the direction
+    /// asked, with a cycle guard and a depth cap of 3 that hold even when the
+    /// request asks for more.
+    #[test]
+    fn the_code_impact_walks_the_edges_with_its_guards() {
+        let scratch = BookScratch::new("impact");
+        scratch.write(
+            "src/store.rs",
+            "pub fn open_store() -> u8 { 1 }\npub fn build() -> u8 { open_store() }\n",
+        );
+        // A cycle: the walk must not spend a hop going back to where it came.
+        scratch.write("src/cycle.rs", "pub fn a() { b(); }\npub fn b() { a(); }\n");
+        // A chain longer than the cap, so the cap is observable.
+        scratch.write(
+            "src/chain.rs",
+            "pub fn x() { y(); }\npub fn y() { z(); }\npub fn z() { w(); }\npub fn w() { v(); }\npub fn v() {}\n",
+        );
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        // The default direction is the impact of a change: who points at it.
+        let dependents = crate::book::code_impact_with(
+            &scratch.config(),
+            Some(&project),
+            "open_store",
+            None,
+            None,
+        );
+        assert_eq!(dependents["ok"], true, "{dependents}");
+        assert_eq!(dependents["direction"], "in", "{dependents}");
+        assert_eq!(
+            dependents["symbol"]["qname"], "store::open_store",
+            "{dependents}"
+        );
+        let nodes = dependents["nodes"].as_array().expect("nodes");
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node["qname"] == "store::build" && node["depth"] == 1),
+            "{dependents}"
+        );
+        let edges = dependents["edges"].as_array().expect("edges");
+        assert_eq!(edges.len(), 1, "{dependents}");
+        assert_eq!(edges[0]["kind"], "calls", "{dependents}");
+        assert_eq!(dependents["budget"]["max_nodes"], 300, "{dependents}");
+        assert_eq!(dependents["budget"]["max_edges"], 600, "{dependents}");
+
+        // The other direction: what the symbol reaches.
+        let callees = crate::book::code_impact_with(
+            &scratch.config(),
+            Some(&project),
+            "build",
+            None,
+            Some("out"),
+        );
+        assert_eq!(callees["ok"], true, "{callees}");
+        assert!(
+            callees["nodes"].as_array().is_some_and(|nodes| nodes
+                .iter()
+                .any(|node| node["qname"] == "store::open_store")),
+            "{callees}"
+        );
+
+        // A cycle answers once per symbol instead of hanging.
+        let cycle = crate::book::code_impact_with(
+            &scratch.config(),
+            Some(&project),
+            "a",
+            Some(3),
+            Some("both"),
+        );
+        assert_eq!(cycle["ok"], true, "{cycle}");
+        assert_eq!(cycle["count"], 2, "{cycle}");
+        assert_eq!(cycle["depth"], 3, "{cycle}");
+
+        // The cap: asking for more than 3 hops keeps the answer at 3.
+        let capped = crate::book::code_impact_with(
+            &scratch.config(),
+            Some(&project),
+            "x",
+            Some(9),
+            Some("out"),
+        );
+        assert_eq!(capped["ok"], true, "{capped}");
+        assert_eq!(capped["depth"], 3, "the cap is 3: {capped}");
+        let reached: Vec<&str> = capped["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .filter_map(|node| node["qname"].as_str())
+            .collect();
+        assert!(reached.contains(&"chain::z"), "{reached:?}");
+        assert!(
+            !reached.contains(&"chain::v"),
+            "hop 4 stays out: {reached:?}"
+        );
+
+        // An unknown direction is rejected, it never silently picks one.
+        let wrong = crate::book::code_impact_with(
+            &scratch.config(),
+            Some(&project),
+            "build",
+            None,
+            Some("sideways"),
+        );
+        assert_eq!(wrong["ok"], false, "{wrong}");
+        assert_eq!(wrong["errors"][0]["path"], "direction", "{wrong}");
+    }
+
+    #[test]
+    fn code_impact_answers_ambiguous_symbol() {
+        let scratch = BookScratch::new("impact-ambiguous");
+        scratch.write("src/one.rs", "pub fn parse() {}\n");
+        scratch.write("src/two.rs", "pub fn parse() {}\n");
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+        let response =
+            crate::book::code_impact_with(&scratch.config(), Some(&project), "parse", None, None);
+        assert_eq!(response["ok"], false, "{response}");
+        assert_eq!(
+            response["errors"][0]["code"],
+            crate::book::AMBIGUOUS_CODE,
+            "{response}"
+        );
+        assert_eq!(
+            response["candidates"].as_array().map(Vec::len),
+            Some(2),
+            "{response}"
+        );
+    }
+
+    #[test]
+    fn code_impact_answers_book_disabled() {
+        let scratch = BookScratch::new("impact-disabled");
+        let project = scratch.root().to_string_lossy().to_string();
+        let config =
+            gx_index::BooksConfig::from_parts(Some("off".into()), Some(scratch.base.join("books")));
+        let response =
+            crate::book::code_impact_with(&config, Some(&project), "anything", None, None);
+        assert_eq!(response["ok"], false, "{response}");
+        assert_eq!(
+            response["errors"][0]["code"],
+            crate::book::DISABLED_CODE,
+            "{response}"
+        );
+        assert!(
+            !scratch.base.join("books").exists(),
+            "the disabled path never creates a books root"
+        );
+    }
+
+    /// S5: `code_diagram` returns a document, not a paint: the `graph` document
+    /// it builds passes the same validation the render runs.
+    #[test]
+    fn the_code_diagram_emits_a_graph_document_the_validation_accepts() {
+        let scratch = BookScratch::new("diagram");
+        scratch.write(
+            "src/store.rs",
+            "pub fn open_store() -> u8 { 1 }\npub fn build() -> u8 { open_store() }\npub fn lonely() {}\n",
+        );
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response =
+            crate::book::code_diagram_with(&scratch.config(), Some(&project), "open_store", None);
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["progress"]["state"], "indexed", "{response}");
+        let document = &response["diagram"];
+        assert_eq!(document["version"], 1, "{response}");
+        assert_eq!(document["kind"], "graph", "{response}");
+        let nodes = document["nodes"].as_array().expect("the nodes travel");
+        assert_eq!(nodes.len(), 2, "{response}");
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node["label"] == "store::open_store"),
+            "{response}"
+        );
+        let edges = document["edges"].as_array().expect("the edges travel");
+        assert_eq!(edges.len(), 1, "{response}");
+        assert_eq!(edges[0]["label"], "calls", "{response}");
+
+        // The document goes to `render_diagram` as it is: the validation of
+        // the render accepts it with no repair.
+        let validated = crate::contract::validate_diagram(&document.to_string());
+        assert!(validated.ok, "{:?}", validated.errors);
+
+        // A symbol with no relations is a one-node document, not an error.
+        let lonely =
+            crate::book::code_diagram_with(&scratch.config(), Some(&project), "lonely", None);
+        assert_eq!(lonely["ok"], true, "{lonely}");
+        assert_eq!(
+            lonely["diagram"]["nodes"].as_array().map(Vec::len),
+            Some(1),
+            "{lonely}"
+        );
+        let validated = crate::contract::validate_diagram(&lonely["diagram"].to_string());
+        assert!(validated.ok, "{:?}", validated.errors);
+    }
+
+    #[test]
+    fn code_diagram_answers_ambiguous_symbol() {
+        let scratch = BookScratch::new("diagram-ambiguous");
+        scratch.write("src/one.rs", "pub fn parse() {}\n");
+        scratch.write("src/two.rs", "pub fn parse() {}\n");
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+        let response =
+            crate::book::code_diagram_with(&scratch.config(), Some(&project), "parse", None);
+        assert_eq!(response["ok"], false, "{response}");
+        assert_eq!(
+            response["errors"][0]["code"],
+            crate::book::AMBIGUOUS_CODE,
+            "{response}"
+        );
+    }
+
+    #[test]
+    fn code_diagram_answers_book_disabled() {
+        let scratch = BookScratch::new("diagram-disabled");
+        let project = scratch.root().to_string_lossy().to_string();
+        let config =
+            gx_index::BooksConfig::from_parts(Some("off".into()), Some(scratch.base.join("books")));
+        let response = crate::book::code_diagram_with(&config, Some(&project), "anything", None);
+        assert_eq!(response["ok"], false, "{response}");
+        assert_eq!(
+            response["errors"][0]["code"],
+            crate::book::DISABLED_CODE,
+            "{response}"
+        );
+    }
+
+    /// The three tools exist once: the dispatcher of the owner publishes them
+    /// with their schemas, exactly like `code_search`.
+    #[test]
+    fn the_dispatcher_exposes_the_book_tools() {
+        for name in ["code_structure", "code_impact", "code_diagram"] {
+            assert!(
+                crate::dispatch::TOOL_NAMES.contains(&name),
+                "`{name}` has to be in the index of the server"
+            );
+            let schema = crate::dispatch::tool_schema(name);
+            assert!(schema["properties"].is_object(), "{name}: {schema}");
+        }
+        assert_eq!(
+            crate::dispatch::tool_schema("code_impact")["required"][0],
+            "symbol"
+        );
+        assert_eq!(
+            crate::dispatch::tool_schema("code_diagram")["required"][0],
+            "symbol"
+        );
+        for name in ["code_impact", "code_diagram"] {
+            let error = crate::dispatch::call_tool(name, &serde_json::json!({}), "s")
+                .expect_err("`symbol` is required");
+            assert!(error.contains("symbol"), "{name}: {error}");
+        }
     }
 }

@@ -115,8 +115,20 @@ function by name before drawing its flow. Every word of `query` has to match \
 and the tool never guesses: a query that fits more than one declaration \
 answers `ok: false` with `code_search`'s `ambiguous_symbol` code and \
 `candidates[]`, so send the words of one candidate's `qname` to narrow it. \
-The book is off unless the project turns it on: without `GRAPHIUM_BOOK=on` the \
-answer is `book_disabled`, and a book that cannot be opened answers \
+`code_structure` reads a whole chapter (`file`) or the chapter that declares \
+one symbol (`symbol`): the declarations with their spans and the `parent` of \
+each one, so you see how a file is built without reading it. `code_impact` \
+walks the connections of a symbol — `direction: \"in\"` by default (what points \
+at it, so what a change would affect), `out` (what it calls or imports) or \
+`both` — following `calls`, `imports`, `inherits` and `uses` between symbols, \
+clamped to 3 hops and to 300 nodes / 600 edges, with a cycle answered once \
+and `unresolved` counting the names the book could not pin down. Those \
+connections are syntactic, not typed: they are read from the code and may be \
+false positives. `code_diagram` turns the same neighbourhood into a `graph` \
+document in `diagram`, ready to send to `render_diagram` with no repair: that \
+is the cheap diagram, drawn from the book instead of from the code. The book \
+is on by default: `book_disabled` only answers when the owner opted out with \
+`GRAPHIUM_BOOK=off`, and a book that cannot be opened answers \
 `book_unavailable`. `progress.state` tells whether the first pass is still \
 `indexing`, so a symbol that is not there yet may appear in a moment. The \
 book is a cache of the project and never changes the plan.";
@@ -250,10 +262,61 @@ match (`render config` finds a symbol whose name carries both); CamelCase and \
 snake_case are both indexed. When the query fits more than one declaration \
 the answer is `ok: false` with code `ambiguous_symbol` and `candidates[]` \
 (`name`, `kind`, `qname`, `file`, `line`, `occurrences`): send the words of \
-one candidate's qname to narrow it, never guess. A project without \
-`GRAPHIUM_BOOK=on` answers `book_disabled`, a book that cannot be opened \
-answers `book_unavailable`, and `progress.state == \"indexing\"` means the \
-first pass is still running. Read-only: it never touches the plan."
+one candidate's qname to narrow it, never guess. The book is on by default: \
+`book_disabled` only answers when the owner opted out with \
+`GRAPHIUM_BOOK=off`, a book that cannot be opened answers `book_unavailable`, \
+and `progress.state == \"indexing\"` means the first pass is still running. \
+Read-only: it never touches the plan."
+        }
+        "code_structure" => {
+            "\
+Read the structure of one chapter of the book: its declarations ordered by \
+span, each with `name`, `kind`, `qname`, `line`, `column`, `end_line`, \
+`end_column` and `parent` (the qname of the declaration that contains it). \
+Send exactly one selector: `file` (a path relative to the project root, with \
+`/`) or `symbol` (a name, as `code_search` takes it). A symbol that fits more \
+than one declaration answers `ok: false` with `ambiguous_symbol` and \
+`candidates[]`; an unknown path answers `invalid_value` at `path: \"file\"` \
+with a hint, never an empty tree that reads as «no declarations». The answer \
+carries the `content_hash` and `indexed_at` of the chapter, the `book_key` of \
+the book and `progress.state` (`indexing` means the first pass is running). The \
+book is on by default: `book_disabled` only answers when the owner opted out \
+with `GRAPHIUM_BOOK=off`, and a book that cannot be opened answers \
+`book_unavailable`. Read-only: it never touches the plan."
+        }
+        "code_impact" => {
+            "\
+Walk the connections of one symbol: who points at it, what it reaches, or \
+both. `direction` is `in` (default: what a change would affect), `out` (what \
+the symbol calls, imports or uses) or `both`; the edges are syntactic, not \
+typed — a call by name, an import by its bound segment, an `impl Trait for \
+Type`, a type reference — so a common name may be a false positive. The walk \
+has three guards, and the answer states them: `depth` is clamped to 3 hops, a \
+cycle is answered once per symbol and never followed twice, and the answer is \
+capped at the ceilings of the `graph` kind (300 nodes / 600 edges) with \
+`truncated: true` when the cap bites and `unresolved` counting the targets \
+the book could not pin to one declaration. Nodes carry `file`, `line` and the \
+hop they were reached at; the symbol you asked about travels with its \
+`content_hash`, its `indexed_at` and the `book_key` of the book. An ambiguous \
+name answers `ok: false` with `ambiguous_symbol` and `candidates[]`; the book \
+is on by default, so `book_disabled` only comes from an explicit \
+`GRAPHIUM_BOOK=off`. Read-only: it never touches the plan."
+        }
+        "code_diagram" => {
+            "\
+Build the diagram of one symbol's neighbourhood from the book, without \
+reading any file: the answer is a complete `graph` document (`version: 1`, \
+`kind: \"graph\"`, one node per symbol labelled with its `qname`, one edge per \
+connection labelled with its kind) in `diagram`. Send it to `render_diagram` \
+as it is, or to `validate_diagram` first: it respects the contract of the kind \
+(300 nodes, 600 edges, density 3), so it needs no repair. The walk is \
+`code_impact` with `direction: both` and `depth` clamped to 3 hops; \
+`truncated` says whether a guard cut it. The connections are syntactic, not \
+typed: the picture is the book's reading of the code. The start symbol \
+travels with `content_hash`, `indexed_at` and the `book_key` of the book; an \
+ambiguous name answers `ok: false` with `ambiguous_symbol` and \
+`candidates[]`, and the book is on by default (`book_disabled` only with an \
+explicit `GRAPHIUM_BOOK=off`). It never renders and never touches the plan."
         }
         "clear_canvas" => {
             "\
@@ -335,6 +398,34 @@ mod tests {
             assert!(text.len() > 120, "{tool} needs a real description");
             assert_ne!(text, description("nope"), "{tool} is a fallback");
         }
+    }
+
+    /// S5/L5: the book is on by default, so no description tells the human to
+    /// turn it on: `GRAPHIUM_BOOK=off` is the explicit opt-out.
+    #[test]
+    fn the_book_descriptions_say_the_book_is_on_by_default() {
+        for tool in [
+            "code_search",
+            "code_structure",
+            "code_impact",
+            "code_diagram",
+        ] {
+            let text = description(tool);
+            assert!(
+                text.contains("on by default"),
+                "{tool} has to say the book is on by default"
+            );
+            assert!(
+                text.contains("GRAPHIUM_BOOK=off"),
+                "{tool} has to name the opt-out"
+            );
+            assert!(
+                !text.contains("GRAPHIUM_BOOK=on"),
+                "{tool} must not ask to enable the book"
+            );
+        }
+        assert!(INSTRUCTIONS.contains("GRAPHIUM_BOOK=off"));
+        assert!(!INSTRUCTIONS.contains("GRAPHIUM_BOOK=on"));
     }
 
     /// S1-S5: the agent learns how an export travels and what it costs,

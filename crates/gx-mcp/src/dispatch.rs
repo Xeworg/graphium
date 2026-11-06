@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use crate::contract;
 
 /// Every tool of the server, in the order the index reports them.
-pub const TOOL_NAMES: [&str; 12] = [
+pub const TOOL_NAMES: [&str; 15] = [
     "render_diagram",
     "validate_diagram",
     "get_diagram_schema",
@@ -23,6 +23,9 @@ pub const TOOL_NAMES: [&str; 12] = [
     "clear_canvas",
     "register_session",
     "code_search",
+    "code_structure",
+    "code_impact",
+    "code_diagram",
 ];
 
 /// Calls a tool by name with its JSON arguments.
@@ -155,6 +158,39 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
             // its own project, never another one (D4).
             Ok(crate::book::code_search(session_id, query))
         }
+        "code_structure" => {
+            // Exactly one selector: `file` or `symbol`. Both are optional in
+            // the schema and the tool decides, so an empty call is the same
+            // answer on both doors.
+            let file = arguments.get("file").and_then(Value::as_str);
+            let symbol = arguments.get("symbol").and_then(Value::as_str);
+            Ok(crate::book::code_structure(session_id, file, symbol))
+        }
+        "code_impact" => {
+            let symbol = arguments
+                .get("symbol")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "`symbol` is required".to_string())?;
+            let depth = arguments
+                .get("depth")
+                .and_then(Value::as_u64)
+                .map(|depth| depth.min(u32::MAX as u64) as u32);
+            let direction = arguments.get("direction").and_then(Value::as_str);
+            Ok(crate::book::code_impact(
+                session_id, symbol, depth, direction,
+            ))
+        }
+        "code_diagram" => {
+            let symbol = arguments
+                .get("symbol")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "`symbol` is required".to_string())?;
+            let depth = arguments
+                .get("depth")
+                .and_then(Value::as_u64)
+                .map(|depth| depth.min(u32::MAX as u64) as u32);
+            Ok(crate::book::code_diagram(session_id, symbol, depth))
+        }
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -251,6 +287,52 @@ pub fn tool_schema(name: &str) -> Value {
                 }
             },
             "required": ["query"]
+        }),
+        "code_structure" => json!({
+            "type": "object",
+            "properties": {
+                "file": {
+                    "type": ["string", "null"],
+                    "description": "The path of the chapter, relative to the project root, with `/` separators."
+                },
+                "symbol": {
+                    "type": ["string", "null"],
+                    "description": "The symbol whose chapter to read: a name, as `code_search` takes it. Send exactly one of `file` or `symbol`."
+                }
+            }
+        }),
+        "code_impact" => json!({
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "The symbol to start from: a name, as `code_search` takes it."
+                },
+                "depth": {
+                    "type": ["integer", "null"],
+                    "description": "Hops to follow: 1 by default, clamped to 3."
+                },
+                "direction": {
+                    "type": ["string", "null"],
+                    "enum": ["in", "out", "both", null],
+                    "description": "`in` (default): the edges that point at the symbol; `out`: what it reaches; `both`."
+                }
+            },
+            "required": ["symbol"]
+        }),
+        "code_diagram" => json!({
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "The symbol to draw the neighbourhood of: a name, as `code_search` takes it."
+                },
+                "depth": {
+                    "type": ["integer", "null"],
+                    "description": "Hops to follow: 1 by default, clamped to 3."
+                }
+            },
+            "required": ["symbol"]
         }),
         _ => json!({ "type": "object" }),
     }
