@@ -892,9 +892,14 @@ body {
 .diagram-clone-tools {
   position: absolute;
   top: 4px;
-  /* The `×` of the clone is 20 px wide at 4 px of the corner: the tools start
-     past it, and the button keeps the grammar of every other object. */
-  right: 28px;
+  /* The `×` that removes the clone lives INSIDE this pill (L8): the toolbar
+     anchors at the corner the way every object's `×` does, grows inward and
+     wraps when the object is narrower than the controls — nothing sticks out
+     of the box the human sees. */
+  right: 4px;
+  max-width: calc(100% - 8px);
+  flex-wrap: wrap;
+  justify-content: flex-end;
   z-index: 2;
   display: flex;
   align-items: center;
@@ -935,6 +940,19 @@ body {
 
 .clone-refresh:hover {
   color: var(--accent);
+}
+
+/* The `×` inside the pill: it drops the circle of the object's `×` (the pill
+   is the button's frame now) and shows exactly when the pill shows. */
+.diagram-clone-tools .clone-close {
+  opacity: 1;
+  pointer-events: auto;
+  width: auto;
+  height: auto;
+  padding: 0 6px;
+  background: none;
+  border: none;
+  border-radius: 6px;
 }
 
 .clone-refresh:disabled {
