@@ -101,3 +101,11 @@ prueba en vivo del corte `f2-cierre` T5 (2026-11-05).
   un clon por original (volver a clonar enfoca el existente) y «×» para
   borrar el clon; cerrar el original NO borra el clon (foto), pero el
   humano sí puede.
+- L7 (2026-11-05): L6 corregida por worker (`mw4g9704-j-o8q7`), verificada
+  y empaquetada por el orquestador: commit `306d5e4`. Dedupe por
+  `origin_diagram_id` (chequeado antes del store: un clon foto responde
+  aunque su original cerró), `ClonePaint` con `svg: Option` + `bring`,
+  `PlanState::remove_clone` + `graphium://clone-remove`, «×» del clon con
+  la gramática `.diagram-close`. Tests nuevos: `user_plan.rs` y
+  `user_plan_page.rs`; suite 36 binarios verdes. Re-test del humano
+  pendiente (fase 3 del plan acordado).
