@@ -1546,8 +1546,8 @@ function createCloneObject(clone) {
   container.rect = { x: 0, y: 0, w: 0, h: 0 };
   container.cloneState = clone;
   // The `×` lives INSIDE the toolbar pill (L8): one control anchored to the
-  // corner of the object — the pill grows inward and wraps when the object is
-  // narrow, so nothing sticks out of the box the human sees.
+  // corner of the object — the pill is one compact row that never wraps; an
+  // object narrower than it gets the pill centered over the top edge.
   container.cloneTools = createCloneTools(container);
   container.cloneTools.append(createCloneClose(container));
   content.append(container.cloneTools);
@@ -1652,7 +1652,8 @@ function createCloneTools(container) {
  * Paints the tools of a clone from the state: the refresh is enabled only
  * while the original is on a plan (B2), the history walks the versions the
  * store keeps (`oldest_version..=current_version`, absolute and consecutive)
- * and reads «v3/7» like the panel item, and a clone whose original closed
+ * and reads «2/2» — the compact pill of L8 drops the «v» the panel item
+ * carries — and a clone whose original closed
  * keeps its photo and loses both.
  */
 function updateCloneTools(container) {
@@ -1675,12 +1676,29 @@ function updateCloneTools(container) {
 
   container.clonePrev.disabled = !updatable || at <= oldest;
   container.cloneNext.disabled = !updatable || at >= current;
-  container.cloneLabel.textContent = count > 0 ? `v${at - oldest + 1}/${count}` : "";
+  container.cloneLabel.textContent = count > 0 ? `${at - oldest + 1}/${count}` : "";
   container.cloneVersions.classList.toggle("hidden", !(count > 1));
   container.cloneRefresh.disabled = !updatable;
   container.cloneRefresh.title = updatable
     ? "actualizar el clon"
     : "el original ya no está en el plan";
+  // One row (L8): the pill never wraps — an object narrower than the pill
+  // gets it centered over the top edge instead.
+  fitCloneTools(container);
+}
+
+/**
+ * Keeps the tools of a clone on one row (L8): the pill grows inward from the
+ * corner, and only when the object is narrower than the pill itself does it
+ * hang over the top edge, centered, instead of wrapping onto its own
+ * controls.
+ */
+function fitCloneTools(container) {
+  const tools = container.cloneTools;
+  if (!tools) {
+    return;
+  }
+  tools.classList.toggle("overhang", tools.offsetWidth > container.clientWidth);
 }
 
 /**

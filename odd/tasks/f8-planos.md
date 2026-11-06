@@ -118,3 +118,18 @@ prueba en vivo del corte `f2-cierre` T5 (2026-11-05).
   más angosto que los controles. Contrato actualizado: la regla vieja
   «la barra deja lugar a la ×» se reemplaza por anclaje a esquina, wrap y
   visibilidad de la × dentro del pill. Commit: `025dbba`.
+- L9 (2026-11-06, verbatim): «si es que le cayo por encima» (con screenshot:
+  en un clon angosto, el `↻` wrapped caía sobre el `▶`). El wrap de L8 apilaba
+  los controles uno encima del otro. Corregido inline por el orquestador:
+  pill compacto de UNA fila — sin `flex-wrap` ni `max-width`, `font-size:
+  11px`, `white-space: nowrap`, paddings apretados — y el indicador pasa a
+  «2/2» sin la «v» (el del panel conserva «v3/7»). Un objeto más angosto que
+  el pill ya no lo parte: `fitCloneTools` (medición `offsetWidth` vs
+  `clientWidth`, llamada al final de `updateCloneTools`) le agrega la clase
+  `.overhang`, que cuelga el pill centrado sobre el borde superior (`top:
+  -12px`, `left: 50%`, `translateX(-50%)`) — desborde simétrico mínimo.
+  Contrato actualizado: la assertion `flex-wrap` de L8 se revierte; ahora se
+  pide una fila compacta a 11px, sin wrap, y la regla `.overhang` con
+  `translateX(-50%)`. Verificación: RED observado (2 assertions nuevas),
+  GREEN, `cargo fmt` + `cargo clippy --workspace --all-targets` +
+  `cargo test --workspace` verdes (36 binarios).

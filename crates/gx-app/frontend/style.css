@@ -892,19 +892,18 @@ body {
 .diagram-clone-tools {
   position: absolute;
   top: 4px;
-  /* The `×` that removes the clone lives INSIDE this pill (L8): the toolbar
-     anchors at the corner the way every object's `×` does, grows inward and
-     wraps when the object is narrower than the controls — nothing sticks out
-     of the box the human sees. */
+  /* L8, one row: the pill is compact (11px, tight paddings) and never wraps —
+     a wrapped control fell on top of its neighbor. When the object is
+     narrower than the pill, `fitCloneTools` hangs it over the top edge,
+     centered (`.overhang` below). */
   right: 4px;
-  max-width: calc(100% - 8px);
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  font-size: 11px;
+  white-space: nowrap;
   z-index: 2;
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 0 3px;
+  padding: 0 2px;
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--surface-border);
@@ -918,6 +917,16 @@ body {
 .diagram.clone:focus-within .diagram-clone-tools {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* The pill of a narrow object (L8): it is wider than the object itself, so it
+   centers over the top edge and hangs over it symmetrically — the minimal
+   overflow that keeps one row and every control reachable. */
+.diagram-clone-tools.overhang {
+  top: -12px;
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 /* The history of the clone is the one of the panel, without the padding of a
