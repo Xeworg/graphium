@@ -1221,15 +1221,55 @@ pub fn render_diagram_from_json(
     response
 }
 
+/// Renders a saved version of a diagram for the history view of the window
+/// (RF14; feature doc `f2-cierre.md`, T5).
+///
+/// Read-only on purpose: the hook is not called, nothing is stored and no
+/// version is written — the window only borrows the drawing the version
+/// produced when it was current. The window sees every session (PRD §11.1),
+/// so the view carries no session check; a closed diagram answers
+/// `unknown_diagram` like every tool that names an id that is not on the
+/// plan, and a version outside the saved range answers the same error as
+/// `get_diagram_version`.
+pub fn render_version_view(diagram_id: &str, version: u64) -> Result<String, ErrorPayload> {
+    crate::bootstrap();
+    let store = diagram_store();
+
+    if store.get(diagram_id).is_none() {
+        return Err(contract_payload(
+            crate::contract::unknown_diagram(diagram_id, &store.known_ids()),
+            "diagram_id",
+        ));
+    }
+    let Some(found) = store.version(diagram_id, version) else {
+        let known = store.versions(diagram_id).unwrap_or_default();
+        return Err(contract_payload(
+            crate::contract::unknown_version(diagram_id, version, &known),
+            "version",
+        ));
+    };
+
+    let (outcome, _) = pipeline(&found.document, &RenderOptions::default()).map_err(|errors| {
+        // The document was accepted when its version was written, so a
+        // rejection now means the pipeline could not draw it again: the
+        // first error names why, with the path it has.
+        errors
+            .first()
+            .map(ErrorPayload::from)
+            .expect("a rejected document carries at least one error")
+    })?;
+    Ok(outcome.svg)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{
         busy, render_diagram, render_diagram_from_json, render_diagram_with, render_queue,
-        set_render_hook, Admission, RenderHook, RenderOptions, RenderQueue, RenderRequest,
-        RenderResponse, RenderStatus, BUSY_RETRY_AFTER_MS, MAX_PARALLEL_RENDERS, QUEUE_DEPTH,
-        SVG_BUDGET_BYTES,
+        render_version_view, set_render_hook, Admission, RenderHook, RenderOptions, RenderQueue,
+        RenderRequest, RenderResponse, RenderStatus, BUSY_RETRY_AFTER_MS, MAX_PARALLEL_RENDERS,
+        QUEUE_DEPTH, SVG_BUDGET_BYTES,
     };
     use crate::store::diagram_store;
     use crate::test_support::{lock_renders_blocking, MINIMAL};
@@ -1569,6 +1609,72 @@ mod tests {
             diagram_store().versions(&diagram_id).map(|v| v.len()),
             Some(1)
         );
+    }
+
+    /// RF14 (T5 de `f2-cierre.md`): la ventana ve una versión guardada del
+    /// historial. El preview dibuja el documento de la versión **solo
+    /// lectura**: no llama al hook, no escribe una versión y la revisión del
+    /// diagrama no se mueve. El plano pinta el documento viejo igual que el
+    /// vivo, así que el preview es el dibujo que reemplaza.
+    #[test]
+    fn the_window_views_a_saved_version_without_touching_the_store() {
+        let _guard = lock_renders_blocking();
+
+        let diagram_id = render(MINIMAL)
+            .diagram_id
+            .expect("the render stores the diagram");
+        let replacement = r#"{
+          "version": 1, "kind": "graph", "title": "reemplazado",
+          "nodes": [ { "id": "a", "label": "A" }, { "id": "b", "label": "B" } ],
+          "edges": [ { "from": "a", "to": "b" } ]
+        }"#;
+        assert!(
+            render_from_json(replacement, serde_json::json!({ "replace_id": diagram_id })).ok,
+            "el reemplazo escribe la versión 2"
+        );
+
+        let before = diagram_store()
+            .record(&diagram_id)
+            .expect("the diagram stays on the plan")
+            .clone();
+
+        let first = render_version_view(&diagram_id, 1).expect("la versión 1 existe");
+        assert!(first.contains("<svg"), "el preview es un SVG: {first:?}");
+        assert!(first.contains("read file"), "la v1 es el primer documento");
+        let second = render_version_view(&diagram_id, 2).expect("la versión 2 existe");
+        assert!(second.contains("<svg"));
+        assert!(!second.contains("read file"), "la v2 es el reemplazo");
+
+        let after = diagram_store()
+            .record(&diagram_id)
+            .expect("the diagram stays on the plan")
+            .clone();
+        assert_eq!(before, after, "el store no se toca");
+        assert_eq!(
+            diagram_store().versions(&diagram_id).map(|v| v.len()),
+            Some(2),
+            "ver una versión no escribe una"
+        );
+    }
+
+    /// RF14 (T5): una versión que el diagrama no guarda es un error con el
+    /// rango guardado, igual que `get_diagram_version`; un diagrama que no
+    /// está en el plano es `unknown_diagram`.
+    #[test]
+    fn the_window_cannot_view_an_unknown_version_or_diagram() {
+        let _guard = lock_renders_blocking();
+
+        let diagram_id = render(MINIMAL)
+            .diagram_id
+            .expect("the render stores the diagram");
+
+        let error = render_version_view(&diagram_id, 9).expect_err("no hay versión 9");
+        assert_eq!(error.path, "version");
+        assert_eq!(error.code, "invalid_value");
+        assert!(error.message.contains("1..=1"), "{:?}", error.message);
+
+        let error = render_version_view("d-9999", 1).expect_err("el diagrama no existe");
+        assert_eq!(error.code, "unknown_diagram");
     }
 
     /// R2/RF13: reemplazar no pide un slot libre, porque no suma un diagrama;
