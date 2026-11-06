@@ -16,6 +16,7 @@ pub mod impact;
 pub mod lang;
 pub mod location;
 pub mod relations;
+pub mod resolution;
 pub mod schema;
 pub mod search;
 pub mod service;
@@ -31,6 +32,7 @@ pub use impact::{
 pub use lang::{ParsedFile, ParsedSymbol};
 pub use location::{book_key, BookLocation, BooksRoot, LocationError};
 pub use relations::{ParsedEdge, RELATION_KINDS};
+pub use resolution::{resolution_by_language, LanguageResolution};
 pub use schema::{OpenReport, RebuildReason};
 pub use search::{SearchOutcome, SearchRequest, SymbolCandidate, SymbolHit};
 pub use service::{BooksConfig, RenderGuard};

@@ -63,6 +63,14 @@ pub struct RawEdge {
     pub name: String,
 }
 
+/// One relation per name, anchored at the same byte: the grammars collect the
+/// names of a construct and the vocabulary decides how a relation is written.
+pub fn push_edges(out: &mut Vec<RawEdge>, byte: usize, kind: &'static str, names: Vec<String>) {
+    for name in names {
+        out.push(RawEdge { byte, kind, name });
+    }
+}
+
 /// Attaches every raw relation to the symbol that owns it and returns the
 /// edges of the chapter, deduplicated and with no self-edge.
 ///

@@ -2778,6 +2778,77 @@ mod tests {
         assert_eq!(response["progress"]["state"], "indexed", "{response}");
     }
 
+    /// S3/D3 (T3/C2): las dos tools contestan un árbol con un capítulo por
+    /// lenguaje — el lenguaje real de cada capítulo y una llamada que cruza de
+    /// Python/Go/Java a la declaración de TypeScript, resuelta por nombre.
+    #[test]
+    fn the_tools_answer_a_tree_with_one_chapter_per_language() {
+        let scratch = BookScratch::new("languages");
+        scratch.write(
+            "src/shared.ts",
+            "export class Store {}\nexport function openStore(): Store {\n  return new Store();\n}\n",
+        );
+        scratch.write(
+            "src/caller.py",
+            "from shared import openStore\n\n\ndef build():\n    return openStore()\n",
+        );
+        scratch.write(
+            "src/tool.go",
+            "package tool\n\nfunc Use() int {\n\treturn openStore()\n}\n",
+        );
+        scratch.write(
+            "src/App.java",
+            "package com.graphium.app;\n\npublic class App {\n    public int run() {\n        return openStore();\n    }\n}\n",
+        );
+        let handle = scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        // `code_structure`: cada capítulo declara su lenguaje.
+        for (file, lang) in [
+            ("src/shared.ts", "typescript"),
+            ("src/caller.py", "python"),
+            ("src/tool.go", "go"),
+            ("src/App.java", "java"),
+        ] {
+            let response = crate::book::code_structure_with(
+                &scratch.config(),
+                Some(&project),
+                Some(file),
+                None,
+            );
+            assert_eq!(response["ok"], true, "{response}");
+            assert_eq!(response["lang"], lang, "the language of `{file}`");
+            assert!(
+                response["count"].as_u64().is_some_and(|count| count >= 1),
+                "`{file}` declares something: {response}"
+            );
+        }
+
+        // `code_impact`: los llamadores de los otros lenguajes resuelven.
+        let response = crate::book::code_impact_with(
+            &scratch.config(),
+            Some(&project),
+            "openStore",
+            Some(1),
+            Some("in"),
+        );
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["book_key"], handle.book().key(), "{response}");
+        let nodes = response["nodes"].as_array().expect("the nodes");
+        let callers: Vec<&str> = nodes
+            .iter()
+            .filter(|node| node["depth"] == 1)
+            .filter_map(|node| node["file"].as_str())
+            .collect();
+        for expected in ["src/caller.py", "src/tool.go", "src/App.java"] {
+            assert!(
+                callers.contains(&expected),
+                "`{expected}` must be reached: {response}"
+            );
+        }
+        assert_eq!(response["unresolved"], 0, "{response}");
+    }
+
     /// S5/L5: only the explicit opt-out answers `book_disabled`, and it never
     /// touches the books root.
     #[test]

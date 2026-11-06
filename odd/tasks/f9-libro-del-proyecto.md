@@ -100,6 +100,10 @@ análisis en specs y tareas; los § que cita viven en el doc de ideas.
   del harness de tests).
 - T3 (C2) (S3, D3): grupos de lenguajes siguientes + % de resolución publicado
   por lenguaje. Los extractores nuevos viven como módulos de `src/lang/` (L5).
+  Commits: `35ae5fe` (los cinco lenguajes + emit.rs compartido) y `29c435d`
+  (D3 medido por `Book::resolution()` y publicado en el PRD, con test
+  guardián). Riesgo abierto: binario 14,32 MB = 91,2 % del techo
+  RNF1-quater — los feature-flags por lenguaje son la palanca de T4.
 - T4 (C3) (S2, S8, D4): pulido de worktrees, prune con cap en idle-exit,
   `graphium books list|prune`, hooks opcionales. Más: envelope de respuesta en
   tokens con asignación por relevancia y acantilado a punteros (modelo
@@ -207,3 +211,24 @@ análisis en specs y tareas; los § que cita viven en el doc de ideas.
   next:{budget:2}}` copypasteable, filtro `edges` (solo `calls`),
   `budget=0` → `invalid_value` con hint, `code_diagram` con `edges` y su
   `truncated` desglosado (density vs nodes/edges).
+- L9 (2026-11-06): T3/C2 implementado por worker, verificado y empaquetado
+  por el orquestador en dos unidades aditivas (`35ae5fe` los cinco
+  lenguajes con emit.rs compartido, `29c435d` D3 medido y publicado) —
+  ambas verificadas aisladas vía stash-dance (42 binarios; 650/0 en U1,
+  651/0 en U2 y en el árbol final; fmt/clippy limpios). El corte es
+  aditivo, así que el split motor/publicación sí permite commits verdes
+  por unidad (a diferencia de T5, L8). Riesgo abierto: el binario release
+  creció a 14,32 MB = **91,2 % del techo RNF1-quater** (quedan ~1,4 MB) —
+  los feature-flags por lenguaje son la palanca de T4, sin implementar
+  ahora. Prueba en vivo del binario release sobre un proyecto mixto
+  (/tmp/gxlangs: .ts/.py/.go/.java): outline por lenguaje correcto con
+  los anclas de módulo de cada idioma (`caller` en Python, `src` en Go),
+  `code_search openStore` resuelve único, `code_impact in openStore`
+  cruza lenguajes (el caller de Python resuelve contra la declaración de
+  TypeScript, 3 nodos, 0 unresolved), y el constructor de Java colisiona
+  con su clase por nombre — `App` contesta `candidates[]` (clase vs
+  método `src.App.App`), el contrato ambiguo funcionando en Java.
+  Aclaraciones de verificación: el D3 se publica en docs/PRD.md con test
+  guardián (no viaja en las respuestas MCP — el spec pide publicarlo, no
+  servirlo); el ancla de módulo de Java se llama como el archivo, así que
+  clases homónimas a su archivo son ambiguas por diseño honesto.

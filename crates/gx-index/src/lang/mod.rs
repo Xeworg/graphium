@@ -11,8 +11,13 @@
 //! Adding a language (T3/C2) is therefore: a grammar dependency in
 //! `Cargo.toml`, a module next to [`rust`], and its line in [`GRAMMARS`].
 
+mod emit;
+pub mod go;
+pub mod java;
 pub mod model;
+pub mod python;
 pub mod rust;
+pub mod typescript;
 
 pub use crate::relations::ParsedEdge;
 pub use model::{
@@ -35,7 +40,13 @@ pub struct Grammar {
 }
 
 /// Every grammar this build ships, in the order the book lists them.
-pub const GRAMMARS: &[Grammar] = &[rust::GRAMMAR];
+pub const GRAMMARS: &[Grammar] = &[
+    rust::GRAMMAR,
+    typescript::GRAMMAR,
+    python::GRAMMAR,
+    go::GRAMMAR,
+    java::GRAMMAR,
+];
 
 /// The grammar of a language, by the `lang` name.
 pub fn grammar(lang: &str) -> Option<&'static Grammar> {
@@ -70,17 +81,36 @@ mod tests {
     use super::{grammar, grammar_for, language_for, parse, GRAMMARS};
 
     /// S3/L5: the registry answers by extension, and the language it answers is
-    /// the one the table `file` stores.
+    /// the one the table `file` stores. C2 adds the four languages after Rust,
+    /// TypeScript/TSX sharing one module and one language name.
     #[test]
     fn the_registry_knows_the_languages_of_the_build() {
-        assert_eq!(language_for(Path::new("src/main.rs")), Some("rust"));
-        assert_eq!(language_for(Path::new("src/main.py")), None);
-        assert!(grammar("rust").is_some());
-        assert!(grammar("python").is_none());
-        assert_eq!(GRAMMARS.len(), 1);
+        for (path, lang) in [
+            ("src/main.rs", "rust"),
+            ("src/main.ts", "typescript"),
+            ("src/main.tsx", "typescript"),
+            ("src/main.py", "python"),
+            ("src/main.go", "go"),
+            ("src/main.java", "java"),
+        ] {
+            assert_eq!(language_for(Path::new(path)), Some(lang), "`{path}`");
+        }
+        assert_eq!(language_for(Path::new("src/notes.txt")), None);
+        assert_eq!(language_for(Path::new("src/view.tsx")), Some("typescript"));
+        for lang in ["rust", "typescript", "python", "go", "java"] {
+            assert!(grammar(lang).is_some(), "the registry knows `{lang}`");
+        }
+        assert!(grammar("ruby").is_none());
+        assert_eq!(GRAMMARS.len(), 5, "one grammar per language (S3)");
         assert_eq!(
-            grammar_for(Path::new("x.rs")).map(|grammar| grammar.lang),
-            Some("rust")
+            grammar_for(Path::new("x.ts")).map(|grammar| grammar.lang),
+            Some("typescript")
+        );
+        // One module covers both TypeScript grammars, so the extensions of the
+        // registry are the ones of the module.
+        assert_eq!(
+            grammar("typescript").map(|grammar| grammar.extensions),
+            Some(&["ts", "tsx"][..])
         );
     }
 
