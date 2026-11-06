@@ -507,6 +507,10 @@ fn the_clone_has_its_own_cross_and_it_asks_the_owner_to_remove_it() {
         "dentro del pill el `×` no lleva su propio círculo: {close}"
     );
     assert!(
+        declaration(close, "position").trim() == "static",
+        "el `×` entra en la fila del pill: hereda `position: absolute` de `.diagram-close` y cae encima del `↻` (L10): {close}"
+    );
+    assert!(
         CSS.contains(".diagram-close:hover"),
         "el `×` del clon hereda la gramática del `×` del plano"
     );
