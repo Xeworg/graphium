@@ -44,9 +44,14 @@ corte F6 en paralelo; se hace después de su merge.
   con número de versión; superficie de lectura MCP para listar versiones y
   obtener el documento de una versión (solo lectura; una versión no se puede
   restaurar con una tool — restaurar es un render/update nuevo).
-- R4 (RF14 UI, fuera de este corte): las flechas en la ventana y el indicador
-  «v3/7» se implementan después del merge de F6 (frontend ocupado). Queda
-  anotado como tarea abierta para el siguiente corte.
+- R4 (RF14 UI): las flechas en la ventana y el indicador «v3/7» se
+  implementan en T5, después del merge de F6 (que ya entró en main:
+  `2b55a48`). Decisión del humano (2026-11-05): **flechas en el ítem del
+  panel de diagramas + preview renderizado** — cada ítem gana «◀ v3/7 ▶»;
+  navegar dibuja la versión vieja sobre el objeto del plano en su mismo
+  lugar (solo vista, sin mover el objeto ni escribir el store); a la última
+  versión se vuelve a ver el diagrama vivo; con diagrama seleccionado,
+  ←/→ también navegan.
 - R5 (coexistencia con F6): F6 edita en paralelo `crates/gx-core/src/render.rs`
   y `export.rs` (paleta efectiva). Este corte NO edita esos dos archivos: si
   una corrección los requiere, se reporta y queda para después del merge de
@@ -70,7 +75,10 @@ corte F6 en paralelo; se hace después de su merge.
 - T2 (R2, R7): `opts.replace_id` en store/dispatch/contract/tools con tests. Commits: `36e0110` + `a91f355`.
 - T3 (R3, R7): versiones del documento en el store (tope 20) + superficie MCP de lectura con tests. Commits: `36e0110` + `a91f355`.
 - T4 (R6): docs (PRD, harness INSTRUCTIONS, textos de tools) y suite completa verde. Commit: `dd0c89c`. Evidencia: fmt + clippy -D warnings + test --workspace (32 binarios ok).
-- T5 (R4, abierto): UI de RF14 (flechas + «v3/7») — después del merge de F6.
+- T5 (R4): UI de RF14 (flechas «◀ v3/7 ▶» en el ítem del panel + preview
+  renderizado en el plano, ←/→ con diagrama seleccionado). Commits:
+  `1e01c02` (preview render-only en gx-mcp) + `d15e65a` (ventana: estado,
+  puente, panel, teclado, tests de contrato).
 
 ## Log
 
@@ -83,3 +91,30 @@ corte F6 en paralelo; se hace después de su merge.
 - L4 (2026-11-05): implementación completa del worker (sin commit); el
   orquestador la empaquetó en cuatro unidades: golden (`96422bb`), store
   (`36e0110`), contrato MCP (`a91f355`), docs (`dd0c89c`).
+- L5 (2026-11-05): T5 desbloqueado (F6 ya está en main). El humano eligió la
+  UI entre tres opciones: «Flechas en el panel + preview» — ítem con
+  «◀ v3/7 ▶», la versión vieja se dibuja sobre el objeto del plano (solo
+  vista: el objeto no se mueve, el store no se escribe, ninguna versión se
+  restaura), en la última versión se ve el vivo, y ←/→ con diagrama
+  seleccionado navegan igual que las flechas del panel. Las alternativas
+  descartadas fueron el control flotando sobre el objeto y la lista de
+  versiones con visor del documento fuente.
+- L6 (2026-11-05): implementación inline del orquestador. Verificación: RED
+  observado (2 tests de gx-mcp sin la función; 9 de 10 de contrato de
+  frontend sin el JS), después GREEN; `cargo fmt --check`, `cargo clippy
+  --workspace --all-targets` y `cargo test --workspace` verdes (0 fallos,
+  47 binarios). Chequeo diferencial del código compartido: `panelItem` y
+  `materializeObject` conservan su comportamiento anterior (los tests de
+  contrato de `panel.rs` y `culling.rs` pasan sin cambios); `insertDiagram`
+  cambió a propósito — un re-render del mismo id (`opts.replace_id`,
+  `update_diagram`) dejaba el contenedor viejo huérfano en el DOM, así que
+  dos dibujos se superponían bajo un id; ahora el viejo sale y el fix quedó
+  fijado por `a_re_render_of_the_same_id_replaces_the_object_and_the_view`
+  (tests/versions.rs). Frontera de slice: la unidad de la ventana (`d15e65a`,
+  617 líneas con sus tests) supera las ~400 porque código y tests del mismo
+  comportamiento van juntos; la de backend (`1e01c02`, 110) queda debajo.
+- L7 (2026-11-05): pendiente del humano: revisión y prueba en vivo de la TUI
+  (mismo S6 que los cortes anteriores) e integración feature → `staging` →
+  PRs encadenados → `main` (L3). El worktree anterior de f2-cierre ya no
+  existe; esta unidad quedó en la rama `feature/f2-t5-versions-ui` del árbol
+  principal, sin pushear.
