@@ -59,13 +59,21 @@ prueba en vivo del corte `f2-cierre` T5 (2026-11-05).
 - A2 (S1, V1): el selector pasa de filtro a conmutador: un plano a la vez,
   «Todas» muere, cámara por plano. Contratos del frontend actualizados.
 - A3 (S2, V1): docs — PRD (RF30 y §11.1) y este documento.
-- B1 (S2, S4): plano del usuario — modelo en el dueño (instancias de vista),
-  conmutador con fila propia, clonar desde el panel.
+- B1 (S2, S4, V2): plano del usuario — modelo en el dueño (instancias de vista,
+  conmutador con fila propia, clonar desde el panel). Commits: `247c05d` +
+  `c896b90`. El clon se dibuja con el documento actual del original vía el
+  render read-only de gx-mcp; sin `render_diagram_view` nueva: dos
+  promociones `pub` bastaron.
 - B2 (S3, S4, V2): refrescar el clon con la versión actual del original;
-  deshabilitado si el original ya no está.
-- B3 (S1, S4, V2): mover el clon arrastrando el objeto; navegación de
-  versiones en el clon con recálculo de posición.
-- B4 (S2, V2): docs — PRD y este documento.
+  deshabilitado si el original ya no está (`updatable` en el estado).
+  Commit: `c896b90`. El clon navega las versiones del original con
+  «◀ vN/M ▶» y el plano del usuario RECALCULA la posición cuando la versión
+  vista es más grande que la foto (cascade contra clones propios); los
+  planos de sesión conservan el preview in-place de T5.
+- B3 (S1, S4, V2): mover el clon arrastrando el objeto (posición persistida
+  en el dueño, como la cámara; solo en el plano del usuario). Commit:
+  `c896b90`.
+- B4 (S2, V2): docs — PRD RF30 y §11.1. Commit: `2ff1bb6`.
 
 ## Log
 
