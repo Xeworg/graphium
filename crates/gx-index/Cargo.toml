@@ -1,0 +1,19 @@
+[package]
+name = "gx-index"
+description = "The book of the project: a SQLite + FTS5 index of the symbols of a worktree (F9)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ignore = { workspace = true }
+notify = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tree-sitter = { workspace = true }
+tree-sitter-rust = { workspace = true }

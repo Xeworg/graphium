@@ -6,6 +6,7 @@ members = [
     "crates/gx-layout",
     "crates/gx-render-svg",
     "crates/gx-mcp",
+    "crates/gx-index",
     "crates/gx-app",
 ]
 
@@ -22,6 +23,7 @@ gx-kinds = { path = "crates/gx-kinds" }
 gx-layout = { path = "crates/gx-layout" }
 gx-render-svg = { path = "crates/gx-render-svg" }
 gx-mcp = { path = "crates/gx-mcp" }
+gx-index = { path = "crates/gx-index" }
 
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
@@ -37,6 +39,15 @@ rustybuzz = "0.20.1"
 # (feature doc `f2-export.md`, L6) — and `memmap-fonts`/`raster-images` are off
 # because nothing here reads fonts or images from disk or from the document.
 resvg = { version = "0.45.1", default-features = false, features = ["text"] }
+# The book of the project (F9): the SQLite/FTS5 engine and its watcher.
+# `bundled` compiles SQLite with its own flags (FTS5 on), so the engine does
+# not depend on the flags of a system sqlite (ideas §10.1, delta 4).
+rusqlite = { version = "0.41", features = ["bundled"] }
+ignore = "0.4"
+notify = "8"
+sha2 = "0.10"
+tree-sitter = "0.25"
+tree-sitter-rust = "0.24"
 tauri = { version = "2.12.5", features = [] }
 tauri-build = { version = "2.7.4", features = [] }
 
