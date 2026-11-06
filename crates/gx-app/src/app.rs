@@ -11,7 +11,7 @@ use tauri::{Emitter, Listener, Manager, WindowEvent};
 
 use crate::camera::{self, CameraSnapshot};
 use crate::settings::Settings;
-use gx_core::geom::Size;
+use gx_core::geom::{Point, Rect, Size};
 
 /// How long the frontend has to confirm the paint (PRD §8.6.1, step 5).
 pub const RENDER_ACK_TIMEOUT_MS: u64 = 2000;
@@ -32,14 +32,20 @@ pub const MAIN_WINDOW: &str = "main";
 /// and must not depend on a file of the installation (S1).
 const TRAY_ICON: &[u8] = include_bytes!("../icons/icon.png");
 
-/// The state of the plan that Rust keeps: the camera copy and the pending
-/// acknowledgements.
+/// The state of the plan that Rust keeps: the camera copy, the pending
+/// acknowledgements and the clones of the user plan.
 #[derive(Default)]
 pub struct PlanState {
     camera: Mutex<CameraSnapshot>,
     pending: Mutex<HashMap<String, Sender<bool>>>,
     ready: AtomicBool,
     settings: Mutex<Settings>,
+    /// The clones of the user plan (`f8-planos.md`, B1): view instances of
+    /// this owner, never diagrams of the store.
+    clones: Mutex<Vec<PlanClone>>,
+    /// The last number handed to a clone. Ids are never reused, like the
+    /// `diagram_id` of the store (PRD §11.1).
+    last_clone: AtomicU64,
 }
 
 impl PlanState {
@@ -103,6 +109,377 @@ impl PlanState {
             let _ = sender.send(ok);
         }
     }
+}
+
+// --- The plan of the human (`f8-planos.md`, B1/B2/B3; S2/S3/S4) ----------
+
+/// One clone of the user plan.
+///
+/// A clone is a **view instance**: it lives here, in the owner, and never in
+/// the store. It has no `diagram_id`, it does not take one of the twelve slots
+/// and no MCP tool can see it, refresh it, close it or update it (S4, V2).
+/// What it keeps is where it came from, the version of the source document it
+/// froze (S3), and the place the human left it in on their own plan (B3).
+#[derive(Debug, Clone)]
+struct PlanClone {
+    clone_id: String,
+    origin_diagram_id: String,
+    origin_session_id: String,
+    title: String,
+    /// The newest version of the original the clone pulled: the photo of S3.
+    /// Browsing an older version never lowers it.
+    snapshot_version: u64,
+    /// The versions of the original the clone can browse, as the store had
+    /// them the last time the clone was drawn. They are the history the photo
+    /// keeps: once the original closes, the store has none and the clone
+    /// still says which version it is (S4).
+    oldest_version: u64,
+    version_count: usize,
+    /// Top-left corner of the object on the user plan, in plan units.
+    pos: Point,
+    /// Size of the object, padding included (PRD §7.2). It is the size of the
+    /// **photo**, so a preview of an older version never reshapes the object.
+    bbox: Size,
+}
+
+impl PlanClone {
+    /// The clone as the state lists it (B1): the place the owner keeps and the
+    /// versions the store can still draw. `updatable` is false once the
+    /// original is closed: the clone stays as a photo and the refresh is
+    /// disabled (S4).
+    fn entry(&self, store: &gx_mcp::store::DiagramStore) -> CloneEntry {
+        let live = store.versions(&self.origin_diagram_id);
+        let range = live.as_ref().and_then(|versions| {
+            versions
+                .first()
+                .map(|first| (first.version, versions.len()))
+        });
+        let (oldest_version, version_count) =
+            range.unwrap_or((self.oldest_version, self.version_count));
+        CloneEntry {
+            clone_id: self.clone_id.clone(),
+            origin_diagram_id: self.origin_diagram_id.clone(),
+            origin_session_id: self.origin_session_id.clone(),
+            title: self.title.clone(),
+            snapshot_version: self.snapshot_version,
+            current_version: oldest_version + version_count.saturating_sub(1) as u64,
+            oldest_version,
+            version_count,
+            updatable: live.is_some(),
+            pos: self.pos,
+            bbox: self.bbox,
+        }
+    }
+}
+
+/// One clone of the user plan, as the state and the paint events carry it.
+///
+/// It is the shape the page reads to paint the object on the user plan and to
+/// offer its history: the same numbers a diagram of the state carries, plus
+/// the original it came from and the version it froze. The SVG does not travel
+/// here: the owner draws it when the clone is created, refreshed or browsed,
+/// and answers with `graphium://clone-paint`.
+#[derive(Debug, Clone, Serialize)]
+pub struct CloneEntry {
+    pub clone_id: String,
+    pub origin_diagram_id: String,
+    pub origin_session_id: String,
+    pub title: String,
+    /// The newest version the clone pulled (S3).
+    pub snapshot_version: u64,
+    /// The newest version the **original** has right now; equals
+    /// `snapshot_version` until someone updates the original.
+    pub current_version: u64,
+    /// The oldest version the history of the original keeps right now.
+    pub oldest_version: u64,
+    /// How many versions the history of the original keeps.
+    pub version_count: usize,
+    /// Whether the original is still on a plan, so the clone can pull its
+    /// current version (B2).
+    pub updatable: bool,
+    /// Top-left corner of the object on the user plan, in plan units.
+    pub pos: Point,
+    /// Size of the object, padding included (PRD §7.2).
+    pub bbox: Size,
+}
+
+/// One clone with the drawing the owner rendered for it: the answer to
+/// `graphium://clone` and `graphium://clone-view` (B1, B2).
+#[derive(Debug, Clone, Serialize)]
+pub struct ClonePaint {
+    #[serde(flatten)]
+    pub entry: CloneEntry,
+    /// The version of the original the drawing shows: the current one after a
+    /// refresh, an older one while the human browses the history.
+    pub version: u64,
+    pub svg: String,
+}
+
+impl PlanState {
+    /// The clones of the user plan, in the order they arrived.
+    pub fn clones(&self) -> Vec<CloneEntry> {
+        let store = gx_mcp::store::diagram_store();
+        self.clones
+            .lock()
+            .expect("clones lock")
+            .iter()
+            .map(|clone| clone.entry(store))
+            .collect()
+    }
+
+    /// Clones a diagram onto the user plan (B1; S2, S4).
+    ///
+    /// The drawing is the **current** document of the original, read through
+    /// the read-only path of the history view: the newest saved version is the
+    /// current document, so `render_version_view` draws it without calling the
+    /// hook, without storing anything and without writing a version. The clone
+    /// lands on the center of the view it arrived in — the camera the owner
+    /// keeps is the one of the plan on screen —, cascading only against the
+    /// clones of the user plan: the diagrams of the sessions are on other plans
+    /// and never push it (S1, S4). The page then brings the user plan on screen
+    /// and travels until the clone. Nothing of the store changes.
+    pub fn create_clone(
+        &self,
+        diagram_id: &str,
+        viewport: Option<Size>,
+    ) -> Result<ClonePaint, gx_mcp::tools::ErrorPayload> {
+        let store = gx_mcp::store::diagram_store();
+        let Some(summary) = store.get(diagram_id) else {
+            return Err(unknown_diagram(diagram_id, store));
+        };
+        let versions = store.versions(diagram_id).unwrap_or_default();
+        let Some(current) = versions.last().map(|version| version.version) else {
+            // A diagram on the plan always has its first version (RF14); a
+            // store without one cannot be cloned.
+            return Err(unknown_diagram(diagram_id, store));
+        };
+        let svg = gx_mcp::tools::render_version_view(diagram_id, current)?;
+
+        // A window that cannot tell its size places the clone against a view of
+        // zero: the center of that view is the corner the camera looks at, and
+        // the hand of the human moves it from there (B3).
+        let occupied = self.clone_rects(None);
+        let rect = camera::place_with_cascade(
+            svg_size(&svg),
+            &self.camera(),
+            viewport.unwrap_or_default(),
+            &occupied,
+        );
+
+        let number = self.last_clone.fetch_add(1, Ordering::SeqCst) + 1;
+        let clone = PlanClone {
+            clone_id: format!("c-{number:04}"),
+            origin_diagram_id: diagram_id.to_string(),
+            origin_session_id: summary.session_id,
+            title: summary.title,
+            snapshot_version: current,
+            oldest_version: versions.first().map_or(current, |version| version.version),
+            version_count: versions.len(),
+            pos: Point::new(rect.x, rect.y),
+            bbox: Size::new(rect.w, rect.h),
+        };
+        let entry = clone.entry(store);
+        self.clones.lock().expect("clones lock").push(clone);
+        Ok(ClonePaint {
+            entry,
+            version: current,
+            svg,
+        })
+    }
+
+    /// Pulls a version of the original into a clone (B2; S3, S4).
+    ///
+    /// `version` is the version the human asked for in the clone's history;
+    /// `None` is «Actualizar el clon», which asks for the current one. The
+    /// drawing comes from the same read-only path the history of a diagram
+    /// uses, so the original is never touched. A version **newer** than the
+    /// snapshot is a new photo: the clone takes it as its own and its place is
+    /// recalculated with more calm, cascading inside the user plan only (S1,
+    /// S4). An older version is a preview in place, like the one the session
+    /// plans keep (T5): nothing moves.
+    pub fn view_clone(
+        &self,
+        clone_id: &str,
+        version: Option<u64>,
+    ) -> Result<ClonePaint, gx_mcp::tools::ErrorPayload> {
+        let store = gx_mcp::store::diagram_store();
+        let Some(found) = self
+            .clones
+            .lock()
+            .expect("clones lock")
+            .iter()
+            .find(|clone| clone.clone_id == clone_id)
+            .cloned()
+        else {
+            return Err(unknown_clone(clone_id));
+        };
+        let origin = found.origin_diagram_id.clone();
+        let versions = store.versions(&origin).unwrap_or_default();
+        let target = version.unwrap_or_else(|| {
+            versions
+                .last()
+                .map_or(found.snapshot_version, |last| last.version)
+        });
+        // The read-only render also answers the error of an original that is
+        // no longer on a plan: a photo cannot pull a version any more (S4).
+        let svg = gx_mcp::tools::render_version_view(&origin, target)?;
+
+        let mut updated = found;
+        if target > updated.snapshot_version {
+            // The photo grew: recalculate its place inside the user plan, with
+            // the places of the other clones as the only obstacles.
+            let size = camera::object_size(svg_size(&svg));
+            let occupied = self.clone_rects(Some(clone_id));
+            let rect = place_with_cascade_from(updated.pos, size, &occupied);
+            updated.pos = Point::new(rect.x, rect.y);
+            updated.bbox = Size::new(rect.w, rect.h);
+            updated.snapshot_version = target;
+            if let Some(summary) = store.get(&origin) {
+                updated.title = summary.title;
+            }
+            if let Some(last) = versions.last() {
+                updated.oldest_version =
+                    versions.first().map_or(last.version, |first| first.version);
+                updated.version_count = versions.len();
+            }
+        }
+        let entry = updated.entry(store);
+        if let Some(slot) = self
+            .clones
+            .lock()
+            .expect("clones lock")
+            .iter_mut()
+            .find(|clone| clone.clone_id == clone_id)
+        {
+            *slot = updated;
+        }
+        Ok(ClonePaint {
+            entry,
+            version: target,
+            svg,
+        })
+    }
+
+    /// Puts a clone where the human dragged it (B3, V2).
+    ///
+    /// Only the place of the view changes: the store is not written, the
+    /// original does not move and no version is recorded. Answers `false` for
+    /// a clone that is not on the user plan.
+    pub fn move_clone(&self, clone_id: &str, pos: Point) -> bool {
+        let mut clones = self.clones.lock().expect("clones lock");
+        let Some(clone) = clones.iter_mut().find(|clone| clone.clone_id == clone_id) else {
+            return false;
+        };
+        clone.pos = pos;
+        true
+    }
+
+    /// The rectangles the user plan already occupies: the objects of its own
+    /// clones. `skip` leaves one out — the clone being recalculated is not an
+    /// obstacle to itself.
+    fn clone_rects(&self, skip: Option<&str>) -> Vec<Rect> {
+        self.clones
+            .lock()
+            .expect("clones lock")
+            .iter()
+            .filter(|clone| Some(clone.clone_id.as_str()) != skip)
+            .map(|clone| Rect::new(clone.pos.x, clone.pos.y, clone.bbox.w, clone.bbox.h))
+            .collect()
+    }
+}
+
+/// The error of a diagram that is not on a plan, with the wording the tools
+/// own (`contract::unknown_diagram`): the human reads the same answer a tool
+/// would get when the diagram they are cloning closed in the meantime.
+fn unknown_diagram(
+    diagram_id: &str,
+    store: &gx_mcp::store::DiagramStore,
+) -> gx_mcp::tools::ErrorPayload {
+    gx_mcp::tools::contract_payload(
+        gx_mcp::contract::unknown_diagram(diagram_id, &store.known_ids()),
+        "diagram_id",
+    )
+}
+
+/// The error of a clone that is not on the user plan: the page asked for a
+/// clone of a window that no longer exists, and the notice the human reads is
+/// the one the plan already shows.
+fn unknown_clone(clone_id: &str) -> gx_mcp::tools::ErrorPayload {
+    gx_mcp::tools::ErrorPayload {
+        path: "clone_id".to_string(),
+        code: "unknown_diagram".to_string(),
+        message: format!("el clon `{clone_id}` no está en el plano del usuario"),
+        hint: Some("cloná el diagrama otra vez desde el panel".to_string()),
+    }
+}
+
+/// The size of a drawing, in plan units: the `width`/`height` of its root
+/// `<svg>`, which the renderer always writes (PRD §7.2). A drawing without
+/// them contributes no size, the way a diagram without geometry contributes no
+/// rectangle.
+fn svg_size(svg: &str) -> Size {
+    let attribute = |name: &str| {
+        let needle = format!("{name}=\"");
+        svg.find(&needle).and_then(|at| {
+            let rest = &svg[at + needle.len()..];
+            let end = rest.find('"')?;
+            rest[..end].parse::<f64>().ok()
+        })
+    };
+    Size::new(
+        attribute("width").unwrap_or_default(),
+        attribute("height").unwrap_or_default(),
+    )
+}
+
+/// Where a clone goes when its photo grew (S4): it keeps the place the human
+/// gave it and, while that place lands on another clone of the user plan, it
+/// takes the step of the cascade the plan uses. It is the «recalcular su
+/// posición con más tranquilidad» of S1, and the same policy as
+/// [`camera::place_with_cascade`], with the place of the clone as the origin
+/// instead of the center of the view.
+fn place_with_cascade_from(start: Point, size: Size, occupied: &[Rect]) -> Rect {
+    let mut rect = Rect::new(start.x, start.y, size.w, size.h);
+    for _ in 0..=camera::CASCADE_STEPS {
+        if !lands_on_another(rect, occupied) {
+            return rect;
+        }
+        rect = Rect::new(
+            rect.x + camera::CASCADE_OFFSET,
+            rect.y + camera::CASCADE_OFFSET,
+            rect.w,
+            rect.h,
+        );
+    }
+
+    // The cascade ran out: a new column, to the right of everything of the
+    // user plan (PRD §7.2).
+    let right = occupied
+        .iter()
+        .map(|other| other.max_x())
+        .fold(f64::NEG_INFINITY, f64::max);
+    let top = occupied
+        .iter()
+        .map(|other| other.min_y())
+        .fold(f64::INFINITY, f64::min);
+    Rect::new(right + camera::CASCADE_OFFSET, top, rect.w, rect.h)
+}
+
+/// Whether `rect` lands within the tolerance of an occupied rectangle: the
+/// tolerance is the padding of the object, so two clones closer than that read
+/// as one (PRD §7.2).
+fn lands_on_another(rect: Rect, occupied: &[Rect]) -> bool {
+    occupied.iter().any(|other| {
+        let inflated = |rect: Rect| {
+            Rect::new(
+                rect.x - camera::OBJECT_PADDING,
+                rect.y - camera::OBJECT_PADDING,
+                rect.w + 2.0 * camera::OBJECT_PADDING,
+                rect.h + 2.0 * camera::OBJECT_PADDING,
+            )
+        };
+        inflated(rect).overlaps(&inflated(*other))
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -230,13 +607,17 @@ fn state_entries() -> Vec<StateEntry> {
 /// Besides the diagrams, it carries **every** session of the owner, because
 /// the human is the exception to the isolation of D3: the switcher lists them
 /// all and brings one plan on screen at a time. Each diagram already names
-/// its session (`session_id`), which is the plan it belongs to.
+/// its session (`session_id`), which is the plan it belongs to. The clones of
+/// the user plan travel here too (`f8-planos.md`, B1): they are the objects of
+/// the human's own surface, and the page builds them from this same event.
 #[derive(Debug, Clone, Serialize)]
 struct PlanPayload {
     diagrams: Vec<StateEntry>,
     /// The sessions in the deterministic order of the registry (a
     /// `BTreeMap`, never a `HashMap`): the rows never jump around.
     sessions: Vec<gx_mcp::session::SessionView>,
+    /// The clones of the user plan, in the order they arrived.
+    clones: Vec<CloneEntry>,
 }
 
 /// The whole state of the plan: what is drawn and who drew it.
@@ -245,14 +626,21 @@ struct PlanPayload {
 /// sessions whose grace finished (D4, S2), so a session that ended is already
 /// gone from the list the switcher reads instead of lingering as a row with no
 /// diagrams.
-fn plan_payload() -> PlanPayload {
+fn plan_payload(state: &PlanState) -> PlanPayload {
     let diagrams = state_entries();
     let sessions = gx_mcp::session::session_registry()
         .list()
         .into_iter()
         .map(|record| record.view())
         .collect();
-    PlanPayload { diagrams, sessions }
+    // The clones are of the owner, not of the store: the state is the only
+    // door they go out through (`f8-planos.md`, B1, S4).
+    let clones = state.clones();
+    PlanPayload {
+        diagrams,
+        sessions,
+        clones,
+    }
 }
 
 /// Builds the Tauri application with the plan window.
@@ -305,6 +693,7 @@ pub fn build(keep_alive: bool, start_window: bool) -> (tauri::App<tauri::Wry>, A
     // the model answers (PRD §7, RF28). The id stays invalid and is never
     // handed out again, and the window survives.
     let close_handle = handle.clone();
+    let close_state = Arc::clone(&state);
     handle.listen("graphium://close", move |event| {
         #[derive(Deserialize)]
         struct ClosePayload {
@@ -320,7 +709,7 @@ pub fn build(keep_alive: bool, start_window: bool) -> (tauri::App<tauri::Wry>, A
             "graphium://closed",
             serde_json::json!({ "diagram_id": payload.diagram_id }),
         );
-        let _ = close_handle.emit("graphium://state", plan_payload());
+        let _ = close_handle.emit("graphium://state", plan_payload(&close_state));
     });
 
     // Viewing a saved version of the history belongs to the human (RF14; T5
@@ -367,7 +756,93 @@ pub fn build(keep_alive: bool, start_window: bool) -> (tauri::App<tauri::Wry>, A
         // The switcher of plans is built from the state, like the panel (S8):
         // the page gets one as soon as it is alive, so the rows are there
         // before the first render and never invented by the page.
-        let _ = ready_handle.emit("graphium://state", plan_payload());
+        let _ = ready_handle.emit("graphium://state", plan_payload(&ready_state));
+    });
+
+    // The user plan (`f8-planos.md`, B1/B2/S2/S4): the human clones a diagram
+    // of any session onto their own surface, refreshes it and browses the
+    // history of the original inside it. The clone is a view instance of the
+    // owner — no store write, no `diagram_id`, no slot of the twelve — so the
+    // page asks and Rust answers with the drawing and the entry the state
+    // lists. `graphium://clone-view` answers both the refresh (no version) and
+    // a step of the history.
+    let clone_handle = handle.clone();
+    let clone_state = Arc::clone(&state);
+    handle.listen("graphium://clone", move |event| {
+        #[derive(Deserialize)]
+        struct ClonePayload {
+            diagram_id: String,
+        }
+        let Ok(payload) = serde_json::from_str::<ClonePayload>(event.payload()) else {
+            return;
+        };
+        let viewport = clone_handle
+            .get_webview_window(MAIN_WINDOW)
+            .as_ref()
+            .and_then(viewport_of);
+        match clone_state.create_clone(&payload.diagram_id, viewport) {
+            Ok(paint) => {
+                // The drawing goes first: the page creates the object with it,
+                // so a state that lists a clone nobody has drawn yet never
+                // happens, and the clone the human asked for never flickers.
+                let _ = clone_handle.emit("graphium://clone-paint", paint);
+                let _ = clone_handle.emit("graphium://state", plan_payload(&clone_state));
+            }
+            Err(error) => {
+                let _ = clone_handle.emit("graphium://error", error);
+            }
+        }
+    });
+
+    let view_handle = handle.clone();
+    let view_state = Arc::clone(&state);
+    handle.listen("graphium://clone-view", move |event| {
+        #[derive(Deserialize)]
+        struct CloneViewPayload {
+            clone_id: String,
+            version: Option<u64>,
+        }
+        let Ok(payload) = serde_json::from_str::<CloneViewPayload>(event.payload()) else {
+            return;
+        };
+        match view_state.view_clone(&payload.clone_id, payload.version) {
+            Ok(paint) => {
+                // A newer version may have moved the clone, so the state (the
+                // place the owner keeps) leaves before the drawing.
+                let _ = view_handle.emit("graphium://state", plan_payload(&view_state));
+                let _ = view_handle.emit("graphium://clone-paint", paint);
+            }
+            Err(error) => {
+                let _ = view_handle.emit("graphium://error", error);
+            }
+        }
+    });
+
+    // Moving a clone belongs to the human and only writes where the view is
+    // (B3, V2): the store, the original and its history stay untouched.
+    let move_handle = handle.clone();
+    let move_state = Arc::clone(&state);
+    handle.listen("graphium://clone-move", move |event| {
+        #[derive(Deserialize)]
+        struct CloneMovePayload {
+            clone_id: String,
+            pos: Position,
+        }
+        #[derive(Deserialize)]
+        struct Position {
+            x: f64,
+            y: f64,
+        }
+        let Ok(payload) = serde_json::from_str::<CloneMovePayload>(event.payload()) else {
+            return;
+        };
+        if !payload.pos.x.is_finite() || !payload.pos.y.is_finite() {
+            return;
+        }
+        if !move_state.move_clone(&payload.clone_id, Point::new(payload.pos.x, payload.pos.y)) {
+            return;
+        }
+        let _ = move_handle.emit("graphium://state", plan_payload(&move_state));
     });
 
     let settings_state = Arc::clone(&state);
@@ -623,7 +1098,7 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
 
         // The model of the diagrams lives in Rust (PRD §8.6.1, S22): the
         // frontend rebuilds its panel from this event.
-        let _ = window.emit("graphium://state", plan_payload());
+        let _ = window.emit("graphium://state", plan_payload(&state));
 
         gx_mcp::tools::RenderStatus::Painted
     });
@@ -707,7 +1182,8 @@ mod tests {
             "{\"version\":1,\"kind\":\"graph\"}".to_string(),
         );
 
-        let payload = serde_json::to_value(super::plan_payload()).expect("the state serializes");
+        let payload = serde_json::to_value(super::plan_payload(&super::PlanState::default()))
+            .expect("the state serializes");
         let entry = payload["diagrams"]
             .as_array()
             .expect("the state carries the diagrams")
@@ -775,7 +1251,8 @@ mod tests {
             "{}".to_string(),
         );
 
-        let payload = serde_json::to_value(super::plan_payload()).expect("the state serializes");
+        let payload = serde_json::to_value(super::plan_payload(&super::PlanState::default()))
+            .expect("the state serializes");
 
         let sessions = payload["sessions"]
             .as_array()
@@ -812,7 +1289,8 @@ mod tests {
         // D4: a session in grace is still a row of the switcher — the human
         // sees every session (D3) — with its state spelled out for the page.
         registry.begin_grace(&claude_id, std::time::SystemTime::now());
-        let in_grace = serde_json::to_value(super::plan_payload()).expect("serializes");
+        let in_grace = serde_json::to_value(super::plan_payload(&super::PlanState::default()))
+            .expect("serializes");
         let claude = in_grace["sessions"]
             .as_array()
             .expect("the state carries the sessions")
@@ -905,5 +1383,72 @@ mod tests {
         let json = serde_json::to_value(&event).expect("the render serializes");
 
         assert_eq!(json["session_id"], "pi-1");
+    }
+
+    /// Un documento chiquito para el plano del usuario: el dueño lo dibuja
+    /// con los motores reales, sin ventana.
+    const MINIMAL: &str = r#"{
+  "version": 1,
+  "kind": "graph",
+  "title": "parse_config() — flujo",
+  "direction": "TB",
+  "nodes": [
+    { "id": "read", "label": "read file" },
+    { "id": "ok",   "label": "Config" }
+  ],
+  "edges": [
+    { "from": "read", "to": "ok", "label": "utf-8" }
+  ]
+}"#;
+
+    /// B1: el estado del plano es la única puerta de los clones. Trae, por
+    /// cada uno, el lugar y el tamaño con los que la página arma el objeto, la
+    /// versión que congeló y si el original sigue en el plano; y **no** trae
+    /// el `diagram_id` del original como si fuera uno: el clon tiene su propia
+    /// clave, que el store no conoce (S4).
+    #[test]
+    fn the_state_of_the_plan_carries_the_clones_of_the_user_plan() {
+        crate::install_engines().expect("the engines of the application are installed");
+        gx_mcp::bootstrap();
+        let store = gx_mcp::store::diagram_store();
+        let diagram_id = store.next_id();
+        store.insert(
+            diagram_id.clone(),
+            "flujo".to_string(),
+            "graph".to_string(),
+            "stdio-planos-usuario".to_string(),
+            MINIMAL.to_string(),
+        );
+
+        let state = super::PlanState::default();
+        let paint = state
+            .create_clone(&diagram_id, Some(gx_core::geom::Size::new(1280.0, 800.0)))
+            .expect("el dueño clona el diagrama");
+
+        let payload =
+            serde_json::to_value(super::plan_payload(&state)).expect("the state serializes");
+        let clones = payload["clones"]
+            .as_array()
+            .expect("the state carries the clones of the user plan");
+        assert_eq!(clones.len(), 1, "el clon que el humano pidió está ahí");
+        let clone = &clones[0];
+        assert_eq!(clone["clone_id"], paint.entry.clone_id.as_str());
+        assert_eq!(clone["origin_diagram_id"], diagram_id.as_str());
+        assert_eq!(clone["origin_session_id"], "stdio-planos-usuario");
+        assert_eq!(clone["title"], "flujo");
+        assert_eq!(clone["snapshot_version"], 1);
+        assert_eq!(clone["updatable"], true);
+        assert!(
+            clone["pos"]["x"].is_number() && clone["bbox"]["w"].is_number(),
+            "la página arma el objeto con el lugar y el tamaño del dueño: {clone}"
+        );
+        assert!(
+            clone.get("diagram_id").is_none(),
+            "un clon no es un diagrama: no lleva `diagram_id` (S4): {clone}"
+        );
+        assert!(
+            !store.known_ids().contains(&paint.entry.clone_id),
+            "el id del clon no está en el store: ninguna tool lo ve (V2)"
+        );
     }
 }

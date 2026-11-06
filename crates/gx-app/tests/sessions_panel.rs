@@ -74,17 +74,18 @@ fn the_switcher_shows_one_plan_at_a_time_and_the_todas_row_is_gone() {
         "la lista del conmutador se llena en un solo lugar: {rows}"
     );
 
-    // Un plano a la vez: solo los objetos de la sesión del plano en pantalla
-    // siguen visibles; los de los otros planos salen de la pintura sin
-    // cerrarse.
-    let visible = slice_between(JS, "function isVisibleSession(sessionId) {", "\n}");
+    // Un plano a la vez: solo los objetos del plano en pantalla siguen
+    // visibles; los de los otros planos salen de la pintura sin cerrarse. La
+    // clave es el plano del objeto, que para un diagrama es su sesión y para
+    // un clon es el plano del usuario (`f8-planos.md`, B1).
+    let visible = slice_between(JS, "function isVisiblePlan(planId) {", "\n}");
     assert!(
         visible.contains("activePlan !== null") && visible.contains("activePlan.id"),
         "un plano a la vez: el plano en pantalla decide qué se ve: {visible}"
     );
     let apply = slice_between(JS, "function applyPlanVisibility() {", "\n}");
     assert!(
-        apply.contains("element.classList.toggle(\"plan-hidden\", !isVisibleSession("),
+        apply.contains("element.classList.toggle(\"plan-hidden\", !isVisiblePlan("),
         "los objetos de los otros planos salen de la pintura: {apply}"
     );
     assert!(
@@ -108,7 +109,7 @@ fn the_switcher_shows_one_plan_at_a_time_and_the_todas_row_is_gone() {
 fn the_switcher_marks_the_plan_on_screen() {
     let row = slice_between(JS, "function sessionRow(session) {", "\n}");
     assert!(
-        row.contains("isVisibleSession(session.id)"),
+        row.contains("isVisiblePlan(session.id)"),
         "la fila del plano en pantalla es la marcada: {row}"
     );
     assert!(
@@ -202,9 +203,9 @@ fn the_camera_of_every_plan_is_kept_in_the_page() {
         restore.contains("newestCenter(activePlan.id)"),
         "un plano sin cámara guardada se encuadra en su diagrama más nuevo: {restore}"
     );
-    let newest = slice_between(JS, "function newestCenter(sessionId) {", "\n}");
+    let newest = slice_between(JS, "function newestCenter(planId) {", "\n}");
     assert!(
-        newest.contains("diagram.session_id === sessionId"),
+        newest.contains("diagram.session_id === planId"),
         "el diagrama más nuevo es uno del plano: {newest}"
     );
     assert!(
@@ -228,8 +229,8 @@ fn a_render_brings_the_plan_of_its_own_session_on_screen() {
         "el plano de la sesión del render entra en pantalla: {insert}"
     );
     assert!(
-        insert.contains("container.sessionId = "),
-        "el objeto guarda la sesión que el conmutador y el culling usan: {insert}"
+        insert.contains("container.planId = "),
+        "el objeto guarda el plano que el conmutador y el culling usan: {insert}"
     );
     assert!(
         insert.contains("framesOnInsert(sessionId)"),
@@ -238,13 +239,13 @@ fn a_render_brings_the_plan_of_its_own_session_on_screen() {
 
     // El primer diagrama de **un** plano se encuadra con la cámara del
     // evento; desde el segundo de ese plano, el plano hace pan.
-    let first = slice_between(JS, "function framesOnInsert(sessionId) {", "\n}");
+    let first = slice_between(JS, "function framesOnInsert(planId) {", "\n}");
     assert!(
-        first.contains("objects.values()") && first.contains("element.sessionId"),
+        first.contains("objects.values()") && first.contains("element.planId"),
         "el encuadre cuenta los objetos del plano del render: {first}"
     );
     assert!(
-        first.contains("=== sessionId"),
+        first.contains("=== planId"),
         "los objetos del plano se reconocen por su sesión: {first}"
     );
 }
@@ -289,12 +290,17 @@ fn a_finished_session_leaves_another_plan_on_screen_with_a_notice() {
 fn the_empty_surface_belongs_to_the_plan_on_screen() {
     let handler = slice_between(JS, "listen(\"graphium://state\", (event) => {", "\n});");
     assert!(
-        handler.contains("empty.classList.toggle(\"hidden\", planDiagramCount() > 0)"),
-        "el estado vacío cuenta los diagramas del plano en pantalla: {handler}"
+        handler.contains("paintEmpty()"),
+        "el estado vacío cuenta los objetos del plano en pantalla: {handler}"
     );
     let count_of_plan = slice_between(JS, "function planDiagramCount() {", "\n}");
     assert!(
         count_of_plan.contains("sessionDiagramCount(activePlan.id)"),
         "los diagramas del plano son los de su sesión: {count_of_plan}"
+    );
+    let paint = slice_between(JS, "function paintEmpty() {", "\n}");
+    assert!(
+        paint.contains("planDiagramCount() > 0"),
+        "el estado vacío se decide por los objetos del plano en pantalla: {paint}"
     );
 }
