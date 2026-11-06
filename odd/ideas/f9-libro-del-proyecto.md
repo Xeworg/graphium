@@ -548,3 +548,99 @@ CREATE VIRTUAL TABLE symbol_fts USING fts5(
 - Lo que **no** está y por qué: contenidos de archivo (el libro no duplica
   el código), CST completo (§3 descarte 2), file-edges materializadas
   (GROUP BY basta en v1), closure transitivo (depth ≤ 3 explícito).
+
+### 10.1 — Schema v1.1: deltas aplicados tras la revisión (2026-11-05)
+
+Tres revisores independientes (normalización, escalabilidad, mecánica SQLite)
+sobre el borrador de §10. Los deltas que sobreviven a los tres:
+
+**Corregidos (eran errores, no elecciones):**
+
+1. **`search_text` es columna real de `symbol`** (`TEXT NOT NULL`, derivado
+   al indexar). Con contenido externo, FTS5 lee los valores de las columnas
+   **desde la content table** para borrar tokens y para `rebuild`: una
+   columna FTS sin contraparte rompe el borrado, el recovery y el ranking a
+   la vez. Corrección de trio: normalización, escalabilidad y mecánica la
+   marcaron por separado. Bonus: con contenido externo `snippet()`
+   **sí funciona** (los valores salen de `symbol`) — el tradeoff «sin
+   snippet» solo valía para contentless.
+2. **`edge.exact` eliminado**: dependencia funcional con
+   `dst_id IS NOT NULL`; el branch heurístico es `WHERE dst_id IS NULL`. El
+   fallo de mantenerla es un diagrama más corto sin error — silent
+   under-approximation en `code_impact`.
+3. **`edge.file_id` eliminado** (dependencia transitiva de `src_id`); el
+   mapa de archivos (P6) lo calcula por joins. Optimización diferida: si el
+   GROUP BY del mapa midiera lento, una columna `dst_file_id` mantenida por
+   el escritor único lo convierte en un covering-index scan — se decide con
+   medición, no por fe.
+4. **`dst_id INTEGER REFERENCES symbol(id) ON DELETE SET NULL`** +
+   `PRAGMA foreign_keys=ON` **explícito** (el default es OFF, y rusqlite
+   *bundled* compila el default contrario a un sqlite de pkg-config: se fija
+   en código, no se hereda). Sin esto, borrar un capítulo aborta el lote o
+   deja huérfanos silenciosos.
+5. **Tokenizer sin `tokenchars '_'`**: añadirlo **elimina** el split gratis
+   de snake_case (`_` es separador por default). El texto de búsqueda
+   derivado (`renderWith → "render with renderWith"`) más matching por
+   AND de tokens con filtros de columna (`{name qname} : x`), nunca frases
+   cosidas; `prefix='2 3'` si se quiere `ren*`; `ORDER BY rank` (no bm25
+   directo) y **sin** `columnsize=0` (rompe bm25); la entrada de MATCH se
+   escapa siempre.
+6. **Colación unificada**: FTS es case-insensitive pero
+   `dst_name = symbol.name` es BINARY — se agrega `symbol.name_norm`
+   (normalizado, indexado) y **toda** resolución de edges corre por ahí, o
+   `code_search` y `code_impact` resuelven distinto el mismo nombre.
+7. **`indexed_at` INTEGER** (unixepoch ms) junto a `mtime_ns`; ISO-8601 solo
+   en el borde de la tool. `UNIQUE(file_id, qname)` y `CHECK`s de kinds y
+   spans ordenados.
+8. **El esquema de bloques de ids contiguos se elimina**: sin AUTOINCREMENT
+   el rowid se reutiliza (`max+1`) y el rango puede aliasear un archivo
+   borrado con uno nuevo — el invariante miente. Borrado por
+   `WHERE file_id=?`, ids monótonos.
+9. **Sincronización FTS por triggers documentados**, no por
+   `DELETE ... WHERE rowid IN (SELECT ...)`: el trigger con el comando
+   especial `('delete', old.id, old.name, old.qname, old.search_text)` es la
+   única operación de fila única garantizada (los valores pasados tienen que
+   coincidir con lo indexado). Recovery: `'rebuild'` (relee `symbol`, no hay
+   reparseo); integridad FTS con `('integrity-check', 1)` — el `1` es
+   requerido contra contenido externo; `.recover` no existe en rusqlite
+   bundled ⇒ **delete-and-reindex es la recuperación final** (confirmado).
+10. **`WITHOUT ROWID`: no** — `id INTEGER PRIMARY KEY` ya es rowid alias
+    (clusteriza), y en `edge` es imposible (`dst_id` es nullable; WITHOUT
+    ROWID fuerza NOT NULL en todo el PK).
+
+**Decisiones de operación:**
+
+- **Tamaño real**: 50k archivos ≈ **8–11 GB** (no 1–5 GB); tuning para 10 GB.
+- **Pragmas**: `page_size=4096` **antes** de crear tablas y antes del probe
+  (solo aplica en archivo vacío); `synchronous` **sigue al probe**
+  (WAL ⇒ NORMAL, DELETE ⇒ FULL); `wal_autocheckpoint=0` + checkpoints
+  PASSIVE solo con la cola del indexer vacía + `TRUNCATE` en idle-exit;
+  `journal_size_limit=64MB`; `auto_vacuum=INCREMENTAL` solo en creación;
+  `cache_size=-65536`; `mmap_size=256MB` (solo lectores); `temp_store=MEMORY`;
+  `busy_timeout=5000` + transacciones de lectura cortas (una `Connection` no
+  es `Sync`: Mutex o conexión por thread); `analysis_limit=400` +
+  `PRAGMA optimize` al cerrar.
+- **Lotes acotados por bytes** (≤2 MB de fuente; `cache_spill` toma lock
+  EXCLUSIVE), co-localizados por `(dir, path)`, size-ascending dentro del
+  dir; parseo paralelo con **commits seriales**; backpressure (1 thread de
+  parseo mientras hay un render en vuelo, ≤4 total); `meta.progress` para el
+  «indexing 40%». First index de 50k: **45–90 s** (medir en C0).
+- **Cold start sin `integrity_check`** (6–10 min a 10 GB): probe de `meta`
+  (<10 ms) + `user_version`/`nonce`/root/head; `quick_check` solo tras
+  shutdown sucio; FTS `integrity-check` puntual; desync de índice ⇒
+  `'rebuild'`; lo demás ⇒ delete-and-reindex.
+- **BFS**: ~3 statements por nivel (out-hop por `src_id IN`, in-hop por
+  `dst_id IN`, resolución de ambiguos con `GROUP BY name HAVING COUNT(*) ≤ 5`),
+  ~9 a depth 3; `IN` por chunks ≤500 (límite 32766); los
+  `dst_id IS NULL` **no se resuelven más allá del salto 1** (el fan-out de
+  nombres genéricos es el costo real); índices
+  `symbol(file_id, start_byte)` y `edge(src_id, dst_id, kind)` para hops
+  index-only.
+- **Imports**: un `symbol` sintético `kind='module'` por archivo
+  (`qname` = module path) y los specifiers resuelven a él — sin tabla nueva,
+  sin envenenar el % de resolución.
+
+**Lo que quedó como estaba (defendido por dos o tres revisores):**
+`dst_name` NOT NULL (procedencia), `qname` inline + `UNIQUE(file_id, qname)`,
+spans inline, `lang` TEXT+CHECK, sin tabla `unresolved_edge`, sin
+file-edges materializadas en v1, delete-and-reindex como recovery final.
