@@ -1218,7 +1218,12 @@ fn merge_patch(target: &mut Value, patch: &Value) {
 }
 
 /// The error of a diagram that is not on the plan (PRD §11.1).
-pub(crate) fn unknown_diagram(diagram_id: &str, known_ids: &[String]) -> ErrorPayload {
+///
+/// Public because the window answers it too: the user plan asks the store for
+/// a clone of a diagram that may have closed, and the human reads the same
+/// error any tool would answer in the banner of the plan
+/// (`f8-planos.md`, B1).
+pub fn unknown_diagram(diagram_id: &str, known_ids: &[String]) -> ErrorPayload {
     ErrorPayload {
         path: "diagram_id".to_string(),
         code: ErrorCode::UnknownDiagram.as_str().to_string(),
@@ -1318,6 +1323,48 @@ mod tests {
             "{}",
             response.errors[0].message
         );
+    }
+
+    /// V2 de `f8-planos.md` (B1, S4): el plano del usuario es del dueño. Las
+    /// tools conocen solo los diagramas del store, así que el id que el dueño
+    /// numera para una **instancia de vista** (`c-0001`, el clon de un plano
+    /// del usuario) no existe para ninguna de ellas: no se lista, no se lee, no
+    /// se actualiza y no se cierra. El id de un clon nunca se confunde con un
+    /// `diagram_id`, y el contrato no tiene una tool para tocarlo.
+    #[test]
+    fn the_tools_only_know_the_diagrams_of_the_store() {
+        let _guard = crate::test_support::lock_renders_blocking();
+        let id = render_into_store(MINIMAL, "session-a");
+        let clone_id = "c-0001";
+
+        let listed = super::list_diagrams("session-a");
+        let ids: Vec<&str> = listed
+            .diagrams
+            .iter()
+            .map(|entry| entry.diagram_id.as_str())
+            .collect();
+        assert!(ids.contains(&id.as_str()));
+        assert!(
+            !ids.contains(&clone_id),
+            "la lista del agente no puede traer una instancia de vista: {ids:?}"
+        );
+
+        let read = super::get_diagram("session-a", clone_id);
+        assert!(!read.ok);
+        assert_eq!(read.errors[0].code, "unknown_diagram");
+
+        let updated = super::update_diagram(
+            "session-a",
+            clone_id,
+            &serde_json::json!({ "title": "otro" }),
+            None,
+        );
+        assert!(!updated.ok);
+        assert_eq!(updated.errors[0].code, "unknown_diagram");
+
+        let versions = super::list_diagram_versions("session-a", clone_id);
+        assert!(!versions.ok);
+        assert_eq!(versions.errors[0].code, "unknown_diagram");
     }
 
     /// RF14/R3: el historial de un diagrama se lista del más viejo al más
