@@ -158,7 +158,9 @@ fn a_symbol_search_answers_in_under_fifty_milliseconds_at_this_scale() {
         "the exit criterion is < 50 ms: median {median:?}"
     );
 
-    service::shutdown_all();
+    // Only the book of this repository: closing every book would stop the
+    // watcher of a test that is still running in parallel (T4/C3).
+    service::shutdown(&repository_root());
 }
 
 /// The second half: two writes to the same file, followed by the watcher,
@@ -239,7 +241,7 @@ fn the_watcher_follows_two_writes_to_the_same_file() {
         "the neighbour file was not touched"
     );
 
-    service::shutdown_all();
+    service::shutdown(&root);
 }
 
 // ---------------------------------------------------------------------------

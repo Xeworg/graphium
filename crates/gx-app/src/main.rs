@@ -2,7 +2,7 @@
 
 use std::error::Error;
 
-use gx_app::{daemon, help_text, mcp_config_for, run_owner, run_solo_ui, run_stdio, socket};
+use gx_app::{books, daemon, help_text, mcp_config_for, run_owner, run_solo_ui, run_stdio, socket};
 
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -11,6 +11,7 @@ fn main() {
         Some("--owner") => run_owner(),
         Some("--stdio") => run_stdio(),
         Some("quit") => quit(),
+        Some("books") => books_command(&arguments[1..]),
         Some("mcp-config") => {
             // `graphium mcp-config [--client <pi|claude|cursor|generic>]`
             let client = match arguments.get(1).map(String::as_str) {
@@ -43,6 +44,17 @@ fn main() {
         eprintln!("graphium: {error}");
         std::process::exit(1);
     }
+}
+
+/// `graphium books list|prune|hook` (F9, T4/C3): the books of the user, the
+/// prune of the worktrees that no longer exist, and the optional git hook.
+fn books_command(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    let root = gx_mcp::book::BooksRoot::from_env()
+        .ok_or("no hay books root: HOME no está definido y GRAPHIUM_BOOKS_ROOT está vacío")?;
+    for line in books::lines(&root, arguments)? {
+        println!("{line}");
+    }
+    Ok(())
 }
 
 /// Asks the owner to shut down gracefully (S5).

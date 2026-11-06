@@ -30,7 +30,10 @@ pub use impact::{
     ImpactRequest, Seed, WalkLimits,
 };
 pub use lang::{ParsedFile, ParsedSymbol};
-pub use location::{book_key, BookLocation, BooksRoot, LocationError};
+pub use location::{
+    book_bytes, book_key, prune_candidates, BookLocation, BookSummary, BooksRoot, LocationError,
+    PruneCandidate, PruneOutcome, PruneReason, KEEP_NEWEST_BOOKS,
+};
 pub use relations::{ParsedEdge, RELATION_KINDS};
 pub use resolution::{resolution_by_language, LanguageResolution};
 pub use schema::{OpenReport, RebuildReason};

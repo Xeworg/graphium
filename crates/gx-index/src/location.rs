@@ -88,6 +88,63 @@ impl BooksRoot {
         self.path.join(REGISTRY_NAME)
     }
 
+    /// Every book the registry remembers, with what the disk says about each
+    /// one, newest first (`graphium books list`, T4/C3).
+    ///
+    /// The totals (`files`, `symbols`) are the ones of the last open — the
+    /// registry already carries them, so listing never opens a database.
+    pub fn list(&self) -> Vec<BookSummary> {
+        let registry = BookRegistry::load(&self.registry_path());
+        let mut summaries: Vec<BookSummary> = registry
+            .books
+            .iter()
+            .map(|entry| BookSummary {
+                entry: entry.clone(),
+                bytes: book_bytes(Path::new(&entry.dir)),
+                root_missing: entry.root.is_empty() || !Path::new(&entry.root).is_dir(),
+                dir_missing: !Path::new(&entry.dir).is_dir(),
+            })
+            .collect();
+        summaries.sort_by(|left, right| newest_first(&left.entry, &right.entry));
+        summaries
+    }
+
+    /// Removes the books [`prune_candidates`] selects: the directory on disk and
+    /// the registry line (T4/C3). With `dry_run` it reports and writes nothing.
+    ///
+    /// `protected` is never touched, and the active book is always in it: the
+    /// idle exit of the owner passes the roots of the books it has open, and the
+    /// CLI passes the directory the user is standing in.
+    pub fn prune(
+        &self,
+        protected: &[PathBuf],
+        keep_newest: usize,
+        dry_run: bool,
+    ) -> io::Result<PruneOutcome> {
+        let path = self.registry_path();
+        let mut registry = BookRegistry::load(&path);
+        let removed = prune_candidates(&registry, protected, keep_newest);
+        if !dry_run && !removed.is_empty() {
+            for candidate in &removed {
+                let dir = Path::new(&candidate.entry.dir);
+                if dir.is_dir() {
+                    fs::remove_dir_all(dir)?;
+                }
+            }
+            registry.books.retain(|entry| {
+                !removed
+                    .iter()
+                    .any(|candidate| candidate.entry.book_key == entry.book_key)
+            });
+            registry.save(&path)?;
+        }
+        Ok(PruneOutcome {
+            kept: registry.books.len(),
+            removed,
+            dry_run,
+        })
+    }
+
     /// Locates (and creates) the directory of the book of `project_root`.
     ///
     /// The key is the canonical root, so two worktrees of the same repository
@@ -298,6 +355,177 @@ impl BookRegistry {
     }
 }
 
+// ---------------------------------------------------------------------------
+// T4/C3 — the books of the user: list, prune, and the cap of the idle exit
+// ---------------------------------------------------------------------------
+
+/// How many books the idle exit keeps, the newest by last open first (T4/C3).
+///
+/// The books root is a cache of worktrees (D1), so a project deleted a week ago
+/// is residue; a user with more than eight live projects is not the case this
+/// budget is for, and the cap is what keeps the directory from growing with
+/// every `git worktree` of a month of afternoons.
+pub const KEEP_NEWEST_BOOKS: usize = 8;
+
+/// Why a book is on its way out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PruneReason {
+    /// The worktree the book indexed is gone: the book is what is left of it.
+    RootGone,
+    /// The registry remembers a book whose directory is gone.
+    DirGone,
+    /// The books root has more live books than the cap keeps.
+    OverCap,
+}
+
+impl PruneReason {
+    /// The reason as the CLI spells it.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PruneReason::RootGone => "root-gone",
+            PruneReason::DirGone => "dir-gone",
+            PruneReason::OverCap => "over-cap",
+        }
+    }
+}
+
+/// One book a prune removes, with the bytes that go with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PruneCandidate {
+    /// The registry line that dies with it.
+    pub entry: BookEntry,
+    /// Why it is on its way out.
+    pub reason: PruneReason,
+    /// Bytes on disk (`libro.sqlite` and its journal siblings).
+    pub bytes: u64,
+}
+
+/// One book as the registry and the disk describe it (`graphium books list`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookSummary {
+    /// The registry line: key, root, directory and the totals of the last open.
+    pub entry: BookEntry,
+    /// Bytes on disk.
+    pub bytes: u64,
+    /// The worktree it indexed no longer exists.
+    pub root_missing: bool,
+    /// Its directory is gone: there is no database to report.
+    pub dir_missing: bool,
+}
+
+/// What a prune did (or would do, with `dry_run`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PruneOutcome {
+    /// The books that went away, each with its reason and its bytes.
+    pub removed: Vec<PruneCandidate>,
+    /// Books still in the registry after the prune.
+    pub kept: usize,
+    /// Whether nothing was deleted and nothing was written.
+    pub dry_run: bool,
+}
+
+impl PruneOutcome {
+    /// The bytes the removed books were holding.
+    pub fn bytes_freed(&self) -> u64 {
+        self.removed.iter().map(|candidate| candidate.bytes).sum()
+    }
+}
+
+/// Which books a prune removes, and why (T4/C3; S8, D4).
+///
+/// Three rules, in this order, and the order is the point:
+///
+/// 1. **The protected books never die.** A root in `protected` is the book of a
+///    session the owner is serving (or the directory a user is standing in):
+///    deleting a database another process is writing is corruption, so the
+///    protection also stands over the cap.
+/// 2. **A book whose reason is not the cap dies.** A registry entry with no
+///    directory is a memory of nothing (`DirGone`), and a book whose worktree
+///    was deleted has nothing left to answer about (`RootGone`).
+/// 3. **The cap keeps the newest [`KEEP_NEWEST_BOOKS`] live books**, ordered by
+///    last open (then creation, then key, so the selection is deterministic).
+///
+/// The selection is a pure function of the registry and the disk so the cap can
+/// be pinned by a test instead of inferred from a filesystem after the fact.
+pub fn prune_candidates(
+    registry: &BookRegistry,
+    protected: &[PathBuf],
+    keep_newest: usize,
+) -> Vec<PruneCandidate> {
+    // The protection answers to both identities of a book: the key it is
+    // stored under and the root it says it indexes. A registry line whose two
+    // disagree is broken, and a broken line is never a reason to delete the
+    // book another process has open.
+    let protected: Vec<(String, String)> = protected
+        .iter()
+        .map(|root| {
+            let canonical = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+            (book_key(&canonical), path_string(&canonical))
+        })
+        .collect();
+    let mut candidates: Vec<PruneCandidate> = Vec::new();
+    let mut live: Vec<&BookEntry> = Vec::new();
+
+    for entry in &registry.books {
+        if protected
+            .iter()
+            .any(|(key, root)| *key == entry.book_key || *root == entry.root)
+        {
+            continue;
+        }
+        let dir = Path::new(&entry.dir);
+        if !dir.is_dir() {
+            candidates.push(PruneCandidate {
+                entry: entry.clone(),
+                reason: PruneReason::DirGone,
+                bytes: 0,
+            });
+            continue;
+        }
+        if entry.root.is_empty() || !Path::new(&entry.root).is_dir() {
+            candidates.push(PruneCandidate {
+                entry: entry.clone(),
+                reason: PruneReason::RootGone,
+                bytes: book_bytes(dir),
+            });
+            continue;
+        }
+        live.push(entry);
+    }
+
+    live.sort_by(|left, right| newest_first(left, right));
+    for entry in live.into_iter().skip(keep_newest) {
+        candidates.push(PruneCandidate {
+            entry: entry.clone(),
+            reason: PruneReason::OverCap,
+            bytes: book_bytes(Path::new(&entry.dir)),
+        });
+    }
+    candidates
+}
+
+/// The newest book first: last open, then creation, then key.
+fn newest_first(left: &BookEntry, right: &BookEntry) -> std::cmp::Ordering {
+    right
+        .last_opened_at
+        .cmp(&left.last_opened_at)
+        .then_with(|| right.created_at.cmp(&left.created_at))
+        .then_with(|| left.book_key.cmp(&right.book_key))
+}
+
+/// The bytes of one book on disk: the database and its journal siblings.
+pub fn book_bytes(dir: &Path) -> u64 {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.metadata().ok())
+        .filter(|metadata| metadata.is_file())
+        .map(|metadata| metadata.len())
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -376,5 +604,251 @@ mod tests {
             "a broken registry costs a reindex, never a crash"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use super::{
+        book_bytes, prune_candidates, BookEntry, BookRegistry, BooksRoot, PruneReason,
+        KEEP_NEWEST_BOOKS,
+    };
+
+    /// A books root of its own, removed when the test ends.
+    struct Scratch {
+        base: PathBuf,
+    }
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let base = std::env::temp_dir().join(format!(
+                "gx-index-prune-{name}-{}-{}",
+                std::process::id(),
+                super::super::schema::new_nonce()
+            ));
+            fs::create_dir_all(&base).expect("the books root");
+            Self { base }
+        }
+
+        fn books(&self) -> BooksRoot {
+            BooksRoot::at(&self.base)
+        }
+
+        /// A live worktree with a book directory that has a database of `bytes`.
+        fn book(&self, name: &str, bytes: usize, opened_at: i64) -> BookEntry {
+            let root = self.base.join("worktrees").join(name);
+            fs::create_dir_all(&root).expect("the worktree");
+            let entry = BookEntry {
+                book_key: format!("{name}-0123456789abcdef"),
+                root: super::path_string(&root),
+                dir: String::new(),
+                nonce: "n".to_string(),
+                last_opened_at: opened_at,
+                ..BookEntry::default()
+            };
+            let dir = self.base.join(&entry.book_key);
+            fs::create_dir_all(&dir).expect("the book dir");
+            fs::write(dir.join(super::DATABASE_NAME), vec![0u8; bytes]).expect("the database");
+            BookEntry {
+                dir: super::path_string(&dir),
+                ..entry
+            }
+        }
+
+        /// A registry entry with no directory at all.
+        fn registry_only(&self, name: &str) -> BookEntry {
+            BookEntry {
+                book_key: format!("{name}-fedcba9876543210"),
+                root: super::path_string(&self.base.join("worktrees").join(name)),
+                dir: super::path_string(&self.base.join(format!("{name}-fedcba9876543210"))),
+                ..BookEntry::default()
+            }
+        }
+
+        fn save(&self, entries: Vec<BookEntry>) -> BookRegistry {
+            let mut registry = BookRegistry::default();
+            for entry in entries {
+                registry.record(entry);
+            }
+            registry
+                .save(&self.books().registry_path())
+                .expect("the registry");
+            registry
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.base);
+        }
+    }
+
+    /// T4/C3 (S8, D4): the prune removes the book of a worktree that no longer
+    /// exists — directory and registry entry — and never the book of a live
+    /// root, whose bytes stay on disk.
+    #[test]
+    fn the_prune_removes_a_gone_root_and_keeps_a_live_one() {
+        let scratch = Scratch::new("root-gone");
+        let live = scratch.book("live", 64, 1);
+        let gone = scratch.book("gone", 128, 2);
+        // The worktree of `gone` is deleted; the book is what is left of it.
+        fs::remove_dir_all(Path::new(&gone.root)).expect("the worktree disappears");
+        let registry = scratch.save(vec![live.clone(), gone.clone()]);
+        assert_eq!(registry.books.len(), 2);
+
+        let outcome = scratch
+            .books()
+            .prune(&[], KEEP_NEWEST_BOOKS, false)
+            .expect("the prune runs");
+        assert_eq!(outcome.removed.len(), 1, "{outcome:?}");
+        assert_eq!(outcome.removed[0].entry.book_key, gone.book_key);
+        assert_eq!(outcome.removed[0].reason, PruneReason::RootGone);
+        assert_eq!(outcome.removed[0].bytes, 128);
+        assert!(!Path::new(&gone.dir).exists(), "the book directory is gone");
+        assert!(Path::new(&live.dir).exists(), "the live book stays");
+        let after = BookRegistry::load(&scratch.books().registry_path());
+        assert_eq!(after.books.len(), 1, "the registry lost only the gone book");
+        assert_eq!(after.books[0].book_key, live.book_key);
+    }
+
+    /// T4/C3: a registry entry whose directory is gone costs no filesystem
+    /// work — the entry is what dies.
+    #[test]
+    fn the_prune_drops_a_registry_entry_whose_directory_is_gone() {
+        let scratch = Scratch::new("dir-gone");
+        let live = scratch.book("live", 64, 1);
+        let orphan = scratch.registry_only("orphan");
+        assert!(!Path::new(&orphan.dir).exists());
+        scratch.save(vec![live.clone(), orphan.clone()]);
+
+        let outcome = scratch
+            .books()
+            .prune(&[], KEEP_NEWEST_BOOKS, false)
+            .expect("the prune runs");
+        assert_eq!(outcome.removed.len(), 1, "{outcome:?}");
+        assert_eq!(outcome.removed[0].entry.book_key, orphan.book_key);
+        assert_eq!(outcome.removed[0].reason, PruneReason::DirGone);
+        assert_eq!(outcome.removed[0].bytes, 0);
+        assert!(Path::new(&live.dir).exists());
+        let after = BookRegistry::load(&scratch.books().registry_path());
+        assert_eq!(after.books.len(), 1);
+        assert_eq!(after.books[0].book_key, live.book_key);
+    }
+
+    /// T4/C3: the cap keeps the `keep_newest` most recently opened books and
+    /// the protected book of the owner is never one of the removed ones, even
+    /// when it is the oldest of all.
+    #[test]
+    fn the_cap_keeps_the_newest_books_and_never_the_protected_one() {
+        let scratch = Scratch::new("cap");
+        let mut entries: Vec<BookEntry> = (0..10)
+            .map(|index| scratch.book(&format!("b{index}"), 10, index as i64))
+            .collect();
+        // The oldest book is the one the owner has open right now.
+        let protected = PathBuf::from(&entries[0].root);
+        entries.sort_by_key(|entry| entry.last_opened_at);
+        scratch.save(entries.clone());
+
+        let candidates = prune_candidates(
+            &BookRegistry::load(&scratch.books().registry_path()),
+            std::slice::from_ref(&protected),
+            KEEP_NEWEST_BOOKS,
+        );
+        assert_eq!(
+            candidates.len(),
+            1,
+            "nine live books over a cap of eight remove one: {candidates:?}"
+        );
+        assert_eq!(candidates[0].reason, PruneReason::OverCap);
+        assert_eq!(
+            candidates[0].entry.book_key, entries[1].book_key,
+            "the oldest book that is not protected is the one over the cap"
+        );
+        assert!(
+            candidates
+                .iter()
+                .all(|candidate| candidate.entry.root != super::path_string(&protected)),
+            "the protected book is never a candidate"
+        );
+        // And the same selection through the prune: the oldest book survives.
+        scratch
+            .books()
+            .prune(std::slice::from_ref(&protected), KEEP_NEWEST_BOOKS, false)
+            .expect("the prune runs");
+        let after = BookRegistry::load(&scratch.books().registry_path());
+        assert_eq!(after.books.len(), 9);
+        assert!(
+            after
+                .books
+                .iter()
+                .any(|entry| entry.root == super::path_string(&protected)),
+            "the book of the owner survived the cap"
+        );
+        assert!(
+            !Path::new(&entries[1].dir).exists(),
+            "the book over the cap was deleted"
+        );
+    }
+
+    /// T4/C3: `--dry-run` reports what it would remove and changes nothing.
+    #[test]
+    fn a_dry_run_reports_without_deleting_anything() {
+        let scratch = Scratch::new("dry-run");
+        let live = scratch.book("live", 64, 1);
+        let gone = scratch.book("gone", 256, 2);
+        fs::remove_dir_all(Path::new(&gone.root)).expect("the worktree disappears");
+        scratch.save(vec![live.clone(), gone.clone()]);
+
+        let outcome = scratch
+            .books()
+            .prune(&[], KEEP_NEWEST_BOOKS, true)
+            .expect("the dry run");
+        assert!(outcome.dry_run);
+        assert_eq!(outcome.removed.len(), 1);
+        assert_eq!(outcome.bytes_freed(), 256);
+        assert!(
+            Path::new(&gone.dir).exists(),
+            "a dry run deletes no directory"
+        );
+        let after = BookRegistry::load(&scratch.books().registry_path());
+        assert_eq!(after.books.len(), 2, "a dry run rewrites no registry");
+    }
+
+    /// T4/C3 (`graphium books list`): the list reports the bytes of each book,
+    /// the totals of its last open, and marks the books whose root is gone.
+    #[test]
+    fn the_list_reports_the_bytes_the_totals_and_the_missing_roots() {
+        let scratch = Scratch::new("list");
+        let live = BookEntry {
+            files: 95,
+            symbols: 2472,
+            last_opened_at: 1_700_000_000_000,
+            ..scratch.book("live", 96, 1)
+        };
+        let gone = scratch.book("gone", 32, 2);
+        fs::remove_dir_all(Path::new(&gone.root)).expect("the worktree disappears");
+        scratch.save(vec![live.clone(), gone.clone()]);
+
+        let books = scratch.books().list();
+        assert_eq!(books.len(), 2);
+        let live_summary = books
+            .iter()
+            .find(|summary| summary.entry.book_key == live.book_key)
+            .expect("the live book");
+        assert_eq!(live_summary.bytes, 96);
+        assert!(!live_summary.root_missing);
+        assert!(!live_summary.dir_missing);
+        assert_eq!(live_summary.entry.files, 95);
+        assert_eq!(live_summary.entry.symbols, 2472);
+        let gone_summary = books
+            .iter()
+            .find(|summary| summary.entry.book_key == gone.book_key)
+            .expect("the stale book");
+        assert!(gone_summary.root_missing, "a deleted worktree is marked");
+        assert!(!gone_summary.dir_missing);
+        assert_eq!(book_bytes(Path::new(&gone.dir)), 32);
     }
 }

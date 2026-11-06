@@ -208,11 +208,40 @@ pub fn maintain(config: &BooksConfig, projects: &[String]) {
 /// repeat it.
 static REPORTED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
+/// Stops the watcher of **one** book and closes it cleanly, forgetting it.
+///
+/// The targeted sibling of [`shutdown_all`], and the one a harness that owns a
+/// single worktree must use: closing every book of the process from the end of
+/// one test tears down the books of the tests that are still answering, and the
+/// next tool call reopens one, whose first pass publishes `progress` from
+/// scratch — the flake of T4/C3, where the row a tool read said `indexing` with
+/// `files_done == 0` for a book that had already been indexed.
+///
+/// A root with no open book is not an error: the caller says «forget this one»
+/// and there is nothing to forget.
+pub fn shutdown(project_root: &Path) {
+    let Ok(canonical) = std::fs::canonicalize(project_root) else {
+        return;
+    };
+    let key = canonical.to_string_lossy().replace('\\', "/");
+    let handle = BOOKS.lock().expect("the books lock").remove(&key);
+    if let Some(handle) = handle {
+        handle.stop();
+        if let Err(error) = handle.book.close_clean() {
+            eprintln!(
+                "gx-index: the book `{}` did not close cleanly: {error}",
+                handle.book.key()
+            );
+        }
+    }
+}
+
 /// Stops every watcher, closes every book cleanly and forgets them.
 ///
 /// This is the idle exit of the owner: a `TRUNCATE` checkpoint and the
 /// `clean_shutdown` marker, so the next start skips `quick_check`
-/// (ideas §10.1, «Cold start»).
+/// (ideas §10.1, «Cold start»). A test harness that owns one worktree uses
+/// [`shutdown`] instead: this one closes the books of the whole process.
 pub fn shutdown_all() {
     let handles: Vec<Arc<BookHandle>> = {
         let mut books = BOOKS.lock().expect("the books lock");
@@ -227,6 +256,19 @@ pub fn shutdown_all() {
             );
         }
     }
+}
+
+/// The canonical roots of the books open in this process (T4/C3).
+///
+/// The idle prune protects every one of them: a book another session is using
+/// is never residue, not even over the cap.
+pub fn open_roots() -> Vec<PathBuf> {
+    BOOKS
+        .lock()
+        .expect("the books lock")
+        .keys()
+        .map(PathBuf::from)
+        .collect()
 }
 
 /// Whether a book is open for a root (tests and maintenance).

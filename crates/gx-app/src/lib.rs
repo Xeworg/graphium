@@ -5,6 +5,7 @@
 //! (PRD §8.6, §8.6.1).
 
 pub mod app;
+pub mod books;
 pub mod camera;
 pub mod daemon;
 pub mod lifecycle;
@@ -172,6 +173,9 @@ pub fn help_text() -> String {
          graphium --stdio      sirve MCP por stdio (lanza el dueño si no hay)\n  \
          graphium quit         cierra el dueño de forma ordenada\n  \
          graphium mcp-config   imprime la configuración MCP\n  \
+         graphium books list               lista los libros de los proyectos\n  \
+         graphium books prune [--dry-run]  borra los libros de worktrees que ya no existen\n  \
+         graphium books hook               imprime el hook de git del libro\n  \
          graphium --version    imprime la versión\n  \
          graphium --help       imprime esta ayuda\n",
         env!("CARGO_PKG_VERSION")
@@ -212,5 +216,8 @@ mod tests {
         // `quit` is the way to close it without leaving a dirty socket (S5).
         assert!(help.contains("--owner"), "{help}");
         assert!(help.contains("quit"), "{help}");
+        // T4/C3: the books of the user have their own door.
+        assert!(help.contains("books list"), "{help}");
+        assert!(help.contains("books prune"), "{help}");
     }
 }

@@ -207,6 +207,15 @@ impl Book {
         &self.location.key
     }
 
+    /// The books root this book lives in (T4/C3): what the idle exit prunes —
+    /// the books of worktrees that no longer exist, never this one.
+    pub fn books_root(&self) -> Option<crate::location::BooksRoot> {
+        self.location
+            .dir
+            .parent()
+            .map(crate::location::BooksRoot::at)
+    }
+
     /// `(files, symbols)` of the book.
     pub fn counts(&self) -> Result<(i64, i64), BookError> {
         let writer = self.writer.lock().expect("the book writer lock");

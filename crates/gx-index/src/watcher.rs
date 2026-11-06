@@ -15,7 +15,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -82,6 +82,28 @@ impl Drop for RenderGuard {
     }
 }
 
+/// Marks a pass as in flight for as long as it lives.
+///
+/// A pass writes `meta.progress`, so while one is in flight the row a tool
+/// reads is honest but not final. The count is what [`Indexer::is_indexing`]
+/// answers, and it is the piece that makes a wait on a settling book
+/// deterministic instead of a race between a tester's synchronous pass and the
+/// watcher's own first pass (the flake of T4/C3).
+struct PassInFlight<'a>(&'a Indexer);
+
+impl<'a> PassInFlight<'a> {
+    fn enter(indexer: &'a Indexer) -> Self {
+        indexer.passes_in_flight.fetch_add(1, Ordering::SeqCst);
+        Self(indexer)
+    }
+}
+
+impl Drop for PassInFlight<'_> {
+    fn drop(&mut self) {
+        self.0.passes_in_flight.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// The knobs of the indexer. `Default` is the production budget.
 #[derive(Debug, Clone)]
 pub struct IndexOptions {
@@ -131,6 +153,10 @@ pub struct Indexer {
     book: Arc<Book>,
     root: PathBuf,
     options: IndexOptions,
+    /// Full passes ([`Indexer::run_full`]) this indexer has completed.
+    passes_done: AtomicU64,
+    /// Passes writing the book right now.
+    passes_in_flight: AtomicUsize,
 }
 
 impl Indexer {
@@ -140,7 +166,27 @@ impl Indexer {
             book,
             root,
             options,
+            passes_done: AtomicU64::new(0),
+            passes_in_flight: AtomicUsize::new(0),
         }
+    }
+
+    /// How many full passes have finished, counting the one the watcher runs
+    /// on its own thread.
+    ///
+    /// A synchronous pass by a caller does not stop the watcher's first pass:
+    /// it runs exactly once per indexer, and the two overlap. A caller that
+    /// wants the settled `progress` row waits until this counter has grown by
+    /// two and [`Indexer::is_indexing`] is false — after that no pass is left
+    /// to overwrite it.
+    pub fn passes_done(&self) -> u64 {
+        self.passes_done.load(Ordering::SeqCst)
+    }
+
+    /// Whether a pass is writing the book (and its `meta.progress` row) right
+    /// now.
+    pub fn is_indexing(&self) -> bool {
+        self.passes_in_flight.load(Ordering::SeqCst) > 0
     }
 
     /// The options in use.
@@ -164,6 +210,7 @@ impl Indexer {
 
     /// Indexes the whole tree: the first pass and the rebuild path.
     pub fn run_full(&self) -> Result<IndexSummary, BookError> {
+        let _in_flight = PassInFlight::enter(self);
         let started = Instant::now();
         let files = scan_tree(&self.root, &self.options);
         let on_disk: BTreeSet<String> = files.iter().map(|file| file.relative.clone()).collect();
@@ -211,6 +258,9 @@ impl Indexer {
         progress.state = "indexed".to_string();
         progress.updated_at = unix_ms();
         self.book.set_progress(&progress)?;
+        // Counted after the row says `indexed`: a waiter that sees this pass
+        // counted sees a pass that has already published its state.
+        self.passes_done.fetch_add(1, Ordering::SeqCst);
         summary.elapsed_ms = started.elapsed().as_millis();
         Ok(summary)
     }
@@ -221,6 +271,9 @@ impl Indexer {
     /// are parsed, and a file that no longer exists loses its chapter. Nothing
     /// else is touched, so an edit never rebuilds the book.
     pub fn sync_dirs(&self, dirs: &[PathBuf]) -> Result<IndexSummary, BookError> {
+        // An incremental sync writes `meta.progress` too, so it counts as a
+        // pass in flight even though it is not a full one.
+        let _in_flight = PassInFlight::enter(self);
         let started = Instant::now();
         let mut summary = IndexSummary::default();
         let mut candidates: Vec<SourceFile> = Vec::new();
@@ -368,6 +421,41 @@ impl Indexer {
         parsed
     }
 
+    /// Prunes the books of the user at the idle exit (T4/C3; S8, D4).
+    ///
+    /// The books root is a cache of worktrees (D1), so when the watcher has had
+    /// nothing to do for [`IndexOptions::idle_truncate`] the books of worktrees
+    /// that no longer exist are residue. The cap is [`KEEP_NEWEST_BOOKS`] and the
+    /// books this process has open are never touched — a book being written has
+    /// readers on every tool call — and the fact is **one line on stderr**,
+    /// because stdout is JSON-RPC.
+    fn prune_stale_books(&self) {
+        let Some(books_root) = self.book.books_root() else {
+            return;
+        };
+        let mut protected = crate::service::open_roots();
+        if !protected.iter().any(|root| root == &self.root) {
+            protected.push(self.root.clone());
+        }
+        match books_root.prune(&protected, crate::location::KEEP_NEWEST_BOOKS, false) {
+            Ok(outcome) if !outcome.removed.is_empty() => {
+                let keys: Vec<&str> = outcome
+                    .removed
+                    .iter()
+                    .map(|candidate| candidate.entry.book_key.as_str())
+                    .collect();
+                eprintln!(
+                    "gx-index: pruned {} book(s) of worktrees that no longer exist ({} bytes): {}",
+                    outcome.removed.len(),
+                    outcome.bytes_freed(),
+                    keys.join(", ")
+                );
+            }
+            Ok(_) => {}
+            Err(error) => eprintln!("gx-index: cannot prune the stale books: {error}"),
+        }
+    }
+
     /// Runs the first pass and reports a failure once, on stderr (stdout is
     /// JSON-RPC, PRD §8.6.1).
     fn first_pass(&self) {
@@ -420,6 +508,9 @@ impl Indexer {
                 while !thread_stop.load(Ordering::SeqCst) {
                     match rx.recv_timeout(self.options.debounce) {
                         Ok(Ok(event)) => {
+                            if !changes_content(&event.kind) {
+                                continue;
+                            }
                             for path in event.paths {
                                 pending.insert(path);
                             }
@@ -431,6 +522,9 @@ impl Indexer {
                             if pending.is_empty() {
                                 if last_work.elapsed() >= self.options.idle_truncate {
                                     let _ = self.book.checkpoint_truncate();
+                                    // The idle exit also prunes the books of the
+                                    // worktrees that no longer exist (T4/C3).
+                                    self.prune_stale_books();
                                     last_work = Instant::now();
                                 }
                                 continue;
@@ -552,6 +646,18 @@ fn collect(
         });
     }
     files
+}
+
+/// Whether an event changes what the book should hold (T4/C3).
+///
+/// An **access is not an edit**: opening a file changes nothing. It matters
+/// because the watcher's own scan opens every directory and file it walks, so
+/// the access events of one sync scheduled the next one — the loop never
+/// drained, and the idle exit (`IDLE_TRUNCATE`, where the prune of T4/C3 lives)
+/// never happened. Found with the idle prune, fixed here: the book follows
+/// writes, creates and removals, and ignores readers.
+pub fn changes_content(kind: &notify::EventKind) -> bool {
+    !matches!(kind, notify::EventKind::Access(_))
 }
 
 /// Whether a path component is one of the hard exclusions (D2).
@@ -713,6 +819,34 @@ mod tests {
         let batches = batches(vec![file("/r", "huge.rs", 5000)], 1000);
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].len(), 1);
+    }
+
+    /// T4/C3: the watcher follows writes, creates and removals; a reader is not
+    /// an editor, and the watcher's own scan reads every file it walks.
+    #[test]
+    fn an_access_is_not_an_edit() {
+        use notify::event::{
+            AccessKind, AccessMode, CreateKind, DataChange, ModifyKind, RemoveKind,
+        };
+        use notify::EventKind;
+
+        for access in [
+            AccessKind::Open(AccessMode::Any),
+            AccessKind::Read,
+            AccessKind::Close(AccessMode::Write),
+        ] {
+            assert!(
+                !super::changes_content(&EventKind::Access(access)),
+                "an access changes nothing: {access:?}"
+            );
+        }
+        for changed in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+            EventKind::Remove(RemoveKind::File),
+        ] {
+            assert!(super::changes_content(&changed), "{changed:?} is an edit");
+        }
     }
 
     #[test]
