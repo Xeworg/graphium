@@ -236,8 +236,9 @@ const panelEmpty = document.getElementById("panel-empty");
 const sessionsPanel = document.getElementById("sessions-panel");
 const sessionsToggle = document.getElementById("sessions-toggle");
 
-// The selector of sessions (S1, S3, D3, D5): the rows of the panel of
-// sessions and the notice that says when the watched session ended.
+// The switcher of plans (A2 of `f8-planos.md`; S1, S3, D3, D5): the rows of
+// the panel of sessions and the notice that says when the plan on screen had
+// to change because its session ended.
 const sessionList = document.getElementById("session-list");
 const sessionNotice = document.getElementById("session-notice");
 
@@ -880,12 +881,10 @@ function selectDiagram(diagramId) {
   if (!diagram) {
     return;
   }
-  // The human asked for this diagram, so the plan shows its session if the
-  // selector was hiding it: the camera never travels to an object nobody can
-  // see (D5). Choosing from the list keeps working as it always did.
-  if (!isVisibleSession(diagram.session_id)) {
-    selectSessionById(diagram.session_id);
-  }
+  // The human asked for this diagram, so its plan comes on screen: the camera
+  // never travels to an object nobody can see (A2, D5). Choosing from the list
+  // keeps working as it always did.
+  showPlan(planOf(diagram.session_id));
   selectedId = diagramId;
   renderPanel();
   focusDiagram(diagram);
@@ -1005,8 +1004,8 @@ function paintPreview(element, svg) {
   element.content.style.top = `${center.y - height / 2}px`;
   element.content.style.width = `${width}px`;
   element.content.style.height = `${height}px`;
-  // The `×` and the badge are the last children of `.content`: the drawing
-  // goes first, the way insertDiagram leaves it.
+  // The `×` is the last child of `.content`: the drawing goes first, the way
+  // insertDiagram leaves it.
   element.content.prepend(svg);
   element.previewSvg = svg;
 }
@@ -1035,7 +1034,7 @@ function restoreLive(element) {
   }
 }
 
-// --- Selector of sessions (S1, S3, D3, D5) ------------------------------
+// --- Switcher of plans (S1, S3, D3, D5; f8-planos.md, A2) ----------------
 
 // The family of a session as the human reads it and the colour it paints
 // with. The keys are the wire strings of `SessionFamily::as_str`
@@ -1050,11 +1049,18 @@ const SESSION_FAMILIES = {
   other: "Otro",
 };
 
-// The session the human chose to watch, or `null` for «Todas» (S3). The
-// filter only hides objects of the plan: the diagrams of the other sessions
-// stay open in Rust, with the place Rust gave them (D5).
-let sessionFilter = null;
-// Why the plan went back to «Todas», when it had to. Empty means no notice.
+// The plan on screen (A2 of `f8-planos.md`, S1): the session whose diagrams
+// the human is looking at, one at a time. The other diagrams stay open in
+// Rust, with the place Rust gave them (D5); the plan just does not paint them.
+// `null` until the state names a session.
+let activePlan = null; // { id, label }
+// The camera of each plan, keyed by the id of its session (A2). The page keeps
+// the view of every plan, so coming back to one restores the camera the human
+// left in it. Rust follows only the camera of the plan on screen, because that
+// is the plan the next render is placed against.
+const planCameras = new Map();
+// Why the plan on screen changed without the human asking, when it had to.
+// Empty means no notice.
 let sessionMessage = "";
 
 /** The colour class of a family: one of the five tokens, else `other`. */
@@ -1069,19 +1075,19 @@ function familyName(family) {
   return SESSION_FAMILIES[family] || SESSION_FAMILIES.other;
 }
 
-/** Whether the plan is showing every session («Todas» is selected). */
-function showsEverySession() {
-  return sessionFilter === null;
-}
-
-/** Whether a diagram of `sessionId` belongs to what the plan shows now. */
+/** Whether the plan on screen is the one of `sessionId` (A2). */
 function isVisibleSession(sessionId) {
-  return sessionFilter === null || sessionId === sessionFilter.id;
+  return activePlan !== null && sessionId === activePlan.id;
 }
 
 /** How many diagrams of a session are on the plan right now. */
 function sessionDiagramCount(sessionId) {
   return state.diagrams.filter((diagram) => diagram.session_id === sessionId).length;
+}
+
+/** How many diagrams the plan on screen has (A2). */
+function planDiagramCount() {
+  return activePlan === null ? 0 : sessionDiagramCount(activePlan.id);
 }
 
 /** The last part of a project path: `/home/x/graphium` -> `graphium`. */
@@ -1104,7 +1110,7 @@ function sessionDot(family) {
 }
 
 /**
- * One row of the selector: the colour of the family, the label of the
+ * One row of the switcher: the colour of the family, the label of the
  * session, its project, whether it is `activa` or `en gracia` and how many
  * diagrams it has on the plan. Every piece of it comes from the state Rust
  * emits; the page invents none.
@@ -1113,12 +1119,12 @@ function sessionRow(session) {
   const row = document.createElement("button");
   row.type = "button";
   row.className = "session-row";
-  const chosen = !showsEverySession() && sessionFilter.id === session.id;
+  const chosen = isVisibleSession(session.id);
   row.classList.toggle("selected", chosen);
   row.classList.toggle("in-grace", session.state === "in_grace");
   row.setAttribute("aria-pressed", chosen ? "true" : "false");
   row.title = session.label;
-  row.addEventListener("click", () => selectSession(session));
+  row.addEventListener("click", () => showPlan({ id: session.id, label: session.label }));
 
   const head = document.createElement("span");
   head.className = "session-head";
@@ -1157,132 +1163,140 @@ function sessionRow(session) {
 }
 
 /**
- * The fixed first row: «Todas». It shows every session again, which is what
- * the plan shows before the human chooses anything.
- */
-function allSessionsRow() {
-  const row = document.createElement("button");
-  row.type = "button";
-  row.className = "session-row";
-  row.classList.toggle("selected", showsEverySession());
-  row.setAttribute("aria-pressed", showsEverySession() ? "true" : "false");
-  row.title = "mostrar todas las sesiones";
-  row.addEventListener("click", () => selectSession(null));
-
-  const head = document.createElement("span");
-  head.className = "session-head";
-  const label = document.createElement("span");
-  label.className = "session-label";
-  label.textContent = "Todas";
-  const count = document.createElement("span");
-  count.className = "session-count";
-  count.textContent = String(state.diagrams.length);
-  count.title = diagramCountText(state.diagrams.length);
-  head.append(label, count);
-
-  const meta = document.createElement("span");
-  meta.className = "session-meta";
-  const all = document.createElement("span");
-  all.className = "session-family";
-  all.textContent = "todas las sesiones";
-  meta.append(all);
-
-  const body = document.createElement("span");
-  body.className = "session-body";
-  body.append(head, meta);
-
-  const dot = document.createElement("span");
-  dot.className = "session-dot family-all";
-  row.append(dot, body);
-  return row;
-}
-
-/**
- * Shows the objects of the chosen session and hides the others (D5).
+ * Shows the objects of the plan on screen and hides the rest (A2).
  *
- * Hiding is one class that takes the object out of the paint (`display:
- * none` in the stylesheet): the camera, the rectangle of the object and the
- * place Rust gave it are untouched, so «Todas» brings every diagram back
- * exactly where it was. Nothing is closed here: the diagrams of the other
- * sessions keep living in Rust.
+ * Hiding is one class that takes the object out of the paint (`display: none`
+ * in the stylesheet): the camera, the rectangle of the object and the place
+ * Rust gave it are untouched, so coming back to a plan shows it exactly where
+ * it was. Nothing is closed here: the diagrams of the other plans keep living
+ * in Rust (D5).
  */
-function applySessionFilter() {
+function applyPlanVisibility() {
   for (const element of objects.values()) {
-    element.classList.toggle("session-hidden", !isVisibleSession(element.sessionId || ""));
+    element.classList.toggle("plan-hidden", !isVisibleSession(element.sessionId || ""));
   }
-  // The badge of a diagram says whose work it is; with one session chosen
-  // every badge would say the same thing, so it only shows under «Todas»
-  // (S1, D3).
-  diagrams.classList.toggle("show-session-badges", showsEverySession());
 }
 
 /**
- * The human chose a row of the selector (S3): the plan shows that session and
- * hides the rest, or shows them all again with «Todas». The camera is not
- * moved: filtering hides, it never travels (D5).
+ * The plan of a session, as the switcher names it (A2). A session the state
+ * does not list yet is still its own plan: a render can arrive before the
+ * state that names it, and the page never invents another id.
  */
-function selectSession(session) {
-  sessionFilter = session === null ? null : { id: session.id, label: session.label };
+function planOf(sessionId) {
+  const session = state.sessions.find((entry) => entry.id === sessionId);
+  return { id: sessionId, label: session ? session.label : sessionId };
+}
+
+/**
+ * The plan the state leaves on screen when the human has not chosen one (A2):
+ * the first session that has diagrams, else the first session of the registry
+ * order (a `BTreeMap`, never a `HashMap`), else no plan. A plan that already
+ * has something on it beats an empty surface.
+ */
+function initialPlan() {
+  const drawn = state.sessions.find((session) => sessionDiagramCount(session.id) > 0);
+  return drawn || state.sessions[0] || null;
+}
+
+/**
+ * Brings one plan on screen (A2, S1): the diagrams of its session and nobody
+ * else's. The plan being left keeps the camera it had and the plan being
+ * entered brings its own back, so the human never loses the view of a plan.
+ */
+function showPlan(plan) {
   sessionMessage = "";
-  applySessionFilter();
-  // The drawings that come back are mounted again by the camera that is
-  // already there: applying it changes nothing of the view, it only lets the
-  // culling decide which objects keep their SVG.
-  applyCamera();
+  const same =
+    plan === null ? activePlan === null : activePlan !== null && activePlan.id === plan.id;
+  if (same) {
+    return;
+  }
+  // A pan in flight belongs to the plan being left: it would keep writing the
+  // camera it was travelling to and would land on the plan being entered, so
+  // the switch stops it, the way a camera intent does (PRD §7.2, RF27).
+  cancelPan();
+  // The view of the plan being left stays in the page (A2): the camera of the
+  // plan on screen is the only one Rust follows.
+  if (activePlan !== null) {
+    planCameras.set(activePlan.id, { tx: camera.tx, ty: camera.ty, zoom: camera.zoom });
+  }
+  activePlan = plan;
+  applyPlanVisibility();
+  restorePlanCamera();
   renderSessions();
 }
 
-/** Chooses a session by its id; an id the selector does not list means «Todas». */
-function selectSessionById(sessionId) {
-  selectSession(state.sessions.find((session) => session.id === sessionId) || null);
-}
-
 /**
- * The session the human was watching is gone: its grace ended and the owner
- * dropped it with its diagrams (D4, S2). The selector says so and the plan
- * goes back to «Todas», instead of leaving an empty plan with no explanation
- * (S3, D5).
+ * The center of the newest object of a plan, in plan units (A2). The store
+ * lists the diagrams by `diagram_id` and the ids are monotonic and never
+ * reused (PRD §11.1, RF28.1), so the last one of a plan is the one that
+ * arrived last.
  */
-function reconcileSessionFilter() {
-  if (sessionFilter === null) {
-    return;
-  }
-  if (state.sessions.some((session) => session.id === sessionFilter.id)) {
-    return;
-  }
-  sessionMessage = `la sesión «${sessionFilter.label}» terminó; vuelvo a «Todas»`;
-  sessionFilter = null;
+function newestCenter(sessionId) {
+  const diagramsOfPlan = state.diagrams.filter((diagram) => diagram.session_id === sessionId);
+  const newest = diagramsOfPlan[diagramsOfPlan.length - 1];
+  return newest === undefined ? null : objectCenter(newest);
 }
 
 /**
- * Builds the selector from the state: the fixed row «Todas» and one row per
- * session, in the order Rust lists them (D3: the human sees every session).
- * The notice explains why the plan fell back to «Todas», when it had to.
+ * Brings back the camera of the plan on screen (A2). Each plan keeps its own
+ * view in the page; a plan nobody has visited yet has none, so the camera goes
+ * to its newest object instead of landing on an empty stretch of the surface.
+ */
+function restorePlanCamera() {
+  if (activePlan === null) {
+    return;
+  }
+  const saved = planCameras.get(activePlan.id);
+  if (saved) {
+    camera.tx = saved.tx;
+    camera.ty = saved.ty;
+    camera.zoom = clampZoom(saved.zoom);
+  } else {
+    const center = newestCenter(activePlan.id);
+    if (center !== null) {
+      const target = cameraOn(center);
+      camera.tx = target.tx;
+      camera.ty = target.ty;
+    }
+  }
+  // The drawings that left the page come back with the camera that is already
+  // there: applying it also decides the culling (RNF1-ter).
+  applyCamera();
+  notifyCamera();
+}
+
+/**
+ * The session of the plan on screen is gone: its grace ended and the owner
+ * dropped it with its diagrams (D4, S2). The switcher says so and shows the
+ * next plan, instead of leaving the surface empty with no explanation.
+ */
+function reconcileActivePlan() {
+  if (activePlan !== null && state.sessions.some((session) => session.id === activePlan.id)) {
+    return;
+  }
+  const ended = activePlan;
+  const next = initialPlan();
+  showPlan(next === null ? null : { id: next.id, label: next.label });
+  if (ended === null) {
+    return;
+  }
+  sessionMessage =
+    next === null
+      ? `la sesión «${ended.label}» terminó; no queda ningún plano`
+      : `la sesión «${ended.label}» terminó; muestro el plano de «${next.label}»`;
+  renderSessions();
+}
+
+/**
+ * Builds the switcher from the state: one row per session, in the order Rust
+ * lists them, with the plan on screen marked as such (A2, D3). There is no
+ * «Todas» row any more: the plan shows one session at a time. The notice
+ * explains why the plan on screen changed, when it had to.
  */
 function renderSessions() {
-  const rows = [allSessionsRow()];
-  for (const session of state.sessions) {
-    rows.push(sessionRow(session));
-  }
-  sessionList.replaceChildren(...rows);
+  sessionList.replaceChildren(...state.sessions.map(sessionRow));
   sessionNotice.textContent = sessionMessage;
   sessionNotice.classList.toggle("hidden", sessionMessage === "");
-}
-
-/**
- * The colour and the name of the session that drew a diagram (S1, D3): the
- * badge of the object. A diagram whose session the state does not list keeps
- * a badge with no colour instead of inventing one.
- */
-function paintBadge(element) {
-  const session = state.sessions.find((entry) => entry.id === element.sessionId);
-  if (!session) {
-    element.badge.className = "diagram-badge";
-    element.badge.title = "";
-    return;
-  }
-  element.badge.className = `diagram-badge ${familyClass(session.family)}`;
-  element.badge.title = session.label;
 }
 
 // --- Diagrams -----------------------------------------------------------
@@ -1318,6 +1332,15 @@ function insertDiagram(payload) {
   if (!svg) {
     emit("render_ack", { req_id: payload.req_id, ok: false });
     return;
+  }
+
+  // The render names the plan it belongs to (A2 of `f8-planos.md`): the
+  // session comes from Rust, and that plan comes on screen, so the human
+  // always sees what the agent just drew. The other plans keep their place
+  // and their camera; nothing of them is closed.
+  const sessionId = typeof payload.session_id === "string" ? payload.session_id : "";
+  if (sessionId !== "") {
+    showPlan(planOf(sessionId));
   }
 
   const width = Number.parseFloat(svg.getAttribute("width") || "0");
@@ -1363,14 +1386,6 @@ function insertDiagram(payload) {
   });
   content.appendChild(close);
 
-  // The badge of the session (S1, D3): a dot in the colour of whoever drew
-  // this diagram. It is positioned inside the padding ring of the object and
-  // is never in its flow, so the drawing keeps its geometry; the state paints
-  // its colour, because the family arrives with the sessions.
-  const badge = document.createElement("span");
-  badge.className = "diagram-badge";
-  content.appendChild(badge);
-
   // The rectangle of the object in plan units (PRD §7.2: the SVG plus its
   // 24 px padding). The state carries the same numbers; this is the copy the
   // culling tests every frame, and it never asks the DOM for a layout to get
@@ -1402,11 +1417,13 @@ function insertDiagram(payload) {
   // leaves the plan and its record leaves with it, so the two can never
   // drift.
   container.diagramId = payload.diagram_id;
+  // The plan the object belongs to (A2): the key the switcher and the
+  // culling use, the same one the state carries for every diagram.
+  container.sessionId = sessionId;
   container.svg = svg;
   container.content = content;
   container.box = box;
   container.boxLabel = boxLabel;
-  container.badge = badge;
   container.caption = "";
   container.culled = false;
   paintBox(container);
@@ -1415,11 +1432,11 @@ function insertDiagram(payload) {
   // that was there (PRD §11.1, S9). The plan is a canvas with room for
   // several objects, each one where Rust placed it.
   //
-  // The first diagram of the plan frames the view; from the second on the
-  // camera pans until the new object and the zoom of the human is never
-  // touched (PRD §7.2, RF27). The answer is read before the new object
-  // lands, or the first one would count as the second.
-  const first = framesOnInsert();
+  // The first diagram of **its** plan frames the view; from the second one of
+  // that plan on the camera pans until the new object and the zoom of the
+  // human is never touched (PRD §7.2, RF27; A2). The answer is read before
+  // the new object lands, or the first one would count as the second.
+  const first = framesOnInsert(sessionId);
   objects.set(payload.diagram_id, container);
   diagrams.appendChild(container);
   // The size of the plan is refreshed before the camera paints, so the
@@ -1450,13 +1467,20 @@ function insertDiagram(payload) {
 }
 
 /**
- * Whether this render is the first diagram of the plan.
+ * Whether this render is the first diagram of **its** plan (A2: one plan per
+ * session, and every plan has its own camera).
  *
- * Only the first one is framed with the camera of the event: from the second
- * on the plan pans until the new object and keeps the zoom (PRD §7.2, RF27).
+ * Only the first diagram of a plan is framed with the camera of the event;
+ * from the second one of that plan on, the camera pans until the new object
+ * and keeps the zoom (PRD §7.2, RF27).
  */
-function framesOnInsert() {
-  return objects.size === 0;
+function framesOnInsert(sessionId) {
+  for (const element of objects.values()) {
+    if ((element.sessionId || "") === sessionId) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // --- Culling (PRD RNF1-ter, §7.2, §7.3) ---------------------------------
@@ -1576,9 +1600,9 @@ function applyCulling() {
   const zoomedOut = camera.zoom < CULL_ZOOM;
   const candidates = [];
   for (const element of objects.values()) {
-    // An object the selector is hiding keeps no drawing in the page: the
-    // three live SVGs are for the diagrams the human is looking at (D5).
-    if (element.classList.contains("session-hidden")) {
+    // An object of a plan the human is not looking at keeps no drawing in the
+    // page: the three live SVGs are for the plan on screen (A2, RNF1-ter).
+    if (element.classList.contains("plan-hidden")) {
       cullObject(element);
       continue;
     }
@@ -1607,12 +1631,11 @@ function readObject(element, diagram) {
   if (typeof diagram.title === "string" && diagram.title !== "") {
     element.caption = diagram.title;
   }
-  // Which session drew this diagram: the key the selector filters by and the
-  // colour of the badge (S1, D3). It is the same id Rust lists in `sessions`.
+  // Which session drew this diagram: the key the switcher and the culling use
+  // (S1, D3; A2). It is the same id Rust lists in `sessions`.
   if (typeof diagram.session_id === "string" && diagram.session_id !== "") {
     element.sessionId = diagram.session_id;
   }
-  paintBadge(element);
   if (diagram.pos && diagram.bbox) {
     element.rect = {
       x: Number(diagram.pos.x),
@@ -1650,10 +1673,9 @@ function syncObjects() {
       readObject(element, diagram);
     }
   }
-  // The selector hides the objects of the sessions the human is not watching
-  // and badges the rest (D3, D5), before the culling decides which drawings
-  // stay in the page.
-  applySessionFilter();
+  // The plan on screen paints its own objects and hides the rest (A2),
+  // before the culling decides which drawings stay in the page.
+  applyPlanVisibility();
   // A state may have moved an object or given it a title: whether it keeps
   // its SVG depends on both, so the culling is decided again.
   applyCulling();
@@ -1726,13 +1748,13 @@ listen("graphium://state", (event) => {
   const diagrams = Array.isArray(payload.diagrams) ? payload.diagrams : [];
   state.diagrams = diagrams;
   state.sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
-  // A watched session the owner dropped takes the plan back to «Todas», with
-  // a notice, never to an empty plan with no explanation (S3, D5).
-  reconcileSessionFilter();
+  // A session the owner dropped takes its plan away: the switcher says so and
+  // shows another plan, never an empty surface with no explanation (S2, A2).
+  reconcileActivePlan();
   syncObjects();
   renderPanel();
   renderSessions();
-  empty.classList.toggle("hidden", diagrams.length > 0);
+  empty.classList.toggle("hidden", planDiagramCount() > 0);
 });
 listen("graphium://pending", (event) => {
   showPending(event.payload || {});

@@ -37,11 +37,13 @@
 
     <!-- The panel of the sessions (S1, S3, D3), separated from the panel of
          diagrams: its own button sits in the bottom-left corner and its own
-         panel opens above it. The fixed row «Todas» and one row per live
+         panel opens above it. It is the switcher of plans: one row per live
          session, with the colour of its family, its label, its project, its
-         state and how many diagrams it has. Choosing a row hides the
-         diagrams of the other sessions; it never closes them (D5). It is
-         built only from `graphium://state`, like the list of diagrams. -->
+         state and how many diagrams it has, and the plan on screen marked in
+         it. Each session draws on its own plan and the plan shows one at a
+         time (A2 of `f8-planos.md`): choosing a row brings its plan on screen
+         and the others leave it, without closing anything (D5). It is built
+         only from `graphium://state`, like the list of diagrams. -->
     <button
       id="sessions-toggle"
       class="sessions-toggle"

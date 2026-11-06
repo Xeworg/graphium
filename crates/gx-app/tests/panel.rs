@@ -242,17 +242,21 @@ fn the_camera_travels_in_an_animated_pan_of_250_ms() {
 
 #[test]
 fn an_insertion_on_a_plan_with_objects_keeps_the_zoom_of_the_human() {
-    // PRD §7.2: only the first diagram of the plan is framed; from the
-    // second on the camera pans until the new object.
-    let first = slice_between(JS, "function framesOnInsert() {", "\n}");
-    assert!(
-        first.contains("return objects.size === 0;"),
-        "the plan frames a render only when it holds no object yet: {first}"
-    );
+    // PRD §7.2; A1/A2 of `f8-planos.md`: one plan per session, so only the
+    // first diagram of **its** plan is framed; from the second one of that
+    // plan on, the camera pans until the new object.
+    let first = slice_between(JS, "function framesOnInsert(sessionId) {", "\n}");
+    for token in ["objects.values()", "element.sessionId", "=== sessionId"] {
+        assert!(
+            first.contains(token),
+            "the plan frames a render only when its own plan holds no object \
+             yet, with `{token}`: {first}"
+        );
+    }
 
     let insert = slice_between(JS, "function insertDiagram(payload) {", "\n}");
     let asks = insert
-        .find("framesOnInsert()")
+        .find("framesOnInsert(")
         .expect("the insertion has to ask whether the plan is empty");
     let lands = insert
         .find("objects.set(")
