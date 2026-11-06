@@ -312,12 +312,13 @@ y mapa/multi-proyecto. Síntesis:
   sesión**, no `current_dir()`. Recomendación: libros por raíz canónica de
   worktree y **sin consultas cross-proyecto en v1**.
 - **P8 — colisión de RNF4 con la ubicación D1 (tres explores, 2026-11-05,
-  análisis en §8):** RNF4 (PRD §7 «No funcionales», `docs/PRD.md:301`) limita
-  las escrituras de Graphium a `~/.graphium/`; la base en el worktree exige
-  enmienda y el nombre `.graphium` colisiona con el directorio de datos del
-  usuario, la clase CSS de los exports y `graphium.json` (RF21). Las tres
-  opciones fueron defendidas por un explore cada una y su análisis completo
-  está en §8. **Decisión pendiente del humano.**
+  análisis en §8, decidido en §9):** RNF4 (PRD §7 «No funcionales",
+  `docs/PRD.md:301`) limita las escrituras de Graphium a `~/.graphium/`; la
+  base en el worktree exige enmienda y el nombre `.graphium` colisiona con
+  el directorio de datos del usuario, la clase CSS de los exports y
+  `graphium.json` (RF21). Las tres opciones fueron defendidas por un explore
+  cada una y su análisis completo está en §8. La decisión quedó tomada por
+  el principio del humano (§9).
 - **P5 — cuándo se vuelve feature doc (§3, cuestionado 5):** el humano dijo
   «analizaremos más»; el doc sigue en estado idea y la conversión a
   S#/T# espera.
@@ -413,3 +414,32 @@ escritor.
    `HEAD` + hashes de contenido + `indexed_at` en cada respuesta.
 4. El libro debe ser siempre **borrable sin consecuencias** — cualquier
    opción que lo vuelva irreemplazable queda descartada por definición.
+
+## 9. P8 — decisión (2026-11-05)
+
+El humano fijó el principio que decide: «al menos pienso que no deberia
+estar en los archivos del repo, deberia ser ignorado, no deberia ser un
+archivo que pueda participar en commits, la unica razon por la que la veo en
+directorio es por ser un archivo unico en ese momento».
+
+Por ese principio:
+
+- **D4 — la ubicación del libro es la opción C**:
+  `~/.graphium/books/<slug>-<16hex de sha256(raíz canónica)>/libro.sqlite`,
+  con directorio por libro (contiene `-wal`/`-shm`), registry en
+  `books/index.json`, re-key por `first_root_commit` para manejar `mv`,
+  stamp `(HEAD, mtime del git index, hashes)` contra re-clones en la misma
+  ruta, probe de arranque que pasa a `journal_mode=DELETE` en filesystem
+  remoto o sincronizado, prune con cap en el idle-exit de 60 s del dueño, y
+  `indexed_at` + `book_key` en cada respuesta. **RNF4 no necesita enmienda**
+  y su cláusula de seguridad se fortalece: el agente no puede tocar ni
+  falsificar el libro.
+- Las opciones A y B quedan registradas en §8 con sus debilidades; B queda
+  como fallback si algún día se quiere aislamiento por clon sin tocar el
+  directorio del usuario. El D1 original (`<worktree>/.graphium/`) queda
+  **reemplazado** por D4; el resto de D1 (una base por worktree, identidad
+  por raíz canónica) sobrevive en D4 vía el hash de la raíz.
+- Consecuencia explícita: el plumbing de `session.rs` (proyecto de la
+  sesión → ruta canónica del worktree) pasa a ser load-bearing del routing
+  del libro, y el análisis de multi-proyecto (P7) hereda la recomendación:
+  libros por raíz canónica, sin consultas cross-proyecto en v1.
