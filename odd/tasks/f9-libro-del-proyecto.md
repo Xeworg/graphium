@@ -46,11 +46,15 @@ análisis en specs y tareas; los § que cita viven en el doc de ideas.
   `meta`/`file`/`symbol`/`edge` + `symbol_fts` external-content con
   triggers; sin CST, sin closure materializado, sin file-edges materializadas
   en v1; `PRAGMA user_version` con delete-and-reindex como recovery.
-- S7 (consultas, ideas §7 y §10.1): resolución por etapas — FTS5 → candidatos
+- S7 (consultas, ideas §7 y §10.1; L7): resolución por etapas — FTS5 → candidatos
   rankeados → rechazo ante ambigüedad (`candidates[]`) → BFS acotado en Rust
-  con guardia de ciclos explícita, depth ≤ 3, budget 300/600 del kind graph,
-  paginación por cursor. Toda respuesta lleva `file:line`, `content_hash`,
-  `indexed_at` y `book_key`; las edges sintácticas nacen `dst_id IS NULL`
+  con guardia de ciclos explícita, depth ≤ 3. **Sin paginación por cursor**
+  (L7: cero cursores en el prior art — Graphify, CodeGraph, LSP, CodeQL —; el
+  tope que factura la ventana del agente es el envelope en tokens, no los
+  nodos): `code_impact` lleva `budget` de consulta propio y `code_diagram`
+  conserva los 300/600 del kind `graph`. Toda respuesta lleva `file:line`,
+  `content_hash`, `indexed_at` y `book_key`; las edges sintácticas nacen
+  `dst_id IS NULL` (heurísticas) y se resuelven por `name_norm`.
   (heurísticas) y se resuelven por `name_norm`.
 - S8 (proceso, S1 verbatim parcial): «este espec se puede trabajar en un
   worktree en una rama aparte hasta que sea estable y funcional» — cada
@@ -97,7 +101,19 @@ análisis en specs y tareas; los § que cita viven en el doc de ideas.
 - T3 (C2) (S3, D3): grupos de lenguajes siguientes + % de resolución publicado
   por lenguaje. Los extractores nuevos viven como módulos de `src/lang/` (L5).
 - T4 (C3) (S2, S8, D4): pulido de worktrees, prune con cap en idle-exit,
-  `graphium books list|prune`, hooks opcionales.
+  `graphium books list|prune`, hooks opcionales. Más: envelope de respuesta en
+  tokens con asignación por relevancia y acantilado a punteros (modelo
+  CodeGraph, L7).
+- T5 (respuesta acotada; S5, S7, D3, L7): los cuatro nombres de tool no
+  cambian. `code_structure` responde **outline por defecto** (solo nivel
+  superior; el árbol se reordena con `after_line`/`limit`, rango monotónico)
+  y lleva `total`/`collapsed{...,next}`/`truncated`; `code_impact` acepta
+  **semilla `file:`** — conexiones del archivo como nodo (imports afuera,
+  referencias adentro, agrupadas por archivo, resolución por nombre declarada)
+  —, filtro `edges` y `budget` de consulta desacoplado de los topes de
+  render; `code_diagram` lleva el mismo `edges`; `truncated` pasa a objeto
+  `{reason, shown, total, next:{tool,args}}` en las tools que contestan
+  (la llamada siguiente es copypaste).
 
 ## Log
 
@@ -149,3 +165,26 @@ análisis en specs y tareas; los § que cita viven en el doc de ideas.
   los topes (depth ≤ 3, budget 300/600) con `truncated`/`unresolved` cumplen
   el propósito de respuesta acotada; decidir en T3/T4 si la paginación hace
   falta de todos modos.
+- L7 (2026-11-06): la paginación por cursor de S7 se descarta y la respuesta
+  se acota por segmentación, tras cinco análisis paralelos (escalabilidad,
+  utilidad para el agente, humano+costo, prior art Graphify/CodeGraph, y
+  segmentación de tools). Números que decidieron: cero cursores en los cuatro
+  productos del prior art; out-degree medio 4,91 (caminatas típicas usan
+  15–60× menos que el tope; el único caso que corta es preguntar `in` sobre
+  nombres genéricos — `new`=409 referidores, todo ruido de std, falso
+  positivo de D3); 0 símbolos de 2.472 exceden el presupuesto a salto 1 con
+  resolución honesta; el tope que factura la ventana del agente es el
+  envelope en tokens (300 nodos ≈ 25K tokens, justo el techo de Claude
+  Code), no los nodos; menú del libro ~1.900 tokens/sesión, cada tool nueva
+  +380 vs +250 la propuesta de parámetros. El humano aprueba el alcance:
+  «si dale actualiza el plan y continua luego hacemos el merge staggin», con
+  su sugerencia «traer por partes o lo que el agente necesita» y la pregunta
+  de cómo segmentar «para no sobrecargar el contexto». S7 queda reescrito
+  (sin cursor, budget de consulta desacoplado de los topes de render); nace
+  T5 con el alcance aprobado; T4 (C3) suma el envelope por relevancia.
+  Regla de segmentación para toda feature futura: dividir en tool nueva solo
+  cuando cambia la decisión de llamarla (otra pregunta, otro contrato de
+  resolución de sujeto, u otro consumidor); nunca cuando solo cambia forma,
+  tamaño o filtro de la misma respuesta; en orden: default común gratis →
+  parámetro de cantidad/rango/filtro → semilla de sujeto → tool nueva →
+  jamás un `mode` que cambie la forma de la respuesta.
