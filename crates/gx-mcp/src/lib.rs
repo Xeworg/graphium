@@ -29,6 +29,15 @@ pub mod book {
 
     use crate::contract::ErrorPayload;
 
+    /// The books of the user, for the human door of `graphium books list|prune`
+    /// (T4/C3): the application reaches the engine through this crate and never
+    /// depends on `gx-index` directly (decision L3 of `f9-libro`).
+    pub use gx_index::book::iso8601_utc;
+    pub use gx_index::location::{
+        BookEntry, BookRegistry, BookSummary, BooksRoot, PruneCandidate, PruneOutcome, PruneReason,
+        KEEP_NEWEST_BOOKS,
+    };
+
     /// The book is only off when the owner opted out: `GRAPHIUM_BOOK=off`
     /// (S5, L5 — the book is on by default).
     pub const DISABLED_CODE: &str = "book_disabled";
@@ -2687,28 +2696,41 @@ mod tests {
             std::fs::write(path, text).expect("the file");
         }
 
-        /// Opens the book and indexes it once, synchronously.
+        /// Opens the book and waits until it is **settled**: the test's own
+        /// pass and the watcher's first pass have both finished and no pass is
+        /// writing.
+        ///
+        /// The watcher runs exactly one full pass on its own thread, and a
+        /// synchronous pass here does not cancel it. Polling the `progress` row
+        /// alone was a race — it can say `indexed` and be overwritten to
+        /// `indexing` a millisecond later by the watcher's pass, which is the
+        /// flake of T4/C3 (three tests at once). Two completed passes plus no
+        /// pass in flight is the deterministic barrier: after it the row cannot
+        /// change again.
         fn indexed(&self) -> std::sync::Arc<gx_index::service::BookHandle> {
             let handle = gx_index::service::ensure(&self.config(), &self.root()).expect("the book");
             handle.indexer().run_full().expect("the first index");
-            // The watcher's own async first pass re-runs and may still hold the
-            // progress row at `indexing` when run_full returns; the answers the
-            // contract tests read must see the settled state (the live flake of
-            // `the_code_structure_contract_answers_a_file_and_a_symbol`).
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            while std::time::Instant::now() < deadline {
-                match handle.book().progress() {
-                    Ok(progress) if progress.state == "indexed" => return handle,
-                    _ => std::thread::sleep(std::time::Duration::from_millis(20)),
-                }
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while handle.indexer().passes_done() < 2 || handle.indexer().is_indexing() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the scratch book never settled its passes: passes_done={}, is_indexing={}",
+                    handle.indexer().passes_done(),
+                    handle.indexer().is_indexing()
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
             }
-            panic!("the scratch book never reached the indexed state");
+            handle
         }
     }
 
     impl Drop for BookScratch {
         fn drop(&mut self) {
-            gx_index::service::shutdown_all();
+            // Only the book of this scratch: `shutdown_all` here tore down the
+            // books of the tests that were still answering, and their next tool
+            // call reopened one whose first pass re-published `progress` (the
+            // flake of T4/C3).
+            gx_index::service::shutdown(&self.root());
             let _ = std::fs::remove_dir_all(&self.base);
         }
     }

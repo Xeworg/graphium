@@ -9,14 +9,27 @@
 //! the language's.
 //!
 //! Adding a language (T3/C2) is therefore: a grammar dependency in
-//! `Cargo.toml`, a module next to [`rust`], and its line in [`GRAMMARS`].
+//! `Cargo.toml`, a module next to the others, and its line in [`GRAMMARS`].
+//!
+//! Each language is also a **cargo feature** of the engine (T4/C3, the lever of
+//! RNF1-quater): `lang-rust`, `lang-typescript`, `lang-python`, `lang-go` and
+//! `lang-java`, all five **on by default**, so nothing changes for a build that
+//! does not ask. A slim build drops a grammar together with its dependency —
+//! `--no-default-features --features "lang-rust,lang-typescript"` — and this
+//! directory is the only place that knows: [`GRAMMARS`] simply lists the
+//! grammars of the build, and everything outside here speaks of [`ParsedFile`].
 
 mod emit;
+#[cfg(feature = "lang-go")]
 pub mod go;
+#[cfg(feature = "lang-java")]
 pub mod java;
 pub mod model;
+#[cfg(feature = "lang-python")]
 pub mod python;
+#[cfg(feature = "lang-rust")]
 pub mod rust;
+#[cfg(feature = "lang-typescript")]
 pub mod typescript;
 
 pub use crate::relations::ParsedEdge;
@@ -40,11 +53,19 @@ pub struct Grammar {
 }
 
 /// Every grammar this build ships, in the order the book lists them.
+///
+/// The list is what the features left (T4/C3): the five languages of C2 by
+/// default, fewer in a slim build, and never a grammar that is not compiled.
 pub const GRAMMARS: &[Grammar] = &[
+    #[cfg(feature = "lang-rust")]
     rust::GRAMMAR,
+    #[cfg(feature = "lang-typescript")]
     typescript::GRAMMAR,
+    #[cfg(feature = "lang-python")]
     python::GRAMMAR,
+    #[cfg(feature = "lang-go")]
     go::GRAMMAR,
+    #[cfg(feature = "lang-java")]
     java::GRAMMAR,
 ];
 
@@ -78,45 +99,69 @@ pub fn parse(path: &str, bytes: &[u8], mtime_ns: i64) -> Result<ParsedFile, Extr
 mod tests {
     use std::path::Path;
 
-    use super::{grammar, grammar_for, language_for, parse, GRAMMARS};
+    use super::{grammar, language_for, GRAMMARS};
 
     /// S3/L5: the registry answers by extension, and the language it answers is
     /// the one the table `file` stores. C2 adds the four languages after Rust,
-    /// TypeScript/TSX sharing one module and one language name.
+    /// TypeScript/TSX sharing one module and one language name. The expectations
+    /// are built with the same features that built the grammars (T4/C3), so a
+    /// slim build is checked against itself and never against five languages it
+    /// does not have.
     #[test]
     fn the_registry_knows_the_languages_of_the_build() {
-        for (path, lang) in [
-            ("src/main.rs", "rust"),
-            ("src/main.ts", "typescript"),
-            ("src/main.tsx", "typescript"),
-            ("src/main.py", "python"),
-            ("src/main.go", "go"),
-            ("src/main.java", "java"),
-        ] {
-            assert_eq!(language_for(Path::new(path)), Some(lang), "`{path}`");
+        #[allow(unused_mut)]
+        let mut expected: Vec<(&str, &str)> = Vec::new();
+        #[cfg(feature = "lang-rust")]
+        expected.push(("src/main.rs", "rust"));
+        #[cfg(feature = "lang-typescript")]
+        {
+            expected.push(("src/main.ts", "typescript"));
+            expected.push(("src/main.tsx", "typescript"));
         }
-        assert_eq!(language_for(Path::new("src/notes.txt")), None);
-        assert_eq!(language_for(Path::new("src/view.tsx")), Some("typescript"));
-        for lang in ["rust", "typescript", "python", "go", "java"] {
+        #[cfg(feature = "lang-python")]
+        expected.push(("src/main.py", "python"));
+        #[cfg(feature = "lang-go")]
+        expected.push(("src/main.go", "go"));
+        #[cfg(feature = "lang-java")]
+        expected.push(("src/main.java", "java"));
+
+        for (path, lang) in expected {
+            assert_eq!(language_for(Path::new(path)), Some(lang), "`{path}`");
             assert!(grammar(lang).is_some(), "the registry knows `{lang}`");
         }
+        // One grammar per language of the build (S3), and nothing else.
+        assert_eq!(
+            GRAMMARS.len(),
+            [
+                cfg!(feature = "lang-rust"),
+                cfg!(feature = "lang-typescript"),
+                cfg!(feature = "lang-python"),
+                cfg!(feature = "lang-go"),
+                cfg!(feature = "lang-java"),
+            ]
+            .iter()
+            .filter(|enabled| **enabled)
+            .count(),
+            "one grammar per enabled language"
+        );
+        assert_eq!(language_for(Path::new("src/notes.txt")), None);
         assert!(grammar("ruby").is_none());
-        assert_eq!(GRAMMARS.len(), 5, "one grammar per language (S3)");
-        assert_eq!(
-            grammar_for(Path::new("x.ts")).map(|grammar| grammar.lang),
-            Some("typescript")
-        );
-        // One module covers both TypeScript grammars, so the extensions of the
-        // registry are the ones of the module.
-        assert_eq!(
-            grammar("typescript").map(|grammar| grammar.extensions),
-            Some(&["ts", "tsx"][..])
-        );
+        #[cfg(feature = "lang-typescript")]
+        {
+            assert_eq!(
+                grammar("typescript").map(|grammar| grammar.extensions),
+                Some(&["ts", "tsx"][..]),
+                "one module covers both TypeScript grammars"
+            );
+        }
     }
 
     /// A path without a grammar is an error and never a silent empty chapter.
+    #[cfg(feature = "lang-rust")]
     #[test]
     fn a_path_without_a_grammar_is_an_error() {
+        use super::parse;
+
         assert!(parse("src/notes.txt", b"hello", 0).is_err());
         let parsed = parse("src/one.rs", b"pub fn one() {}\n", 0).expect("the Rust grammar");
         assert_eq!(parsed.lang, "rust");

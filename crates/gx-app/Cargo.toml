@@ -12,6 +12,8 @@ gx-core = { workspace = true }
 gx-kinds = { workspace = true }
 gx-layout = { workspace = true }
 gx-render-svg = { workspace = true, features = ["png"] }
+# The languages of the book reach the binary as features (T4/C3): they are on by
+# default and a slim `graphium` asks for the ones it needs.
 gx-mcp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -20,6 +22,14 @@ signal-hook = { workspace = true }
 # the binary, so the tray needs the image decoder.
 tauri = { workspace = true, features = ["tray-icon", "image-png"] }
 tokio = { workspace = true }
+
+[features]
+default = ["lang-rust", "lang-typescript", "lang-python", "lang-go", "lang-java"]
+lang-rust = ["gx-mcp/lang-rust"]
+lang-typescript = ["gx-mcp/lang-typescript"]
+lang-python = ["gx-mcp/lang-python"]
+lang-go = ["gx-mcp/lang-go"]
+lang-java = ["gx-mcp/lang-java"]
 
 [build-dependencies]
 tauri-build = { workspace = true }

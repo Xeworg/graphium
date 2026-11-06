@@ -149,6 +149,7 @@ pub fn dotted_module(relative: &str, skip: &[&str]) -> String {
 
 /// The dotted module path of a file whose unit is the directory (Go packages,
 /// the fallback of a Java file with no `package` declaration).
+#[cfg(any(feature = "lang-go", feature = "lang-java"))]
 pub fn dotted_directories(relative: &str) -> String {
     let parts: Vec<&str> = relative
         .split('/')
@@ -200,7 +201,11 @@ fn join_segments(segments: Vec<String>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{dotted_directories, dotted_module, last_segment, prefix_of};
+    use super::{dotted_module, last_segment, prefix_of};
+    // `dotted_directories` only exists for the grammars whose unit is the
+    // directory (Go, Java): the slim build of T4/C3 does not compile it.
+    #[cfg(any(feature = "lang-go", feature = "lang-java"))]
+    use super::dotted_directories;
 
     /// The nesting of a `qname` is the language's: the helpers keep the
     /// separator the grammar chose and drop the empty segments.
@@ -214,11 +219,14 @@ mod tests {
             dotted_module("src/pkg/__init__.py", &["__init__"]),
             "src.pkg"
         );
-        assert_eq!(
-            dotted_directories("internal/store/store.go"),
-            "internal.store"
-        );
-        assert_eq!(dotted_directories("main.go"), "");
+        #[cfg(any(feature = "lang-go", feature = "lang-java"))]
+        {
+            assert_eq!(
+                dotted_directories("internal/store/store.go"),
+                "internal.store"
+            );
+            assert_eq!(dotted_directories("main.go"), "");
+        }
         assert_eq!(last_segment("java.util.List"), "List");
         assert_eq!(last_segment("crate::store::Store"), "Store");
         // A Go package path is spelled with `/`: its grammar splits that one.

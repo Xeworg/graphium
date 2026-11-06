@@ -22,8 +22,12 @@ gx-core = { path = "crates/gx-core" }
 gx-kinds = { path = "crates/gx-kinds" }
 gx-layout = { path = "crates/gx-layout" }
 gx-render-svg = { path = "crates/gx-render-svg" }
-gx-mcp = { path = "crates/gx-mcp" }
-gx-index = { path = "crates/gx-index" }
+# `default-features = false` here is what makes the per-language features of the
+# book (T4/C3, RNF1-quater) a real lever: a dependent that wants the defaults
+# asks for them through its own features, so a slim `graphium` build really
+# leaves the grammars out instead of inheriting them from this table.
+gx-mcp = { path = "crates/gx-mcp", default-features = false }
+gx-index = { path = "crates/gx-index", default-features = false }
 
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"

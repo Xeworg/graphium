@@ -796,3 +796,175 @@ fn the_book_records_the_git_identity_of_the_worktree() {
     let git_dir = meta(&book, "git_dir").expect("git_dir");
     assert!(git_dir.ends_with(".git"), "{git_dir}");
 }
+
+// ---------------------------------------------------------------------------
+// T4/C3 — the passes of the book and the settle a harness waits on
+// ---------------------------------------------------------------------------
+
+/// T4/C3 (the flake of `progress`): the watcher runs its first pass on its own
+/// thread, so a synchronous pass of the caller does not end the first index and
+/// the `progress` row keeps moving after `run_full` returns. Reading the row
+/// was a race; the counter is the fact — two completed passes (the caller's and
+/// the watcher's) with none in flight leave the row at `indexed` for good.
+#[test]
+fn the_passes_are_counted_and_the_book_settles_without_racing() {
+    use std::time::{Duration, Instant};
+
+    let scratch = Scratch::new("passes");
+    scratch.write("src/one.rs", "pub fn one() {}\n");
+    let book = Arc::new(scratch.open());
+    let indexer = Arc::new(scratch.indexer(&book));
+    assert_eq!(indexer.passes_done(), 0, "a fresh indexer has no passes");
+    assert!(!indexer.is_indexing(), "a fresh indexer writes nothing");
+
+    let watcher = Arc::clone(&indexer).start().expect("the watcher starts");
+    indexer.run_full().expect("the synchronous pass");
+    assert!(indexer.passes_done() >= 1, "the caller's pass is counted");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while indexer.passes_done() < 2 || indexer.is_indexing() {
+        assert!(
+            Instant::now() < deadline,
+            "the watcher's own pass never finished: passes_done={}",
+            indexer.passes_done()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        indexer.passes_done(),
+        2,
+        "one synchronous pass and the watcher's own first pass"
+    );
+    assert!(!indexer.is_indexing());
+    let progress = book.progress().expect("the progress row");
+    assert_eq!(
+        progress.state, "indexed",
+        "the settled row is the one a tool reads"
+    );
+    assert_eq!(progress.files_total, 1);
+    watcher.stop();
+}
+
+/// T4/C3: the teardown of one worktree closes **its** book and leaves the book
+/// of another worktree open. Closing every book from the end of one test is
+/// what made `progress` flake in the suite of the tools: the next call reopened
+/// a book mid-test and its first pass published `indexing` again.
+#[test]
+fn the_teardown_of_one_book_leaves_the_other_open() {
+    let scratch = Scratch::new("teardown");
+    let base = scratch.base.clone();
+    // Two worktrees under one books root: the registry and the map of open
+    // books are the process's, the roots are not.
+    let books = scratch.books.clone();
+    let one = base.join("one");
+    let other = base.join("other");
+    for root in [&one, &other] {
+        fs::create_dir_all(root.join("src")).expect("the worktree");
+    }
+    fs::write(one.join("src/a.rs"), "pub fn a() {}\n").expect("the file");
+    fs::write(other.join("src/b.rs"), "pub fn b() {}\n").expect("the file");
+
+    let config = gx_index::BooksConfig::from_parts(None, Some(books));
+    gx_index::service::ensure(&config, &one).expect("the first book");
+    gx_index::service::ensure(&config, &other).expect("the second book");
+    assert!(gx_index::service::is_open(&one));
+    assert!(gx_index::service::is_open(&other));
+
+    gx_index::service::shutdown(&one);
+    assert!(
+        !gx_index::service::is_open(&one),
+        "the book that was torn down is closed"
+    );
+    assert!(
+        gx_index::service::is_open(&other),
+        "the other book is untouched"
+    );
+
+    // Forgetting a root with no open book is not an error.
+    gx_index::service::shutdown(&one);
+    gx_index::service::shutdown_all();
+    assert!(
+        !gx_index::service::is_open(&other),
+        "the idle exit closes all"
+    );
+    let _ = fs::remove_dir_all(&base);
+}
+
+/// T4/C3 (S8, D4): the idle exit of the watcher — the `IDLE_TRUNCATE` moment —
+/// prunes the books of worktrees that no longer exist, and never the book that
+/// is being written.
+#[test]
+fn the_idle_exit_prunes_the_books_of_gone_worktrees() {
+    use std::time::{Duration, Instant};
+
+    use gx_index::location::{BookEntry, BookRegistry};
+
+    let scratch = Scratch::new("idle-prune");
+    scratch.write("src/one.rs", "pub fn one() {}\n");
+    let book = Arc::new(scratch.open());
+
+    // A stale book in the same books root: a database and a registry line whose
+    // worktree does not exist.
+    let stale_key = "stale-0123456789abcdef";
+    let stale_dir = scratch.books.join(stale_key);
+    fs::create_dir_all(&stale_dir).expect("the stale book dir");
+    fs::write(stale_dir.join("libro.sqlite"), vec![0u8; 64]).expect("the database");
+    let registry_path = scratch.books_root().registry_path();
+    let mut registry = BookRegistry::load(&registry_path);
+    registry.record(BookEntry {
+        book_key: stale_key.to_string(),
+        root: scratch
+            .base
+            .join("gone-worktree")
+            .to_string_lossy()
+            .to_string(),
+        dir: stale_dir.to_string_lossy().to_string(),
+        ..BookEntry::default()
+    });
+    registry.save(&registry_path).expect("the registry");
+    assert!(
+        registry.entry(book.key()).is_some(),
+        "the live book is registered too"
+    );
+
+    let indexer = Arc::new(Indexer::new(
+        Arc::clone(&book),
+        scratch.canonical_root(),
+        IndexOptions {
+            debounce: Duration::from_millis(10),
+            idle_truncate: Duration::from_millis(50),
+            ..IndexOptions::default()
+        },
+    ));
+    let watcher = Arc::clone(&indexer).start().expect("the watcher starts");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while stale_dir.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the idle exit never pruned the book of a gone worktree"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    watcher.stop();
+
+    let after = BookRegistry::load(&registry_path);
+    assert!(
+        after.entry(stale_key).is_none(),
+        "the stale line is gone from the registry"
+    );
+    assert!(
+        after.entry(book.key()).is_some(),
+        "the book that was being written keeps its line"
+    );
+    let live_dir = scratch.books.join(book.key());
+    assert!(
+        live_dir.join("libro.sqlite").exists(),
+        "the live book's database is untouched"
+    );
+    assert!(
+        book.all_paths()
+            .expect("the book reads")
+            .contains("src/one.rs"),
+        "the live book still answers"
+    );
+}
