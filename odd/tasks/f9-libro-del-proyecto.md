@@ -113,7 +113,10 @@ análisis en specs y tareas; los § que cita viven en el doc de ideas.
   —, filtro `edges` y `budget` de consulta desacoplado de los topes de
   render; `code_diagram` lleva el mismo `edges`; `truncated` pasa a objeto
   `{reason, shown, total, next:{tool,args}}` en las tools que contestan
-  (la llamada siguiente es copypaste).
+  (la llamada siguiente es copypaste). Commit: `5586853` (atómico — el
+  contrato de respuesta cambia de forma, así que la API del motor y su
+  consumidor entran juntos; el árbol verificado: fmt/clippy limpios,
+  workspace 626 passed / 0 failed).
 
 ## Log
 
@@ -188,3 +191,19 @@ análisis en specs y tareas; los § que cita viven en el doc de ideas.
   tamaño o filtro de la misma respuesta; en orden: default común gratis →
   parámetro de cantidad/rango/filtro → semilla de sujeto → tool nueva →
   jamás un `mode` que cambie la forma de la respuesta.
+- L8 (2026-11-06): T5 implementado por worker, verificado y empaquetado por
+  el orquestador en UN commit atómico (`5586853`): el contrato de respuesta
+  cambia de forma, así que la API del motor y su consumidor entran juntos —
+  el intento de dos commits dejó un intermedio que no compilaba (la firma
+  de structure/impact cambió) y se rehizo; el corte queda registrado aquí.
+  Gates del árbol final: fmt/clippy limpios, workspace 626 passed / 0 failed
+  (una corrida arrojó 1 fallo transitorio de timing bajo recompilación, no
+  reproducido en 4 corridas limpias). Prueba en vivo del binario release sin
+  `GRAPHIUM_BOOK`, siete escenarios verdes: outline por defecto (19 de 23
+  filas + `collapsed{hidden:4, next:{after_line:454}}`), slice
+  `after_line`/`limit` monotónico (5 filas desde la línea 26), semilla
+  `file:` con agrupación por archivo (55 nodos, 135 `unresolved`
+  declarados), `budget=1` → `truncated{reason:nodes, shown:1, total:2,
+  next:{budget:2}}` copypasteable, filtro `edges` (solo `calls`),
+  `budget=0` → `invalid_value` con hint, `code_diagram` con `edges` y su
+  `truncated` desglosado (density vs nodes/edges).
