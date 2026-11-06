@@ -1546,9 +1546,46 @@ function createCloneObject(clone) {
   container.rect = { x: 0, y: 0, w: 0, h: 0 };
   container.cloneState = clone;
   container.cloneTools = createCloneTools(container);
-  content.appendChild(container.cloneTools);
+  content.append(container.cloneTools, createCloneClose(container));
   container.append(box, content);
   return container;
+}
+
+/**
+ * The `×` of a clone (L6 of `f8-planos.md`): the human removes the view
+ * instance from their own plan. It is the same button of the plan — same
+ * corner, same size, same tokens — and it never closes the diagram of the
+ * session: closing that one belongs to the panel, and a clone is a view, not a
+ * diagram of the store (S4).
+ */
+function createCloneClose(container) {
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "diagram-close clone-close";
+  close.textContent = "×";
+  close.setAttribute("aria-label", `cerrar el clon`);
+  close.title = `cerrar el clon`;
+  close.addEventListener("pointerdown", (event) => {
+    // The plan starts the move of the clone on its own pointer down: the button
+    // is not the object, so it does not drag it (B3).
+    event.stopPropagation();
+  });
+  close.addEventListener("click", (event) => {
+    event.stopPropagation();
+    emitCloneRemove(container.cloneId);
+  });
+  return close;
+}
+
+/**
+ * Asks the owner to remove a clone from the user plan (L6, defecto 2).
+ *
+ * The page does not delete the object by itself: the model lives in Rust and
+ * the state that comes back is what takes the object off the plan, like every
+ * other change of the plan (S8, S22).
+ */
+function emitCloneRemove(cloneId) {
+  emit("graphium://clone-remove", { clone_id: cloneId });
 }
 
 /**
@@ -1723,20 +1760,24 @@ function mountCloneDrawing(element, payloadSvg) {
  * brings the user plan on screen — cloning is asking to analyze it (S2).
  */
 function applyClonePaint(paint) {
-  const known = objects.has(paint.clone_id);
   // Whether this is the first object of the user plan on the page is read
   // before it lands, the way a render decides its camera (A2).
   const first = framesOnInsert(USER_PLAN_ID);
   const element = upsertClone(paint);
-  mountCloneDrawing(element, paint.svg);
-  // The truth about what the clone shows is the owner's: showing its photo
-  // ends the browsing, an older version is a preview of the history (B2, B3).
-  const version = Number(paint.version || paint.snapshot_version);
-  const snapshot = Number(paint.snapshot_version || version);
-  if (version >= snapshot) {
-    viewedCloneVersion.delete(paint.clone_id);
-  } else {
-    viewedCloneVersion.set(paint.clone_id, version);
+  // A paint without a drawing is an answer with nothing new to draw: the clone
+  // the human asked for already exists (L6) or its photo is the only drawing
+  // left (S4), so the page keeps what it shows instead of blanking the object.
+  if (paint.svg) {
+    mountCloneDrawing(element, paint.svg);
+    // The truth about what the clone shows is the owner's: showing its photo
+    // ends the browsing, an older version is a preview of the history (B2, B3).
+    const version = Number(paint.version || paint.snapshot_version);
+    const snapshot = Number(paint.snapshot_version || version);
+    if (version >= snapshot) {
+      viewedCloneVersion.delete(paint.clone_id);
+    } else {
+      viewedCloneVersion.set(paint.clone_id, version);
+    }
   }
   updateCloneTools(element);
   // The size of the plan is refreshed before the camera paints, so the culling
@@ -1747,12 +1788,14 @@ function applyClonePaint(paint) {
   };
   applyCamera();
   paintEmpty();
-  if (known) {
+  // A version of the history never moves the camera; the answer to a clone
+  // request always does: the human asked to see that clone (L6).
+  if (!paint.bring) {
     return;
   }
   showPlan(USER_PLAN);
-  // The camera travels until the clone that just arrived, keeping the zoom the
-  // human chose (PRD §7.2, RF27). The first object of the plan is framed by the
+  // The camera travels until the clone the human asked for, keeping the zoom
+  // they chose (PRD §7.2, RF27). The first object of the plan is framed by the
   // camera the plan already restored.
   const center = objectCenter(paint);
   if (!first && center !== null) {
