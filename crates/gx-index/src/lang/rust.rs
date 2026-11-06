@@ -1,109 +1,49 @@
-//! The Rust chapter of the book: Tree-sitter pruned to the declarations.
+//! The Rust chapter of the book (S3: one module per language, L5).
 //!
 //! Only the top level survives (ideas §3, «descarte del CST completo»): the
 //! functions, the types, the traits, the `impl` blocks with their methods, the
 //! modules and the constants, each with its span. No CST is stored, and no
 //! content of the file is stored: the book keeps the names and where they are.
 //!
-//! `search_text` is **derived at insert time** because `unicode61` does not
-//! split CamelCase (ideas §7, the queries explorer): the column carries the name,
-//! its words separated and its CamelCase form, so `renderWith`, `render_with`
-//! and `render with` all find the same symbol.
+//! The relations of this grammar are the four kinds of the schema, read
+//! syntactically (D3):
+//!
+//! - `calls` — `open_store()`, `store.load()`, `DiagramStore::new()`;
+//! - `imports` — the segment a `use` binds, one per imported item;
+//! - `inherits` — the trait of an `impl Trait for Type`;
+//! - `uses` — every type reference the grammar types as a type.
+//!
+//! This module is the whole of Rust in the engine: a language of C2 is another
+//! file next to it that exposes a [`Grammar`] and nothing else.
 
-use sha2::{Digest, Sha256};
+use crate::lang::model::{
+    content_hash, name_norm, search_text_for, ExtractError, ParsedFile, ParsedSymbol,
+};
+use crate::lang::Grammar;
+use crate::relations::{attach, RawEdge, CALLS, IMPORTS, INHERITS, USES};
 
-/// The language of the chapter (C0 has one; C2 adds the rest of D2).
+/// The Rust grammar of the book.
+pub const GRAMMAR: Grammar = Grammar {
+    lang: LANGUAGE,
+    extensions: &["rs"],
+    parse,
+};
+
+/// The language of the chapter, as the table `file` spells it.
 pub const LANGUAGE: &str = "rust";
 
-/// Files bigger than this are skipped with a warning (D2): a Rust source that
-/// big is generated, and parsing it costs more than it answers.
-pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
-
-/// What can go wrong parsing one file.
-#[derive(Debug, thiserror::Error)]
-pub enum ExtractError {
-    /// Tree-sitter could not build a parser for the language.
-    #[error("cannot load the Rust grammar: {0}")]
-    Grammar(String),
-    /// The parser did not return a tree.
-    #[error("the Rust parser returned no tree")]
-    NoTree,
-    /// The shell around tree-sitter failed to compile.
-    #[error("the file cannot be read as Rust source")]
-    Unreadable,
-}
-
-/// One symbol of a file, with its span and its derived search text.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsedSymbol {
-    /// Index of the container in the same vector, when it has one.
-    pub parent: Option<usize>,
-    /// `fn`, `method`, `type`, `trait`, `impl`, `module`, `const` or `static`.
-    pub kind: &'static str,
-    /// The simple name: `render_with`.
-    pub name: String,
-    /// The qualified name: `gx_mcp::tools::render_with`.
-    pub qname: String,
-    /// The derived text FTS5 indexes (ideas §10.1, delta 1).
-    pub search_text: String,
-    /// The unified collation for edge resolution (ideas §10.1, delta 6).
-    pub name_norm: String,
-    pub start_line: u32,
-    pub start_col: u32,
-    pub end_line: u32,
-    pub end_col: u32,
-    pub start_byte: u32,
-    pub end_byte: u32,
-}
-
-/// A file ready to be committed to the book.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParsedFile {
-    /// Path relative to the root of the worktree, with `/` separators.
-    pub path: String,
-    /// The language of the chapter.
-    pub lang: &'static str,
-    /// sha256 of the bytes that were parsed.
-    pub content_hash: String,
-    /// Size of the file, in bytes.
-    pub size: i64,
-    /// Modification time, in nanoseconds since the epoch.
-    pub mtime_ns: i64,
-    /// The symbols, parents before children.
-    pub symbols: Vec<ParsedSymbol>,
-}
-
-/// The language of a path, when the book knows it (only Rust in C0).
-pub fn language_for(path: &std::path::Path) -> Option<&'static str> {
-    match path.extension().and_then(|extension| extension.to_str()) {
-        Some("rs") => Some(LANGUAGE),
-        _ => None,
-    }
-}
-
-/// Whether a file looks binary: a NUL byte in the first 8 KiB. The book never
-/// parses binary content, and skipping it is a warning, not an error (D2).
-pub fn looks_binary(bytes: &[u8]) -> bool {
-    bytes.iter().take(8192).any(|byte| *byte == 0)
-}
-
-/// sha256 of the bytes, as lowercase hex.
-pub fn content_hash(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut hex = String::with_capacity(64);
-    for byte in digest {
-        hex.push_str(&format!("{byte:02x}"));
-    }
-    hex
-}
-
-/// Parses one Rust file into the pruned symbols of the book.
-pub fn parse_rust(path: &str, bytes: &[u8], mtime_ns: i64) -> Result<ParsedFile, ExtractError> {
+/// Parses one Rust file into the pruned symbols and the relations of the book.
+pub fn parse(path: &str, bytes: &[u8], mtime_ns: i64) -> Result<ParsedFile, ExtractError> {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter::Language::new(tree_sitter_rust::LANGUAGE))
-        .map_err(|error| ExtractError::Grammar(error.to_string()))?;
-    let tree = parser.parse(bytes, None).ok_or(ExtractError::NoTree)?;
+        .map_err(|error| ExtractError::Grammar {
+            language: LANGUAGE,
+            detail: error.to_string(),
+        })?;
+    let tree = parser
+        .parse(bytes, None)
+        .ok_or(ExtractError::NoTree { language: LANGUAGE })?;
 
     let module = module_path(path);
     let mut symbols = Vec::new();
@@ -114,6 +54,12 @@ pub fn parse_rust(path: &str, bytes: &[u8], mtime_ns: i64) -> Result<ParsedFile,
     };
     walk(&tree.root_node(), &prefix, None, None, bytes, &mut symbols);
 
+    // The relations are attached after the declarations exist: the ownership
+    // of an edge is decided by the spans of the chapter (ideas §10.1).
+    let raw = rust_relations(&tree.root_node(), bytes);
+    let anchor = anchor_symbol(path);
+    let edges = attach(raw, &mut symbols, anchor);
+
     Ok(ParsedFile {
         path: path.to_string(),
         lang: LANGUAGE,
@@ -121,6 +67,7 @@ pub fn parse_rust(path: &str, bytes: &[u8], mtime_ns: i64) -> Result<ParsedFile,
         size: bytes.len() as i64,
         mtime_ns,
         symbols,
+        edges,
     })
 }
 
@@ -190,8 +137,8 @@ fn walk(
             "static_item" => {
                 emit(child, "static", prefix, parent, source, out);
             }
-            // `use`, attributes, comments and macro calls are not entries of
-            // the book: C1 uses them for edges, C0 does not store them.
+            // A `use` is not an entry of the book: C1 turns it into an
+            // `imports` edge, and a comment or a string into nothing at all.
             _ => {}
         }
     }
@@ -271,6 +218,41 @@ fn qualified(prefix: &str, name: &str) -> String {
     }
 }
 
+/// The synthetic `module` symbol that anchors the relations of a file: the
+/// `qname` is the module path, and its span is the top of the file, so it can
+/// never win an ownership question against a declaration.
+fn anchor_symbol(path: &str) -> ParsedSymbol {
+    let module = module_path(path);
+    let name = if module.is_empty() {
+        std::path::Path::new(path)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| path.to_string())
+    } else {
+        module.clone()
+    };
+    let qname = if module.is_empty() {
+        name.clone()
+    } else {
+        module
+    };
+    ParsedSymbol {
+        parent: None,
+        kind: "module",
+        search_text: search_text_for(&name),
+        name_norm: name_norm(&name),
+        name,
+        qname,
+        start_line: 1,
+        start_col: 1,
+        end_line: 1,
+        end_col: 1,
+        start_byte: 0,
+        end_byte: 0,
+    }
+}
+
 /// The module path of a file, used as the prefix of every `qname`.
 ///
 /// `crates/gx-mcp/src/tools.rs` → `gx_mcp::tools`; `src/lib.rs` → `` (the
@@ -324,87 +306,150 @@ fn normalise_identifier(text: &str) -> String {
     out.trim_matches('_').to_string()
 }
 
-/// The collation of every resolution that is not FTS (ideas §10.1, delta 6).
-pub fn name_norm(name: &str) -> String {
-    name.to_lowercase()
-}
-
-/// The derived search text of a name: the name, its words and its CamelCase.
-///
-/// `renderWith` → `renderWith render with RenderWith` (ideas §10.1);
-/// `render_with` → `render_with render with RenderWith`. Both forms keep the
-/// snake_case name whole in the first segment, which is what a query for
-/// `render_with` hits.
-pub fn search_text_for(name: &str) -> String {
-    let words = words(name);
-    let mut segments: Vec<String> = vec![name.to_string()];
-    let spaced = words.join(" ");
-    if !spaced.is_empty() {
-        segments.push(spaced);
-    }
-    let camel: String = words
-        .iter()
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                None => String::new(),
-            }
-        })
-        .collect();
-    if !camel.is_empty() {
-        segments.push(camel);
-    }
-    segments.dedup();
-    segments
-        .into_iter()
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// The lowercase words of an identifier: split at `_`, at non-alphanumerics
-/// and at the CamelCase boundaries (including the end of an acronym).
-fn words(name: &str) -> Vec<String> {
-    let chars: Vec<char> = name.chars().collect();
-    let mut out: Vec<String> = Vec::new();
-    let mut current = String::new();
-    for (index, char) in chars.iter().copied().enumerate() {
-        if !char.is_alphanumeric() {
-            flush(&mut current, &mut out);
-            continue;
-        }
-        let previous = index.checked_sub(1).map(|previous| chars[previous]);
-        let next = chars.get(index + 1).copied();
-        let boundary = char.is_uppercase()
-            && match previous {
-                Some(previous) if previous.is_lowercase() || previous.is_ascii_digit() => true,
-                Some(previous) if previous.is_uppercase() => {
-                    next.is_some_and(|next| next.is_lowercase())
-                }
-                _ => false,
-            };
-        if boundary {
-            flush(&mut current, &mut out);
-        }
-        current.extend(char.to_lowercase());
-    }
-    flush(&mut current, &mut out);
+/// The relations of one Rust chapter, as the grammar sees them.
+fn rust_relations(root: &tree_sitter::Node, source: &[u8]) -> Vec<RawEdge> {
+    let mut out = Vec::new();
+    visit(root, source, &mut out);
     out
 }
 
-/// Pushes the pending word, if any.
-fn flush(current: &mut String, out: &mut Vec<String>) {
-    if !current.is_empty() {
-        out.push(std::mem::take(current));
+/// Walks the tree once and records every relation it recognises.
+fn visit(node: &tree_sitter::Node, source: &[u8], out: &mut Vec<RawEdge>) {
+    match node.kind() {
+        "call_expression" => {
+            if let Some(name) = node
+                .child_by_field_name("function")
+                .and_then(|function| called_name(&function, source))
+            {
+                out.push(RawEdge {
+                    byte: node.start_byte(),
+                    kind: CALLS,
+                    name,
+                });
+            }
+        }
+        "use_declaration" => {
+            let mut names = Vec::new();
+            let argument = node
+                .child_by_field_name("argument")
+                .or_else(|| node.named_child(node.named_child_count().saturating_sub(1)));
+            if let Some(argument) = argument {
+                use_names(&argument, source, &mut names);
+            }
+            for name in names {
+                out.push(RawEdge {
+                    byte: node.start_byte(),
+                    kind: IMPORTS,
+                    name,
+                });
+            }
+        }
+        "impl_item" => {
+            if let Some(name) = node
+                .child_by_field_name("trait")
+                .and_then(|trait_node| type_name(&trait_node, source))
+            {
+                out.push(RawEdge {
+                    byte: node.start_byte(),
+                    kind: INHERITS,
+                    name,
+                });
+            }
+        }
+        // A type reference in any position the grammar types as a type: a
+        // parameter, a return type, a field, a generic argument.
+        "type_identifier" => {
+            if let Ok(text) = node.utf8_text(source) {
+                out.push(RawEdge {
+                    byte: node.start_byte(),
+                    kind: USES,
+                    name: text.to_string(),
+                });
+            }
+        }
+        // Comments, strings, attributes and macros carry prose: no relation.
+        _ => {}
     }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        visit(&child, source, out);
+    }
+}
+
+/// The name a call expression targets, when it has one.
+fn called_name(function: &tree_sitter::Node, source: &[u8]) -> Option<String> {
+    let name = match function.kind() {
+        "identifier" | "type_identifier" => Some(*function),
+        // `store.load()`, `self.helper()`: the method name.
+        "field_expression" => function.child_by_field_name("field"),
+        // `DiagramStore::new()`: the last segment.
+        "scoped_identifier" | "scoped_type_identifier" => function.child_by_field_name("name"),
+        // `open::<u8>()`: the function is wrapped in its type arguments.
+        "generic_function" => {
+            return function
+                .child_by_field_name("function")
+                .and_then(|inner| called_name(&inner, source));
+        }
+        _ => None,
+    }?;
+    name.utf8_text(source).ok().map(str::to_string)
+}
+
+/// The names a `use` declaration binds, one per imported item.
+fn use_names(node: &tree_sitter::Node, source: &[u8], out: &mut Vec<String>) {
+    match node.kind() {
+        // `use a::{b, c}`: the names are the list, not the module.
+        "scoped_use_list" => {
+            if let Some(list) = node.child_by_field_name("list") {
+                use_names(&list, source, out);
+            }
+        }
+        "use_list" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                use_names(&child, source, out);
+            }
+        }
+        // `use a::b as c`: the imported item is `b`.
+        "use_as_clause" => {
+            if let Some(path) = node.child_by_field_name("path") {
+                use_names(&path, source, out);
+            }
+        }
+        // `use a::b::*`: the path's last segment.
+        "use_wildcard" => {
+            if let Some(path) = node.named_child(0) {
+                push_last_segment(&path, source, out);
+            }
+        }
+        "scoped_identifier" | "identifier" | "type_identifier" => {
+            push_last_segment(node, source, out);
+        }
+        _ => {}
+    }
+}
+
+/// Pushes the last `::` segment of a node's text.
+fn push_last_segment(node: &tree_sitter::Node, source: &[u8], out: &mut Vec<String>) {
+    if let Ok(text) = node.utf8_text(source) {
+        out.push(text.to_string());
+    }
+}
+
+/// The name of a type node: `Trait<T>` → `Trait`, `a::Trait` → `Trait`.
+fn type_name(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
+    let node = if node.kind() == "generic_type" {
+        node.child_by_field_name("type")?
+    } else {
+        *node
+    };
+    node.utf8_text(source).ok().map(str::to_string)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        content_hash, looks_binary, module_path, name_norm, parse_rust, search_text_for, words,
-    };
+    use super::{module_path, parse};
 
     const SOURCE: &str = r#"
 use std::path::Path;
@@ -449,7 +494,7 @@ pub fn render_with_all(input: &Path) -> usize {
     /// and `impl` methods hang from the `impl` (containment, `parent_id`).
     #[test]
     fn extracts_the_declarations_of_a_rust_file_with_spans() {
-        let parsed = parse_rust("src/demo.rs", SOURCE.as_bytes(), 0).expect("parses");
+        let parsed = parse("src/demo.rs", SOURCE.as_bytes(), 0).expect("parses");
         let names: Vec<(&str, &str)> = parsed
             .symbols
             .iter()
@@ -504,22 +549,6 @@ pub fn render_with_all(input: &Path) -> usize {
         assert_eq!(method.qname, "demo::Config::renderWith");
     }
 
-    /// Ideas §10.1, delta 1: `search_text` is derived at insert time.
-    #[test]
-    fn the_search_text_splits_camel_case_and_snake_case() {
-        assert_eq!(
-            search_text_for("renderWith"),
-            "renderWith render with RenderWith"
-        );
-        assert_eq!(
-            search_text_for("render_with"),
-            "render_with render with RenderWith"
-        );
-        assert_eq!(name_norm("renderWith"), "renderwith");
-        assert_eq!(words("HTTPServer"), vec!["http", "server"]);
-        assert_eq!(words("gx_index_v2"), vec!["gx", "index", "v2"]);
-    }
-
     /// The module path is the prefix of every `qname` and the anchor of the
     /// ambiguity report: the same name in two files stays distinguishable.
     #[test]
@@ -532,13 +561,7 @@ pub fn render_with_all(input: &Path) -> usize {
         );
         assert_eq!(module_path("src/main.rs"), "");
         assert_eq!(module_path("tests/end_to_end.rs"), "tests::end_to_end");
-    }
-
-    #[test]
-    fn a_binary_file_is_detected_by_its_nul_byte() {
-        assert!(looks_binary(b"\x7fELF\0rest"));
-        assert!(!looks_binary(b"pub fn main() {}\n"));
-        assert_eq!(content_hash(b"abc").len(), 64);
+        assert_eq!(module_path(""), "");
     }
 
     /// Tree-sitter is error tolerant: a file with a syntax error still yields
@@ -547,7 +570,7 @@ pub fn render_with_all(input: &Path) -> usize {
     #[test]
     fn a_file_with_a_syntax_error_still_yields_what_the_grammar_recovers() {
         let broken = "pub fn one() {}\nfn two( {\n";
-        let parsed = parse_rust("src/broken.rs", broken.as_bytes(), 0).expect("parses");
+        let parsed = parse("src/broken.rs", broken.as_bytes(), 0).expect("parses");
         assert!(
             parsed.symbols.iter().any(|symbol| symbol.name == "one"),
             "{:?}",

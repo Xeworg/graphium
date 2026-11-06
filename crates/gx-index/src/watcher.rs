@@ -22,7 +22,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use notify::{RecursiveMode, Watcher};
 
 use crate::book::{Book, BookError, Progress};
-use crate::extract::{self, ParsedFile};
+use crate::lang::{self, ParsedFile};
 
 /// The byte ceiling of one batch (ideas §10.1: `cache_spill` takes an
 /// EXCLUSIVE lock, so the batch decides how long the writer holds it).
@@ -82,7 +82,7 @@ impl Default for IndexOptions {
     fn default() -> Self {
         Self {
             max_batch_bytes: MAX_BATCH_BYTES,
-            max_file_bytes: extract::MAX_FILE_BYTES,
+            max_file_bytes: lang::MAX_FILE_BYTES,
             parse_threads: MAX_PARSE_THREADS,
             debounce: DEBOUNCE,
             idle_truncate: IDLE_TRUNCATE,
@@ -285,14 +285,14 @@ impl Indexer {
                     continue;
                 }
             };
-            if extract::looks_binary(&bytes) {
+            if lang::looks_binary(&bytes) {
                 eprintln!("gx-index: skipping `{}`: it looks binary", file.relative);
                 summary.skipped += 1;
                 continue;
             }
             if skip_unchanged {
                 let existing = self.book.content_hash_of(&file.relative)?;
-                if existing.as_deref() == Some(extract::content_hash(&bytes).as_str()) {
+                if existing.as_deref() == Some(lang::content_hash(&bytes).as_str()) {
                     continue;
                 }
             }
@@ -512,7 +512,7 @@ fn collect(
         if !entry.file_type().is_some_and(|kind| kind.is_file()) {
             continue;
         }
-        if extract::language_for(path).is_none() {
+        if lang::language_for(path).is_none() {
             continue;
         }
         let Ok(metadata) = entry.metadata() else {
@@ -615,7 +615,7 @@ pub fn batches(files: Vec<SourceFile>, max_batch_bytes: usize) -> Vec<Vec<Source
 
 /// Parses the bytes already read for one source file.
 fn parse_source(file: &SourceFile, bytes: &[u8]) -> Result<ParsedFile, String> {
-    match extract::parse_rust(&file.relative, bytes, file.mtime_ns) {
+    match lang::parse(&file.relative, bytes, file.mtime_ns) {
         Ok(parsed) => Ok(parsed),
         Err(error) => Err(format!("cannot parse `{}`: {error}", file.relative)),
     }

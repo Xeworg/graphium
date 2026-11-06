@@ -19,9 +19,11 @@ use crate::location::BooksRoot;
 
 /// Where the books live and whether the feature is on.
 ///
-/// The flag is `GRAPHIUM_BOOK=on`, read once by the owner and shared by the
-/// watcher and the tool: a project without the flag gets no watcher and the
-/// tool answers `book_disabled` instead of pretending.
+/// The book is **on by default** (S5, L5: the human asked for `GRAPHIUM_BOOK=on`
+/// to stop being necessary): the owner keeps a book for every project of its
+/// sessions, and `GRAPHIUM_BOOK=off` is the explicit opt-out. The flag is read
+/// once by the owner and shared by the watcher and the tools, so a project that
+/// opted out answers `book_disabled` instead of pretending.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BooksConfig {
     enabled: bool,
@@ -31,9 +33,21 @@ pub struct BooksConfig {
 impl BooksConfig {
     /// The configuration of this process, from the environment.
     pub fn from_env() -> Self {
+        Self::from_parts(
+            std::env::var_os("GRAPHIUM_BOOK"),
+            BooksRoot::from_env().map(|root| root.path().to_path_buf()),
+        )
+    }
+
+    /// The configuration of its two values: the raw flag and the books root.
+    ///
+    /// This is what [`BooksConfig::from_env`] does, exposed so a test (or a
+    /// headless run) can answer for an environment that is not this machine's
+    /// without racing the process environment.
+    pub fn from_parts(flag: Option<OsString>, root: Option<PathBuf>) -> Self {
         Self {
-            enabled: flag_from_value(std::env::var_os("GRAPHIUM_BOOK")),
-            root: BooksRoot::from_env().map(|root| root.path().to_path_buf()),
+            enabled: flag_from_value(flag),
+            root,
         }
     }
 
@@ -70,16 +84,20 @@ impl BooksConfig {
     }
 }
 
-/// The values of `GRAPHIUM_BOOK` that turn the book on. Everything else is
-/// off, including an unset variable: the tools stay invisible to a project
-/// that did not ask for them (S5, condition 4 of P3).
+/// Whether `GRAPHIUM_BOOK` leaves the book on (S5, L5).
+///
+/// **Absent means on**: the book starts with the owner, because the human asked
+/// for `GRAPHIUM_BOOK=on` to stop being necessary. Only the explicit opt-out
+/// turns it off — `off`, `0`, `false`, `no` — and everything else (including an
+/// empty value, which is what an unset variable in a config file looks like)
+/// keeps the default.
 pub fn flag_from_value(raw: Option<OsString>) -> bool {
     let Some(raw) = raw else {
-        return false;
+        return true;
     };
-    matches!(
+    !matches!(
         raw.to_string_lossy().trim().to_ascii_lowercase().as_str(),
-        "on" | "1" | "true" | "yes"
+        "off" | "0" | "false" | "no"
     )
 }
 
@@ -226,23 +244,33 @@ mod tests {
 
     use super::{flag_from_value, BooksConfig};
 
-    /// The switch is `GRAPHIUM_BOOK=on`; "off", an empty value and no value
-    /// are all the disabled path (S5, condition 4 of P3).
+    /// S5/L5: no `GRAPHIUM_BOOK` at all means **on**; only the explicit opt-out
+    /// turns the book off, and an accidental value never does it silently.
     #[test]
-    fn the_flag_is_on_only_for_the_documented_values() {
-        for on in ["on", "ON", "1", "true", "yes", " on "] {
-            assert!(
-                flag_from_value(Some(OsString::from(on))),
-                "`{on}` has to turn the book on"
-            );
-        }
-        for off in ["off", "0", "false", "", " ", "maybe"] {
+    fn the_book_is_on_unless_the_opt_out_is_explicit() {
+        assert!(
+            flag_from_value(None),
+            "an absent GRAPHIUM_BOOK keeps the book on"
+        );
+        for off in ["off", "OFF", "0", "false", "no", " off "] {
             assert!(
                 !flag_from_value(Some(OsString::from(off))),
-                "`{off}` has to leave the book off"
+                "`{off}` is the explicit opt-out"
             );
         }
-        assert!(!flag_from_value(None));
+        for on in ["on", "1", "true", "yes", ""] {
+            assert!(
+                flag_from_value(Some(OsString::from(on))),
+                "`{on}` keeps the book on"
+            );
+        }
+        // The explicit configuration: absent flag and a root answers enabled,
+        // the opt-out answers disabled without touching the root.
+        let config = BooksConfig::from_parts(None, Some("/tmp/books".into()));
+        assert!(config.is_enabled());
+        assert!(config.root().is_some());
+        let opted_out = BooksConfig::from_parts(Some("off".into()), Some("/tmp/books".into()));
+        assert!(!opted_out.is_enabled());
     }
 
     #[test]

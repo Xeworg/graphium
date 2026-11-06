@@ -30,6 +30,8 @@ pub struct SearchRequest {
 /// One place where the symbol is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolHit {
+    /// The `symbol.id` of the book: what the structure and impact readers take.
+    pub id: i64,
     /// Path relative to the root of the worktree.
     pub file: String,
     /// 1-based line of the declaration.
@@ -104,7 +106,7 @@ pub fn search(connection: &Connection, request: &SearchRequest) -> rusqlite::Res
 
     let mut statement = connection.prepare(
         "SELECT s.kind, s.name, s.name_norm, s.qname, s.start_line, s.start_col,
-                f.path, f.content_hash, f.indexed_at
+                f.path, f.content_hash, f.indexed_at, s.id
          FROM symbol_fts
          JOIN symbol s ON s.id = symbol_fts.rowid
          JOIN file f ON f.id = s.file_id
@@ -124,6 +126,7 @@ pub fn search(connection: &Connection, request: &SearchRequest) -> rusqlite::Res
                     file: row.get(6)?,
                     content_hash: row.get(7)?,
                     indexed_at: row.get(8)?,
+                    id: row.get(9)?,
                 },
                 name_norm: row.get(2)?,
             })
