@@ -519,8 +519,10 @@ fn kind_change_not_allowed(replace_id: &str, kind: &str, current: &str) -> Rende
 ///
 /// The wording of `unknown_diagram` and `not_owner` (with `known_ids[]`) is
 /// owned by `contract`; this is the one place where the two copies of the
-/// type meet, so the messages cannot drift.
-pub(crate) fn contract_payload(payload: crate::contract::ErrorPayload, path: &str) -> ErrorPayload {
+/// type meet, so the messages cannot drift. Public because the window asks the
+/// same questions: the user plan clones a diagram that may have closed and
+/// answers the human with the error a tool would give (`f8-planos.md`, B1).
+pub fn contract_payload(payload: crate::contract::ErrorPayload, path: &str) -> ErrorPayload {
     ErrorPayload {
         path: path.to_string(),
         code: payload.code,
