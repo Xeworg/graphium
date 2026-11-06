@@ -752,6 +752,7 @@ body {
  * the right. The chosen one keeps the accent of the panel. */
 .panel-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 2px;
   border: 1px solid transparent;
@@ -823,6 +824,45 @@ body {
 .panel-item-close:hover {
   color: var(--accent);
   opacity: 1;
+}
+
+/* The history of the diagram (RF14): «◀ v3/7 ▶» under the item, in the
+   row the meta opens. The steps are small like the close button. */
+.panel-item-versions {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 4px 12px;
+  font-size: 12px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel-item-version-label {
+  min-width: 5ch;
+  text-align: center;
+  opacity: 0.65;
+}
+
+.panel-item-version-step {
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.panel-item-version-step:hover {
+  color: var(--accent);
+}
+
+.panel-item-version-step:disabled {
+  opacity: 0.25;
+  cursor: default;
 }
 
 .panel-empty {
