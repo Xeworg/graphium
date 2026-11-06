@@ -256,11 +256,11 @@ fn the_refresh_and_the_history_of_a_clone_are_asked_to_rust() {
     );
     assert!(
         update.contains("oldest_version") && update.contains("version_count"),
-        "la historia del clon se lee como la del panel, «v3/7»: {update}"
+        "la historia del clon se lee como la del panel: {update}"
     );
     assert!(
-        update.contains("v${"),
-        "el indicador del clon es el mismo del panel: {update}"
+        update.contains("`${at - oldest + 1}/${count}`"),
+        "el indicador del clon es el compacto del pill, «2/2» sin la «v» (L8): {update}"
     );
     assert!(
         update.contains("shown >= oldest && shown <= current"),
@@ -476,20 +476,26 @@ fn the_clone_has_its_own_cross_and_it_asks_the_owner_to_remove_it() {
     );
 
     // The tools of the clone hang from the very corner with the `×` inside
-    // the pill (L8): one control, growing inward, wrapping when the object is
-    // narrow — nothing sticks out of the box the human sees.
+    // the pill (L8): one compact row that never wraps — a wrapped control
+    // fell on top of its neighbor — and an object narrower than the pill gets
+    // it centered over the top edge (`.overhang`).
     let tools = slice_between(CSS, ".diagram-clone-tools {", "}");
     assert!(
         declaration(tools, "right").trim() == "4px",
         "el toolbar se ancla en la esquina del objeto, como el `×` de siempre: {tools}"
     );
     assert!(
-        declaration(tools, "flex-wrap").contains("wrap"),
-        "un toolbar más ancho que la caja se parte en filas, no se desborda: {tools}"
+        declaration(tools, "font-size").trim() == "11px",
+        "el pill es compacto: una fila de controles a 11px (L8): {tools}"
     );
     assert!(
-        declaration(tools, "max-width").contains("100%"),
-        "el toolbar nunca es más ancho que su objeto: {tools}"
+        !tools.contains("flex-wrap"),
+        "el toolbar nunca se parte en filas: el control wrapped caía encima del vecino (L8): {tools}"
+    );
+    let overhang = slice_between(CSS, ".diagram-clone-tools.overhang {", "}");
+    assert!(
+        declaration(overhang, "top").trim() == "-12px" && overhang.contains("translateX(-50%)"),
+        "un objeto más angosto que el pill lo cuelga centrado sobre el borde superior: {overhang}"
     );
     let close = slice_between(CSS, ".diagram-clone-tools .clone-close {", "}");
     assert!(
