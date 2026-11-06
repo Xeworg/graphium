@@ -109,3 +109,12 @@ prueba en vivo del corte `f2-cierre` T5 (2026-11-05).
   la gramática `.diagram-close`. Tests nuevos: `user_plan.rs` y
   `user_plan_page.rs`; suite 36 binarios verdes. Re-test del humano
   pendiente (fase 3 del plan acordado).
+- L8 (2026-11-05, verbatim): «un pequeno detalle estetico y es el que se
+  sale de la caja … la x». En clones angostos, el toolbar de versiones más
+  la «×» se desbordaba del rectángulo punteado del objeto. Corregido
+  inline por el orquestador: la «×» vive DENTRO del pill del toolbar — un
+  solo control anclado a la esquina (`right: 4px`), que crece hacia
+  adentro con `flex-wrap` + `max-width` y se parte en filas si el objeto es
+  más angosto que los controles. Contrato actualizado: la regla vieja
+  «la barra deja lugar a la ×» se reemplaza por anclaje a esquina, wrap y
+  visibilidad de la × dentro del pill. Commit: `025dbba`.
