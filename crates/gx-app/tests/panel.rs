@@ -245,8 +245,8 @@ fn an_insertion_on_a_plan_with_objects_keeps_the_zoom_of_the_human() {
     // PRD §7.2; A1/A2 of `f8-planos.md`: one plan per session, so only the
     // first diagram of **its** plan is framed; from the second one of that
     // plan on, the camera pans until the new object.
-    let first = slice_between(JS, "function framesOnInsert(sessionId) {", "\n}");
-    for token in ["objects.values()", "element.sessionId", "=== sessionId"] {
+    let first = slice_between(JS, "function framesOnInsert(planId) {", "\n}");
+    for token in ["objects.values()", "element.planId", "=== planId"] {
         assert!(
             first.contains(token),
             "the plan frames a render only when its own plan holds no object \

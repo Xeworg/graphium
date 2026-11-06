@@ -216,6 +216,10 @@ function fillSwatches() {
 const plan = document.getElementById("plan");
 const diagrams = document.getElementById("diagrams");
 const empty = document.getElementById("empty");
+// State 1 of the user plan (B1 of `f8-planos.md`, S4): the human's own surface
+// says what to do with it, instead of waiting for an agent that draws
+// somewhere else.
+const emptyUser = document.getElementById("empty-user");
 const banner = document.getElementById("banner");
 const bannerPath = document.getElementById("banner-path");
 const bannerMessage = document.getElementById("banner-message");
@@ -269,7 +273,9 @@ const themeInputs = Array.from(
 
 const camera = { tx: 0, ty: 0, zoom: 1 };
 const objects = new Map(); // diagram_id -> element
-const state = { diagrams: [], sessions: [] }; // the state Rust owns (PRD §8.6.1)
+// The state Rust owns (PRD §8.6.1): the diagrams of the plan, every session
+// the switcher lists and the clones of the user plan (`f8-planos.md`, B1).
+const state = { diagrams: [], sessions: [], clones: [] };
 let cameraTimer = null;
 // The settings of the human: Rust sends them and the page paints them. Until
 // the first `graphium://settings` arrives the plan shows the `plano` preset.
@@ -429,16 +435,81 @@ plan.addEventListener(
 );
 
 let dragging = null;
+// The clone the pointer is moving (B3 of `f8-planos.md`, S4): dragging an
+// **object** of the user plan moves it, dragging the background keeps panning
+// the camera. A session plan never moves an object — what an agent drew stays
+// where the owner placed it.
+let moving = null;
+
+/**
+ * The clone under the pointer, when the plan on screen is the one of the human
+ * (B3). Anywhere else there is nothing to grab: the background pans the camera,
+ * which is what it has always done.
+ */
+function cloneUnder(target) {
+  if (activePlan === null || activePlan.id !== USER_PLAN_ID) {
+    return null;
+  }
+  const container = target instanceof Element ? target.closest(".diagram.clone") : null;
+  return container && container.cloneId ? container : null;
+}
+
+/**
+ * Starts moving the clone the hand grabbed (B3): the object becomes the chosen
+ * one (the arrows of the keyboard walk its history), the pointer is captured
+ * and the place it started from is kept, so a click writes nothing.
+ */
+function moveCloneStart(event, element) {
+  selectedId = element.cloneId;
+  moving = {
+    element,
+    fromX: event.clientX,
+    fromY: event.clientY,
+    x: element.rect.x,
+    y: element.rect.y,
+  };
+  plan.classList.add("dragging");
+  plan.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
+
+/** Puts a clone where the hand says, in plan units, and paints the object. */
+function setClonePlace(element, x, y) {
+  element.rect = { ...element.rect, x, y };
+  placeCloneContent(element);
+  paintBox(element);
+}
 
 plan.addEventListener("pointerdown", (event) => {
   // The same for the drag: the hand of the human wins over the animation.
   cancelPan();
+  // A button of a clone (a step of its history, its refresh) does its own
+  // thing: it never starts a move of the object nor a drag of the camera.
+  if (event.target instanceof Element && event.target.closest("button")) {
+    return;
+  }
+  const clone = cloneUnder(event.target);
+  if (clone !== null) {
+    moveCloneStart(event, clone);
+    return;
+  }
   dragging = { x: event.clientX, y: event.clientY, tx: camera.tx, ty: camera.ty };
   plan.classList.add("dragging");
   plan.setPointerCapture(event.pointerId);
 });
 
 plan.addEventListener("pointermove", (event) => {
+  if (moving !== null) {
+    // The pointer travels in screen pixels and the plan in plan units: the zoom
+    // of the camera is what joins them (B3).
+    const zoom = camera.zoom > 0 ? camera.zoom : 1;
+    setClonePlace(
+      moving.element,
+      moving.x + (event.clientX - moving.fromX) / zoom,
+      moving.y + (event.clientY - moving.fromY) / zoom,
+    );
+    return;
+  }
   if (!dragging) {
     return;
   }
@@ -449,6 +520,26 @@ plan.addEventListener("pointermove", (event) => {
 });
 
 function endDrag(event) {
+  // The hand let go of a clone: the object stays where it is and the owner
+  // keeps that place (B3).
+  if (moving !== null) {
+    const move = moving;
+    moving = null;
+    plan.classList.remove("dragging");
+    if (plan.hasPointerCapture(event.pointerId)) {
+      plan.releasePointerCapture(event.pointerId);
+    }
+    const element = move.element;
+    if (element.rect.x !== move.x || element.rect.y !== move.y) {
+      // Only the position of the view travels: no camera, no store, no render
+      // (V2). A click without movement asks for nothing.
+      emit("graphium://clone-move", {
+        clone_id: element.cloneId,
+        pos: { x: element.rect.x, y: element.rect.y },
+      });
+    }
+    return;
+  }
   if (!dragging) {
     return;
   }
@@ -758,6 +849,18 @@ function emitClose(diagramId) {
   emit("graphium://close", { diagram_id: diagramId });
 }
 
+/**
+ * Asks Rust to put a clone of a diagram on the user plan (B1; S2, S4).
+ *
+ * The clone is a view instance of the owner: the page does not copy the
+ * drawing, does not pick a place and does not invent an id — Rust renders the
+ * current document read-only, places the object on the user plan and answers
+ * with `graphium://clone-paint` and a new state.
+ */
+function emitClone(diagramId) {
+  emit("graphium://clone", { diagram_id: diagramId });
+}
+
 /** The moment of the last change, in the clock of the human. */
 function formatUpdated(value) {
   const when = new Date(value);
@@ -769,7 +872,7 @@ function formatUpdated(value) {
   return when.toLocaleString("es", { dateStyle: "short", timeStyle: "short" });
 }
 
-/** One entry of the panel: title, kind, updated and its close button. */
+/** One entry of the panel: title, kind, updated, its clone and its close. */
 function panelItem(diagram) {
   const item = document.createElement("li");
   item.className = "panel-item";
@@ -808,7 +911,19 @@ function panelItem(diagram) {
   close.title = `cerrar ${diagram.title}`;
   close.addEventListener("click", () => emitClose(diagram.diagram_id));
 
-  item.append(open, close);
+  // Cloning onto the user plan (B1 of `f8-planos.md`, S2): the human copies the
+  // diagram to a surface where no agent draws, to analyze it with calm. Same
+  // visual grammar as the `×`, and it only asks: the clone never becomes a
+  // second `diagram_id` of the store (S4).
+  const clone = document.createElement("button");
+  clone.type = "button";
+  clone.className = "panel-item-clone";
+  clone.textContent = "⧉";
+  clone.setAttribute("aria-label", `clonar ${diagram.title} al plano del usuario`);
+  clone.title = "clonar al plano del usuario";
+  clone.addEventListener("click", () => emitClone(diagram.diagram_id));
+
+  item.append(open, clone, close);
 
   // The history of the diagram (RF14, L5): «◀ v3/7 ▶» when the store keeps
   // more than one version. Navigating draws the chosen version on the plan,
@@ -1063,6 +1178,20 @@ const planCameras = new Map();
 // Empty means no notice.
 let sessionMessage = "";
 
+// The plan of the human (B1 of `f8-planos.md`; S2, S4): the row at the top of
+// the switcher, always there and independent of the sessions. It holds the
+// clones (`state.clones`), which live in the owner as **view instances**: they
+// carry no `diagram_id`, they do not take a slot of the store and no agent can
+// see, refresh or close them. The camera of the user plan is one entry of
+// `planCameras`, like any other plan.
+const USER_PLAN_ID = "user";
+const USER_PLAN = { id: USER_PLAN_ID, label: "Mi plano" };
+// The version of the original a clone is showing, per clone: the number of the
+// version while the human browses an older one, and nothing while the clone
+// shows the newest it pulled. The page never writes the store: Rust renders the
+// version read-only and answers `graphium://clone-paint` (B2, B3).
+const viewedCloneVersion = new Map(); // clone_id -> version number
+
 /** The colour class of a family: one of the five tokens, else `other`. */
 function familyClass(family) {
   return Object.prototype.hasOwnProperty.call(SESSION_FAMILIES, family)
@@ -1075,9 +1204,9 @@ function familyName(family) {
   return SESSION_FAMILIES[family] || SESSION_FAMILIES.other;
 }
 
-/** Whether the plan on screen is the one of `sessionId` (A2). */
-function isVisibleSession(sessionId) {
-  return activePlan !== null && sessionId === activePlan.id;
+/** Whether the plan on screen is the one of `planId` (A2; S4, B1). */
+function isVisiblePlan(planId) {
+  return activePlan !== null && planId === activePlan.id;
 }
 
 /** How many diagrams of a session are on the plan right now. */
@@ -1085,9 +1214,26 @@ function sessionDiagramCount(sessionId) {
   return state.diagrams.filter((diagram) => diagram.session_id === sessionId).length;
 }
 
-/** How many diagrams the plan on screen has (A2). */
+/** How many objects the plan on screen has (A2; B1). */
 function planDiagramCount() {
-  return activePlan === null ? 0 : sessionDiagramCount(activePlan.id);
+  if (activePlan === null) {
+    return 0;
+  }
+  if (activePlan.id === USER_PLAN_ID) {
+    return state.clones.length;
+  }
+  return sessionDiagramCount(activePlan.id);
+}
+
+/**
+ * Paints the empty surface of the plan on screen: the plan of the human has
+ * its own (S4, B1) and neither of them shows while the plan has objects.
+ */
+function paintEmpty() {
+  const hasObjects = planDiagramCount() > 0;
+  const onUserPlan = activePlan !== null && activePlan.id === USER_PLAN_ID;
+  empty.classList.toggle("hidden", hasObjects || onUserPlan);
+  emptyUser.classList.toggle("hidden", hasObjects || !onUserPlan);
 }
 
 /** The last part of a project path: `/home/x/graphium` -> `graphium`. */
@@ -1100,6 +1246,11 @@ function projectName(project) {
 /** The text of the count: `1 diagrama`, `3 diagramas`. */
 function diagramCountText(count) {
   return `${count} ${count === 1 ? "diagrama" : "diagramas"}`;
+}
+
+/** The text of the count of a clone: `1 clon`, `3 clones`. */
+function cloneCountText(count) {
+  return `${count} ${count === 1 ? "clon" : "clones"}`;
 }
 
 /** The dot of a family: the colour of whoever drew the diagram (D3). */
@@ -1119,7 +1270,7 @@ function sessionRow(session) {
   const row = document.createElement("button");
   row.type = "button";
   row.className = "session-row";
-  const chosen = isVisibleSession(session.id);
+  const chosen = isVisiblePlan(session.id);
   row.classList.toggle("selected", chosen);
   row.classList.toggle("in-grace", session.state === "in_grace");
   row.setAttribute("aria-pressed", chosen ? "true" : "false");
@@ -1163,17 +1314,17 @@ function sessionRow(session) {
 }
 
 /**
- * Shows the objects of the plan on screen and hides the rest (A2).
+ * Shows the objects of the plan on screen and hides the rest (A2; B1).
  *
  * Hiding is one class that takes the object out of the paint (`display: none`
  * in the stylesheet): the camera, the rectangle of the object and the place
  * Rust gave it are untouched, so coming back to a plan shows it exactly where
  * it was. Nothing is closed here: the diagrams of the other plans keep living
- * in Rust (D5).
+ * in Rust (D5) and the clones of the user plan keep their place (S4).
  */
 function applyPlanVisibility() {
   for (const element of objects.values()) {
-    element.classList.toggle("plan-hidden", !isVisibleSession(element.sessionId || ""));
+    element.classList.toggle("plan-hidden", !isVisiblePlan(element.planId || ""));
   }
 }
 
@@ -1223,16 +1374,22 @@ function showPlan(plan) {
   applyPlanVisibility();
   restorePlanCamera();
   renderSessions();
+  paintEmpty();
 }
 
 /**
- * The center of the newest object of a plan, in plan units (A2). The store
+ * The center of the newest object of a plan, in plan units (A2; B1). The store
  * lists the diagrams by `diagram_id` and the ids are monotonic and never
  * reused (PRD §11.1, RF28.1), so the last one of a plan is the one that
- * arrived last.
+ * arrived last. The clones of the user plan arrive in the same order, so the
+ * last clone is the newest object of that plan.
  */
-function newestCenter(sessionId) {
-  const diagramsOfPlan = state.diagrams.filter((diagram) => diagram.session_id === sessionId);
+function newestCenter(planId) {
+  if (planId === USER_PLAN_ID) {
+    const newest = state.clones[state.clones.length - 1];
+    return newest === undefined ? null : objectCenter(newest);
+  }
+  const diagramsOfPlan = state.diagrams.filter((diagram) => diagram.session_id === planId);
   const newest = diagramsOfPlan[diagramsOfPlan.length - 1];
   return newest === undefined ? null : objectCenter(newest);
 }
@@ -1271,6 +1428,11 @@ function restorePlanCamera() {
  * next plan, instead of leaving the surface empty with no explanation.
  */
 function reconcileActivePlan() {
+  // The plan of the human does not end with a session: its row is always in
+  // the switcher, so nothing replaces it (S4).
+  if (activePlan !== null && activePlan.id === USER_PLAN_ID) {
+    return;
+  }
   if (activePlan !== null && state.sessions.some((session) => session.id === activePlan.id)) {
     return;
   }
@@ -1288,15 +1450,365 @@ function reconcileActivePlan() {
 }
 
 /**
- * Builds the switcher from the state: one row per session, in the order Rust
- * lists them, with the plan on screen marked as such (A2, D3). There is no
- * «Todas» row any more: the plan shows one session at a time. The notice
- * explains why the plan on screen changed, when it had to.
+ * The row of the plan of the human (B1; S4): «Mi plano», always first, with the
+ * dot of the plan (nobody else draws there, so it is not a family), the number
+ * of clones it holds and the plan on screen marked in it. Everything it says
+ * comes from the state: the count is `state.clones` and the row exists even
+ * with no session at all.
+ */
+function userPlanRow() {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "session-row user-plan";
+  const chosen = isVisiblePlan(USER_PLAN_ID);
+  row.classList.toggle("selected", chosen);
+  row.setAttribute("aria-pressed", chosen ? "true" : "false");
+  row.title = "tu plano: los diagramas que clonaste para analizar";
+  row.addEventListener("click", () => showPlan(USER_PLAN));
+
+  const head = document.createElement("span");
+  head.className = "session-head";
+  const label = document.createElement("span");
+  label.className = "session-label";
+  label.textContent = USER_PLAN.label;
+  const count = document.createElement("span");
+  count.className = "session-count";
+  count.textContent = String(state.clones.length);
+  count.title = cloneCountText(state.clones.length);
+  head.append(label, count);
+
+  const meta = document.createElement("span");
+  meta.className = "session-meta";
+  const owner = document.createElement("span");
+  owner.className = "session-family";
+  owner.textContent = "plano del usuario";
+  meta.append(owner);
+
+  const dot = document.createElement("span");
+  dot.className = "session-dot user-plan-dot";
+
+  const body = document.createElement("span");
+  body.className = "session-body";
+  body.append(head, meta);
+  row.append(dot, body);
+  return row;
+}
+
+/**
+ * Builds the switcher from the state: the plan of the human first and then one
+ * row per session, in the order Rust lists them, with the plan on screen marked
+ * as such (A2, D3; B1). There is no «Todas» row any more: the plan shows one
+ * plan at a time. The notice explains why the plan on screen changed, when it
+ * had to.
  */
 function renderSessions() {
-  sessionList.replaceChildren(...state.sessions.map(sessionRow));
+  sessionList.replaceChildren(userPlanRow(), ...state.sessions.map(sessionRow));
   sessionNotice.textContent = sessionMessage;
   sessionNotice.classList.toggle("hidden", sessionMessage === "");
+}
+
+// --- Plan of the human: the clones (`f8-planos.md`, B1/B2/B3) -------------
+
+/**
+ * One clone of the user plan (B1; S2, S4): an object of the surface that
+ * belongs to the human.
+ *
+ * It reuses the machinery of a diagram object — the rectangle the culling
+ * tests, the box that stands in for the drawing, the camera transform, the
+ * selection — and it has none of the parts that belong to the agent: no `×`,
+ * no `diagram_id`, and its place is written by the hand of the human (B3). The
+ * drawing arrives from the owner with `graphium://clone-paint`.
+ */
+function createCloneObject(clone) {
+  const container = document.createElement("div");
+  container.className = "diagram clone";
+
+  const content = document.createElement("div");
+  content.className = "content";
+
+  const box = document.createElement("div");
+  box.className = "diagram-box hidden";
+  const boxLabel = document.createElement("span");
+  boxLabel.className = "diagram-box-label";
+  box.appendChild(boxLabel);
+
+  container.cloneId = clone.clone_id;
+  // The plan the object belongs to, the key the switcher and the culling use
+  // (A2; B1): a clone is an object of the user plan and of no other.
+  container.planId = USER_PLAN_ID;
+  container.content = content;
+  container.box = box;
+  container.boxLabel = boxLabel;
+  container.caption = "";
+  // The object is born without a drawing: its box names it until the paint of
+  // the owner arrives (RNF1-ter).
+  container.culled = true;
+  container.rect = { x: 0, y: 0, w: 0, h: 0 };
+  container.cloneState = clone;
+  container.cloneTools = createCloneTools(container);
+  content.appendChild(container.cloneTools);
+  container.append(box, content);
+  return container;
+}
+
+/**
+ * The tools of a clone (B2, B3): «Actualizar el clon» and the history of the
+ * original in the «◀ v3/7 ▶» grammar of the panel item. They hang from the
+ * corner of the object, like the `×` of a diagram, so the plan stays clean and
+ * the human finds them on the object they belong to.
+ */
+function createCloneTools(container) {
+  const tools = document.createElement("div");
+  tools.className = "diagram-clone-tools";
+
+  const versions = document.createElement("div");
+  versions.className = "panel-item-versions clone-versions";
+
+  const prev = document.createElement("button");
+  prev.type = "button";
+  prev.className = "panel-item-version-step";
+  prev.textContent = "◀";
+  prev.setAttribute("aria-label", "versión anterior del original");
+  prev.addEventListener("click", () => cloneVersionStep(container.cloneState, -1));
+
+  const label = document.createElement("span");
+  label.className = "panel-item-version-label";
+
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "panel-item-version-step";
+  next.textContent = "▶";
+  next.setAttribute("aria-label", "versión siguiente del original");
+  next.addEventListener("click", () => cloneVersionStep(container.cloneState, 1));
+
+  versions.append(prev, label, next);
+
+  const refresh = document.createElement("button");
+  refresh.type = "button";
+  refresh.className = "clone-refresh";
+  refresh.textContent = "↻";
+  refresh.setAttribute("aria-label", "actualizar el clon");
+  refresh.title = "actualizar el clon";
+  refresh.addEventListener("click", () => refreshClone(container.cloneState));
+
+  // A button is not the object: pressing one never starts the drag of the
+  // camera nor the move of the clone (B3).
+  for (const button of [prev, next, refresh]) {
+    button.addEventListener("pointerdown", (event) => event.stopPropagation());
+  }
+
+  container.cloneVersions = versions;
+  container.clonePrev = prev;
+  container.cloneLabel = label;
+  container.cloneNext = next;
+  container.cloneRefresh = refresh;
+
+  tools.append(versions, refresh);
+  return tools;
+}
+
+/**
+ * Paints the tools of a clone from the state: the refresh is enabled only
+ * while the original is on a plan (B2), the history walks the versions the
+ * store keeps (`oldest_version..=current_version`, absolute and consecutive)
+ * and reads «v3/7» like the panel item, and a clone whose original closed
+ * keeps its photo and loses both.
+ */
+function updateCloneTools(container) {
+  const clone = container.cloneState;
+  if (!clone) {
+    return;
+  }
+  const updatable = Boolean(clone.updatable);
+  const oldest = Number(clone.oldest_version || 0);
+  const current = Number(clone.current_version || oldest);
+  const count = Number(clone.version_count || 0);
+  const viewed = viewedCloneVersion.get(clone.clone_id);
+  // Without a version in view the clone shows the photo: the newest version
+  // it pulled, not the newest of the original.
+  const shown = viewed === undefined ? Number(clone.snapshot_version || current) : viewed;
+  // A version the history discarded cannot be browsed, because the store no
+  // longer has it: the indicator falls back to the newest one the owner can
+  // draw, like the panel item does (RF14, L5).
+  const at = shown >= oldest && shown <= current ? shown : current;
+
+  container.clonePrev.disabled = !updatable || at <= oldest;
+  container.cloneNext.disabled = !updatable || at >= current;
+  container.cloneLabel.textContent = count > 0 ? `v${at - oldest + 1}/${count}` : "";
+  container.cloneVersions.classList.toggle("hidden", !(count > 1));
+  container.cloneRefresh.disabled = !updatable;
+  container.cloneRefresh.title = updatable
+    ? "actualizar el clon"
+    : "el original ya no está en el plan";
+}
+
+/**
+ * Reads from the state where a clone sits and what it is called. Like a
+ * diagram, the page invents neither: the place and the size are the ones the
+ * owner keeps (B3) and the title is the one the clone froze.
+ */
+function readClone(element, clone) {
+  element.cloneState = clone;
+  if (typeof clone.title === "string" && clone.title !== "") {
+    element.caption = clone.title;
+  }
+  if (clone.pos && clone.bbox) {
+    element.rect = {
+      x: Number(clone.pos.x),
+      y: Number(clone.pos.y),
+      w: Number(clone.bbox.w),
+      h: Number(clone.bbox.h),
+    };
+    placeCloneContent(element);
+  }
+  updateCloneTools(element);
+  paintBox(element);
+}
+
+/**
+ * Puts the object of a clone where its rectangle says. The content **is** the
+ * object — the drawing centers inside it with the stylesheet — so moving a
+ * clone is moving one rectangle, and the drawing and its tools travel with it.
+ */
+function placeCloneContent(element) {
+  const rect = element.rect;
+  element.content.style.left = `${rect.x}px`;
+  element.content.style.top = `${rect.y}px`;
+  element.content.style.width = `${rect.w}px`;
+  element.content.style.height = `${rect.h}px`;
+}
+
+/**
+ * The object of a clone, created or kept in step with the state. Nothing else
+ * creates one: the state of the owner and its paint are the only sources.
+ */
+function upsertClone(clone) {
+  let element = objects.get(clone.clone_id);
+  if (!element) {
+    element = createCloneObject(clone);
+    objects.set(clone.clone_id, element);
+    diagrams.appendChild(element);
+  }
+  readClone(element, clone);
+  return element;
+}
+
+/**
+ * Mounts the drawing the owner rendered for a clone (B1, B2).
+ *
+ * It is a **new** drawing, not the one that left the page, so it is mounted
+ * here and the culling decides afterwards whether it stays: the box leaves,
+ * the object takes the node and every `applyCamera()` re-decides the
+ * materialization like it does for a diagram (RNF1-ter).
+ */
+function mountCloneDrawing(element, payloadSvg) {
+  const holder = document.createElement("div");
+  holder.innerHTML = payloadSvg;
+  const svg = holder.querySelector("svg");
+  if (!svg) {
+    return;
+  }
+  if (element.svg) {
+    element.svg.remove();
+  }
+  element.svg = svg;
+  element.content.prepend(svg);
+  element.culled = false;
+  element.box.classList.add("hidden");
+}
+
+/**
+ * Paints a clone the owner rendered (B1, B2): the object takes the place the
+ * owner keeps, the drawing mounts where it was, and a clone that just arrived
+ * brings the user plan on screen — cloning is asking to analyze it (S2).
+ */
+function applyClonePaint(paint) {
+  const known = objects.has(paint.clone_id);
+  // Whether this is the first object of the user plan on the page is read
+  // before it lands, the way a render decides its camera (A2).
+  const first = framesOnInsert(USER_PLAN_ID);
+  const element = upsertClone(paint);
+  mountCloneDrawing(element, paint.svg);
+  // The truth about what the clone shows is the owner's: showing its photo
+  // ends the browsing, an older version is a preview of the history (B2, B3).
+  const version = Number(paint.version || paint.snapshot_version);
+  const snapshot = Number(paint.snapshot_version || version);
+  if (version >= snapshot) {
+    viewedCloneVersion.delete(paint.clone_id);
+  } else {
+    viewedCloneVersion.set(paint.clone_id, version);
+  }
+  updateCloneTools(element);
+  // The size of the plan is refreshed before the camera paints, so the culling
+  // tests the new object against the window it really has.
+  viewport = {
+    w: plan.clientWidth || window.innerWidth,
+    h: plan.clientHeight || window.innerHeight,
+  };
+  applyCamera();
+  paintEmpty();
+  if (known) {
+    return;
+  }
+  showPlan(USER_PLAN);
+  // The camera travels until the clone that just arrived, keeping the zoom the
+  // human chose (PRD §7.2, RF27). The first object of the plan is framed by the
+  // camera the plan already restored.
+  const center = objectCenter(paint);
+  if (!first && center !== null) {
+    panTo(cameraOn(center));
+  }
+}
+
+/**
+ * «Actualizar el clon» (B2, S3): asks the owner for the current version of the
+ * original. The page draws nothing by itself and moves nothing: the answer
+ * brings the drawing and, when the photo grew, the new place on the plan.
+ */
+function refreshClone(clone) {
+  if (!clone || !clone.updatable) {
+    return;
+  }
+  viewedCloneVersion.delete(clone.clone_id);
+  emit("graphium://clone-view", { clone_id: clone.clone_id });
+}
+
+/**
+ * One step of the history of the original, from the version in view or from the
+ * photo when the human was not browsing (B2, B3).
+ */
+function cloneVersionStep(clone, step) {
+  if (!clone || !clone.updatable) {
+    return;
+  }
+  const at = viewedCloneVersion.get(clone.clone_id) ?? clone.snapshot_version;
+  viewCloneVersion(clone, at + step);
+}
+
+/**
+ * Asks the owner for one version of the original inside the clone (B3, S4).
+ *
+ * Read-only, like the history of a panel item: Rust renders the version without
+ * the hook, stores nothing and writes no version, and it recalculates the place
+ * of the clone only when the version is newer than the photo — with the calm of
+ * the user plan, where the sessions are not mixed (S1).
+ */
+function viewCloneVersion(clone, version) {
+  const target = Math.min(
+    clone.current_version,
+    Math.max(clone.oldest_version, version),
+  );
+  if (target === clone.snapshot_version) {
+    // The photo is the version in view: there is nothing to browse.
+    viewedCloneVersion.delete(clone.clone_id);
+  } else {
+    viewedCloneVersion.set(clone.clone_id, target);
+  }
+  emit("graphium://clone-view", { clone_id: clone.clone_id, version: target });
+  const element = objects.get(clone.clone_id);
+  if (element) {
+    updateCloneTools(element);
+  }
 }
 
 // --- Diagrams -----------------------------------------------------------
@@ -1417,9 +1929,10 @@ function insertDiagram(payload) {
   // leaves the plan and its record leaves with it, so the two can never
   // drift.
   container.diagramId = payload.diagram_id;
-  // The plan the object belongs to (A2): the key the switcher and the
-  // culling use, the same one the state carries for every diagram.
-  container.sessionId = sessionId;
+  // The plan the object belongs to (A2; B1): the key the switcher and the
+  // culling use, the same one the state carries for every diagram. A clone
+  // carries the user plan here; a diagram, the session that drew it.
+  container.planId = sessionId;
   container.svg = svg;
   container.content = content;
   container.box = box;
@@ -1446,7 +1959,7 @@ function insertDiagram(payload) {
     h: plan.clientHeight || window.innerHeight,
   };
   applyCamera();
-  empty.classList.add("hidden");
+  paintEmpty();
 
   // One single place decides what the camera does with the intent of the
   // event: mostrar la cámara del render cuando el plano está vacío o cuando
@@ -1467,16 +1980,16 @@ function insertDiagram(payload) {
 }
 
 /**
- * Whether this render is the first diagram of **its** plan (A2: one plan per
- * session, and every plan has its own camera).
+ * Whether this object is the first of **its** plan (A2: one plan per session,
+ * every plan has its own camera, and the user plan has its clones; B1).
  *
- * Only the first diagram of a plan is framed with the camera of the event;
- * from the second one of that plan on, the camera pans until the new object
- * and keeps the zoom (PRD §7.2, RF27).
+ * Only the first object of a plan is framed with the camera of the event; from
+ * the second one of that plan on, the camera pans until the new object and
+ * keeps the zoom (PRD §7.2, RF27).
  */
-function framesOnInsert(sessionId) {
+function framesOnInsert(planId) {
   for (const element of objects.values()) {
-    if ((element.sessionId || "") === sessionId) {
+    if ((element.planId || "") === planId) {
       return false;
     }
   }
@@ -1555,13 +2068,22 @@ function cullObject(element) {
     return;
   }
   element.culled = true;
-  element.svg.remove();
+  // A clone whose drawing has not arrived yet has no node to take out: the
+  // box already stands for it.
+  if (element.svg) {
+    element.svg.remove();
+  }
   element.box.classList.remove("hidden");
 }
 
 /** Brings the drawing of an object back into the DOM (RNF1-ter). */
 function materializeObject(element) {
   if (!element.culled) {
+    return;
+  }
+  // An object whose drawing has not arrived yet (a clone the page asked the
+  // owner for) keeps its box: there is nothing to mount yet (RNF1-ter).
+  if (!element.previewSvg && !element.svg) {
     return;
   }
   element.culled = false;
@@ -1571,7 +2093,7 @@ function materializeObject(element) {
   // `.content`: the drawing goes before it, the way `insertDiagram` left it.
   if (element.previewSvg) {
     element.content.prepend(element.previewSvg);
-  } else {
+  } else if (element.svg) {
     element.content.prepend(element.svg);
   }
   element.box.classList.add("hidden");
@@ -1631,10 +2153,11 @@ function readObject(element, diagram) {
   if (typeof diagram.title === "string" && diagram.title !== "") {
     element.caption = diagram.title;
   }
-  // Which session drew this diagram: the key the switcher and the culling use
-  // (S1, D3; A2). It is the same id Rust lists in `sessions`.
+  // Which plan this object belongs to: the key the switcher and the culling
+  // use (S1, D3; A2, B1). For a diagram it is the session that drew it, the
+  // same id Rust lists in `sessions`.
   if (typeof diagram.session_id === "string" && diagram.session_id !== "") {
-    element.sessionId = diagram.session_id;
+    element.planId = diagram.session_id;
   }
   if (diagram.pos && diagram.bbox) {
     element.rect = {
@@ -1648,18 +2171,34 @@ function readObject(element, diagram) {
 }
 
 /**
- * Drops from the plan the objects Rust no longer lists (PRD §7 RF28): the
+ * The ids of every object the state lists: the diagrams of the sessions and the
+ * clones of the user plan (B1). The two kinds never collide — the store numbers
+ * `d-…`, the owner numbers `c-…` — and both live in the same map, so the
+ * camera, the culling and the selection work for the two of them.
+ */
+function objectIds() {
+  const open = new Set(state.diagrams.map((diagram) => diagram.diagram_id));
+  for (const clone of state.clones) {
+    open.add(clone.clone_id);
+  }
+  return open;
+}
+
+/**
+ * Drops from the plan the objects Rust no longer lists (PRD §7 RF28; B1): the
  * state is the truth, so a closed diagram leaves the plan when the state says
- * so and not when the page feels like it.
+ * so and not when the page feels like it. The clones of the user plan follow
+ * the same rule: the owner is the one that knows which ones exist.
  */
 function syncObjects() {
-  const open = new Set(state.diagrams.map((diagram) => diagram.diagram_id));
-  for (const [diagramId, element] of objects) {
-    if (open.has(diagramId)) {
+  const open = objectIds();
+  for (const [objectId, element] of objects) {
+    if (open.has(objectId)) {
       continue;
     }
     element.remove();
-    objects.delete(diagramId);
+    objects.delete(objectId);
+    viewedCloneVersion.delete(objectId);
   }
   if (selectedId !== null && !open.has(selectedId)) {
     selectedId = null;
@@ -1671,6 +2210,21 @@ function syncObjects() {
     const element = objects.get(diagram.diagram_id);
     if (element) {
       readObject(element, diagram);
+    }
+  }
+  // The clones of the user plan (B1): the same reconciliation, from the same
+  // state. The SVG does not travel in it, so a clone the page never drew — a
+  // window that came back to life has the state and no drawings — asks the
+  // owner for the version the clone keeps. A photo whose original closed has
+  // nothing to ask: the owner no longer holds its versions, so the object keeps
+  // its box instead of asking for a drawing nobody can render (S4).
+  for (const clone of state.clones) {
+    const element = upsertClone(clone);
+    if (!element.svg && clone.updatable) {
+      emit("graphium://clone-view", {
+        clone_id: clone.clone_id,
+        version: clone.snapshot_version,
+      });
     }
   }
   // The plan on screen paints its own objects and hides the rest (A2),
@@ -1733,6 +2287,15 @@ listen("graphium://version-paint", (event) => {
   paintPreview(element, svg);
 });
 
+/**
+ * The drawing of a clone (B1, B2): the owner renders it read-only and the page
+ * mounts it where the object is. Nothing of the store is written here — the
+ * clone is a view instance and the answer carries the version it shows.
+ */
+listen("graphium://clone-paint", (event) => {
+  applyClonePaint(event.payload || {});
+});
+
 // --- Wiring -------------------------------------------------------------
 
 listen("graphium://ready", () => {});
@@ -1748,13 +2311,16 @@ listen("graphium://state", (event) => {
   const diagrams = Array.isArray(payload.diagrams) ? payload.diagrams : [];
   state.diagrams = diagrams;
   state.sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+  // The clones of the user plan (B1): view instances of the owner, never
+  // diagrams of the store.
+  state.clones = Array.isArray(payload.clones) ? payload.clones : [];
   // A session the owner dropped takes its plan away: the switcher says so and
   // shows another plan, never an empty surface with no explanation (S2, A2).
   reconcileActivePlan();
   syncObjects();
   renderPanel();
   renderSessions();
-  empty.classList.toggle("hidden", planDiagramCount() > 0);
+  paintEmpty();
 });
 listen("graphium://pending", (event) => {
   showPending(event.payload || {});
@@ -1777,6 +2343,19 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   if (selectedId === null) {
+    return;
+  }
+  // A clone walks the history of its original with the same arrows (B3): the
+  // preview is read-only and the owner recalculates the place when the version
+  // is newer than the photo.
+  const clone = state.clones.find((entry) => entry.clone_id === selectedId);
+  if (clone) {
+    if (!(clone.version_count > 1) || !clone.updatable) {
+      return;
+    }
+    const at = viewedCloneVersion.get(selectedId) ?? clone.snapshot_version;
+    viewCloneVersion(clone, event.key === "ArrowLeft" ? at - 1 : at + 1);
+    event.preventDefault();
     return;
   }
   const diagram = state.diagrams.find((entry) => entry.diagram_id === selectedId);
