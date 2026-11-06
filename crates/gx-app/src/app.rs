@@ -109,6 +109,10 @@ impl PlanState {
 struct RenderEvent {
     req_id: String,
     diagram_id: String,
+    /// The session that drew the diagram, which is the plan it belongs to
+    /// (`f8-planos.md`, A1/A2). The page brings that plan on screen; the
+    /// state that names the session arrives only after the acknowledgement.
+    session_id: String,
     svg: String,
     /// Where the diagram goes in plan units: the center of the view it
     /// arrived in (PRD §7.2, `place`). Absent when the window size is
@@ -166,6 +170,17 @@ struct StateEntry {
     /// Size of the object, padding included (PRD §7.2).
     #[serde(skip_serializing_if = "Option::is_none")]
     bbox: Option<gx_core::geom::Size>,
+    /// Newest version of the source document the history keeps (RF14). The
+    /// numbers are absolute and consecutive: the store discards the oldest
+    /// version past its cap without restarting the numbering, so the range
+    /// `oldest_version..=current_version` names every saved version and the
+    /// panel positions any of them without asking twice.
+    current_version: u64,
+    oldest_version: u64,
+    /// How many versions the history keeps, capped at `MAX_VERSIONS` (RF14).
+    /// It is the «7» of the indicator «v3/7»; the «3» is the position of a
+    /// version inside `oldest_version..=current_version`.
+    version_count: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -189,25 +204,33 @@ fn state_entries() -> Vec<StateEntry> {
     gx_mcp::store::diagram_store()
         .list()
         .into_iter()
-        .map(|summary| StateEntry {
-            diagram_id: summary.diagram_id,
-            title: summary.title,
-            kind: summary.kind,
-            updated_at: summary.updated_at,
-            session_id: summary.session_id,
-            pos: summary.pos,
-            bbox: summary.bbox,
+        .map(|summary| {
+            let versions = gx_mcp::store::diagram_store()
+                .versions(&summary.diagram_id)
+                .unwrap_or_default();
+            StateEntry {
+                diagram_id: summary.diagram_id,
+                title: summary.title,
+                kind: summary.kind,
+                updated_at: summary.updated_at,
+                session_id: summary.session_id,
+                pos: summary.pos,
+                bbox: summary.bbox,
+                current_version: versions.last().map_or(0, |version| version.version),
+                oldest_version: versions.first().map_or(0, |version| version.version),
+                version_count: versions.len(),
+            }
         })
         .collect()
 }
 
 /// The state of the plan the panel reads (PRD §8.6.1, S8; feature
-/// `f3-sesiones`, S1/S3/D3/D5).
+/// `f3-sesiones`, S1/S3/D3/D5; `f8-planos.md`, A2).
 ///
 /// Besides the diagrams, it carries **every** session of the owner, because
-/// the human is the exception to the isolation of D3: the selector lists them
-/// all and chooses which ones the plan shows. Each diagram already names its
-/// session (`session_id`), which is the key the selector and the badge use.
+/// the human is the exception to the isolation of D3: the switcher lists them
+/// all and brings one plan on screen at a time. Each diagram already names
+/// its session (`session_id`), which is the plan it belongs to.
 #[derive(Debug, Clone, Serialize)]
 struct PlanPayload {
     diagrams: Vec<StateEntry>,
@@ -220,7 +243,7 @@ struct PlanPayload {
 ///
 /// The store is read first on purpose: reading it is the tick that ends the
 /// sessions whose grace finished (D4, S2), so a session that ended is already
-/// gone from the list the selector reads instead of lingering as a row with no
+/// gone from the list the switcher reads instead of lingering as a row with no
 /// diagrams.
 fn plan_payload() -> PlanPayload {
     let diagrams = state_entries();
@@ -300,14 +323,50 @@ pub fn build(keep_alive: bool, start_window: bool) -> (tauri::App<tauri::Wry>, A
         let _ = close_handle.emit("graphium://state", plan_payload());
     });
 
+    // Viewing a saved version of the history belongs to the human (RF14; T5
+    // of `f2-cierre.md`): the panel asks, Rust draws the version read-only.
+    // The preview renders without the hook, stores nothing and writes no
+    // version — the plan only borrows the drawing the version had when it
+    // was current. The answer goes back as its own event, so the page can
+    // swap the drawing in place without moving the object on the plan.
+    let version_handle = handle.clone();
+    handle.listen("graphium://version-view", move |event| {
+        #[derive(Deserialize)]
+        struct VersionViewPayload {
+            diagram_id: String,
+            version: u64,
+        }
+        let Ok(payload) = serde_json::from_str::<VersionViewPayload>(event.payload()) else {
+            return;
+        };
+        match gx_mcp::tools::render_version_view(&payload.diagram_id, payload.version) {
+            Ok(svg) => {
+                let _ = version_handle.emit(
+                    "graphium://version-paint",
+                    serde_json::json!({
+                        "diagram_id": payload.diagram_id,
+                        "version": payload.version,
+                        "svg": svg,
+                    }),
+                );
+            }
+            Err(error) => {
+                // A version the history does not keep (or a diagram that
+                // closed while the human browsed it) is answered in the
+                // banner the plan already shows, where the human reads it.
+                let _ = version_handle.emit("graphium://error", error);
+            }
+        }
+    });
+
     let ready_state = Arc::clone(&state);
     let ready_handle = handle.clone();
     handle.listen("graphium://ready", move |_event| {
         ready_state.set_ready();
         let _ = ready_handle.emit("graphium://settings", ready_state.settings());
-        // The selector of sessions is built from the state, like the panel
-        // (S8): the page gets one as soon as it is alive, so the rows are
-        // there before the first render and never invented by the page.
+        // The switcher of plans is built from the state, like the panel (S8):
+        // the page gets one as soon as it is alive, so the rows are there
+        // before the first render and never invented by the page.
         let _ = ready_handle.emit("graphium://state", plan_payload());
     });
 
@@ -436,6 +495,30 @@ pub fn install_tray(handle: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// The rectangles the placement of a render has to avoid: the objects of the
+/// same session that are already on its plan (PRD §7.2, RF27; `f8-planos.md`,
+/// A1 and S1).
+///
+/// Each session draws on its own surface, so a diagram only collides with the
+/// objects its own session already placed: the objects of another session are
+/// on another plan and never push it. The diagram being rendered is skipped
+/// as well: a re-render (`opts.replace_id`, `update_diagram`) is not an
+/// obstacle to itself. A diagram without a place contributes no rectangle.
+fn occupied_of_session(
+    diagrams: &[gx_mcp::store::DiagramSummary],
+    session_id: &str,
+    diagram_id: &str,
+) -> Vec<gx_core::geom::Rect> {
+    diagrams
+        .iter()
+        .filter(|summary| summary.session_id == session_id && summary.diagram_id != diagram_id)
+        .filter_map(|summary| match (summary.pos, summary.bbox) {
+            (Some(pos), Some(bbox)) => Some(gx_core::geom::Rect::new(pos.x, pos.y, bbox.w, bbox.h)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Installs the hook that paints a diagram in the window and waits for the
 /// frontend to confirm it.
 pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
@@ -469,18 +552,16 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
         // and a cut diagram cannot be read (PRD §7.2, S17 and S23).
         let viewport = viewport_of(&window);
         // The objects already on the plan, so a new one never lands on top of
-        // another (PRD §7.2, RF27).
-        let occupied: Vec<gx_core::geom::Rect> = gx_mcp::store::diagram_store()
-            .list()
-            .into_iter()
-            .filter(|summary| summary.diagram_id != payload.diagram_id)
-            .filter_map(|summary| match (summary.pos, summary.bbox) {
-                (Some(pos), Some(bbox)) => {
-                    Some(gx_core::geom::Rect::new(pos.x, pos.y, bbox.w, bbox.h))
-                }
-                _ => None,
-            })
-            .collect();
+        // another (PRD §7.2, RF27). Each session has its own plan, so only the
+        // objects of the same session are in the way (`f8-planos.md`, A1/S1):
+        // the store knows the session of the render because the diagram is
+        // inserted before the hook runs.
+        let store = gx_mcp::store::diagram_store();
+        let summary = store.get(&payload.diagram_id);
+        let session_id = summary
+            .as_ref()
+            .map_or_else(String::new, |summary| summary.session_id.clone());
+        let occupied = occupied_of_session(&store.list(), &session_id, &payload.diagram_id);
         let placement = viewport.map(|viewport| {
             camera::place_with_cascade(
                 Size::new(payload.width, payload.height),
@@ -490,7 +571,7 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
             )
         });
         if let Some(rect) = placement {
-            gx_mcp::store::diagram_store().place(
+            store.place(
                 &payload.diagram_id,
                 gx_core::geom::Point::new(rect.x, rect.y),
                 gx_core::geom::Size::new(rect.w, rect.h),
@@ -519,6 +600,7 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
         let event = RenderEvent {
             req_id: req_id.clone(),
             diagram_id: payload.diagram_id.clone(),
+            session_id,
             svg: payload.svg.clone(),
             placement: placement.map(|rect| Placement {
                 x: rect.x,
@@ -550,7 +632,7 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
 
 #[cfg(test)]
 mod tests {
-    use super::StateEntry;
+    use super::{occupied_of_session, RenderEvent, StateEntry};
 
     /// PRD §8.6.1: el panel lateral se construye **solo** desde este evento,
     /// así que tiene que traer dónde está cada objeto y cuánto mide. Sin eso
@@ -565,6 +647,9 @@ mod tests {
             session_id: "stdio".to_string(),
             pos: Some(gx_core::geom::Point::new(120.0, -40.0)),
             bbox: Some(gx_core::geom::Size::new(320.0, 180.0)),
+            current_version: 3,
+            oldest_version: 1,
+            version_count: 3,
         };
 
         let json = serde_json::to_value(&entry).expect("the state serializes");
@@ -588,12 +673,53 @@ mod tests {
             session_id: "stdio".to_string(),
             pos: None,
             bbox: None,
+            current_version: 1,
+            oldest_version: 1,
+            version_count: 1,
         };
 
         let json = serde_json::to_value(&entry).expect("the state serializes");
 
         assert!(json.get("pos").is_none(), "{json}");
         assert!(json.get("bbox").is_none(), "{json}");
+    }
+
+    /// RF14 (T5 de `f2-cierre.md`): el panel muestra el indicador «v3/7» y
+    /// navega el historial, así que el estado tiene que traer qué versiones
+    /// guarda cada diagrama: la más vieja que sobrevive, la actual y cuántas
+    /// hay. Los números son absolutos y consecutivos (el store descarta la
+    /// más vieja sin reiniciar la numeración), así que el rango bastan para
+    /// posicionar cualquier versión y para armar el «3» de «v3/7».
+    #[test]
+    fn the_state_of_the_plan_carries_the_version_history_of_each_diagram() {
+        let store = gx_mcp::store::diagram_store();
+        let diagram_id = store.next_id();
+        store.insert(
+            diagram_id.clone(),
+            "flujo".to_string(),
+            "graph".to_string(),
+            "stdio-historial".to_string(),
+            "{}".to_string(),
+        );
+        store.replace(
+            &diagram_id,
+            "flujo".to_string(),
+            "{\"version\":1,\"kind\":\"graph\"}".to_string(),
+        );
+
+        let payload = serde_json::to_value(super::plan_payload()).expect("the state serializes");
+        let entry = payload["diagrams"]
+            .as_array()
+            .expect("the state carries the diagrams")
+            .iter()
+            .find(|entry| entry["diagram_id"].as_str() == Some(diagram_id.as_str()))
+            .expect("the diagram is on the plan");
+        assert_eq!(
+            entry["oldest_version"], 1,
+            "el insert es la primera versión"
+        );
+        assert_eq!(entry["current_version"], 2, "el replace es la segunda");
+        assert_eq!(entry["version_count"], 2);
     }
 
     /// The identity a session declares, resolved the way the transports
@@ -615,9 +741,9 @@ mod tests {
     }
 
     /// S1/S3/D3: the panel is built only from this event, so the state has to
-    /// carry **every** session of the owner — the human sees all of them — and
-    /// say which session drew each diagram, or the selector cannot group a row
-    /// with its diagrams.
+    /// carry **every** session of the owner — the human sees all of them, one
+    /// plan at a time — and say which session drew each diagram, or the
+    /// switcher cannot group a row with its diagrams.
     #[test]
     fn the_state_of_the_plan_carries_every_session_and_what_it_drew() {
         let pid = std::process::id();
@@ -683,8 +809,8 @@ mod tests {
             .expect("the Claude session is in the state");
         assert_eq!(claude["family"], "claude");
 
-        // D4: a session in grace is still a row of the selector — the human
-        // sees everything (D3) — with its state spelled out for the page.
+        // D4: a session in grace is still a row of the switcher — the human
+        // sees every session (D3) — with its state spelled out for the page.
         registry.begin_grace(&claude_id, std::time::SystemTime::now());
         let in_grace = serde_json::to_value(super::plan_payload()).expect("serializes");
         let claude = in_grace["sessions"]
@@ -713,9 +839,71 @@ mod tests {
                 sessions
                     .iter()
                     .any(|session| session["id"] == entry["session_id"]),
-                "the session of a diagram is one the selector lists, or the row \
+                "the session of a diagram is one the switcher lists, or the row \
                  and its diagrams would disagree: {entry}"
             );
         }
+    }
+
+    /// Un diagrama de la tienda, con la geometría que el plano le dio (o
+    /// ninguna, si todavía no tiene sitio).
+    fn summary_of(
+        diagram_id: &str,
+        session_id: &str,
+        geometry: Option<(f64, f64, f64, f64)>,
+    ) -> gx_mcp::store::DiagramSummary {
+        gx_mcp::store::DiagramSummary {
+            diagram_id: diagram_id.to_string(),
+            title: diagram_id.to_string(),
+            kind: "graph".to_string(),
+            updated_at: "2026-11-05T12:00:00Z".to_string(),
+            session_id: session_id.to_string(),
+            revision: 1,
+            pos: geometry.map(|(x, y, _, _)| gx_core::geom::Point::new(x, y)),
+            bbox: geometry.map(|(_, _, w, h)| gx_core::geom::Size::new(w, h)),
+        }
+    }
+
+    /// S1, A1: cada sesión dibuja en su plano. La colocación de un render
+    /// solo puede colisionar con los objetos de **su** sesión: los de otra
+    /// sesión están en otro plano y no lo empujan. El diagrama que se está
+    /// dibujando tampoco es un obstáculo para sí mismo (re-render con
+    /// `opts.replace_id`), y un diagrama sin sitio no aporta rectángulo.
+    #[test]
+    fn a_placement_only_avoids_the_objects_of_its_own_session() {
+        let diagrams = vec![
+            summary_of("d-0001", "pi-1", Some((10.0, 20.0, 300.0, 180.0))),
+            summary_of("d-0002", "claude-1", Some((500.0, 20.0, 300.0, 180.0))),
+            summary_of("d-0003", "pi-1", Some((900.0, 400.0, 120.0, 80.0))),
+            summary_of("d-0004", "pi-1", None),
+        ];
+
+        let occupied = occupied_of_session(&diagrams, "pi-1", "d-0003");
+
+        assert_eq!(
+            occupied,
+            vec![gx_core::geom::Rect::new(10.0, 20.0, 300.0, 180.0)],
+            "solo el objeto de la propia sesión ocupa lugar en su plano"
+        );
+    }
+
+    /// A2: el evento del render nombra la sesión que lo dibujó. La página
+    /// necesita esa clave para poner en pantalla el plano de esa sesión: el
+    /// estado que la trae llega recién después del acuse.
+    #[test]
+    fn the_render_names_the_plan_of_the_diagram() {
+        let event = RenderEvent {
+            req_id: "req-1".to_string(),
+            diagram_id: "d-0001".to_string(),
+            session_id: "pi-1".to_string(),
+            svg: "<svg/>".to_string(),
+            placement: None,
+            camera: None,
+            focus: None,
+        };
+
+        let json = serde_json::to_value(&event).expect("the render serializes");
+
+        assert_eq!(json["session_id"], "pi-1");
     }
 }

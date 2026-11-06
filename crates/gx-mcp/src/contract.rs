@@ -1032,7 +1032,7 @@ pub fn get_diagram_version(session_id: &str, diagram_id: &str, version: u64) -> 
 }
 
 /// The error of a version the diagram does not keep (RF14).
-fn unknown_version(
+pub(crate) fn unknown_version(
     diagram_id: &str,
     version: u64,
     known: &[crate::store::VersionSummary],

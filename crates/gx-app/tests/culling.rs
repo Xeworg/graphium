@@ -423,6 +423,35 @@ fn the_insertion_still_answers_after_two_frames_and_paints_every_object() {
     );
 }
 
+/// A2 de `f8-planos.md`: un objeto de un plano que no está en pantalla no
+/// guarda su dibujo en la página. Si no, el techo de RNF1-ter contaría
+/// dibujos que el humano no ve, y volver a un plano traería SVGs viejos que
+/// el culling ya había decidido dejar fuera.
+#[test]
+fn a_plan_that_is_not_on_screen_keeps_no_drawing_in_the_page() {
+    let culling = slice_between(JS, "function applyCulling() {", "\n}");
+    assert!(
+        culling.contains("element.classList.contains(\"plan-hidden\")"),
+        "el plano que no está en pantalla no aporta dibujos al DOM: {culling}"
+    );
+    let hidden = culling
+        .find("plan-hidden")
+        .expect("the culling knows the plans that are not on screen");
+    let culled = culling
+        .find("cullObject(element)")
+        .expect("a hidden object loses its drawing");
+    assert!(
+        hidden < culled,
+        "el objeto del plano que no está en pantalla se cull-ea antes de contar: {culling}"
+    );
+    let css = slice_between(CSS, ".diagram.plan-hidden {", "}");
+    assert_eq!(
+        declaration(css, "display"),
+        "none",
+        "el plano que no está en pantalla no se pinta: {css}"
+    );
+}
+
 /// Un pan en vuelo escribía la cámara en cada frame y pisaba la intención que
 /// acababa de llegar: el `opts.focus` de un render terminaba mostrando el
 /// diagrama anterior. La intención tiene que cancelar el pan.
