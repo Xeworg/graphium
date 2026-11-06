@@ -241,3 +241,39 @@ fn the_watcher_follows_two_writes_to_the_same_file() {
 
     service::shutdown_all();
 }
+
+// ---------------------------------------------------------------------------
+// D2 hard exclusions (found live, 2026-11-06): a git worktree carries `.git`
+// as a FILE, and under that condition the `ignore` crate let `target/` in —
+// 31 generated `.rs` files of build scripts polluted the book of this very
+// repository. D2 says `target/` and `node_modules` are implicit exclusions,
+// so they must never depend on how well `.gitignore` happens to parse.
+// ---------------------------------------------------------------------------
+
+/// The cold walk never enters `target/` or `node_modules/`, not even in a
+/// worktree-like tree where `.git` is a file and `.gitignore` anchors
+/// `/target` (D2, S4).
+#[test]
+fn the_walk_never_enters_target_or_node_modules() {
+    let scratch = Scratch::new("hard-exclusions");
+    let root = scratch.worktree();
+    fs::write(root.join(".gitignore"), "/target\nnode_modules/\n").expect("gitignore");
+    // A worktree's `.git` is a file, not a directory.
+    fs::write(root.join(".git"), "gitdir: /somewhere/else\n").expect("git file");
+    fs::write(root.join("src").join("main.rs"), "fn main() {}\n").expect("src");
+    let generated = root
+        .join("target")
+        .join("debug")
+        .join("build")
+        .join("x")
+        .join("out");
+    fs::create_dir_all(&generated).expect("target tree");
+    fs::write(generated.join("generated.rs"), "pub fn generated() {}\n").expect("generated");
+    let modules = root.join("node_modules").join("pkg");
+    fs::create_dir_all(&modules).expect("node_modules tree");
+    fs::write(modules.join("index.js"), "module.exports = 1;\n").expect("js");
+
+    let files = gx_index::watcher::scan_tree(&root, &gx_index::IndexOptions::default());
+    let paths: Vec<&str> = files.iter().map(|file| file.relative.as_str()).collect();
+    assert_eq!(paths, vec!["src/main.rs"], "only the source file is walked");
+}
