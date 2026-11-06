@@ -45,8 +45,7 @@
   --accent: #6ea8fe;
   --text: #e9e9ec;
   /* The colour of each family of agent (S4, D1): the dot of a session in the
-     selector and the badge of its diagrams paint with them, so the human
-     tells whose work is whose (D3). */
+     switcher paints with them, so the human tells whose work is whose (D3). */
   --family-pi: #6ea8fe;
   --family-claude: #e0a165;
   --family-opencode: #7cc9a4;
@@ -414,10 +413,11 @@ body {
   position: absolute;
 }
 
-/* The object of a session the selector is hiding (D5): out of the paint, never
- * closed. It keeps its place, its rectangle and its diagrams in Rust, so
- * choosing «Todas» puts it back exactly where it was. */
-.diagram.session-hidden {
+/* The object of a plan the human is not looking at (A2 of `f8-planos.md`):
+ * out of the paint, never closed. It keeps its place, its rectangle and its
+ * diagrams in Rust, so coming back to its plan puts it back exactly where it
+ * was. */
+.diagram.plan-hidden {
   display: none;
 }
 
@@ -475,28 +475,6 @@ body {
 .diagram-close:hover {
   color: var(--accent);
   border-color: var(--accent);
-}
-
-/* The badge of the session of a diagram (S1, D3): a dot in the colour of
- * whoever drew it. It sits in the padding ring of the object and is
- * positioned, so the drawing never changes shape because of it. It only shows
- * while the plan shows every session: with one session chosen every badge
- * would say the same thing. */
-.diagram-badge {
-  position: absolute;
-  top: -18px;
-  left: 2px;
-  z-index: 2;
-  display: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  box-shadow: 0 0 0 2px var(--surface);
-  pointer-events: none;
-}
-
-.diagrams.show-session-badges .diagram-badge {
-  display: block;
 }
 
 /* The box that stands in for a diagram whose SVG left the DOM (PRD RNF1-ter,
@@ -871,10 +849,10 @@ body {
   opacity: 0.6;
 }
 
-/* The selector of sessions (S1, S3, D3, D5): the fixed row «Todas» and one
- * row per session, above the list of open diagrams. It is built from
- * `graphium://state` like the list, so it paints with the tokens of the theme
- * and reads in both of them (RF22, S18). */
+/* The switcher of plans (S1, S3, D3, D5; A2): one row per session, above the
+ * list of open diagrams, and the plan on screen marked in it. It is built
+ * from `graphium://state` like the list, so it paints with the tokens of the
+ * theme and reads in both of them (RF22, S18). */
 .session-list {
   display: flex;
   flex-direction: column;
@@ -950,11 +928,6 @@ body {
   background: var(--family-other);
 }
 
-/* «Todas» is not a family: its dot is the neutral ink of the plan. */
-.family-all {
-  background: var(--edge-text);
-}
-
 .session-body {
   flex: 1;
   min-width: 0;
@@ -1011,8 +984,9 @@ body {
   flex: none;
 }
 
-/* Why the plan went back to «Todas» when the watched session ended (S3, D5):
- * a notice in the selector area, never an empty plan with no explanation. */
+/* Why the plan on screen changed when the session that owned it ended (S2,
+ * D4; A2): a notice in the switcher, never an empty surface with no
+ * explanation. */
 .session-notice {
   margin: 0;
   padding: 6px 8px;
