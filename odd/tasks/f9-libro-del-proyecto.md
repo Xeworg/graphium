@@ -76,6 +76,12 @@ análisis en specs y tareas; los § que cita viven en el doc de ideas.
   buscar un símbolo de este repo responde en <50 ms; el watcher sigue a los
   edits sin reconstruir todo; `cargo test --workspace` verde con el nuevo
   crate. Worktree: `graphium-f9-libro`, rama `feature/f9-libro-c0`.
+  Commits: `7b591d8` (motor) + `c1b70f1` (tool). Evidencia: fmt/clippy
+  limpios, 38 binarios de test verdes (2 nuevos), búsqueda con mediana
+  **0,73 ms** sobre 87 archivos / 2193 símbolos (criterio <50 ms: sobrado),
+  binario 6.384.208 → 10.164.632 B = **64,7 % del techo de RNF1-quater**
+  (el headroom queda anotado como riesgo para C2). Mecanismo de activación:
+  `GRAPHIUM_BOOK=on` (por dueño; el flag por proyecto humano-facing es C3).
 - C1 (S5, S7, D3): relaciones (`calls`/`imports`/`inherits`/`uses`) para los
   5 lenguajes, `code_structure`, `code_impact` (BFS con guardias) y
   `code_diagram` que arma el documento `graph`.
@@ -92,3 +98,11 @@ análisis en specs y tareas; los § que cita viven en el doc de ideas.
   aprueba convertir la idea a feature doc y arrancar el spike C0 en
   worktree propio («listo puedes trabajarlo con wortrees y hacerle merge al
   staggin»), con el merge previo del corte A de `f8-planos.md` a `staging`.
+- L3 (2026-11-05): C0 implementado por worker (`mw4cqtjj-h-h610`), verificado
+  y empaquetado por el orquestador en dos unidades (`7b591d8` motor 3.529
+  líneas, `c1b70f1` tool). Un bloqueo de superficies resuelto en vuelo:
+  `crates/gx-mcp/Cargo.toml` autorizado (opción A — gx-app llega al motor
+  por wrapper). Gotchas del worker: CASCADE no dispara los triggers FTS
+  (borrado FTS explícito primero), camelCase hay que partirlo al indexar,
+  colisión de qname struct/impl, progreso vs `counts()`. Quedan C1 (edges),
+  C2 (lenguajes), C3 (pulido).
