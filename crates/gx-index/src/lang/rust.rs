@@ -16,9 +16,8 @@
 //! This module is the whole of Rust in the engine: a language of C2 is another
 //! file next to it that exposes a [`Grammar`] and nothing else.
 
-use crate::lang::model::{
-    content_hash, name_norm, search_text_for, ExtractError, ParsedFile, ParsedSymbol,
-};
+use crate::lang::emit::{anchor_symbol, emit, emit_named, file_stem, prefix_of};
+use crate::lang::model::{content_hash, ExtractError, ParsedFile, ParsedSymbol};
 use crate::lang::Grammar;
 use crate::relations::{attach, RawEdge, CALLS, IMPORTS, INHERITS, USES};
 
@@ -47,17 +46,13 @@ pub fn parse(path: &str, bytes: &[u8], mtime_ns: i64) -> Result<ParsedFile, Extr
 
     let module = module_path(path);
     let mut symbols = Vec::new();
-    let prefix = if module.is_empty() {
-        String::new()
-    } else {
-        module
-    };
+    let prefix = prefix_of(&module, "::");
     walk(&tree.root_node(), &prefix, None, None, bytes, &mut symbols);
 
     // The relations are attached after the declarations exist: the ownership
     // of an edge is decided by the spans of the chapter (ideas §10.1).
     let raw = rust_relations(&tree.root_node(), bytes);
-    let anchor = anchor_symbol(path);
+    let anchor = anchor_symbol(&module, &anchor_name(path, &module));
     let edges = attach(raw, &mut symbols, anchor);
 
     Ok(ParsedFile {
@@ -99,14 +94,14 @@ fn walk(
                     Some("impl") | Some("trait") => "method",
                     _ => "fn",
                 };
-                emit(child, kind, prefix, parent, source, out);
+                emit(&child, kind, prefix, parent, source, out);
             }
             "struct_item" | "enum_item" | "union_item" | "type_item" => {
-                emit(child, "type", prefix, parent, source, out);
+                emit(&child, "type", prefix, parent, source, out);
             }
             "trait_item" => {
-                if let Some(index) = emit(child, "trait", prefix, parent, source, out) {
-                    let own = qualified(prefix, &out[index].name);
+                if let Some(index) = emit(&child, "trait", prefix, parent, source, out) {
+                    let own = format!("{prefix}{}::", out[index].name);
                     walk_body(&child, &own, Some(index), "trait", source, out);
                 }
             }
@@ -120,22 +115,22 @@ fn walk(
                     .filter(|text| !text.is_empty())
                     .unwrap_or("impl")
                     .to_string();
-                if let Some(index) = emit_named(child, "impl", &name, prefix, parent, out) {
-                    let own = qualified(prefix, &name);
+                if let Some(index) = emit_named(&child, "impl", &name, prefix, parent, out) {
+                    let own = format!("{prefix}{name}::");
                     walk_body(&child, &own, Some(index), "impl", source, out);
                 }
             }
             "mod_item" => {
-                if let Some(index) = emit(child, "module", prefix, parent, source, out) {
-                    let own = qualified(prefix, &out[index].name);
+                if let Some(index) = emit(&child, "module", prefix, parent, source, out) {
+                    let own = format!("{prefix}{}::", out[index].name);
                     walk_body(&child, &own, Some(index), "mod", source, out);
                 }
             }
             "const_item" => {
-                emit(child, "const", prefix, parent, source, out);
+                emit(&child, "const", prefix, parent, source, out);
             }
             "static_item" => {
-                emit(child, "static", prefix, parent, source, out);
+                emit(&child, "static", prefix, parent, source, out);
             }
             // A `use` is not an entry of the book: C1 turns it into an
             // `imports` edge, and a comment or a string into nothing at all.
@@ -161,95 +156,13 @@ fn walk_body(
     }
 }
 
-/// Emits a symbol whose name comes from the `name` field.
-fn emit(
-    node: tree_sitter::Node,
-    kind: &'static str,
-    prefix: &str,
-    parent: Option<usize>,
-    source: &[u8],
-    out: &mut Vec<ParsedSymbol>,
-) -> Option<usize> {
-    let name = node
-        .child_by_field_name("name")
-        .and_then(|name| name.utf8_text(source).ok())
-        .map(str::trim)
-        .filter(|name| !name.is_empty())?
-        .to_string();
-    emit_named(node, kind, &name, prefix, parent, out)
-}
-
-/// Emits a symbol with an explicit name (`impl` blocks have no `name` field).
-fn emit_named(
-    node: tree_sitter::Node,
-    kind: &'static str,
-    name: &str,
-    prefix: &str,
-    parent: Option<usize>,
-    out: &mut Vec<ParsedSymbol>,
-) -> Option<usize> {
-    let start = node.start_position();
-    let end = node.end_position();
-    let qname = qualified(prefix, name);
-    let index = out.len();
-    out.push(ParsedSymbol {
-        parent,
-        kind,
-        name: name.to_string(),
-        qname,
-        search_text: search_text_for(name),
-        name_norm: name_norm(name),
-        start_line: (start.row as u32).saturating_add(1),
-        start_col: (start.column as u32).saturating_add(1),
-        end_line: (end.row as u32).saturating_add(1),
-        end_col: end.column as u32,
-        start_byte: node.start_byte() as u32,
-        end_byte: node.end_byte() as u32,
-    });
-    Some(index)
-}
-
-/// `prefix::name`, or just `name` at the root.
-fn qualified(prefix: &str, name: &str) -> String {
-    if prefix.is_empty() {
-        name.to_string()
+/// The name of the anchor of a Rust chapter: a Rust chapter **is** the module,
+/// so its name is the whole module path (the stem of the file at the root).
+fn anchor_name(path: &str, module: &str) -> String {
+    if module.is_empty() {
+        file_stem(path).unwrap_or_else(|| path.to_string())
     } else {
-        format!("{prefix}::{name}")
-    }
-}
-
-/// The synthetic `module` symbol that anchors the relations of a file: the
-/// `qname` is the module path, and its span is the top of the file, so it can
-/// never win an ownership question against a declaration.
-fn anchor_symbol(path: &str) -> ParsedSymbol {
-    let module = module_path(path);
-    let name = if module.is_empty() {
-        std::path::Path::new(path)
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .map(str::to_string)
-            .unwrap_or_else(|| path.to_string())
-    } else {
-        module.clone()
-    };
-    let qname = if module.is_empty() {
-        name.clone()
-    } else {
-        module
-    };
-    ParsedSymbol {
-        parent: None,
-        kind: "module",
-        search_text: search_text_for(&name),
-        name_norm: name_norm(&name),
-        name,
-        qname,
-        start_line: 1,
-        start_col: 1,
-        end_line: 1,
-        end_col: 1,
-        start_byte: 0,
-        end_byte: 0,
+        module.to_string()
     }
 }
 
@@ -562,6 +475,22 @@ pub fn render_with_all(input: &Path) -> usize {
         assert_eq!(module_path("src/main.rs"), "");
         assert_eq!(module_path("tests/end_to_end.rs"), "tests::end_to_end");
         assert_eq!(module_path(""), "");
+    }
+
+    /// C1 published the anchor of a chapter as the **whole module path**: a
+    /// Rust chapter is the module, so `crates/x/src/demo.rs` anchors as
+    /// `x::demo` and not as `demo`.
+    #[test]
+    fn the_anchor_of_a_nested_chapter_is_its_module_path() {
+        let parsed =
+            parse("crates/gx-index/src/demo.rs", b"use std::path::Path;\n", 0).expect("parses");
+        let anchor = parsed
+            .symbols
+            .iter()
+            .find(|symbol| symbol.kind == "module")
+            .expect("the file-scope import needs an anchor");
+        assert_eq!(anchor.name, "gx_index::demo");
+        assert_eq!(anchor.qname, "gx_index::demo");
     }
 
     /// Tree-sitter is error tolerant: a file with a syntax error still yields

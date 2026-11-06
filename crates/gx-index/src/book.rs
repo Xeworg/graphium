@@ -372,6 +372,13 @@ impl Book {
         Ok(crate::impact::file_impact(&reader, path, request)?)
     }
 
+    /// How many of the syntactic relations of each language resolve to a
+    /// declaration (D3): the published honesty of the book.
+    pub fn resolution(&self) -> Result<Vec<crate::resolution::LanguageResolution>, BookError> {
+        let reader = self.reader()?;
+        Ok(crate::resolution::resolution_by_language(&reader)?)
+    }
+
     /// A read-only connection of this book, with the pragmas of a reader.
     fn reader(&self) -> Result<Connection, BookError> {
         let reader = Connection::open_with_flags(

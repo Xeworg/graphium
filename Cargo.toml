@@ -48,6 +48,13 @@ notify = "8"
 sha2 = "0.10"
 tree-sitter = "0.25"
 tree-sitter-rust = "0.24"
+# The languages of C2 (T3, S3): the newest release of each grammar that
+# compiles against the tree-sitter 0.25 of the engine. One crate per language,
+# one module per crate in `crates/gx-index/src/lang/` (L5).
+tree-sitter-typescript = "0.23.2"
+tree-sitter-python = "0.25.0"
+tree-sitter-go = "0.25.0"
+tree-sitter-java = "0.23.5"
 tauri = { version = "2.12.5", features = [] }
 tauri-build = { version = "2.7.4", features = [] }
 
