@@ -133,3 +133,13 @@ prueba en vivo del corte `f2-cierre` T5 (2026-11-05).
   `translateX(-50%)`. Verificación: RED observado (2 assertions nuevas),
   GREEN, `cargo fmt` + `cargo clippy --workspace --all-targets` +
   `cargo test --workspace` verdes (36 binarios).
+- L10 (2026-11-06, verbatim): «ha quedado mal» (screenshot: en el clon
+  angosto el pill del overhang mostraba un solo glifo enmarañado). Causa:
+  el override `.diagram-clone-tools .clone-close` (L8) nunca reseteó el
+  `position: absolute` que la «×» hereda de `.diagram-close` — la «×» se
+  anclaba a la esquina del pill y caía encima del `↻`, fuera de la fila.
+  Fix: `position: static` en el override, la «×» entra en la fila del pill.
+  Contrato: las assertions de L8 ganan la regla `position: static`. Commit:
+  `d46a4ea`. Slice boundary: la rama pasa las ~400 líneas desde
+  `origin/main` — antes del próximo commit, estrategia de entrega (merge a
+  staging + PRs encadenados).
