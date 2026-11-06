@@ -361,6 +361,17 @@ impl Book {
         Ok(crate::impact::impact(&reader, request)?)
     }
 
+    /// The connections of one chapter, with the walk from every declaration of
+    /// it and the grouping by file (T5, `code_impact` with a `file` seed).
+    pub fn file_impact(
+        &self,
+        path: &str,
+        request: &crate::impact::FileImpactRequest,
+    ) -> Result<Option<crate::impact::FileImpact>, BookError> {
+        let reader = self.reader()?;
+        Ok(crate::impact::file_impact(&reader, path, request)?)
+    }
+
     /// A read-only connection of this book, with the pragmas of a reader.
     fn reader(&self) -> Result<Connection, BookError> {
         let reader = Connection::open_with_flags(

@@ -11,6 +11,7 @@
 //! one module per language (S3, L5) — and to rusqlite (ideas §5, riesgo 2).
 
 pub mod book;
+pub mod cut;
 pub mod impact;
 pub mod lang;
 pub mod location;
@@ -22,12 +23,16 @@ pub mod structure;
 pub mod watcher;
 
 pub use book::{Book, BookError, Progress};
-pub use impact::{Direction, Impact, ImpactEdge, ImpactNode, ImpactRequest};
+pub use cut::{CutReason, Truncation};
+pub use impact::{
+    Direction, FileImpact, FileImpactRequest, FileLink, Impact, ImpactEdge, ImpactNode,
+    ImpactRequest, Seed, WalkLimits,
+};
 pub use lang::{ParsedFile, ParsedSymbol};
 pub use location::{book_key, BookLocation, BooksRoot, LocationError};
 pub use relations::{ParsedEdge, RELATION_KINDS};
 pub use schema::{OpenReport, RebuildReason};
 pub use search::{SearchOutcome, SearchRequest, SymbolCandidate, SymbolHit};
 pub use service::{BooksConfig, RenderGuard};
-pub use structure::{FileStructure, StructureSymbol};
+pub use structure::{Collapsed, FileStructure, StructureAnswer, StructureRequest, StructureSymbol};
 pub use watcher::{IndexOptions, IndexSummary, SourceFile};

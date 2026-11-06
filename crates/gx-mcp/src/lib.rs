@@ -46,6 +46,10 @@ pub mod book {
     /// change affects what points at the symbol.
     pub const DEFAULT_DIRECTION: &str = "in";
 
+    /// The direction a chapter seed follows when the agent does not say: the
+    /// file as a node answers its whole neighbourhood (T5).
+    pub const DEFAULT_FILE_DIRECTION: &str = "both";
+
     /// The project of the session: the record of the session, never the cwd
     /// of the process (D4, ideas §7 explore 3).
     pub fn project_of(session_id: &str) -> Option<String> {
@@ -129,23 +133,84 @@ pub mod book {
     }
 
     /// Runs `code_structure` for the session with the configuration of the owner.
-    pub fn code_structure(session_id: &str, file: Option<&str>, symbol: Option<&str>) -> Value {
+    pub fn code_structure(
+        session_id: &str,
+        file: Option<&str>,
+        symbol: Option<&str>,
+        request: &gx_index::StructureRequest,
+    ) -> Value {
         let config = gx_index::BooksConfig::from_env();
-        code_structure_with(&config, project_of(session_id).as_deref(), file, symbol)
+        code_structure_query_with(
+            &config,
+            project_of(session_id).as_deref(),
+            file,
+            symbol,
+            request,
+        )
     }
 
     /// Runs `code_structure` with an explicit configuration and project (S5).
-    ///
-    /// The structure of a chapter is its containment tree: the declarations of
-    /// one file, ordered by span, with the `parent_id` of each one translated
-    /// to the qname of the parent, so the agent can rebuild the tree without
-    /// another call.
     pub fn code_structure_with(
         config: &gx_index::BooksConfig,
         project: Option<&str>,
         file: Option<&str>,
         symbol: Option<&str>,
     ) -> Value {
+        code_structure_query_with(
+            config,
+            project,
+            file,
+            symbol,
+            &gx_index::StructureRequest::default(),
+        )
+    }
+
+    /// Runs `code_structure` with the knobs of the bounded answer (T5).
+    ///
+    /// The default answer is the **outline**: the declarations of the chapter
+    /// whose parent is `NULL`, with the count of the whole chapter and the
+    /// cursor that reads the children. `after_line` and `limit` walk the same
+    /// span-ordered list by range, so reading the whole tree is a sequence of
+    /// monotone pages instead of one unbounded answer; `kinds` filters the rows
+    /// and never the `total`.
+    pub fn code_structure_query_with(
+        config: &gx_index::BooksConfig,
+        project: Option<&str>,
+        file: Option<&str>,
+        symbol: Option<&str>,
+        request: &gx_index::StructureRequest,
+    ) -> Value {
+        if let Some(after_line) = request.after_line {
+            if after_line < 0 {
+                return failure(
+                    "after_line",
+                    "invalid_value",
+                    "`after_line` is negative",
+                    Some("lines start at 1; `after_line: 0` asks for the list from its first row"),
+                );
+            }
+        }
+        if request.limit == Some(0) {
+            return failure(
+                "limit",
+                "invalid_value",
+                "`limit` is 0",
+                Some("send how many rows the answer may carry; 200 by default and 200 at most"),
+            );
+        }
+        for kind in &request.kinds {
+            if !gx_index::StructureRequest::kind_is_known(kind) {
+                return failure(
+                    "kinds",
+                    "invalid_value",
+                    &format!("`{kind}` is not a declaration kind"),
+                    Some(
+                        "send the kinds the book declares: `fn`, `method`, `type`, `class`, `trait`, `impl`, `module`, `const`, `static`",
+                    ),
+                );
+            }
+        }
+
         let file = file.map(str::trim).filter(|text| !text.is_empty());
         let symbol = symbol.map(str::trim).filter(|text| !text.is_empty());
         match (file, symbol) {
@@ -211,43 +276,71 @@ pub mod book {
             }
         };
 
+        let path = structure.file.clone();
+        let answer = structure.answer(request);
         let mut response = base;
         response["ok"] = json!(true);
-        response["file"] = json!(structure.file);
+        response["file"] = json!(path);
         response["lang"] = json!(structure.lang);
         response["content_hash"] = json!(structure.content_hash);
         response["indexed_at"] = json!(gx_index::book::iso8601_utc(structure.indexed_at));
-        response["count"] = json!(structure.symbols.len());
-        response["symbols"] = json!(structure_symbols_json(&structure.symbols));
+        response["count"] = json!(answer.symbols.len());
+        response["total"] = json!(answer.total);
+        response["symbols"] = json!(structure_symbols_json(&structure.symbols, &answer.symbols));
         if let Some(hit) = asked {
             response["symbol"] = hit_json(&hit);
         }
+        if let Some(collapsed) = &answer.collapsed {
+            response["collapsed"] = json!({
+                "hidden_symbols": collapsed.hidden_symbols,
+                "declarations_with_children": collapsed.declarations_with_children,
+                "next": structure_next(&path, collapsed.after_line, None, &request.kinds),
+            });
+        }
+        response["truncated"] = match &answer.truncated {
+            Some(truncation) => {
+                let next = match truncation.reason {
+                    gx_index::CutReason::Collapsed => answer.collapsed.as_ref().map(|collapsed| {
+                        structure_next(&path, collapsed.after_line, None, &request.kinds)
+                    }),
+                    gx_index::CutReason::Nodes => answer.symbols.last().map(|row| {
+                        structure_next(&path, row.line, Some(answer.symbols.len()), &request.kinds)
+                    }),
+                    _ => None,
+                };
+                truncated_json(truncation, next)
+            }
+            None => Value::Null,
+        };
         response
     }
 
-    /// Runs `code_impact` for the session with the configuration of the owner.
-    pub fn code_impact(
-        session_id: &str,
-        symbol: &str,
-        depth: Option<u32>,
-        direction: Option<&str>,
-    ) -> Value {
-        let config = gx_index::BooksConfig::from_env();
-        code_impact_with(
-            &config,
-            project_of(session_id).as_deref(),
-            symbol,
-            depth,
-            direction,
-        )
+    /// The question of one `code_impact` call (T5): exactly one seed, and the
+    /// knobs of the walk.
+    #[derive(Debug, Clone, Default)]
+    pub struct ImpactQuestion {
+        /// The symbol to start from: a name, as `code_search` takes it.
+        pub symbol: Option<String>,
+        /// The chapter to walk as a node: a path relative to the project root.
+        pub file: Option<String>,
+        /// Hops to follow: 1 by default, clamped to 3.
+        pub depth: Option<u32>,
+        /// `in`, `out` or `both`.
+        pub direction: Option<String>,
+        /// The edge kinds to follow; empty follows the whole vocabulary.
+        pub edges: Option<Vec<String>>,
+        /// The query budget in nodes: 600 by default, 2000 at most.
+        pub budget: Option<usize>,
     }
 
-    /// Runs `code_impact` with an explicit configuration and project (S7, D3).
-    ///
-    /// The walk is bounded on purpose: `depth` is clamped to the 3 hops of the
-    /// design and the answer is capped at the ceilings of the `graph` kind
-    /// (300 nodes / 600 edges), so it always fits in a document the agent can
-    /// render. A cycle is answered once per symbol, never followed twice.
+    /// Runs `code_impact` for the session with the configuration of the owner.
+    pub fn code_impact(session_id: &str, question: &ImpactQuestion) -> Value {
+        let config = gx_index::BooksConfig::from_env();
+        code_impact_query_with(&config, project_of(session_id).as_deref(), question)
+    }
+
+    /// Runs the symbol walk of `code_impact` with an explicit configuration and
+    /// project (S7, D3), the shape C1 published.
     pub fn code_impact_with(
         config: &gx_index::BooksConfig,
         project: Option<&str>,
@@ -255,82 +348,255 @@ pub mod book {
         depth: Option<u32>,
         direction: Option<&str>,
     ) -> Value {
-        let symbol = match text_argument(symbol, "symbol") {
-            Ok(symbol) => symbol,
+        code_impact_query_with(
+            config,
+            project,
+            &ImpactQuestion {
+                symbol: Some(symbol.to_string()),
+                depth,
+                direction: direction.map(str::to_string),
+                ..ImpactQuestion::default()
+            },
+        )
+    }
+
+    /// Runs `code_impact` with the bounded answer of T5.
+    ///
+    /// The seed is exactly one of `symbol` or `file`. A file seed walks from
+    /// every declaration of the chapter — the file as a node — and adds the
+    /// grouping of the connected files. The walk follows at most 3 hops, the
+    /// edge kinds of `edges`, and its own query budget (`budget` nodes, 600 by
+    /// default, 2000 at most), decoupled from the 300/600 ceilings of the
+    /// `graph` kind.
+    pub fn code_impact_query_with(
+        config: &gx_index::BooksConfig,
+        project: Option<&str>,
+        question: &ImpactQuestion,
+    ) -> Value {
+        let symbol = optional_text(question.symbol.as_deref());
+        let file = optional_text(question.file.as_deref());
+        match (file, symbol) {
+            (Some(_), Some(_)) => {
+                return failure(
+                    "file",
+                    "invalid_value",
+                    "send one of `symbol` or `file`, not both",
+                    Some("`file` walks a whole chapter; `symbol` walks the connections of one declaration"),
+                );
+            }
+            (None, None) => {
+                return failure(
+                    "file",
+                    "invalid_value",
+                    "`symbol` or `file` is required",
+                    Some("send `symbol` (a name, as `code_search` takes it) or `file` (a path relative to the project root, with `/`)"),
+                );
+            }
+            _ => {}
+        }
+        let edges = match edges_argument(question.edges.as_deref()) {
+            Ok(edges) => edges,
             Err(response) => return response,
         };
-        let direction = match direction_argument(direction) {
+        if question.budget == Some(0) {
+            return failure(
+                "budget",
+                "invalid_value",
+                "`budget` is 0",
+                Some("send how many nodes the answer may carry; 600 by default and 2000 at most"),
+            );
+        }
+        // A symbol answers the impact of a change (`in`); a chapter answers its
+        // whole neighbourhood, which is what a file as a node is for.
+        let default_direction = if file.is_some() {
+            DEFAULT_FILE_DIRECTION
+        } else {
+            DEFAULT_DIRECTION
+        };
+        let direction = match direction_argument(question.direction.as_deref(), default_direction) {
             Ok(direction) => direction,
             Err(response) => return response,
         };
+        let symbol = match symbol {
+            Some(symbol) => match text_argument(symbol, "symbol") {
+                Ok(symbol) => Some(symbol),
+                Err(response) => return response,
+            },
+            None => None,
+        };
+
         let opened = match open(config, project) {
             Ok(opened) => opened,
             Err(response) => return response,
         };
         let book = opened.handle.book();
         let base = base(&opened);
-        let hit = match one_symbol(book, base.clone(), symbol, "symbol") {
-            Ok(hit) => hit,
-            Err(answer) => return answer,
-        };
-        let request = gx_index::ImpactRequest {
-            start: hit.id,
-            depth: depth.unwrap_or(DEFAULT_DEPTH),
-            direction,
-        };
-        let impact = match book.impact(&request) {
-            Ok(Some(impact)) => impact,
-            Ok(None) => {
-                return failure_with(
-                    base,
-                    "symbol",
-                    "invalid_value",
-                    "the symbol is no longer in the book",
-                    Some("the indexer replaced the chapter since the search: call the tool again"),
-                );
+        let depth = question.depth.unwrap_or(DEFAULT_DEPTH);
+        let limits = gx_index::WalkLimits::query(question.budget);
+        let mut seed_args = serde_json::Map::new();
+        let mut asked = None;
+        let mut seed_file = None;
+        let (walked, grouped) = match (file, &symbol) {
+            (Some(path), _) => {
+                let request = gx_index::FileImpactRequest {
+                    depth,
+                    direction,
+                    edges: edges.clone(),
+                    limits,
+                };
+                let impact = match book.file_impact(path, &request) {
+                    Ok(Some(impact)) => impact,
+                    Ok(None) => {
+                        return failure_with(
+                            base,
+                            "file",
+                            "invalid_value",
+                            "the book has no chapter there",
+                            Some("paths are relative to the project root with `/` separators; `progress.state == \"indexing\"` means the first pass is still running"),
+                        );
+                    }
+                    Err(error) => {
+                        return failure_with(
+                            base,
+                            "book",
+                            UNAVAILABLE_CODE,
+                            &error.to_string(),
+                            None,
+                        );
+                    }
+                };
+                seed_args.insert("file".to_string(), json!(impact.file));
+                seed_file = Some(impact.file.clone());
+                (impact.impact, impact.files)
             }
-            Err(error) => {
-                return failure_with(base, "book", UNAVAILABLE_CODE, &error.to_string(), None);
+            (None, Some(symbol)) => {
+                let hit = match one_symbol(book, base.clone(), symbol, "symbol") {
+                    Ok(hit) => hit,
+                    Err(answer) => return answer,
+                };
+                let request = gx_index::ImpactRequest::symbol(hit.id, depth, direction)
+                    .with_edges(edges.clone())
+                    .with_limits(limits);
+                let impact = match book.impact(&request) {
+                    Ok(Some(impact)) => impact,
+                    Ok(None) => {
+                        return failure_with(
+                            base,
+                            "symbol",
+                            "invalid_value",
+                            "the symbol is no longer in the book",
+                            Some("the indexer replaced the chapter since the search: call the tool again"),
+                        );
+                    }
+                    Err(error) => {
+                        return failure_with(
+                            base,
+                            "book",
+                            UNAVAILABLE_CODE,
+                            &error.to_string(),
+                            None,
+                        );
+                    }
+                };
+                seed_args.insert("symbol".to_string(), json!(symbol));
+                asked = Some(hit);
+                (impact, Vec::new())
             }
+            // The grammar above rejected zero and two selectors.
+            (None, None) => unreachable!("the selector grammar runs first"),
         };
 
         let mut response = base;
         response["ok"] = json!(true);
-        response["symbol"] = hit_json(&hit);
+        if let Some(hit) = &asked {
+            response["symbol"] = hit_json(hit);
+        }
+        if let Some(file) = &seed_file {
+            response["file"] = json!(file);
+        }
         response["direction"] = json!(direction.as_str());
-        response["depth"] = json!(impact.depth);
+        response["depth"] = json!(walked.depth);
         response["budget"] = json!({
-            "max_nodes": gx_index::impact::MAX_NODES,
-            "max_edges": gx_index::impact::MAX_EDGES,
+            "max_nodes": limits.max_nodes,
+            "max_edges": limits.max_edges,
         });
-        response["truncated"] = json!(impact.truncated);
-        response["unresolved"] = json!(impact.unresolved);
-        response["count"] = json!(impact.nodes.len());
-        response["nodes"] = json!(nodes_json(&impact.nodes));
-        response["edges"] = json!(edges_json(&impact.edges));
+        response["truncated"] = match &walked.truncated {
+            Some(truncation) => {
+                let next = match truncation.reason {
+                    gx_index::CutReason::Nodes | gx_index::CutReason::Edges => {
+                        // The follow-up call asks the same question with twice
+                        // the budget; at the ceiling there is no next call.
+                        let bigger = limits
+                            .max_nodes
+                            .saturating_mul(2)
+                            .min(gx_index::impact::MAX_QUERY_NODES);
+                        (bigger > limits.max_nodes)
+                            .then(|| walk_call(&seed_args, depth, direction, &edges, Some(bigger)))
+                    }
+                    _ => None,
+                };
+                truncated_json(truncation, next)
+            }
+            None => Value::Null,
+        };
+        response["unresolved"] = json!(walked.unresolved);
+        response["count"] = json!(walked.nodes.len());
+        response["nodes"] = json!(nodes_json(&walked.nodes));
+        response["edges"] = json!(edges_json(&walked.edges));
+        if seed_file.is_some() {
+            response["files"] = json!(files_json(&grouped));
+        }
         response
     }
 
     /// Runs `code_diagram` for the session with the configuration of the owner.
-    pub fn code_diagram(session_id: &str, symbol: &str, depth: Option<u32>) -> Value {
+    pub fn code_diagram(
+        session_id: &str,
+        symbol: &str,
+        depth: Option<u32>,
+        edges: Option<&[String]>,
+    ) -> Value {
         let config = gx_index::BooksConfig::from_env();
-        code_diagram_with(&config, project_of(session_id).as_deref(), symbol, depth)
+        code_diagram_query_with(
+            &config,
+            project_of(session_id).as_deref(),
+            symbol,
+            depth,
+            edges,
+        )
     }
 
     /// Builds the `graph` document of one symbol's neighbourhood (S5).
-    ///
-    /// The answer is a **document**, not a paint: the agent sends `diagram` to
-    /// `render_diagram` (or to `validate_diagram` first) unchanged. The
-    /// document never leaves with a density the kind would reject, so it is
-    /// renderable as it arrives.
     pub fn code_diagram_with(
         config: &gx_index::BooksConfig,
         project: Option<&str>,
         symbol: &str,
         depth: Option<u32>,
     ) -> Value {
+        code_diagram_query_with(config, project, symbol, depth, None)
+    }
+
+    /// Builds the `graph` document of one symbol's neighbourhood (S5, T5).
+    ///
+    /// The answer is a **document**, not a paint: the agent sends `diagram` to
+    /// `render_diagram` (or to `validate_diagram` first) unchanged. The
+    /// document never leaves with a density the kind would reject, so it is
+    /// renderable as it arrives. `edges` chooses which kinds the walk follows;
+    /// the walk keeps the 300/600 ceilings of the kind, because a bigger
+    /// neighbourhood is a `code_impact` question, not a document.
+    pub fn code_diagram_query_with(
+        config: &gx_index::BooksConfig,
+        project: Option<&str>,
+        symbol: &str,
+        depth: Option<u32>,
+        edges: Option<&[String]>,
+    ) -> Value {
         let symbol = match text_argument(symbol, "symbol") {
             Ok(symbol) => symbol,
+            Err(response) => return response,
+        };
+        let edges = match edges_argument(edges) {
+            Ok(edges) => edges,
             Err(response) => return response,
         };
         let opened = match open(config, project) {
@@ -343,11 +609,12 @@ pub mod book {
             Ok(hit) => hit,
             Err(answer) => return answer,
         };
-        let request = gx_index::ImpactRequest {
-            start: hit.id,
-            depth: depth.unwrap_or(DEFAULT_DEPTH),
-            direction: gx_index::Direction::Both,
-        };
+        let depth = depth.unwrap_or(DEFAULT_DEPTH);
+        let direction = gx_index::Direction::Both;
+        let limits = gx_index::WalkLimits::GRAPH;
+        let request = gx_index::ImpactRequest::symbol(hit.id, depth, direction)
+            .with_edges(edges.clone())
+            .with_limits(limits);
         let impact = match book.impact(&request) {
             Ok(Some(impact)) => impact,
             Ok(None) => {
@@ -376,7 +643,7 @@ pub mod book {
             .len()
             .saturating_mul(MAX_DENSITY)
             .min(gx_index::impact::MAX_EDGES);
-        let edges: Vec<Value> = impact
+        let document_edges: Vec<Value> = impact
             .edges
             .iter()
             .take(ceiling)
@@ -388,21 +655,71 @@ pub mod book {
                 })
             })
             .collect();
-        let dropped = impact.edges.len().saturating_sub(edges.len());
+        let dropped = impact.edges.len().saturating_sub(document_edges.len());
         let document = json!({
             "version": 1,
             "kind": "graph",
             "title": format!("{} — relations", hit.qname),
             "nodes": nodes,
-            "edges": edges,
+            "edges": document_edges,
         });
+
+        // The follow-up of a cut diagram is the connections view: the same
+        // walk, with its own query budget and without the document ceiling.
+        let mut seed_args = serde_json::Map::new();
+        seed_args.insert("symbol".to_string(), json!(symbol));
+        let next = walk_call(
+            &seed_args,
+            depth,
+            direction,
+            &edges,
+            Some(gx_index::impact::DEFAULT_QUERY_NODES),
+        );
+        let truncated = match &impact.truncated {
+            // The walk was cut, so the document is a slice of a slice: the
+            // walk's own reason wins over the density of what reached it, and
+            // `shown` counts what the document carries (the density trim may
+            // have taken edges away after the walk stopped).
+            Some(truncation) => {
+                let shown = match truncation.reason {
+                    gx_index::CutReason::Edges => document["edges"]
+                        .as_array()
+                        .map(Vec::len)
+                        .unwrap_or_default(),
+                    _ => document["nodes"]
+                        .as_array()
+                        .map(Vec::len)
+                        .unwrap_or_default(),
+                };
+                Some(truncated_json(
+                    &gx_index::Truncation::new(truncation.reason, shown, truncation.total),
+                    Some(next),
+                ))
+            }
+            None if dropped > 0 => Some(truncated_json(
+                &gx_index::Truncation::new(
+                    gx_index::CutReason::Density,
+                    document["edges"]
+                        .as_array()
+                        .map(Vec::len)
+                        .unwrap_or_default(),
+                    Some(impact.edges.len()),
+                ),
+                Some(next),
+            )),
+            None => None,
+        };
 
         let mut response = base;
         response["ok"] = json!(true);
         response["symbol"] = hit_json(&hit);
-        response["direction"] = json!(gx_index::Direction::Both.as_str());
+        response["direction"] = json!(direction.as_str());
         response["depth"] = json!(impact.depth);
-        response["truncated"] = json!(impact.truncated || dropped > 0);
+        response["budget"] = json!({
+            "max_nodes": limits.max_nodes,
+            "max_edges": limits.max_edges,
+        });
+        response["truncated"] = truncated.unwrap_or(Value::Null);
         response["nodes"] = json!(document["nodes"].as_array().map(Vec::len));
         response["edges"] = json!(document["edges"].as_array().map(Vec::len));
         response["diagram"] = document;
@@ -464,6 +781,107 @@ pub mod book {
         })
     }
 
+    /// A selector or an option of the tool: trimmed, and empty is absent.
+    fn optional_text(raw: Option<&str>) -> Option<&str> {
+        raw.map(str::trim).filter(|text| !text.is_empty())
+    }
+
+    /// The `edges` filter of a walk: the four kinds of the schema (T5).
+    ///
+    /// Absent follows the whole vocabulary. An empty list is a mistake the
+    /// agent would read as «no connections», so it is rejected instead of
+    /// silently following everything.
+    fn edges_argument(raw: Option<&[String]>) -> Result<Vec<String>, Value> {
+        let Some(raw) = raw else {
+            return Ok(Vec::new());
+        };
+        if raw.is_empty() {
+            return Err(failure(
+                "edges",
+                "invalid_value",
+                "`edges` is empty",
+                Some("send at least one of `calls`, `imports`, `inherits`, `uses`, or omit it to follow the four"),
+            ));
+        }
+        for kind in raw {
+            if !gx_index::RELATION_KINDS.contains(&kind.as_str()) {
+                return Err(failure(
+                    "edges",
+                    "invalid_value",
+                    &format!("`{kind}` is not an edge kind"),
+                    Some("send `calls`, `imports`, `inherits` or `uses`"),
+                ));
+            }
+        }
+        Ok(raw.to_vec())
+    }
+
+    /// The copy-pasteable call that reads the rest of a chapter (T5).
+    fn structure_next(
+        file: &str,
+        after_line: u32,
+        limit: Option<usize>,
+        kinds: &[String],
+    ) -> Value {
+        let mut args = serde_json::Map::new();
+        args.insert("file".to_string(), json!(file));
+        args.insert("after_line".to_string(), json!(after_line));
+        if let Some(limit) = limit {
+            args.insert("limit".to_string(), json!(limit));
+        }
+        if !kinds.is_empty() {
+            args.insert("kinds".to_string(), json!(kinds));
+        }
+        json!({ "tool": "code_structure", "args": Value::Object(args) })
+    }
+
+    /// The copy-pasteable call that continues one walk (T5): the same seed and
+    /// the same question, with a budget the `graph` kind would never allow.
+    fn walk_call(
+        seed: &serde_json::Map<String, Value>,
+        depth: u32,
+        direction: gx_index::Direction,
+        edges: &[String],
+        budget: Option<usize>,
+    ) -> Value {
+        let mut args = seed.clone();
+        args.insert("depth".to_string(), json!(depth));
+        args.insert("direction".to_string(), json!(direction.as_str()));
+        if !edges.is_empty() {
+            args.insert("edges".to_string(), json!(edges));
+        }
+        if let Some(budget) = budget {
+            args.insert("budget".to_string(), json!(budget));
+        }
+        json!({ "tool": "code_impact", "args": Value::Object(args) })
+    }
+
+    /// The machine-readable notice of a cut (T5): the reason, the numbers and
+    /// the exact follow-up call.
+    fn truncated_json(truncation: &gx_index::Truncation, next: Option<Value>) -> Value {
+        json!({
+            "reason": truncation.reason.as_str(),
+            "shown": truncation.shown,
+            "total": truncation.total,
+            "next": next,
+        })
+    }
+
+    /// The files connected to a chapter seed (T5), as the agent reads them.
+    fn files_json(files: &[gx_index::FileLink]) -> Vec<Value> {
+        files
+            .iter()
+            .map(|link| {
+                json!({
+                    "file": link.file,
+                    "imports_out": link.imports_out,
+                    "referenced_by_in": link.referenced_by_in,
+                    "symbols": link.symbols,
+                })
+            })
+            .collect()
+    }
+
     /// A text argument: trimmed, non-empty and not a sentence.
     fn text_argument<'a>(value: &'a str, field: &str) -> Result<&'a str, Value> {
         let value = value.trim();
@@ -490,11 +908,11 @@ pub mod book {
     }
 
     /// The direction of a walk, from its three names.
-    fn direction_argument(raw: Option<&str>) -> Result<gx_index::Direction, Value> {
+    fn direction_argument(raw: Option<&str>, fallback: &str) -> Result<gx_index::Direction, Value> {
         let text = raw
             .map(str::trim)
             .filter(|text| !text.is_empty())
-            .unwrap_or(DEFAULT_DIRECTION);
+            .unwrap_or(fallback);
         gx_index::Direction::parse(text).ok_or_else(|| {
             failure(
                 "direction",
@@ -646,12 +1064,18 @@ pub mod book {
 
     /// The declarations of a chapter, with the parent as the qname it belongs
     /// to: the tree is rebuildable from this list alone.
-    fn structure_symbols_json(symbols: &[gx_index::StructureSymbol]) -> Vec<Value> {
-        let qnames: std::collections::BTreeMap<i64, &str> = symbols
+    ///
+    /// `all` is the whole chapter and `shown` the rows of this answer, because
+    /// an outline hides the parent of a child it does show.
+    fn structure_symbols_json(
+        all: &[gx_index::StructureSymbol],
+        shown: &[gx_index::StructureSymbol],
+    ) -> Vec<Value> {
+        let qnames: std::collections::BTreeMap<i64, &str> = all
             .iter()
             .map(|symbol| (symbol.id, symbol.qname.as_str()))
             .collect();
-        symbols
+        shown
             .iter()
             .map(|symbol| {
                 json!({
@@ -1026,16 +1450,26 @@ pub struct CodeSearchParams {
 }
 
 /// Description of the `code_structure` tool, written for the agent (S5, S7).
-const CODE_STRUCTURE_DESCRIPTION: &str = "\
-Read the structure of one chapter of the book: the declarations of a file, \
-ordered by span, each with `name`, `kind`, `qname`, `line`, `column`, \
-`end_line`, `end_column` and `parent` (the qname of the declaration that \
-contains it), so the containment tree is rebuildable from one answer. Ask with \
-`file` (a path relative to the project root, with `/` separators) or with \
+const CODE_STRUCTURE_DESCRIPTION: &str =
+    "Read the structure of one chapter of the book. The default answer is the \
+outline: only the declarations of the chapter whose parent is `NULL`, ordered \
+by span, each with `name`, `kind`, `qname`, `line`, `column`, `end_line`, \
+`end_column` and `parent` (the qname of the declaration that contains it). The \
+answer carries `count` and `total` (every declaration of the chapter, filter \
+included) and, when children were hidden, \
+`collapsed: {hidden_symbols, declarations_with_children, next}`, where `next` \
+is the copy-pasteable call that reads them. To read the rest of the tree, or a \
+slice of it, send `after_line` (start strictly after that line) and `limit` \
+(1..=200): they are a range over the same span-ordered list, never a mode. \
+`kinds` filters the rows by declaration kind (`fn`, `method`, `type`, `class`, \
+`trait`, `impl`, `module`, `const`, `static`) and never changes `total`. Ask \
+with `file` (a path relative to the project root, with `/` separators) or with \
 `symbol` (a name, as `code_search` takes it): exactly one of the two, and a \
 symbol that fits more than one declaration answers `ok: false` with code \
-`ambiguous_symbol` and `candidates[]`. The answer carries the `content_hash` \
-and `indexed_at` of the chapter plus the `book_key` of the book that answered. \
+`ambiguous_symbol` and `candidates[]`. When a cut happens, `truncated` says \
+`{reason, shown, total, next}` with reason `collapsed` (the outline) or \
+`nodes` (the limit). The answer carries the `content_hash` and `indexed_at` of \
+the chapter plus the `book_key` of the book that answered. \
 `progress.state == \"indexing\"` means the first pass is still running. The \
 book is on by default: `book_disabled` only answers when the owner opted out \
 with `GRAPHIUM_BOOK=off`, and an unopenable book answers `book_unavailable`. \
@@ -1051,57 +1485,95 @@ pub struct CodeStructureParams {
     /// The symbol whose chapter to read: a name, as `code_search` takes it.
     #[serde(default)]
     pub symbol: Option<String>,
+    /// T5: start strictly after this line. With `limit` it is a range over
+    /// the span-ordered list; without either, the answer is the outline.
+    #[serde(default)]
+    pub after_line: Option<i64>,
+    /// T5: how many rows the answer carries (default 200, at most 200).
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// T5: the declaration kinds to answer; empty answers all of them.
+    #[serde(default)]
+    pub kinds: Option<Vec<String>>,
 }
 
 /// Description of the `code_impact` tool, written for the agent (S5, S7, D3).
-const CODE_IMPACT_DESCRIPTION: &str = "\
-Walk the connections of one symbol in the book: who points at it, what it \
-reaches, or both. `direction` is `in` (default: the edges that point at the \
-symbol, so what a change would affect), `out` (what the symbol calls, imports \
-or uses) or `both`. The edges are **syntactic, not typed** (a call by name, an \
-import by its bound segment, an `impl Trait for Type`, a type reference), so a \
-common name may be a false positive and `unresolved` counts the targets the \
-book could not pin to one declaration. The walk has three guards and the \
-answer states them: `depth` is clamped to 3 hops, a cycle is answered once \
-per symbol and never followed twice, and the answer is capped at the ceilings \
-of the `graph` kind (300 nodes / 600 edges) with `truncated: true` when the \
-cap bites. Every node carries `file`, `line` and the hop it was reached at; \
-the symbol you asked about travels with `content_hash` and `indexed_at`, plus \
-the `book_key` of the book. A name that fits more than one declaration \
-answers `ok: false` with `ambiguous_symbol` and `candidates[]`; the book is \
-on by default, so `book_disabled` only comes from an explicit \
-`GRAPHIUM_BOOK=off`. Read-only: it never touches the plan.";
+const CODE_IMPACT_DESCRIPTION: &str =
+    "Walk the connections of one symbol, or of one whole chapter, in the book: who \
+points at it, what it reaches, or both. The seed is exactly one of `symbol` (a \
+name, as `code_search` takes it) or `file` (a path relative to the project \
+root): a file seed is the connections view — every declaration of the chapter \
+starts the walk, the answer adds `file` and a `files` grouping of the \
+connected files (`imports_out`, `referenced_by_in`, `symbols`; the seed file is \
+never a row of `files`), and its \
+default `direction` is `both`. `direction` is `in` (the default of a symbol \
+seed: the edges that point at it, so what a change would affect), `out` (what \
+the symbol calls, imports or uses) or `both`; `edges` narrows which kinds the \
+walk follows (`calls`, `imports`, `inherits`, `uses`). The edges are \
+**syntactic, not typed** (a call by name, an import by its bound segment, an \
+`impl Trait for Type`, a type reference), so a common name may be a false \
+positive and `unresolved` counts the targets the book could not pin to one \
+declaration. The walk has three guards and the answer states them: `depth` is \
+clamped to 3 hops, a cycle is answered once per symbol and never followed \
+twice, and the answer is bounded by `budget` nodes (600 by default, 2000 at \
+most, with the edges at twice the nodes): a cut is `truncated: {reason, \
+shown, total, next}`, where `next` is the copy-pasteable call with the bigger \
+budget, or `null` when the 3-hop cap is the reason and no follow-up exists. \
+Every node carries `file`, `line` and the hop it was reached at; the seed \
+travels with `content_hash` and `indexed_at`, plus the `book_key` of the book. \
+A name that fits more than one declaration answers `ok: false` with \
+`ambiguous_symbol` and `candidates[]`; the book is on by default, so \
+`book_disabled` only comes from an explicit `GRAPHIUM_BOOK=off`. Read-only: it \
+never touches the plan.";
 
 /// Parameters of the `code_impact` tool (F9, C1).
 #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeImpactParams {
-    /// The symbol to start from: a name, as `code_search` takes it.
-    pub symbol: String,
+    /// The symbol to start from: a name, as `code_search` takes it. Exactly
+    /// one of `symbol` or `file`.
+    #[serde(default)]
+    pub symbol: Option<String>,
+    /// T5: the chapter to walk as a node (the connections view). Exactly one
+    /// of `symbol` or `file`.
+    #[serde(default)]
+    pub file: Option<String>,
     /// Hops to follow: 1 by default, clamped to 3.
     #[serde(default)]
     pub depth: Option<u32>,
-    /// `in` (default), `out` or `both`.
+    /// `in` (default for a symbol), `both` (default for a file) or `out`.
     #[serde(default)]
     pub direction: Option<String>,
+    /// T5: the edge kinds to follow (`calls`, `imports`, `inherits`,
+    /// `uses`); empty follows the whole vocabulary.
+    #[serde(default)]
+    pub edges: Option<Vec<String>>,
+    /// T5: the query budget in nodes (default 600, at most 2000).
+    #[serde(default)]
+    pub budget: Option<usize>,
 }
 
 /// Description of the `code_diagram` tool, written for the agent (S5).
-const CODE_DIAGRAM_DESCRIPTION: &str = "\
-Build the diagram of one symbol's neighbourhood from the book, without reading \
+const CODE_DIAGRAM_DESCRIPTION: &str =
+    "Build the diagram of one symbol's neighbourhood from the book, without reading \
 any file. The answer is a complete `graph` document (`version: 1`, `kind: \
 \"graph\"`, one node per symbol with its `qname` as the label, one edge per \
 connection labelled with its kind) in `diagram`: send it to `render_diagram` \
 as it is, or to `validate_diagram` first. The document respects the contract of \
 the kind (at most 300 nodes, 600 edges and a density of 3), so it is \
 renderable with no repair. The walk is the same as `code_impact` with \
-`direction: both` and `depth` clamped to 3 hops; `truncated` says whether a \
-guard cut it. The edges are syntactic, not typed (D3): the picture is the \
-book's reading of the code, not a compiler's. The start symbol travels with \
-`content_hash`, `indexed_at` and the `book_key` of the book; an ambiguous name \
-answers `ok: false` with `ambiguous_symbol` and `candidates[]`, and the book is \
-on by default (`book_disabled` only with an explicit `GRAPHIUM_BOOK=off`). \
-It never renders and never touches the plan: the diagram is a document.";
+`direction: both` and `depth` clamped to 3 hops; `edges` narrows which kinds \
+it follows. `truncated` is the object `{reason, shown, total, next}`: \
+`density` means the document was trimmed to render, `nodes`/`edges` mean the \
+walk was cut before the document existed (the answer carries the 300/600 \
+ceilings of the kind in `budget`), and `next` is the `code_impact` call that \
+answers the same question with its own query budget. The edges are syntactic, \
+not typed (D3): the picture is the book's reading of the code, not a \
+compiler's. The start symbol travels with `content_hash`, `indexed_at` and the \
+`book_key` of the book; an ambiguous name answers `ok: false` with \
+`ambiguous_symbol` and `candidates[]`, and the book is on by default \
+(`book_disabled` only with an explicit `GRAPHIUM_BOOK=off`). It never renders \
+and never touches the plan: the diagram is a document.";
 
 /// Parameters of the `code_diagram` tool (F9, C1).
 #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
@@ -1112,6 +1584,10 @@ pub struct CodeDiagramParams {
     /// Hops to follow: 1 by default, clamped to 3.
     #[serde(default)]
     pub depth: Option<u32>,
+    /// T5: the edge kinds to follow (`calls`, `imports`, `inherits`,
+    /// `uses`); empty follows the whole vocabulary.
+    #[serde(default)]
+    pub edges: Option<Vec<String>>,
 }
 
 /// The MCP server of Graphium.
@@ -1470,11 +1946,17 @@ impl GraphiumServer {
     ) -> Result<CallToolResult, ErrorData> {
         let session_id = self.session_id.clone();
         // Reading the book opens it in the owner's process: off the async loop.
+        let request = gx_index::StructureRequest {
+            after_line: params.after_line,
+            limit: params.limit,
+            kinds: params.kinds.unwrap_or_default(),
+        };
         let response = tokio::task::spawn_blocking(move || {
             book::code_structure(
                 &session_id,
                 params.file.as_deref(),
                 params.symbol.as_deref(),
+                &request,
             )
         })
         .await
@@ -1500,18 +1982,20 @@ impl GraphiumServer {
         Parameters(params): Parameters<CodeImpactParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let session_id = self.session_id.clone();
-        let response = tokio::task::spawn_blocking(move || {
-            book::code_impact(
-                &session_id,
-                &params.symbol,
-                params.depth,
-                params.direction.as_deref(),
-            )
-        })
-        .await
-        .map_err(|error| {
-            ErrorData::internal_error(format!("the impact task failed: {error}"), None)
-        })?;
+        let question = book::ImpactQuestion {
+            symbol: params.symbol,
+            file: params.file,
+            depth: params.depth,
+            direction: params.direction,
+            edges: params.edges,
+            budget: params.budget,
+        };
+        let response =
+            tokio::task::spawn_blocking(move || book::code_impact(&session_id, &question))
+                .await
+                .map_err(|error| {
+                    ErrorData::internal_error(format!("the impact task failed: {error}"), None)
+                })?;
         structured(response)
     }
 
@@ -1532,7 +2016,12 @@ impl GraphiumServer {
     ) -> Result<CallToolResult, ErrorData> {
         let session_id = self.session_id.clone();
         let response = tokio::task::spawn_blocking(move || {
-            book::code_diagram(&session_id, &params.symbol, params.depth)
+            book::code_diagram(
+                &session_id,
+                &params.symbol,
+                params.depth,
+                params.edges.as_deref(),
+            )
         })
         .await
         .map_err(|error| {
@@ -2567,8 +3056,10 @@ mod tests {
         let edges = dependents["edges"].as_array().expect("edges");
         assert_eq!(edges.len(), 1, "{dependents}");
         assert_eq!(edges[0]["kind"], "calls", "{dependents}");
-        assert_eq!(dependents["budget"]["max_nodes"], 300, "{dependents}");
-        assert_eq!(dependents["budget"]["max_edges"], 600, "{dependents}");
+        // T5: the query budget of `code_impact` is its own, decoupled from
+        // the 300/600 ceilings of the `graph` kind (L7).
+        assert_eq!(dependents["budget"]["max_nodes"], 600, "{dependents}");
+        assert_eq!(dependents["budget"]["max_edges"], 1200, "{dependents}");
 
         // The other direction: what the symbol reaches.
         let callees = crate::book::code_impact_with(
@@ -2755,6 +3246,695 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------
+    // F9, T5 — la respuesta acotada (S7, L7: outline, semilla de archivo)
+    // -----------------------------------------------------------------
+
+    /// A chapter with nested declarations: two top-level items contain
+    /// others, so the outline hides something.
+    ///
+    /// ```text
+    /// 1  pub struct Config;
+    /// 2  impl Config {
+    /// 3      pub fn load(&self) {}
+    /// 4      pub fn save(&self) {}
+    /// 5  }
+    /// 6  pub fn build() {}
+    /// 7  mod inner {
+    /// 8      pub fn hidden() {}
+    /// 9  }
+    /// ```
+    const NESTED: &str = "\
+pub struct Config;\n\
+impl Config {\n\
+    pub fn load(&self) {}\n\
+    pub fn save(&self) {}\n\
+}\n\
+pub fn build() {}\n\
+mod inner {\n\
+    pub fn hidden() {}\n\
+}\n";
+
+    /// A complete digraph: each declaration calls the other four.
+    const CLIQUE: &str = "\
+pub fn a() { b(); c(); d(); }\n\
+pub fn b() { a(); c(); d(); }\n\
+pub fn c() { a(); b(); d(); }\n\
+pub fn d() { a(); b(); c(); }\n";
+
+    /// Five declarations that all call each other: twenty edges over five
+    /// nodes, so the density ceiling of the `graph` kind bites.
+    const DENSE: &str = "\
+pub fn a() { b(); c(); d(); e(); }\n\
+pub fn b() { a(); c(); d(); e(); }\n\
+pub fn c() { a(); b(); d(); e(); }\n\
+pub fn d() { a(); b(); c(); e(); }\n\
+pub fn e() { a(); b(); c(); d(); }\n";
+
+    /// The chapters of the file-seed tests: `api.rs` imports and calls into
+    /// `store.rs`, and `store.rs` calls back into `api.rs`.
+    fn write_file_seed_chapters(scratch: &BookScratch) {
+        scratch.write(
+            "src/store.rs",
+            "pub fn open_store() -> u8 { 1 }\npub fn check() -> u8 { handler(); 0 }\n",
+        );
+        scratch.write(
+            "src/api.rs",
+            "use crate::store::open_store;\npub fn build() -> u8 { open_store() }\npub fn handler() -> u8 { 1 }\n",
+        );
+    }
+
+    /// T5/S7: `code_structure` answers the OUTLINE by default — only the
+    /// declarations whose parent is `NULL` — with `total` and a `collapsed`
+    /// block that carries the exact call that reads the hidden children.
+    #[test]
+    fn the_code_structure_answer_is_the_outline_by_default() {
+        let scratch = BookScratch::new("t5-outline");
+        scratch.write("src/nested.rs", NESTED);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response = crate::book::code_structure_with(
+            &scratch.config(),
+            Some(&project),
+            Some("src/nested.rs"),
+            None,
+        );
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["total"], 7, "{response}");
+        assert_eq!(response["count"], 4, "{response}");
+        let symbols = response["symbols"].as_array().expect("the rows travel");
+        let names: Vec<&str> = symbols
+            .iter()
+            .filter_map(|row| row["name"].as_str())
+            .collect();
+        assert_eq!(names, ["Config", "Config", "build", "inner"], "{response}");
+        let kinds: Vec<&str> = symbols
+            .iter()
+            .filter_map(|row| row["kind"].as_str())
+            .collect();
+        assert_eq!(kinds, ["type", "impl", "fn", "module"], "{response}");
+        for row in symbols {
+            assert!(
+                row["parent"].is_null(),
+                "the outline keeps the top level: {response}"
+            );
+        }
+
+        let collapsed = &response["collapsed"];
+        assert_eq!(collapsed["hidden_symbols"], 3, "{response}");
+        assert_eq!(collapsed["declarations_with_children"], 2, "{response}");
+        assert_eq!(collapsed["next"]["tool"], "code_structure", "{response}");
+        assert_eq!(
+            collapsed["next"]["args"]["file"], "src/nested.rs",
+            "{response}"
+        );
+        assert_eq!(
+            collapsed["next"]["args"]["after_line"], 3,
+            "the first hidden child's line: {response}"
+        );
+
+        let truncated = &response["truncated"];
+        assert_eq!(truncated["reason"], "collapsed", "{response}");
+        assert_eq!(truncated["shown"], 4, "{response}");
+        assert_eq!(truncated["total"], 7, "{response}");
+        assert_eq!(truncated["next"], collapsed["next"], "{response}");
+    }
+
+    /// T5/S7: `after_line`/`limit` slice the span-ordered list monotonically:
+    /// the pages concatenated are the whole list, once, in order.
+    #[test]
+    fn after_line_and_limit_slice_the_span_ordered_rows() {
+        let scratch = BookScratch::new("t5-slice");
+        scratch.write("src/nested.rs", NESTED);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let query = |after_line: Option<i64>, limit: Option<usize>| {
+            crate::book::code_structure_query_with(
+                &scratch.config(),
+                Some(&project),
+                Some("src/nested.rs"),
+                None,
+                &gx_index::StructureRequest {
+                    after_line,
+                    limit,
+                    kinds: Vec::new(),
+                },
+            )
+        };
+
+        let mut seen: Vec<i64> = Vec::new();
+        let mut after_line = Some(0);
+        let mut pages = 0;
+        loop {
+            let page = query(after_line, Some(3));
+            assert_eq!(page["ok"], true, "{page}");
+            assert_eq!(page["total"], 7, "{page}");
+            assert!(
+                page["collapsed"].is_null(),
+                "a range is not an outline: {page}"
+            );
+            let rows = page["symbols"].as_array().expect("the rows travel");
+            seen.extend(rows.iter().filter_map(|row| row["line"].as_i64()));
+            pages += 1;
+            if page["truncated"].is_null() {
+                break;
+            }
+            assert_eq!(page["truncated"]["reason"], "nodes", "{page}");
+            assert_eq!(page["truncated"]["shown"], 3, "{page}");
+            assert_eq!(page["truncated"]["total"], 7, "{page}");
+            assert_eq!(
+                page["truncated"]["next"]["tool"], "code_structure",
+                "{page}"
+            );
+            assert_eq!(
+                page["truncated"]["next"]["args"]["file"], "src/nested.rs",
+                "{page}"
+            );
+            assert_eq!(
+                page["truncated"]["next"]["args"]["after_line"],
+                seen.last().copied().unwrap_or_default(),
+                "the cursor is the last shown line: {page}"
+            );
+            assert_eq!(page["truncated"]["next"]["args"]["limit"], 3, "{page}");
+            after_line = seen.last().copied();
+        }
+        assert_eq!(
+            seen,
+            vec![1, 2, 3, 4, 6, 7, 8],
+            "the slices are the span-ordered list"
+        );
+        assert_eq!(pages, 3, "{seen:?}");
+    }
+
+    /// T5: `kinds` filters the rows and `total` keeps counting the chapter, so
+    /// a filter is never read as a smaller file.
+    #[test]
+    fn the_kinds_filter_narrows_the_rows_and_total_stays_the_chapter() {
+        let scratch = BookScratch::new("t5-kinds");
+        scratch.write("src/nested.rs", NESTED);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let methods = crate::book::code_structure_query_with(
+            &scratch.config(),
+            Some(&project),
+            Some("src/nested.rs"),
+            None,
+            &gx_index::StructureRequest {
+                after_line: Some(0),
+                limit: None,
+                kinds: vec!["method".to_string()],
+            },
+        );
+        assert_eq!(methods["ok"], true, "{methods}");
+        assert_eq!(methods["total"], 7, "{methods}");
+        assert_eq!(methods["count"], 2, "{methods}");
+        let kinds: Vec<&str> = methods["symbols"]
+            .as_array()
+            .expect("the rows travel")
+            .iter()
+            .filter_map(|row| row["kind"].as_str())
+            .collect();
+        assert_eq!(kinds, ["method", "method"], "{methods}");
+
+        let types = crate::book::code_structure_query_with(
+            &scratch.config(),
+            Some(&project),
+            Some("src/nested.rs"),
+            None,
+            &gx_index::StructureRequest {
+                kinds: vec!["type".to_string()],
+                ..gx_index::StructureRequest::default()
+            },
+        );
+        assert_eq!(types["total"], 7, "{types}");
+        assert_eq!(types["count"], 1, "{types}");
+        assert!(types["collapsed"].is_null(), "{types}");
+
+        let unknown = crate::book::code_structure_query_with(
+            &scratch.config(),
+            Some(&project),
+            Some("src/nested.rs"),
+            None,
+            &gx_index::StructureRequest {
+                kinds: vec!["whatever".to_string()],
+                ..gx_index::StructureRequest::default()
+            },
+        );
+        assert_eq!(unknown["ok"], false, "{unknown}");
+        assert_eq!(unknown["errors"][0]["code"], "invalid_value", "{unknown}");
+        assert_eq!(unknown["errors"][0]["path"], "kinds", "{unknown}");
+        assert!(
+            unknown["errors"][0]["hint"]
+                .as_str()
+                .is_some_and(|hint| hint.contains("method")),
+            "the hint lists the vocabulary: {unknown}"
+        );
+    }
+
+    /// T5/S5: a file seed turns a chapter into a node: every declaration of it
+    /// is the frontier, the answer keeps the impact shape and adds the file
+    /// and the grouping of the connected files.
+    #[test]
+    fn the_file_seed_walks_the_chapter_and_groups_by_file() {
+        let scratch = BookScratch::new("t5-file-seed");
+        write_file_seed_chapters(&scratch);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response = crate::book::code_impact_query_with(
+            &scratch.config(),
+            Some(&project),
+            &crate::book::ImpactQuestion {
+                file: Some("src/api.rs".to_string()),
+                ..crate::book::ImpactQuestion::default()
+            },
+        );
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(
+            response["direction"], "both",
+            "a chapter answers its neighbourhood: {response}"
+        );
+        assert_eq!(response["file"], "src/api.rs", "{response}");
+        assert!(
+            response["symbol"].is_null(),
+            "a file seed has no `symbol`: {response}"
+        );
+        let nodes = response["nodes"].as_array().expect("nodes");
+        assert_eq!(
+            nodes.iter().filter(|node| node["depth"] == 0).count(),
+            3,
+            "every declaration of the chapter starts the walk: {response}"
+        );
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node["qname"] == "store::open_store" && node["depth"] == 1),
+            "{response}"
+        );
+        let files = response["files"].as_array().expect("the grouping travels");
+        assert_eq!(files.len(), 1, "{response}");
+        assert_eq!(files[0]["file"], "src/store.rs", "{response}");
+        assert_eq!(
+            files[0]["imports_out"], 2,
+            "the import and the call: {response}"
+        );
+        assert_eq!(files[0]["referenced_by_in"], 1, "the call back: {response}");
+        assert_eq!(
+            files[0]["symbols"], 2,
+            "the declarations of the connected file: {response}"
+        );
+        assert_eq!(response["unresolved"], 0, "{response}");
+
+        // The symbol seed keeps the shape it had: no `file`, no `files`.
+        let symbol = crate::book::code_impact_query_with(
+            &scratch.config(),
+            Some(&project),
+            &crate::book::ImpactQuestion {
+                symbol: Some("build".to_string()),
+                direction: Some("out".to_string()),
+                ..crate::book::ImpactQuestion::default()
+            },
+        );
+        assert_eq!(symbol["ok"], true, "{symbol}");
+        assert!(symbol["file"].is_null(), "{symbol}");
+        assert!(symbol["files"].is_null(), "{symbol}");
+        assert_eq!(symbol["symbol"]["qname"], "api::build", "{symbol}");
+    }
+
+    /// T5: a seed is exactly one of `symbol` or `file`, with the same grammar
+    /// as `code_structure`: zero or two selectors is `invalid_value`.
+    #[test]
+    fn a_file_seed_takes_exactly_one_selector() {
+        let scratch = BookScratch::new("t5-seed-grammar");
+        write_file_seed_chapters(&scratch);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+        let ask = |question: crate::book::ImpactQuestion| {
+            crate::book::code_impact_query_with(&scratch.config(), Some(&project), &question)
+        };
+
+        let none = ask(crate::book::ImpactQuestion::default());
+        assert_eq!(none["ok"], false, "{none}");
+        assert_eq!(none["errors"][0]["code"], "invalid_value", "{none}");
+        assert_eq!(none["errors"][0]["path"], "file", "{none}");
+
+        let both = ask(crate::book::ImpactQuestion {
+            symbol: Some("build".to_string()),
+            file: Some("src/api.rs".to_string()),
+            ..crate::book::ImpactQuestion::default()
+        });
+        assert_eq!(both["ok"], false, "{both}");
+        assert_eq!(both["errors"][0]["code"], "invalid_value", "{both}");
+        assert_eq!(both["errors"][0]["path"], "file", "{both}");
+
+        let unknown = ask(crate::book::ImpactQuestion {
+            file: Some("src/nope.rs".to_string()),
+            ..crate::book::ImpactQuestion::default()
+        });
+        assert_eq!(unknown["ok"], false, "{unknown}");
+        assert_eq!(unknown["errors"][0]["code"], "invalid_value", "{unknown}");
+        assert_eq!(unknown["errors"][0]["path"], "file", "{unknown}");
+        assert!(unknown["errors"][0]["hint"].is_string(), "{unknown}");
+    }
+
+    /// T5: `edges` chooses which kinds the walk follows, on `code_impact` and
+    /// on `code_diagram`; a kind the book does not have is rejected with the
+    /// vocabulary in the hint.
+    #[test]
+    fn the_edges_filter_narrows_the_kinds_of_both_walks() {
+        let scratch = BookScratch::new("t5-edges");
+        write_file_seed_chapters(&scratch);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+        let ask = |edges: Option<&[&str]>| {
+            crate::book::code_impact_query_with(
+                &scratch.config(),
+                Some(&project),
+                &crate::book::ImpactQuestion {
+                    symbol: Some("open_store".to_string()),
+                    direction: Some("both".to_string()),
+                    edges: edges.map(|edges| edges.iter().map(|edge| edge.to_string()).collect()),
+                    ..crate::book::ImpactQuestion::default()
+                },
+            )
+        };
+
+        let all = ask(None);
+        assert_eq!(all["ok"], true, "{all}");
+        let kinds: Vec<&str> = all["edges"]
+            .as_array()
+            .expect("edges")
+            .iter()
+            .filter_map(|edge| edge["kind"].as_str())
+            .collect();
+        assert!(kinds.contains(&"imports"), "{all}");
+        assert!(kinds.contains(&"calls"), "{all}");
+
+        let imports = ask(Some(&["imports"]));
+        let kinds: Vec<&str> = imports["edges"]
+            .as_array()
+            .expect("edges")
+            .iter()
+            .filter_map(|edge| edge["kind"].as_str())
+            .collect();
+        assert_eq!(kinds, ["imports"], "{imports}");
+
+        let calls = ask(Some(&["calls"]));
+        let kinds: Vec<&str> = calls["edges"]
+            .as_array()
+            .expect("edges")
+            .iter()
+            .filter_map(|edge| edge["kind"].as_str())
+            .collect();
+        assert!(kinds.iter().all(|kind| *kind == "calls"), "{calls}");
+
+        // The diagram follows the same filter.
+        let diagram = crate::book::code_diagram_query_with(
+            &scratch.config(),
+            Some(&project),
+            "open_store",
+            None,
+            Some(&["imports".to_string()]),
+        );
+        assert_eq!(diagram["ok"], true, "{diagram}");
+        let labels: Vec<&str> = diagram["diagram"]["edges"]
+            .as_array()
+            .expect("the document edges")
+            .iter()
+            .filter_map(|edge| edge["label"].as_str())
+            .collect();
+        assert_eq!(labels, ["imports"], "{diagram}");
+
+        let wrong = ask(Some(&["sideways"]));
+        assert_eq!(wrong["ok"], false, "{wrong}");
+        assert_eq!(wrong["errors"][0]["code"], "invalid_value", "{wrong}");
+        assert_eq!(wrong["errors"][0]["path"], "edges", "{wrong}");
+        assert!(
+            wrong["errors"][0]["hint"]
+                .as_str()
+                .is_some_and(|hint| hint.contains("inherits")),
+            "the hint lists the four kinds: {wrong}"
+        );
+
+        // An empty list would read as «no connections»: it is rejected.
+        let empty = ask(Some(&[]));
+        assert_eq!(empty["ok"], false, "{empty}");
+        assert_eq!(empty["errors"][0]["path"], "edges", "{empty}");
+    }
+
+    /// T5/S7: the query budget of `code_impact` is 600 nodes by default and
+    /// 2000 at most, decoupled from the 300/600 of the `graph` kind, which
+    /// `code_diagram` keeps because the document has to render.
+    #[test]
+    fn the_query_budget_is_decoupled_from_the_diagram_ceilings() {
+        let scratch = BookScratch::new("t5-budget");
+        write_file_seed_chapters(&scratch);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+        let ask = |budget: Option<usize>| {
+            crate::book::code_impact_query_with(
+                &scratch.config(),
+                Some(&project),
+                &crate::book::ImpactQuestion {
+                    symbol: Some("build".to_string()),
+                    budget,
+                    ..crate::book::ImpactQuestion::default()
+                },
+            )
+        };
+
+        let default = ask(None);
+        assert_eq!(default["budget"]["max_nodes"], 600, "{default}");
+        assert_eq!(default["budget"]["max_edges"], 1200, "{default}");
+
+        let small = ask(Some(10));
+        assert_eq!(small["budget"]["max_nodes"], 10, "{small}");
+        assert_eq!(small["budget"]["max_edges"], 20, "{small}");
+
+        let huge = ask(Some(5000));
+        assert_eq!(
+            huge["budget"]["max_nodes"], 2000,
+            "a query budget never leaves the ceiling: {huge}"
+        );
+        assert_eq!(huge["budget"]["max_edges"], 4000, "{huge}");
+
+        let zero = ask(Some(0));
+        assert_eq!(zero["ok"], false, "{zero}");
+        assert_eq!(zero["errors"][0]["code"], "invalid_value", "{zero}");
+        assert_eq!(zero["errors"][0]["path"], "budget", "{zero}");
+
+        let diagram =
+            crate::book::code_diagram_with(&scratch.config(), Some(&project), "build", None);
+        assert_eq!(diagram["budget"]["max_nodes"], 300, "{diagram}");
+        assert_eq!(diagram["budget"]["max_edges"], 600, "{diagram}");
+    }
+
+    /// T5/S7: every cut is an object with the reason, the numbers and the
+    /// exact call that continues the answer (the Graphify «showing 67 of 182»
+    /// pattern, machine readable).
+    #[test]
+    fn the_walk_cut_names_the_reason_the_numbers_and_the_next_call() {
+        let scratch = BookScratch::new("t5-cut");
+        scratch.write(
+            "src/store.rs",
+            "pub fn hub() {}\npub fn c1() { hub(); }\npub fn c2() { hub(); }\npub fn c3() { hub(); }\npub fn c4() { hub(); }\npub fn c5() { hub(); }\n",
+        );
+        scratch.write("src/clique.rs", CLIQUE);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+        let ask = |symbol: &str, depth: Option<u32>, direction: &str, budget: Option<usize>| {
+            crate::book::code_impact_query_with(
+                &scratch.config(),
+                Some(&project),
+                &crate::book::ImpactQuestion {
+                    symbol: Some(symbol.to_string()),
+                    depth,
+                    direction: Some(direction.to_string()),
+                    budget,
+                    ..crate::book::ImpactQuestion::default()
+                },
+            )
+        };
+
+        // The node budget: the walk had six nodes in hand and showed three.
+        let nodes = ask("hub", Some(1), "in", Some(3));
+        assert_eq!(nodes["truncated"]["reason"], "nodes", "{nodes}");
+        assert_eq!(nodes["truncated"]["shown"], 3, "{nodes}");
+        assert_eq!(nodes["truncated"]["total"], 6, "{nodes}");
+        assert_eq!(nodes["truncated"]["next"]["tool"], "code_impact", "{nodes}");
+        assert_eq!(
+            nodes["truncated"]["next"]["args"]["symbol"], "hub",
+            "{nodes}"
+        );
+        assert_eq!(nodes["truncated"]["next"]["args"]["budget"], 6, "{nodes}");
+        assert_eq!(nodes["count"], 3, "{nodes}");
+
+        // The edge budget: eight edges shown of the twelve the walk had.
+        let edges = ask("a", Some(2), "both", Some(4));
+        assert_eq!(edges["truncated"]["reason"], "edges", "{edges}");
+        assert_eq!(edges["truncated"]["shown"], 8, "{edges}");
+        assert_eq!(edges["truncated"]["total"], 12, "{edges}");
+        assert_eq!(edges["truncated"]["next"]["args"]["budget"], 8, "{edges}");
+
+        // The hop cap: only when the walk still had somewhere to go.
+        scratch.write(
+            "src/chain.rs",
+            "pub fn x() { y(); }\npub fn y() { z(); }\npub fn z() { w(); }\npub fn w() { v(); }\npub fn v() {}\n",
+        );
+        scratch.indexed();
+        let deep = ask("x", Some(9), "out", None);
+        assert_eq!(deep["truncated"]["reason"], "depth", "{deep}");
+        assert_eq!(deep["truncated"]["shown"], 4, "{deep}");
+        assert!(deep["truncated"]["total"].is_null(), "{deep}");
+        assert!(deep["truncated"]["next"].is_null(), "{deep}");
+
+        // Asking for the cap is not a cut, and a finished walk is not one.
+        let asked = ask("x", Some(3), "out", None);
+        assert!(asked["truncated"].is_null(), "{asked}");
+        let done = ask("build", None, "out", None);
+        assert!(done["truncated"].is_null(), "{done}");
+    }
+
+    /// T5/S5: `code_diagram` splits the density trim (the document has to
+    /// render) from the walk cut, and the next call is the connections view
+    /// that answers the same question without the document ceiling.
+    #[test]
+    fn the_code_diagram_names_the_density_trim() {
+        let scratch = BookScratch::new("t5-density");
+        scratch.write("src/dense.rs", DENSE);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response =
+            crate::book::code_diagram_with(&scratch.config(), Some(&project), "a", Some(2));
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["truncated"]["reason"], "density", "{response}");
+        assert_eq!(
+            response["truncated"]["shown"], 15,
+            "three edges per node: {response}"
+        );
+        assert_eq!(response["truncated"]["total"], 20, "{response}");
+        assert_eq!(
+            response["truncated"]["next"]["tool"], "code_impact",
+            "{response}"
+        );
+        assert_eq!(
+            response["truncated"]["next"]["args"]["direction"], "both",
+            "{response}"
+        );
+        assert_eq!(
+            response["truncated"]["next"]["args"]["budget"], 600,
+            "{response}"
+        );
+        assert_eq!(response["nodes"], 5, "{response}");
+        assert_eq!(response["edges"], 15, "{response}");
+        assert_eq!(
+            response["diagram"]["edges"].as_array().map(Vec::len),
+            Some(15),
+            "{response}"
+        );
+        let validated = crate::contract::validate_diagram(&response["diagram"].to_string());
+        assert!(validated.ok, "{:?}", validated.errors);
+
+        // A diagram that fits needs no cut at all.
+        let small = crate::book::code_diagram_with(&scratch.config(), Some(&project), "a", Some(1));
+        assert!(small["truncated"].is_null(), "{small}");
+    }
+
+    /// T5: the four schemas and the descriptions teach the outline default,
+    /// the file seed and the query budget, so an agent can pick them without
+    /// reading any other document.
+    #[test]
+    fn the_schemas_and_the_descriptions_teach_the_bounded_answer() {
+        let structure = crate::dispatch::tool_schema("code_structure");
+        assert!(
+            structure["properties"]["after_line"].is_object(),
+            "{structure}"
+        );
+        assert!(structure["properties"]["limit"].is_object(), "{structure}");
+        assert_eq!(
+            structure["properties"]["kinds"]["type"],
+            serde_json::json!(["array", "null"]),
+            "{structure}"
+        );
+
+        let impact = crate::dispatch::tool_schema("code_impact");
+        assert!(impact["properties"]["file"].is_object(), "{impact}");
+        assert!(impact["properties"]["edges"].is_object(), "{impact}");
+        assert!(impact["properties"]["budget"].is_object(), "{impact}");
+        assert!(
+            impact.get("required").is_none(),
+            "exactly one of `symbol` or `file`: {impact:?}"
+        );
+
+        let diagram = crate::dispatch::tool_schema("code_diagram");
+        assert!(diagram["properties"]["edges"].is_object(), "{diagram}");
+        assert!(
+            diagram["properties"].get("budget").is_none(),
+            "the diagram keeps the ceilings of the kind: {diagram}"
+        );
+
+        let structure_text = crate::harness::description("code_structure");
+        for needle in ["outline", "after_line", "collapsed", "truncated"] {
+            assert!(
+                structure_text.contains(needle),
+                "code_structure lacks `{needle}`"
+            );
+        }
+        let impact_text = crate::harness::description("code_impact");
+        for needle in ["`file`", "budget", "edges", "files", "truncated"] {
+            assert!(impact_text.contains(needle), "code_impact lacks `{needle}`");
+        }
+        let diagram_text = crate::harness::description("code_diagram");
+        for needle in ["edges", "density"] {
+            assert!(
+                diagram_text.contains(needle),
+                "code_diagram lacks `{needle}`"
+            );
+        }
+        assert!(crate::harness::INSTRUCTIONS.contains("outline"));
+        assert!(crate::harness::INSTRUCTIONS.contains("file seed"));
+
+        // The router of the stdio server publishes the same arguments: the
+        // stdio schema is derived from the params structs, and a knob that
+        // exists in the dispatcher only is invisible to that client.
+        let tools = GraphiumServer::tool_router().list_all();
+        let advertised = |name: &str| {
+            tools
+                .iter()
+                .find(|tool| tool.name == name)
+                .unwrap_or_else(|| panic!("{name} is advertised"))
+                .input_schema
+                .clone()
+        };
+        let structure = advertised("code_structure");
+        for key in ["after_line", "limit", "kinds"] {
+            assert!(
+                structure["properties"].get(key).is_some(),
+                "code_structure takes `{key}`: {structure:?}"
+            );
+        }
+        let impact = advertised("code_impact");
+        for key in ["file", "edges", "budget"] {
+            assert!(
+                impact["properties"].get(key).is_some(),
+                "code_impact takes `{key}`: {impact:?}"
+            );
+        }
+        assert!(
+            impact.get("required").is_none(),
+            "exactly one of `symbol` or `file`: {impact:?}"
+        );
+        let diagram = advertised("code_diagram");
+        assert!(
+            diagram["properties"].get("edges").is_some(),
+            "code_diagram takes `edges`: {diagram:?}"
+        );
+    }
+
     /// The three tools exist once: the dispatcher of the owner publishes them
     /// with their schemas, exactly like `code_search`.
     #[test]
@@ -2767,18 +3947,27 @@ mod tests {
             let schema = crate::dispatch::tool_schema(name);
             assert!(schema["properties"].is_object(), "{name}: {schema}");
         }
-        assert_eq!(
-            crate::dispatch::tool_schema("code_impact")["required"][0],
-            "symbol"
+        // T5: `code_impact` takes a seed (`symbol` or `file`), so no single
+        // argument is required; `code_diagram` keeps the symbol.
+        assert!(
+            crate::dispatch::tool_schema("code_impact")
+                .get("required")
+                .is_none(),
+            "exactly one of `symbol` or `file`"
         );
         assert_eq!(
             crate::dispatch::tool_schema("code_diagram")["required"][0],
             "symbol"
         );
-        for name in ["code_impact", "code_diagram"] {
-            let error = crate::dispatch::call_tool(name, &serde_json::json!({}), "s")
-                .expect_err("`symbol` is required");
-            assert!(error.contains("symbol"), "{name}: {error}");
-        }
+        let error = crate::dispatch::call_tool("code_diagram", &serde_json::json!({}), "s")
+            .expect_err("`symbol` is required");
+        assert!(error.contains("symbol"), "{error}");
+
+        // The dispatcher hands the seed grammar to the tool, so an empty call
+        // is the same `invalid_value` the stdio server answers.
+        let empty = crate::dispatch::call_tool("code_impact", &serde_json::json!({}), "s")
+            .expect("the grammar is an answer");
+        assert_eq!(empty["ok"], false, "{empty}");
+        assert_eq!(empty["errors"][0]["code"], "invalid_value", "{empty}");
     }
 }

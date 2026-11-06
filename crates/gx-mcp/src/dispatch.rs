@@ -164,21 +164,46 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
             // answer on both doors.
             let file = arguments.get("file").and_then(Value::as_str);
             let symbol = arguments.get("symbol").and_then(Value::as_str);
-            Ok(crate::book::code_structure(session_id, file, symbol))
+            let request = gx_index::StructureRequest {
+                after_line: arguments.get("after_line").and_then(Value::as_i64),
+                limit: arguments
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX)),
+                kinds: string_array(arguments.get("kinds")).unwrap_or_default(),
+            };
+            Ok(crate::book::code_structure(
+                session_id, file, symbol, &request,
+            ))
         }
         "code_impact" => {
-            let symbol = arguments
-                .get("symbol")
-                .and_then(Value::as_str)
-                .ok_or_else(|| "`symbol` is required".to_string())?;
-            let depth = arguments
-                .get("depth")
-                .and_then(Value::as_u64)
-                .map(|depth| depth.min(u32::MAX as u64) as u32);
-            let direction = arguments.get("direction").and_then(Value::as_str);
-            Ok(crate::book::code_impact(
-                session_id, symbol, depth, direction,
-            ))
+            // The seed grammar (one of `symbol` or `file`) belongs to the
+            // tool: the relay answers the same `invalid_value` the stdio
+            // server does instead of a transport error.
+            let question = crate::book::ImpactQuestion {
+                symbol: arguments
+                    .get("symbol")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                file: arguments
+                    .get("file")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                depth: arguments
+                    .get("depth")
+                    .and_then(Value::as_u64)
+                    .map(|depth| depth.min(u32::MAX as u64) as u32),
+                direction: arguments
+                    .get("direction")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                edges: string_array(arguments.get("edges")),
+                budget: arguments
+                    .get("budget")
+                    .and_then(Value::as_u64)
+                    .map(|budget| usize::try_from(budget).unwrap_or(usize::MAX)),
+            };
+            Ok(crate::book::code_impact(session_id, &question))
         }
         "code_diagram" => {
             let symbol = arguments
@@ -189,10 +214,27 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
                 .get("depth")
                 .and_then(Value::as_u64)
                 .map(|depth| depth.min(u32::MAX as u64) as u32);
-            Ok(crate::book::code_diagram(session_id, symbol, depth))
+            let edges = string_array(arguments.get("edges"));
+            Ok(crate::book::code_diagram(
+                session_id,
+                symbol,
+                depth,
+                edges.as_deref(),
+            ))
         }
         other => Err(format!("unknown tool: {other}")),
     }
+}
+
+/// A JSON array of strings, or `None` when the key is absent.
+fn string_array(value: Option<&Value>) -> Option<Vec<String>> {
+    value.and_then(Value::as_array).map(|values| {
+        values
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect()
+    })
 }
 
 /// The schema of the arguments of a tool, as the MCP clients see it.
@@ -298,6 +340,22 @@ pub fn tool_schema(name: &str) -> Value {
                 "symbol": {
                     "type": ["string", "null"],
                     "description": "The symbol whose chapter to read: a name, as `code_search` takes it. Send exactly one of `file` or `symbol`."
+                },
+                "after_line": {
+                    "type": ["integer", "null"],
+                    "description": "Start strictly after this line: with `limit` it is a range over the span-ordered list of the chapter. Without it the answer is the outline."
+                },
+                "limit": {
+                    "type": ["integer", "null"],
+                    "description": "How many rows the answer carries: 200 by default and 200 at most."
+                },
+                "kinds": {
+                    "type": ["array", "null"],
+                    "items": {
+                        "type": "string",
+                        "enum": ["fn", "method", "type", "class", "trait", "impl", "module", "const", "static"]
+                    },
+                    "description": "The declaration kinds to answer; `total` keeps counting the whole chapter."
                 }
             }
         }),
@@ -305,8 +363,12 @@ pub fn tool_schema(name: &str) -> Value {
             "type": "object",
             "properties": {
                 "symbol": {
-                    "type": "string",
-                    "description": "The symbol to start from: a name, as `code_search` takes it."
+                    "type": ["string", "null"],
+                    "description": "The symbol to start from: a name, as `code_search` takes it. Send exactly one of `symbol` or `file`."
+                },
+                "file": {
+                    "type": ["string", "null"],
+                    "description": "The chapter to walk as a node: the connections view, grouped by file. Send exactly one of `symbol` or `file`."
                 },
                 "depth": {
                     "type": ["integer", "null"],
@@ -315,10 +377,21 @@ pub fn tool_schema(name: &str) -> Value {
                 "direction": {
                     "type": ["string", "null"],
                     "enum": ["in", "out", "both", null],
-                    "description": "`in` (default): the edges that point at the symbol; `out`: what it reaches; `both`."
+                    "description": "`in` (default of a symbol): the edges that point at it; `out`: what it reaches; `both` (default of a file)."
+                },
+                "edges": {
+                    "type": ["array", "null"],
+                    "items": {
+                        "type": "string",
+                        "enum": ["calls", "imports", "inherits", "uses"]
+                    },
+                    "description": "The edge kinds the walk follows; omitted follows all four."
+                },
+                "budget": {
+                    "type": ["integer", "null"],
+                    "description": "The query budget in nodes: 600 by default and 2000 at most (the edges are twice the nodes)."
                 }
-            },
-            "required": ["symbol"]
+            }
         }),
         "code_diagram" => json!({
             "type": "object",
@@ -330,6 +403,14 @@ pub fn tool_schema(name: &str) -> Value {
                 "depth": {
                     "type": ["integer", "null"],
                     "description": "Hops to follow: 1 by default, clamped to 3."
+                },
+                "edges": {
+                    "type": ["array", "null"],
+                    "items": {
+                        "type": "string",
+                        "enum": ["calls", "imports", "inherits", "uses"]
+                    },
+                    "description": "The edge kinds the walk follows; omitted follows all four."
                 }
             },
             "required": ["symbol"]

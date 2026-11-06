@@ -14,11 +14,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use gx_index::book::Book;
+use gx_index::cut::CutReason;
+use gx_index::impact::{DEFAULT_QUERY_NODES, MAX_NODES, MAX_QUERY_NODES};
 use gx_index::lang::parse;
 use gx_index::location::BooksRoot;
 use gx_index::watcher::{IndexOptions, Indexer};
 use gx_index::RELATION_KINDS;
-use gx_index::{Direction, ImpactRequest, SearchOutcome, SearchRequest};
+use gx_index::{
+    Direction, FileImpactRequest, ImpactRequest, SearchOutcome, SearchRequest, WalkLimits,
+};
 
 /// A worktree with its books root, removed when the test ends.
 struct Scratch {
@@ -237,11 +241,7 @@ fn the_book_walks_the_edges_a_chapter_declared() {
     };
 
     let impact = book
-        .impact(&ImpactRequest {
-            start: start.id,
-            depth: 1,
-            direction: Direction::Out,
-        })
+        .impact(&ImpactRequest::symbol(start.id, 1, Direction::Out))
         .expect("the walk")
         .expect("the start symbol exists");
 
@@ -293,11 +293,7 @@ fn the_walk_resolves_by_name_and_never_invents_a_target() {
         other => panic!("expected one `build`, got {other:?}"),
     };
     let impact = book
-        .impact(&ImpactRequest {
-            start: start.id,
-            depth: 2,
-            direction: Direction::Out,
-        })
+        .impact(&ImpactRequest::symbol(start.id, 2, Direction::Out))
         .expect("the walk")
         .expect("the start exists");
     assert!(
@@ -313,4 +309,228 @@ fn the_walk_resolves_by_name_and_never_invents_a_target() {
         "an unresolved name never becomes a node: {impact:?}"
     );
     assert!(impact.unresolved >= 1, "{impact:?}");
+}
+
+// ---------------------------------------------------------------------------
+// F9, T5 — la respuesta acotada (S7, L7)
+// ---------------------------------------------------------------------------
+
+/// A chapter with a call, an import and a type reference, so a filter of
+/// `edges` has something to leave out.
+const MIXED: &str = "\
+use crate::store::Store;
+
+pub trait Store {
+    fn load(&self) -> u8;
+}
+
+pub fn build(store: &impl Store) -> u8 {
+    load_store()
+}
+
+pub fn load_store() -> u8 {
+    1
+}
+";
+
+/// T5/S7: `edges` elige qué kinds sigue la caminata; los demás no aparecen ni
+/// como arista ni como nodo, y la resolución sigue siendo la misma.
+#[test]
+fn the_walk_follows_only_the_edge_kinds_asked() {
+    let scratch = Scratch::new("kinds");
+    scratch.write("src/mixed.rs", MIXED);
+    let book = Arc::new(scratch.open());
+    scratch.indexer(&book).run_full().expect("the index");
+    let start = match book
+        .search(&SearchRequest {
+            query: "build".to_string(),
+        })
+        .expect("the search")
+    {
+        SearchOutcome::Hits(hits) => hits[0].clone(),
+        other => panic!("expected one `build`, got {other:?}"),
+    };
+
+    let all = book
+        .impact(&ImpactRequest::symbol(start.id, 2, Direction::Both))
+        .expect("the walk")
+        .expect("the start exists");
+    assert!(
+        all.edges.iter().any(|edge| edge.kind == "uses"),
+        "the whole vocabulary is followed by default: {:?}",
+        all.edges
+    );
+
+    let calls_only = book
+        .impact(
+            &ImpactRequest::symbol(start.id, 2, Direction::Both)
+                .with_edges(vec!["calls".to_string()]),
+        )
+        .expect("the walk")
+        .expect("the start exists");
+    assert!(
+        calls_only.edges.iter().all(|edge| edge.kind == "calls"),
+        "{:?}",
+        calls_only.edges
+    );
+    assert!(
+        !calls_only.nodes.iter().any(|node| node.name == "Store"),
+        "a kind left out adds no node either: {:?}",
+        calls_only.nodes
+    );
+
+    let uses_only = book
+        .impact(
+            &ImpactRequest::symbol(start.id, 2, Direction::Both)
+                .with_edges(vec!["uses".to_string(), "imports".to_string()]),
+        )
+        .expect("the walk")
+        .expect("the start exists");
+    assert!(
+        uses_only.edges.iter().all(|edge| edge.kind != "calls"),
+        "{:?}",
+        uses_only.edges
+    );
+}
+
+/// T5/S7: la caminata dice por qué se cortó, cuánto mostró y cuánto tenía en la
+/// mano, y el presupuesto de consulta es el que se le pidió (con techo).
+#[test]
+fn the_walk_states_why_it_stopped_and_how_much_it_held() {
+    let scratch = Scratch::new("budget");
+    scratch.write(
+        "src/store.rs",
+        "pub fn hub() {}\npub fn c1() { hub(); }\npub fn c2() { hub(); }\npub fn c3() { hub(); }\npub fn c4() { hub(); }\npub fn c5() { hub(); }\n",
+    );
+    let book = Arc::new(scratch.open());
+    scratch.indexer(&book).run_full().expect("the index");
+    let hub = match book
+        .search(&SearchRequest {
+            query: "hub".to_string(),
+        })
+        .expect("the search")
+    {
+        SearchOutcome::Hits(hits) => hits[0].clone(),
+        other => panic!("expected one `hub`, got {other:?}"),
+    };
+
+    let cut = book
+        .impact(
+            &ImpactRequest::symbol(hub.id, 1, Direction::In)
+                .with_limits(WalkLimits::query(Some(3))),
+        )
+        .expect("the walk")
+        .expect("the start exists");
+    let truncated = cut.truncated.clone().expect("the node budget bit");
+    assert_eq!(truncated.reason, CutReason::Nodes);
+    assert_eq!(truncated.shown, 3, "hub plus two callers: {cut:?}");
+    assert_eq!(
+        truncated.total,
+        Some(6),
+        "five callers and the hub: {cut:?}"
+    );
+
+    let ceiling = WalkLimits::query(Some(usize::MAX));
+    assert_eq!(ceiling.max_nodes, MAX_QUERY_NODES);
+    assert_eq!(ceiling.max_edges, MAX_QUERY_NODES * 2);
+    assert_eq!(WalkLimits::query(None).max_nodes, DEFAULT_QUERY_NODES);
+    assert_eq!(WalkLimits::GRAPH.max_nodes, MAX_NODES);
+
+    // The hop cap is a cut only when the walk still had somewhere to go.
+    scratch.write(
+        "src/chain.rs",
+        "pub fn x() { y(); }\npub fn y() { z(); }\npub fn z() { w(); }\npub fn w() { v(); }\npub fn v() {}\n",
+    );
+    scratch.indexer(&book).run_full().expect("the reindex");
+    let x = match book
+        .search(&SearchRequest {
+            query: "x".to_string(),
+        })
+        .expect("the search")
+    {
+        SearchOutcome::Hits(hits) => hits[0].clone(),
+        other => panic!("expected one `x`, got {other:?}"),
+    };
+    let deep = book
+        .impact(&ImpactRequest::symbol(x.id, 9, Direction::Out))
+        .expect("the walk")
+        .expect("the start exists");
+    let truncated = deep.truncated.clone().expect("the hop cap bit");
+    assert_eq!(truncated.reason, CutReason::Depth);
+    assert_eq!(truncated.shown, 4, "x, y, z and w: {deep:?}");
+    assert_eq!(truncated.total, None, "the deeper answer is not knowable");
+
+    let asked = book
+        .impact(&ImpactRequest::symbol(x.id, 3, Direction::Out))
+        .expect("the walk")
+        .expect("the start exists");
+    assert!(
+        asked.truncated.is_none(),
+        "asking for three hops is not a cut: {asked:?}"
+    );
+}
+
+/// T5/S7/D3: una semilla de archivo camina desde cada declaración del capítulo
+/// y agrupa las conexiones por archivo, con la resolución por nombre de la
+/// caminata de símbolos.
+#[test]
+fn a_chapter_seed_walks_from_every_declaration_and_groups_by_file() {
+    let scratch = Scratch::new("chapter");
+    scratch.write(
+        "src/store.rs",
+        "pub fn open_store() -> u8 { 1 }\npub fn check() -> u8 { handler(); 0 }\n",
+    );
+    scratch.write(
+        "src/api.rs",
+        "use crate::store::open_store;\npub fn build() -> u8 { open_store() }\npub fn handler() -> u8 { 1 }\n",
+    );
+    let book = Arc::new(scratch.open());
+    scratch.indexer(&book).run_full().expect("the index");
+
+    let impact = book
+        .file_impact(
+            "src/api.rs",
+            &FileImpactRequest {
+                depth: 1,
+                direction: Direction::Both,
+                edges: Vec::new(),
+                limits: WalkLimits::query(None),
+            },
+        )
+        .expect("the walk")
+        .expect("the chapter exists");
+    assert_eq!(impact.file, "src/api.rs");
+    assert!(
+        impact
+            .impact
+            .nodes
+            .iter()
+            .filter(|node| node.depth == 0)
+            .all(|node| node.file == "src/api.rs"),
+        "the frontier is the chapter: {:?}",
+        impact.impact.nodes
+    );
+    let link = impact
+        .files
+        .iter()
+        .find(|link| link.file == "src/store.rs")
+        .unwrap_or_else(|| panic!("the chapter reaches store.rs: {:?}", impact.files));
+    assert_eq!(link.imports_out, 2, "the import and the call: {impact:?}");
+    assert_eq!(link.referenced_by_in, 1, "store calls back: {impact:?}");
+    assert_eq!(link.symbols, 2, "the declarations of store.rs: {impact:?}");
+    assert_eq!(impact.impact.unresolved, 0);
+
+    // A path the book does not have is `None`, never an empty walk.
+    assert!(book
+        .file_impact(
+            "src/nope.rs",
+            &FileImpactRequest {
+                depth: 1,
+                direction: Direction::In,
+                edges: Vec::new(),
+                limits: WalkLimits::query(None),
+            },
+        )
+        .expect("the read")
+        .is_none());
 }
