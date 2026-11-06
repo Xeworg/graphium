@@ -12,6 +12,7 @@
 
 pub mod book;
 pub mod cut;
+pub mod envelope;
 pub mod impact;
 pub mod lang;
 pub mod location;
@@ -25,6 +26,7 @@ pub mod watcher;
 
 pub use book::{Book, BookError, Progress};
 pub use cut::{CutReason, Truncation};
+pub use envelope::{Envelope, Pack, ANSWER_OVERHEAD_CHARS};
 pub use impact::{
     Direction, FileImpact, FileImpactRequest, FileLink, Impact, ImpactEdge, ImpactNode,
     ImpactRequest, Seed, WalkLimits,

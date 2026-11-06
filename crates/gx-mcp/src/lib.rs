@@ -219,6 +219,10 @@ pub mod book {
                 );
             }
         }
+        let max_chars = match max_chars_argument(request.max_chars) {
+            Ok(max_chars) => max_chars,
+            Err(response) => return response,
+        };
 
         let file = file.map(str::trim).filter(|text| !text.is_empty());
         let symbol = symbol.map(str::trim).filter(|text| !text.is_empty());
@@ -254,6 +258,10 @@ pub mod book {
         };
         let book = opened.handle.book();
         let base = base(&opened);
+        let envelope = match envelope_of(book, &base, max_chars) {
+            Ok(envelope) => envelope,
+            Err(answer) => return answer,
+        };
 
         let (structure, asked) = match symbol {
             Some(symbol) => {
@@ -287,15 +295,20 @@ pub mod book {
 
         let path = structure.file.clone();
         let answer = structure.answer(request);
+        let mut pack = envelope.pack();
+        let packed = pack_structure_rows(&structure.symbols, &answer.symbols, &mut pack);
         let mut response = base;
         response["ok"] = json!(true);
         response["file"] = json!(path);
         response["lang"] = json!(structure.lang);
         response["content_hash"] = json!(structure.content_hash);
         response["indexed_at"] = json!(gx_index::book::iso8601_utc(structure.indexed_at));
-        response["count"] = json!(answer.symbols.len());
+        response["count"] = json!(packed.shown());
         response["total"] = json!(answer.total);
-        response["symbols"] = json!(structure_symbols_json(&structure.symbols, &answer.symbols));
+        response["symbols"] = json!(packed.rows);
+        if !packed.pointers.is_empty() {
+            response["pointers"] = json!(packed.pointers);
+        }
         if let Some(hit) = asked {
             response["symbol"] = hit_json(&hit);
         }
@@ -306,19 +319,61 @@ pub mod book {
                 "next": structure_next(&path, collapsed.after_line, None, &request.kinds),
             });
         }
-        response["truncated"] = match &answer.truncated {
-            Some(truncation) => {
-                let next = match truncation.reason {
-                    gx_index::CutReason::Collapsed => answer.collapsed.as_ref().map(|collapsed| {
-                        structure_next(&path, collapsed.after_line, None, &request.kinds)
-                    }),
-                    gx_index::CutReason::Nodes => answer.symbols.last().map(|row| {
-                        structure_next(&path, row.line, Some(answer.symbols.len()), &request.kinds)
-                    }),
-                    _ => None,
+        // The notice names the cut that bound first: the book's own (the
+        // outline or the range) or, when the book answered everything and the
+        // answer still did not fit, the character envelope (L7).
+        let filtered_total = answer
+            .truncated
+            .as_ref()
+            .and_then(|truncation| truncation.total)
+            .unwrap_or(answer.symbols.len());
+        let shown = packed.shown();
+        let reason = answer
+            .truncated
+            .as_ref()
+            .map(|truncation| truncation.reason)
+            .or(packed.cliffed.then_some(gx_index::CutReason::Budget));
+        let next = match reason {
+            Some(gx_index::CutReason::Collapsed) => answer
+                .collapsed
+                .as_ref()
+                .map(|collapsed| structure_next(&path, collapsed.after_line, None, &request.kinds)),
+            Some(gx_index::CutReason::Nodes) => packed.last_line.map(|line| {
+                let limit = if packed.cliffed {
+                    Some(
+                        filtered_total
+                            .saturating_sub(shown)
+                            .clamp(1, gx_index::structure::MAX_LIMIT),
+                    )
+                } else {
+                    Some(answer.symbols.len())
                 };
-                truncated_json(truncation, next)
+                structure_next(&path, line, limit, &request.kinds)
+            }),
+            Some(gx_index::CutReason::Budget) if envelope.can_grow() => {
+                Some(structure_wide_next(&path, request, envelope.ceiling_chars))
             }
+            Some(gx_index::CutReason::Budget) => packed.last_line.map(|line| {
+                structure_next(
+                    &path,
+                    line,
+                    Some(
+                        filtered_total
+                            .saturating_sub(shown)
+                            .clamp(1, gx_index::structure::MAX_LIMIT),
+                    ),
+                    &request.kinds,
+                )
+            }),
+            _ => None,
+        };
+        response["max_chars"] = json!(envelope.max_chars);
+        response["chars"] = json!(pack.used());
+        response["truncated"] = match reason {
+            Some(reason) => truncated_json(
+                &gx_index::Truncation::new(reason, shown, Some(filtered_total)),
+                next,
+            ),
             None => Value::Null,
         };
         response
@@ -340,6 +395,9 @@ pub mod book {
         pub edges: Option<Vec<String>>,
         /// The query budget in nodes: 600 by default, 2000 at most.
         pub budget: Option<usize>,
+        /// The character envelope of the answer: the ladder of the book when
+        /// absent, clamped to its hard ceiling.
+        pub max_chars: Option<usize>,
     }
 
     /// Runs `code_impact` for the session with the configuration of the owner.
@@ -415,6 +473,10 @@ pub mod book {
                 Some("send how many nodes the answer may carry; 600 by default and 2000 at most"),
             );
         }
+        let max_chars = match max_chars_argument(question.max_chars) {
+            Ok(max_chars) => max_chars,
+            Err(response) => return response,
+        };
         // A symbol answers the impact of a change (`in`); a chapter answers its
         // whole neighbourhood, which is what a file as a node is for.
         let default_direction = if file.is_some() {
@@ -440,6 +502,10 @@ pub mod book {
         };
         let book = opened.handle.book();
         let base = base(&opened);
+        let envelope = match envelope_of(book, &base, max_chars) {
+            Ok(envelope) => envelope,
+            Err(answer) => return answer,
+        };
         let depth = question.depth.unwrap_or(DEFAULT_DEPTH);
         let limits = gx_index::WalkLimits::query(question.budget);
         let mut seed_args = serde_json::Map::new();
@@ -515,6 +581,46 @@ pub mod book {
             (None, None) => unreachable!("the selector grammar runs first"),
         };
 
+        let mut pack = envelope.pack();
+        let extras = files_json(&grouped);
+        let packed = pack_walk(&walked.nodes, &walked.edges, &extras, &mut pack);
+        let shown = match (&walked.truncated, packed.cliffed) {
+            // The walk bound first: its own cut keeps its own number.
+            (Some(truncation), false) => truncation.shown,
+            (Some(truncation), true) => match truncation.reason {
+                gx_index::CutReason::Edges => packed.edges.len(),
+                _ => packed.shown(),
+            },
+            (None, _) => packed.shown(),
+        };
+        // The follow-up: the envelope first when it bound and the book is
+        // under its ceiling (a bigger answer, one call away), then the walk's
+        // own doubling, and at the ceiling a narrower walk (L7).
+        let next = if packed.cliffed && envelope.can_grow() {
+            Some(with_max_chars(
+                walk_call(&seed_args, depth, direction, &edges, Some(limits.max_nodes)),
+                Some(envelope.ceiling_chars),
+            ))
+        } else if let Some(truncation) = &walked.truncated {
+            match truncation.reason {
+                gx_index::CutReason::Nodes | gx_index::CutReason::Edges => {
+                    // The follow-up call asks the same question with twice
+                    // the budget; at the ceiling there is no next call.
+                    let bigger = limits
+                        .max_nodes
+                        .saturating_mul(2)
+                        .min(gx_index::impact::MAX_QUERY_NODES);
+                    (bigger > limits.max_nodes)
+                        .then(|| walk_call(&seed_args, depth, direction, &edges, Some(bigger)))
+                }
+                _ => None,
+            }
+        } else if packed.cliffed {
+            // The envelope is at its ceiling: the same question, one hop less.
+            (depth > 1).then(|| walk_call(&seed_args, 1, direction, &edges, Some(limits.max_nodes)))
+        } else {
+            None
+        };
         let mut response = base;
         response["ok"] = json!(true);
         if let Some(hit) = &asked {
@@ -529,31 +635,31 @@ pub mod book {
             "max_nodes": limits.max_nodes,
             "max_edges": limits.max_edges,
         });
-        response["truncated"] = match &walked.truncated {
-            Some(truncation) => {
-                let next = match truncation.reason {
-                    gx_index::CutReason::Nodes | gx_index::CutReason::Edges => {
-                        // The follow-up call asks the same question with twice
-                        // the budget; at the ceiling there is no next call.
-                        let bigger = limits
-                            .max_nodes
-                            .saturating_mul(2)
-                            .min(gx_index::impact::MAX_QUERY_NODES);
-                        (bigger > limits.max_nodes)
-                            .then(|| walk_call(&seed_args, depth, direction, &edges, Some(bigger)))
-                    }
-                    _ => None,
-                };
-                truncated_json(truncation, next)
-            }
+        let reason = walked
+            .truncated
+            .as_ref()
+            .map(|truncation| truncation.reason)
+            .or(packed.cliffed.then_some(gx_index::CutReason::Budget));
+        let total = walked
+            .truncated
+            .as_ref()
+            .and_then(|truncation| truncation.total)
+            .or(packed.cliffed.then_some(walked.nodes.len()));
+        response["max_chars"] = json!(envelope.max_chars);
+        response["chars"] = json!(pack.used());
+        response["truncated"] = match reason {
+            Some(reason) => truncated_json(&gx_index::Truncation::new(reason, shown, total), next),
             None => Value::Null,
         };
         response["unresolved"] = json!(walked.unresolved);
-        response["count"] = json!(walked.nodes.len());
-        response["nodes"] = json!(nodes_json(&walked.nodes));
-        response["edges"] = json!(edges_json(&walked.edges));
+        response["count"] = json!(packed.shown());
+        response["nodes"] = json!(packed.nodes);
+        response["edges"] = json!(packed.edges);
+        if !packed.pointers.is_empty() {
+            response["pointers"] = json!(packed.pointers);
+        }
         if seed_file.is_some() {
-            response["files"] = json!(files_json(&grouped));
+            response["files"] = json!(packed.extras);
         }
         response
     }
@@ -564,6 +670,7 @@ pub mod book {
         symbol: &str,
         depth: Option<u32>,
         edges: Option<&[String]>,
+        max_chars: Option<usize>,
     ) -> Value {
         let config = gx_index::BooksConfig::from_env();
         code_diagram_query_with(
@@ -572,6 +679,7 @@ pub mod book {
             symbol,
             depth,
             edges,
+            max_chars,
         )
     }
 
@@ -582,7 +690,7 @@ pub mod book {
         symbol: &str,
         depth: Option<u32>,
     ) -> Value {
-        code_diagram_query_with(config, project, symbol, depth, None)
+        code_diagram_query_with(config, project, symbol, depth, None, None)
     }
 
     /// Builds the `graph` document of one symbol's neighbourhood (S5, T5).
@@ -592,14 +700,21 @@ pub mod book {
     /// document never leaves with a density the kind would reject, so it is
     /// renderable as it arrives. `edges` chooses which kinds the walk follows;
     /// the walk keeps the 300/600 ceilings of the kind, because a bigger
-    /// neighbourhood is a `code_impact` question, not a document.
+    /// neighbourhood is a `code_impact` question, not a document. Past those
+    /// ceilings the character envelope (`max_chars`, L7) trims the document,
+    /// never its validity: an edge always connects nodes the document carries.
     pub fn code_diagram_query_with(
         config: &gx_index::BooksConfig,
         project: Option<&str>,
         symbol: &str,
         depth: Option<u32>,
         edges: Option<&[String]>,
+        max_chars: Option<usize>,
     ) -> Value {
+        let max_chars = match max_chars_argument(max_chars) {
+            Ok(max_chars) => max_chars,
+            Err(response) => return response,
+        };
         let symbol = match text_argument(symbol, "symbol") {
             Ok(symbol) => symbol,
             Err(response) => return response,
@@ -614,6 +729,10 @@ pub mod book {
         };
         let book = opened.handle.book();
         let base = base(&opened);
+        let envelope = match envelope_of(book, &base, max_chars) {
+            Ok(envelope) => envelope,
+            Err(answer) => return answer,
+        };
         let hit = match one_symbol(book, base.clone(), symbol, "symbol") {
             Ok(hit) => hit,
             Err(answer) => return answer,
@@ -640,22 +759,17 @@ pub mod book {
             }
         };
 
-        let nodes: Vec<Value> = impact
+        // The document keeps the ceilings of the kind first — at most 300
+        // nodes, 600 edges and a density of 3, every edge between nodes the
+        // document carries — and the envelope trims after them (L7).
+        let node_rows: Vec<Value> = impact
             .nodes
             .iter()
             .map(|node| json!({ "id": node_id(node.id), "label": node.qname }))
             .collect();
-        // The `graph` kind rejects a density over 3.0 at render time: the
-        // document is trimmed here so it never needs a repair before drawing.
-        let ceiling = impact
-            .nodes
-            .len()
-            .saturating_mul(MAX_DENSITY)
-            .min(gx_index::impact::MAX_EDGES);
-        let document_edges: Vec<Value> = impact
+        let edge_rows: Vec<Value> = impact
             .edges
             .iter()
-            .take(ceiling)
             .map(|edge| {
                 json!({
                     "from": node_id(edge.from),
@@ -664,7 +778,52 @@ pub mod book {
                 })
             })
             .collect();
-        let dropped = impact.edges.len().saturating_sub(document_edges.len());
+        let mut pack = envelope.pack();
+        let room = pack.room();
+        // Nodes and edges share the room: the head of the document is the
+        // ranked nodes, and the edges take what the nodes left — a document
+        // has no pointer tail, so nothing else competes for the rest.
+        let head = if rows_total(node_rows.iter().cloned())
+            .saturating_add(rows_total(edge_rows.iter().cloned()))
+            <= room
+        {
+            room
+        } else {
+            room * HEAD_SHARE_PERCENT / 100
+        };
+        let mut nodes: Vec<Value> = Vec::new();
+        let mut kept: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for (node, row) in impact.nodes.iter().zip(node_rows) {
+            if !pack.take_under(&row, head) {
+                break;
+            }
+            kept.insert(node_id(node.id));
+            nodes.push(row);
+        }
+        let node_count = nodes.len();
+        let mut document_edges: Vec<Value> = Vec::new();
+        let mut dropped_by_density = 0usize;
+        let mut dropped_by_envelope = 0usize;
+        for (edge, row) in impact.edges.iter().zip(edge_rows) {
+            // A node the envelope left out takes its edges with it: the
+            // document never dangles.
+            if !kept.contains(&node_id(edge.from)) || !kept.contains(&node_id(edge.to)) {
+                continue;
+            }
+            if document_edges.len() >= node_count.saturating_mul(MAX_DENSITY)
+                || document_edges.len() >= gx_index::impact::MAX_EDGES
+            {
+                dropped_by_density += 1;
+                continue;
+            }
+            if !pack.take_under(&row, room) {
+                dropped_by_envelope += 1;
+                continue;
+            }
+            document_edges.push(row);
+        }
+        let edge_count = document_edges.len();
+        let nodes_dropped = node_count < impact.nodes.len();
         let document = json!({
             "version": 1,
             "kind": "graph",
@@ -691,27 +850,37 @@ pub mod book {
             // have taken edges away after the walk stopped).
             Some(truncation) => {
                 let shown = match truncation.reason {
-                    gx_index::CutReason::Edges => document["edges"]
-                        .as_array()
-                        .map(Vec::len)
-                        .unwrap_or_default(),
-                    _ => document["nodes"]
-                        .as_array()
-                        .map(Vec::len)
-                        .unwrap_or_default(),
+                    gx_index::CutReason::Edges => edge_count,
+                    _ => node_count,
                 };
                 Some(truncated_json(
                     &gx_index::Truncation::new(truncation.reason, shown, truncation.total),
                     Some(next),
                 ))
             }
-            None if dropped > 0 => Some(truncated_json(
+            // The envelope trimmed a document the walk completed: the answer
+            // says so and names the exact wider call, or the connections view
+            // when the envelope is already at its ceiling.
+            None if nodes_dropped || dropped_by_envelope > 0 => {
+                let (shown, total) = if nodes_dropped {
+                    (node_count, Some(impact.nodes.len()))
+                } else {
+                    (edge_count, Some(impact.edges.len()))
+                };
+                let next = if envelope.can_grow() {
+                    diagram_call(symbol, depth, &edges, envelope.ceiling_chars)
+                } else {
+                    next
+                };
+                Some(truncated_json(
+                    &gx_index::Truncation::new(gx_index::CutReason::Budget, shown, total),
+                    Some(next),
+                ))
+            }
+            None if dropped_by_density > 0 => Some(truncated_json(
                 &gx_index::Truncation::new(
                     gx_index::CutReason::Density,
-                    document["edges"]
-                        .as_array()
-                        .map(Vec::len)
-                        .unwrap_or_default(),
+                    edge_count,
                     Some(impact.edges.len()),
                 ),
                 Some(next),
@@ -728,9 +897,11 @@ pub mod book {
             "max_nodes": limits.max_nodes,
             "max_edges": limits.max_edges,
         });
+        response["max_chars"] = json!(envelope.max_chars);
+        response["chars"] = json!(pack.used());
         response["truncated"] = truncated.unwrap_or(Value::Null);
-        response["nodes"] = json!(document["nodes"].as_array().map(Vec::len));
-        response["edges"] = json!(document["edges"].as_array().map(Vec::len));
+        response["nodes"] = json!(node_count);
+        response["edges"] = json!(edge_count);
         response["diagram"] = document;
         response
     }
@@ -738,6 +909,16 @@ pub mod book {
     /// The most edges a `graph` document may carry for each node: the density
     /// ceiling of the kind (PRD §7.3).
     const MAX_DENSITY: usize = 3;
+
+    /// The share of the envelope the ranked head of a walk may spend before
+    /// the cliff (L7): the full rows take two thirds, the edges that explain
+    /// them the next sixth, and the pointer tail what is left. A diagram has
+    /// no pointer tail, so its edges take the rest of the room.
+    const HEAD_SHARE_PERCENT: usize = 66;
+
+    /// The cumulative share of the head and the edges of a walk: the pointer
+    /// tail keeps the last sixth of the envelope.
+    const EDGES_SHARE_PERCENT: usize = 83;
 
     /// One open book and the project it belongs to.
     struct Opened {
@@ -863,6 +1044,50 @@ pub mod book {
             args.insert("budget".to_string(), json!(budget));
         }
         json!({ "tool": "code_impact", "args": Value::Object(args) })
+    }
+
+    /// The same call with a bigger envelope (L7): the exact widening a budget
+    /// cut proposes while the book is under its hard ceiling.
+    fn with_max_chars(mut call: Value, max_chars: Option<usize>) -> Value {
+        if let (Some(max_chars), Some(args)) = (max_chars, call["args"].as_object_mut()) {
+            args.insert("max_chars".to_string(), json!(max_chars));
+        }
+        call
+    }
+
+    /// The same `code_structure` call with a bigger envelope (L7): the
+    /// `after_line`/`limit`/`kinds` of this answer are kept, so the wider call
+    /// asks exactly the same question.
+    fn structure_wide_next(
+        file: &str,
+        request: &gx_index::StructureRequest,
+        max_chars: usize,
+    ) -> Value {
+        let mut args = serde_json::Map::new();
+        args.insert("file".to_string(), json!(file));
+        if let Some(after_line) = request.after_line {
+            args.insert("after_line".to_string(), json!(after_line));
+        }
+        if let Some(limit) = request.limit {
+            args.insert("limit".to_string(), json!(limit));
+        }
+        if !request.kinds.is_empty() {
+            args.insert("kinds".to_string(), json!(request.kinds));
+        }
+        args.insert("max_chars".to_string(), json!(max_chars));
+        json!({ "tool": "code_structure", "args": Value::Object(args) })
+    }
+
+    /// The same `code_diagram` call with a bigger envelope (L7).
+    fn diagram_call(symbol: &str, depth: u32, edges: &[String], max_chars: usize) -> Value {
+        let mut args = serde_json::Map::new();
+        args.insert("symbol".to_string(), json!(symbol));
+        args.insert("depth".to_string(), json!(depth));
+        if !edges.is_empty() {
+            args.insert("edges".to_string(), json!(edges));
+        }
+        args.insert("max_chars".to_string(), json!(max_chars));
+        json!({ "tool": "code_diagram", "args": Value::Object(args) })
     }
 
     /// The machine-readable notice of a cut (T5): the reason, the numbers and
@@ -1039,66 +1264,250 @@ pub mod book {
         format!("s{id}")
     }
 
-    /// The nodes of a walk as the agent reads them.
-    fn nodes_json(nodes: &[gx_index::ImpactNode]) -> Vec<Value> {
-        nodes
-            .iter()
-            .map(|node| {
-                json!({
-                    "id": node_id(node.id),
-                    "name": node.name,
-                    "kind": node.kind,
-                    "qname": node.qname,
-                    "file": node.file,
-                    "line": node.line,
-                    "depth": node.depth,
-                })
-            })
-            .collect()
+    /// The `max_chars` envelope of the three answering tools (L7): absent is
+    /// the ladder of the book, and `0` is a mistake the agent would read as
+    /// «no answer at all».
+    fn max_chars_argument(raw: Option<usize>) -> Result<Option<usize>, Value> {
+        if raw == Some(0) {
+            return Err(failure(
+                "max_chars",
+                "invalid_value",
+                "`max_chars` is 0",
+                Some("send how many characters the answer may carry: the default is the ladder of the book (13,000 up to 150 indexed files, 18,000 up to 500, 24,000 beyond) and the ceiling is 1.5 times that"),
+            ));
+        }
+        Ok(raw)
     }
 
-    /// The edges of a walk as the agent reads them.
-    fn edges_json(edges: &[gx_index::ImpactEdge]) -> Vec<Value> {
-        edges
-            .iter()
-            .map(|edge| {
-                json!({
-                    "from": node_id(edge.from),
-                    "to": node_id(edge.to),
-                    "kind": edge.kind,
-                })
-            })
-            .collect()
+    /// The envelope of one answer: the ladder of the book it was asked of, or
+    /// the caller's `max_chars` clamped to the hard ceiling of that rung (L7).
+    fn envelope_of(
+        book: &gx_index::Book,
+        base: &Value,
+        requested: Option<usize>,
+    ) -> Result<gx_index::Envelope, Value> {
+        let (files, _symbols) = book.counts().map_err(|error| {
+            failure_with(
+                base.clone(),
+                "book",
+                UNAVAILABLE_CODE,
+                &error.to_string(),
+                None,
+            )
+        })?;
+        Ok(gx_index::Envelope::resolve(files, requested))
     }
 
-    /// The declarations of a chapter, with the parent as the qname it belongs
-    /// to: the tree is rebuildable from this list alone.
-    ///
-    /// `all` is the whole chapter and `shown` the rows of this answer, because
-    /// an outline hides the parent of a child it does show.
-    fn structure_symbols_json(
+    /// What the envelope made of the rows of one chapter (L7): the full rows
+    /// at the head and the pointer tail after the cliff.
+    #[derive(Debug, Default)]
+    struct PackedRows {
+        rows: Vec<Value>,
+        pointers: Vec<Value>,
+        /// The line of the last row the answer carries: the cursor of the
+        /// follow-up call.
+        last_line: Option<u32>,
+        /// Whether the envelope stopped the full rows.
+        cliffed: bool,
+    }
+
+    impl PackedRows {
+        /// The entries the answer carries: full rows and pointers.
+        fn shown(&self) -> usize {
+            self.rows.len() + self.pointers.len()
+        }
+    }
+
+    /// What the envelope made of one walk (L7).
+    #[derive(Debug, Default)]
+    struct PackedWalk {
+        nodes: Vec<Value>,
+        edges: Vec<Value>,
+        /// The grouping of a file seed, trimmed with the envelope.
+        extras: Vec<Value>,
+        pointers: Vec<Value>,
+        /// Whether the envelope stopped the full nodes.
+        cliffed: bool,
+    }
+
+    impl PackedWalk {
+        /// The entries the answer carries: full nodes and pointers.
+        fn shown(&self) -> usize {
+            self.nodes.len() + self.pointers.len()
+        }
+    }
+
+    /// The characters a list of serialized rows spends, separators included.
+    fn rows_total<I>(rows: I) -> usize
+    where
+        I: IntoIterator<Item = Value>,
+    {
+        rows.into_iter().fold(0usize, |total, row| {
+            total.saturating_add(gx_index::envelope::measure(&row).saturating_add(1))
+        })
+    }
+
+    /// Packs the rows of a chapter into the envelope (L7): the span-ordered
+    /// head as full rows, the tail as `{name, line, kind}` pointers. Past the
+    /// cliff the `collapsed`/`after_line` cursor keeps reading the chapter.
+    fn pack_structure_rows(
         all: &[gx_index::StructureSymbol],
-        shown: &[gx_index::StructureSymbol],
-    ) -> Vec<Value> {
+        rows: &[gx_index::StructureSymbol],
+        pack: &mut gx_index::Pack,
+    ) -> PackedRows {
         let qnames: std::collections::BTreeMap<i64, &str> = all
             .iter()
             .map(|symbol| (symbol.id, symbol.qname.as_str()))
             .collect();
-        shown
-            .iter()
-            .map(|symbol| {
-                json!({
-                    "name": symbol.name,
-                    "kind": symbol.kind,
-                    "qname": symbol.qname,
-                    "line": symbol.line,
-                    "column": symbol.column,
-                    "end_line": symbol.end_line,
-                    "end_column": symbol.end_column,
-                    "parent": symbol.parent.and_then(|parent| qnames.get(&parent).copied()),
-                })
-            })
-            .collect()
+        let room = pack.room();
+        let whole = rows_total(
+            rows.iter()
+                .map(|symbol| structure_symbol_json(&qnames, symbol)),
+        );
+        let head = if whole <= room {
+            room
+        } else {
+            room * HEAD_SHARE_PERCENT / 100
+        };
+        let mut packed = PackedRows::default();
+        for symbol in rows {
+            if !packed.cliffed {
+                let row = structure_symbol_json(&qnames, symbol);
+                if pack.take_under(&row, head) {
+                    packed.rows.push(row);
+                    packed.last_line = Some(symbol.line);
+                    continue;
+                }
+                packed.cliffed = true;
+            }
+            let pointer = json!({
+                "name": symbol.name,
+                "line": symbol.line,
+                "kind": symbol.kind,
+            });
+            if !pack.take(&pointer) {
+                break;
+            }
+            packed.pointers.push(pointer);
+            packed.last_line = Some(symbol.line);
+        }
+        packed
+    }
+
+    /// Packs one walk into the envelope (L7): the ranked nodes as full rows,
+    /// the edges between the rows the answer carries, the `extras` of the
+    /// answer (the grouping of a file seed) and the rest of the nodes as
+    /// `{name, file, line}` pointers.
+    fn pack_walk(
+        nodes: &[gx_index::ImpactNode],
+        edges: &[gx_index::ImpactEdge],
+        extras: &[Value],
+        pack: &mut gx_index::Pack,
+    ) -> PackedWalk {
+        let room = pack.room();
+        let whole = rows_total(nodes.iter().map(node_json))
+            .saturating_add(rows_total(edges.iter().map(edge_json)))
+            .saturating_add(rows_total(extras.iter().cloned()));
+        let (head, connective) = if whole <= room {
+            (room, room)
+        } else {
+            (
+                room * HEAD_SHARE_PERCENT / 100,
+                room * EDGES_SHARE_PERCENT / 100,
+            )
+        };
+        let mut packed = PackedWalk::default();
+        let mut full: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
+        for node in nodes {
+            let row = node_json(node);
+            if !pack.take_under(&row, head) {
+                packed.cliffed = true;
+                break;
+            }
+            full.insert(node.id);
+            packed.nodes.push(row);
+        }
+        // An edge connects rows the answer fully carries: a pointer has no id,
+        // so an edge to it would reference nothing.
+        for edge in edges {
+            if !full.contains(&edge.from) || !full.contains(&edge.to) {
+                continue;
+            }
+            let row = edge_json(edge);
+            if !pack.take_under(&row, connective) {
+                break;
+            }
+            packed.edges.push(row);
+        }
+        // The grouping of a file seed is part of what the window pays for, so
+        // the envelope trims it too.
+        for extra in extras {
+            if !pack.take(extra) {
+                packed.cliffed = true;
+                break;
+            }
+            packed.extras.push(extra.clone());
+        }
+        let cliff = if packed.cliffed {
+            packed.nodes.len()
+        } else {
+            nodes.len()
+        };
+        for node in &nodes[cliff..] {
+            let pointer = json!({
+                "name": node.name,
+                "file": node.file,
+                "line": node.line,
+            });
+            if !pack.take(&pointer) {
+                break;
+            }
+            packed.pointers.push(pointer);
+        }
+        packed
+    }
+
+    /// One node of a walk as the agent reads it.
+    fn node_json(node: &gx_index::ImpactNode) -> Value {
+        json!({
+            "id": node_id(node.id),
+            "name": node.name,
+            "kind": node.kind,
+            "qname": node.qname,
+            "file": node.file,
+            "line": node.line,
+            "depth": node.depth,
+        })
+    }
+
+    /// One edge of a walk as the agent reads it.
+    fn edge_json(edge: &gx_index::ImpactEdge) -> Value {
+        json!({
+            "from": node_id(edge.from),
+            "to": node_id(edge.to),
+            "kind": edge.kind,
+        })
+    }
+
+    /// One declaration of a chapter, with the parent as the qname it belongs
+    /// to: the tree is rebuildable from this list alone.
+    ///
+    /// `qnames` is the whole chapter, because an outline hides the parent of a
+    /// child it does show.
+    fn structure_symbol_json(
+        qnames: &std::collections::BTreeMap<i64, &str>,
+        symbol: &gx_index::StructureSymbol,
+    ) -> Value {
+        json!({
+            "name": symbol.name,
+            "kind": symbol.kind,
+            "qname": symbol.qname,
+            "line": symbol.line,
+            "column": symbol.column,
+            "end_line": symbol.end_line,
+            "end_column": symbol.end_column,
+            "parent": symbol.parent.and_then(|parent| qnames.get(&parent).copied()),
+        })
     }
 
     /// One hit as the agent reads it: `file:line` plus what S7 requires.
@@ -1482,6 +1891,14 @@ the chapter plus the `book_key` of the book that answered. \
 `progress.state == \"indexing\"` means the first pass is still running. The \
 book is on by default: `book_disabled` only answers when the owner opted out \
 with `GRAPHIUM_BOOK=off`, and an unopenable book answers `book_unavailable`. \
+The answer is bounded in characters too (L7): it carries `chars` (what it \
+spends) and `max_chars` (the envelope it had — the ladder of the book by \
+indexed files, 13,000 up to 150, 18,000 up to 500, 24,000 beyond, which the \
+`max_chars` argument overrides up to 1.5 times). Past the envelope the full \
+rows stop and the rest of the span-ordered tail arrives as one-line \
+`pointers: [{name, line, kind}]`, so the `after_line` cursor still reads what \
+was left; that cut says `reason: \"budget\"` and its `next` is the exact \
+wider call (`max_chars` at the ceiling) or, at the ceiling, the cursor page. \
 Read-only: it never touches the plan.";
 
 /// Parameters of the `code_structure` tool (F9, C1).
@@ -1504,6 +1921,10 @@ pub struct CodeStructureParams {
     /// T5: the declaration kinds to answer; empty answers all of them.
     #[serde(default)]
     pub kinds: Option<Vec<String>>,
+    /// T4/C3: the character envelope of the answer (L7). Absent is the ladder
+    /// of the book; the hard ceiling is 1.5 times its rung.
+    #[serde(default)]
+    pub max_chars: Option<usize>,
 }
 
 /// Description of the `code_impact` tool, written for the agent (S5, S7, D3).
@@ -1530,6 +1951,14 @@ shown, total, next}`, where `next` is the copy-pasteable call with the bigger \
 budget, or `null` when the 3-hop cap is the reason and no follow-up exists. \
 Every node carries `file`, `line` and the hop it was reached at; the seed \
 travels with `content_hash` and `indexed_at`, plus the `book_key` of the book. \
+The answer is bounded in characters too (L7): it carries `chars` and \
+`max_chars` (the ladder of the book by indexed files, which the `max_chars` \
+argument overrides up to 1.5 times), and the nodes are ranked by relevance — \
+the hop first, then the edges of the answer that touch each node — so a \
+capped answer leads with the most connected. Past the envelope the full rows \
+stop and the rest arrives as one-line `pointers: [{name, file, line}]`; that \
+cut says `reason: \"budget\"` and `next` is the exact wider call, or a \
+narrower walk (`depth: 1`) when the envelope is already at its ceiling. \
 A name that fits more than one declaration answers `ok: false` with \
 `ambiguous_symbol` and `candidates[]`; the book is on by default, so \
 `book_disabled` only comes from an explicit `GRAPHIUM_BOOK=off`. Read-only: it \
@@ -1560,6 +1989,10 @@ pub struct CodeImpactParams {
     /// T5: the query budget in nodes (default 600, at most 2000).
     #[serde(default)]
     pub budget: Option<usize>,
+    /// T4/C3: the character envelope of the answer (L7). Absent is the ladder
+    /// of the book; the hard ceiling is 1.5 times its rung.
+    #[serde(default)]
+    pub max_chars: Option<usize>,
 }
 
 /// Description of the `code_diagram` tool, written for the agent (S5).
@@ -1575,8 +2008,13 @@ renderable with no repair. The walk is the same as `code_impact` with \
 it follows. `truncated` is the object `{reason, shown, total, next}`: \
 `density` means the document was trimmed to render, `nodes`/`edges` mean the \
 walk was cut before the document existed (the answer carries the 300/600 \
-ceilings of the kind in `budget`), and `next` is the `code_impact` call that \
-answers the same question with its own query budget. The edges are syntactic, \
+ceilings of the kind in `budget`), `budget` means the character envelope of \
+the answer (`max_chars`, L7 — the ladder of the book by indexed files, \
+overridable up to 1.5 times) trimmed nodes or edges after the kind's ceilings, \
+and `next` is the `code_impact` call that answers the same question with its \
+own query budget or, when the envelope can grow, the same `code_diagram` with \
+a bigger `max_chars`. A trimmed document always renders: an edge never points \
+at a node the document dropped. The edges are syntactic, \
 not typed (D3): the picture is the book's reading of the code, not a \
 compiler's. The start symbol travels with `content_hash`, `indexed_at` and the \
 `book_key` of the book; an ambiguous name answers `ok: false` with \
@@ -1597,6 +2035,10 @@ pub struct CodeDiagramParams {
     /// `uses`); empty follows the whole vocabulary.
     #[serde(default)]
     pub edges: Option<Vec<String>>,
+    /// T4/C3: the character envelope of the answer (L7). Absent is the ladder
+    /// of the book; the hard ceiling is 1.5 times its rung.
+    #[serde(default)]
+    pub max_chars: Option<usize>,
 }
 
 /// The MCP server of Graphium.
@@ -1959,6 +2401,7 @@ impl GraphiumServer {
             after_line: params.after_line,
             limit: params.limit,
             kinds: params.kinds.unwrap_or_default(),
+            max_chars: params.max_chars,
         };
         let response = tokio::task::spawn_blocking(move || {
             book::code_structure(
@@ -1998,6 +2441,7 @@ impl GraphiumServer {
             direction: params.direction,
             edges: params.edges,
             budget: params.budget,
+            max_chars: params.max_chars,
         };
         let response =
             tokio::task::spawn_blocking(move || book::code_impact(&session_id, &question))
@@ -2030,6 +2474,7 @@ impl GraphiumServer {
                 &params.symbol,
                 params.depth,
                 params.edges.as_deref(),
+                params.max_chars,
             )
         })
         .await
@@ -3473,6 +3918,7 @@ pub fn e() { a(); b(); c(); d(); }\n";
                     after_line,
                     limit,
                     kinds: Vec::new(),
+                    max_chars: None,
                 },
             )
         };
@@ -3539,6 +3985,7 @@ pub fn e() { a(); b(); c(); d(); }\n";
                 after_line: Some(0),
                 limit: None,
                 kinds: vec!["method".to_string()],
+                max_chars: None,
             },
         );
         assert_eq!(methods["ok"], true, "{methods}");
@@ -3751,6 +4198,7 @@ pub fn e() { a(); b(); c(); d(); }\n";
             "open_store",
             None,
             Some(&["imports".to_string()]),
+            None,
         );
         assert_eq!(diagram["ok"], true, "{diagram}");
         let labels: Vec<&str> = diagram["diagram"]["edges"]
@@ -3937,6 +4385,485 @@ pub fn e() { a(); b(); c(); d(); }\n";
         assert!(small["truncated"].is_null(), "{small}");
     }
 
+    // -----------------------------------------------------------------
+    // F9, T4/C3 — the answer envelope (L7)
+    // -----------------------------------------------------------------
+
+    /// A chapter of `count` top-level declarations: enough rows to pass the
+    /// envelope of a small book, so the answer has to cliff its tail.
+    fn write_many_rows(scratch: &BookScratch, count: usize) {
+        let mut text = String::new();
+        for index in 0..count {
+            text.push_str(&format!("pub fn handler_{index:03}() {{}}\n"));
+        }
+        scratch.write("src/many.rs", &text);
+    }
+
+    /// A hub and its callers: a wide answer with one ranked head.
+    fn write_hub(scratch: &BookScratch, callers: usize) {
+        let mut text = String::from("pub fn hub() {}\n");
+        for index in 0..callers {
+            text.push_str(&format!("pub fn caller_{index:03}() {{ hub(); }}\n"));
+        }
+        scratch.write("src/fan.rs", &text);
+    }
+
+    /// The characters of one answer, as the agent's window pays for them.
+    fn answer_chars(response: &serde_json::Value) -> usize {
+        serde_json::to_string(response)
+            .expect("the answer is JSON")
+            .chars()
+            .count()
+    }
+
+    /// L7: the envelope is the ladder of the book and its hard ceiling is 1.5×
+    /// the rung: 151 indexed chapters are the second rung.
+    #[test]
+    fn the_envelope_reports_the_ladder_of_the_book() {
+        let scratch = BookScratch::new("envelope-ladder");
+        for index in 0..151 {
+            scratch.write(
+                &format!("src/f{index:03}.rs"),
+                &format!("pub fn f{index:03}() {{}}\n"),
+            );
+        }
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+        let ask = |max_chars: Option<usize>| {
+            crate::book::code_structure_query_with(
+                &scratch.config(),
+                Some(&project),
+                Some("src/f000.rs"),
+                None,
+                &gx_index::StructureRequest {
+                    max_chars,
+                    ..gx_index::StructureRequest::default()
+                },
+            )
+        };
+
+        let default = ask(None);
+        assert_eq!(default["ok"], true, "{default}");
+        assert_eq!(
+            default["max_chars"], 18_000,
+            "151 chapters are the second rung: {default}"
+        );
+        assert!(answer_chars(&default) <= 18_000, "{default}");
+
+        let ceiling = ask(Some(1_000_000));
+        assert_eq!(
+            ceiling["max_chars"], 27_000,
+            "the hard ceiling of the second rung: {ceiling}"
+        );
+    }
+
+    /// L7: past the envelope the full rows stop and the tail becomes one-line
+    /// pointers, with the row cursor of the answer still valid.
+    #[test]
+    fn the_structure_answer_cliffs_to_pointers_inside_the_envelope() {
+        let scratch = BookScratch::new("envelope-structure");
+        write_many_rows(&scratch, 180);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response = crate::book::code_structure_query_with(
+            &scratch.config(),
+            Some(&project),
+            Some("src/many.rs"),
+            None,
+            &gx_index::StructureRequest::default(),
+        );
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["max_chars"], 13_000, "{response}");
+        let chars = response["chars"]
+            .as_u64()
+            .expect("the answer says what it used") as usize;
+        assert!(
+            chars <= 13_000,
+            "the notice stays inside the envelope: {response}"
+        );
+        assert!(
+            answer_chars(&response) <= 13_000,
+            "the window pays at most the envelope: {} > 13,000",
+            answer_chars(&response)
+        );
+        assert_eq!(response["total"], 180, "{response}");
+        assert_eq!(response["truncated"]["reason"], "budget", "{response}");
+
+        let rows = response["symbols"].as_array().expect("the full rows");
+        let pointers = response["pointers"].as_array().expect("the pointer tail");
+        assert!(!rows.is_empty(), "the head keeps full rows: {response}");
+        assert!(
+            !pointers.is_empty(),
+            "the tail cliffs to pointers: {response}"
+        );
+        assert!(rows.len() < 180, "{response}");
+        assert!(
+            pointers[0]["name"].is_string()
+                && pointers[0]["line"].is_number()
+                && pointers[0]["kind"].is_string(),
+            "a pointer names one line: {response}"
+        );
+        assert!(
+            pointers[0].get("column").is_none() && pointers[0].get("parent").is_none(),
+            "a pointer is not a row: {response}"
+        );
+        assert_eq!(
+            pointers[0]["line"].as_i64(),
+            rows.last()
+                .and_then(|row| row["line"].as_i64())
+                .map(|line| line + 1),
+            "the cliff is contiguous and after the full rows: {response}"
+        );
+        let shown = response["truncated"]["shown"]
+            .as_u64()
+            .expect("the notice says how many") as usize;
+        assert_eq!(shown, rows.len() + pointers.len(), "{response}");
+        assert_eq!(response["count"], shown, "{response}");
+        assert!(shown < 180, "the whole tail did not fit: {response}");
+
+        let next = &response["truncated"]["next"];
+        assert_eq!(next["tool"], "code_structure", "{response}");
+        assert_eq!(next["args"]["file"], "src/many.rs", "{response}");
+        assert_eq!(
+            next["args"]["max_chars"], 19_500,
+            "the exact widening call: {response}"
+        );
+    }
+
+    /// L7: the walk ranks and cliffs too: the head keeps the ranked nodes with
+    /// their `id`, the tail becomes `{name, file, line}` pointers, and every
+    /// edge connects nodes the answer fully carries.
+    #[test]
+    fn the_impact_answer_cliffs_to_pointers_inside_the_envelope() {
+        let scratch = BookScratch::new("envelope-impact");
+        write_hub(&scratch, 300);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response = crate::book::code_impact_query_with(
+            &scratch.config(),
+            Some(&project),
+            &crate::book::ImpactQuestion {
+                symbol: Some("hub".to_string()),
+                direction: Some("in".to_string()),
+                ..crate::book::ImpactQuestion::default()
+            },
+        );
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["max_chars"], 13_000, "{response}");
+        assert!(
+            answer_chars(&response) <= 13_000,
+            "the window pays at most the envelope: {} > 13,000",
+            answer_chars(&response)
+        );
+        assert_eq!(response["truncated"]["reason"], "budget", "{response}");
+        assert_eq!(response["truncated"]["total"], 301, "{response}");
+
+        let nodes = response["nodes"].as_array().expect("the full nodes");
+        let pointers = response["pointers"].as_array().expect("the pointer tail");
+        assert_eq!(nodes[0]["name"], "hub", "the seed leads: {response}");
+        assert!(!pointers.is_empty(), "{response}");
+        assert!(nodes.len() + pointers.len() < 301, "{response}");
+        assert_eq!(
+            response["count"],
+            nodes.len() + pointers.len(),
+            "{response}"
+        );
+        assert_eq!(
+            response["truncated"]["shown"], response["count"],
+            "{response}"
+        );
+        assert_eq!(pointers[0]["file"], "src/fan.rs", "{response}");
+        assert!(
+            pointers[0].get("id").is_none() && pointers[0].get("qname").is_none(),
+            "a pointer is compact: {response}"
+        );
+
+        let ids: std::collections::BTreeSet<&str> = nodes
+            .iter()
+            .filter_map(|node| node["id"].as_str())
+            .collect();
+        for edge in response["edges"].as_array().expect("the edges") {
+            for end in ["from", "to"] {
+                assert!(
+                    ids.contains(edge[end].as_str().expect("an id")),
+                    "an edge never dangles from a pointer: {response}"
+                );
+            }
+        }
+        assert_eq!(
+            response["truncated"]["next"]["args"]["max_chars"], 19_500,
+            "{response}"
+        );
+    }
+
+    /// L7: the kept nodes are ranked by relevance — hop depth first, then the
+    /// distinct edges that touch them — so a capped hub answer leads with what
+    /// the walk found most connected instead of the alphabet.
+    #[test]
+    fn the_impact_answer_ranks_the_neighbours_by_degree() {
+        let scratch = BookScratch::new("envelope-rank");
+        scratch.write(
+            "src/rank.rs",
+            "pub fn hub() {}\n\
+             pub fn zulu() { hub(); }\n\
+             pub fn alpha() { hub(); }\n\
+             pub fn z_one() { zulu(); }\n\
+             pub fn z_two() { zulu(); }\n\
+             pub fn z_three() { zulu(); }\n",
+        );
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response = crate::book::code_impact_query_with(
+            &scratch.config(),
+            Some(&project),
+            &crate::book::ImpactQuestion {
+                symbol: Some("hub".to_string()),
+                depth: Some(2),
+                direction: Some("in".to_string()),
+                ..crate::book::ImpactQuestion::default()
+            },
+        );
+        assert_eq!(response["ok"], true, "{response}");
+        let nodes = response["nodes"].as_array().expect("the nodes");
+        assert_eq!(nodes[0]["name"], "hub", "the seed leads: {response}");
+        let neighbours: Vec<&str> = nodes
+            .iter()
+            .filter(|node| node["depth"] == 1)
+            .filter_map(|node| node["name"].as_str())
+            .collect();
+        assert_eq!(
+            neighbours,
+            ["zulu", "alpha"],
+            "the degree ranks the answer, not the alphabet: {response}"
+        );
+        assert!(
+            response["truncated"].is_null(),
+            "the fixture fits the envelope: {response}"
+        );
+    }
+
+    /// L7: `max_chars` overrides the rung, the hard ceiling clamps it, and `0`
+    /// is a mistake the agent would read as «no answer»: all three tools say
+    /// `invalid_value`.
+    #[test]
+    fn the_max_chars_override_is_clamped_and_zero_is_invalid_value() {
+        let scratch = BookScratch::new("envelope-override");
+        write_many_rows(&scratch, 180);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+        let ask = |max_chars: Option<usize>| {
+            crate::book::code_structure_query_with(
+                &scratch.config(),
+                Some(&project),
+                Some("src/many.rs"),
+                None,
+                &gx_index::StructureRequest {
+                    max_chars,
+                    ..gx_index::StructureRequest::default()
+                },
+            )
+        };
+
+        let tight = ask(Some(2_000));
+        assert_eq!(tight["ok"], true, "{tight}");
+        assert_eq!(tight["max_chars"], 2_000, "{tight}");
+        assert!(answer_chars(&tight) <= 2_000, "{tight}");
+        assert_eq!(tight["truncated"]["reason"], "budget", "{tight}");
+        assert_eq!(
+            tight["truncated"]["next"]["args"]["max_chars"], 19_500,
+            "the widening call: {tight}"
+        );
+
+        let huge = ask(Some(1_000_000));
+        assert_eq!(
+            huge["max_chars"], 19_500,
+            "the hard ceiling of the rung: {huge}"
+        );
+
+        let zero = ask(Some(0));
+        assert_eq!(zero["ok"], false, "{zero}");
+        assert_eq!(zero["errors"][0]["code"], "invalid_value", "{zero}");
+        assert_eq!(zero["errors"][0]["path"], "max_chars", "{zero}");
+
+        let impact = crate::book::code_impact_query_with(
+            &scratch.config(),
+            Some(&project),
+            &crate::book::ImpactQuestion {
+                symbol: Some("handler_000".to_string()),
+                max_chars: Some(0),
+                ..crate::book::ImpactQuestion::default()
+            },
+        );
+        assert_eq!(impact["ok"], false, "{impact}");
+        assert_eq!(impact["errors"][0]["path"], "max_chars", "{impact}");
+
+        let diagram = crate::book::code_diagram_query_with(
+            &scratch.config(),
+            Some(&project),
+            "handler_000",
+            None,
+            None,
+            Some(0),
+        );
+        assert_eq!(diagram["ok"], false, "{diagram}");
+        assert_eq!(diagram["errors"][0]["code"], "invalid_value", "{diagram}");
+        assert_eq!(diagram["errors"][0]["path"], "max_chars", "{diagram}");
+    }
+
+    /// L7: the document is trimmed inside the envelope and still renders: the
+    /// kind ceilings come first, the envelope takes nodes and edges after, and
+    /// no edge is left pointing at a node the document dropped.
+    #[test]
+    fn the_diagram_stays_renderable_inside_the_envelope() {
+        let scratch = BookScratch::new("envelope-diagram");
+        write_hub(&scratch, 240);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response = crate::book::code_diagram_query_with(
+            &scratch.config(),
+            Some(&project),
+            "hub",
+            Some(1),
+            None,
+            Some(3_000),
+        );
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["max_chars"], 3_000, "{response}");
+        assert!(
+            answer_chars(&response) <= 3_000,
+            "the window pays at most the envelope: {} > 3,000",
+            answer_chars(&response)
+        );
+        assert_eq!(response["truncated"]["reason"], "budget", "{response}");
+        assert_eq!(response["truncated"]["total"], 241, "{response}");
+
+        let document = &response["diagram"];
+        assert_eq!(document["kind"], "graph", "{response}");
+        let nodes = document["nodes"].as_array().expect("the document nodes");
+        assert!(!nodes.is_empty() && nodes.len() < 241, "{response}");
+        let kept: std::collections::BTreeSet<&str> = nodes
+            .iter()
+            .filter_map(|node| node["id"].as_str())
+            .collect();
+        for edge in document["edges"].as_array().expect("the document edges") {
+            for end in ["from", "to"] {
+                assert!(
+                    kept.contains(edge[end].as_str().expect("an id")),
+                    "the trimmed document never dangles: {response}"
+                );
+            }
+        }
+        let validated = crate::contract::validate_diagram(&document.to_string());
+        assert!(
+            validated.ok,
+            "the trimmed document still renders: {:?}",
+            validated.errors
+        );
+        assert_eq!(response["nodes"], nodes.len(), "{response}");
+        assert_eq!(response["truncated"]["shown"], nodes.len(), "{response}");
+        assert_eq!(
+            response["truncated"]["next"]["args"]["max_chars"], 19_500,
+            "the wider document is one call away: {response}"
+        );
+    }
+
+    /// L7: the node budget and the character envelope compose — whichever
+    /// binds first cuts, and the reason says which one it was.
+    #[test]
+    fn the_budget_and_the_envelope_compose_and_the_reason_says_which_bound_first() {
+        let scratch = BookScratch::new("envelope-compose");
+        write_hub(&scratch, 60);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+        let ask = |budget: Option<usize>, max_chars: Option<usize>| {
+            crate::book::code_impact_query_with(
+                &scratch.config(),
+                Some(&project),
+                &crate::book::ImpactQuestion {
+                    symbol: Some("hub".to_string()),
+                    budget,
+                    max_chars,
+                    ..crate::book::ImpactQuestion::default()
+                },
+            )
+        };
+
+        let nodes = ask(Some(30), None);
+        assert_eq!(nodes["truncated"]["reason"], "nodes", "{nodes}");
+        assert_eq!(nodes["truncated"]["total"], 61, "{nodes}");
+        assert_eq!(nodes["truncated"]["shown"], 30, "{nodes}");
+        assert!(nodes["pointers"].is_null(), "{nodes}");
+
+        let envelope = ask(None, Some(3_000));
+        assert_eq!(
+            envelope["truncated"]["reason"], "budget",
+            "the envelope binds the complete walk: {envelope}"
+        );
+        assert_eq!(envelope["truncated"]["total"], 61, "{envelope}");
+        assert!(answer_chars(&envelope) <= 3_000, "{envelope}");
+        assert!(
+            envelope["truncated"]["shown"].as_u64().unwrap() < 30,
+            "{envelope}"
+        );
+
+        let both = ask(Some(30), Some(3_000));
+        assert_eq!(
+            both["truncated"]["reason"], "nodes",
+            "the walk stopped first: {both}"
+        );
+        assert_eq!(both["truncated"]["total"], 61, "{both}");
+        assert!(
+            both["truncated"]["shown"].as_u64().unwrap() < 30,
+            "the envelope also cut: {both}"
+        );
+        assert_eq!(
+            both["truncated"]["next"]["args"]["max_chars"], 19_500,
+            "the envelope is the tighter bound, so the next call widens it: {both}"
+        );
+    }
+
+    /// T4/C3 (PRESERVE): an answer that fits the envelope keeps the shape T5
+    /// published — the outline, its rows and `truncated: null` — and now
+    /// reports the envelope it had and what it used.
+    #[test]
+    fn a_small_answer_keeps_its_shape_and_reports_the_envelope() {
+        let scratch = BookScratch::new("envelope-preserve");
+        scratch.write("src/nested.rs", NESTED);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response = crate::book::code_structure_with(
+            &scratch.config(),
+            Some(&project),
+            Some("src/nested.rs"),
+            None,
+        );
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["count"], 4, "{response}");
+        assert_eq!(response["total"], 7, "{response}");
+        assert_eq!(response["collapsed"]["hidden_symbols"], 3, "{response}");
+        assert_eq!(response["truncated"]["reason"], "collapsed", "{response}");
+        assert_eq!(response["truncated"]["shown"], 4, "{response}");
+        assert!(
+            response["pointers"].is_null(),
+            "nothing was cliffed: {response}"
+        );
+        assert_eq!(response["max_chars"], 13_000, "{response}");
+        let chars = response["chars"]
+            .as_u64()
+            .expect("the envelope is reported") as usize;
+        assert!(chars <= 13_000, "{response}");
+        assert!(
+            answer_chars(&response) <= chars,
+            "the estimate is an upper bound: {} > {chars}",
+            answer_chars(&response)
+        );
+    }
+
     /// T5: the four schemas and the descriptions teach the outline default,
     /// the file seed and the query budget, so an agent can pick them without
     /// reading any other document.
@@ -3970,24 +4897,49 @@ pub fn e() { a(); b(); c(); d(); }\n";
             "the diagram keeps the ceilings of the kind: {diagram}"
         );
 
+        // T4/C3: the envelope is a knob of the three tools and a fact of
+        // every answer they publish.
+        for tool in ["code_structure", "code_impact", "code_diagram"] {
+            let schema = crate::dispatch::tool_schema(tool);
+            assert!(
+                schema["properties"]["max_chars"].is_object(),
+                "{tool} takes `max_chars`: {schema}"
+            );
+        }
+
         let structure_text = crate::harness::description("code_structure");
-        for needle in ["outline", "after_line", "collapsed", "truncated"] {
+        for needle in [
+            "outline",
+            "after_line",
+            "collapsed",
+            "truncated",
+            "pointers",
+        ] {
             assert!(
                 structure_text.contains(needle),
                 "code_structure lacks `{needle}`"
             );
         }
         let impact_text = crate::harness::description("code_impact");
-        for needle in ["`file`", "budget", "edges", "files", "truncated"] {
+        for needle in [
+            "`file`",
+            "budget",
+            "edges",
+            "files",
+            "truncated",
+            "pointers",
+        ] {
             assert!(impact_text.contains(needle), "code_impact lacks `{needle}`");
         }
         let diagram_text = crate::harness::description("code_diagram");
-        for needle in ["edges", "density"] {
+        for needle in ["edges", "density", "max_chars"] {
             assert!(
                 diagram_text.contains(needle),
                 "code_diagram lacks `{needle}`"
             );
         }
+        assert!(crate::harness::INSTRUCTIONS.contains("max_chars"));
+        assert!(crate::harness::INSTRUCTIONS.contains("pointer"));
         assert!(crate::harness::INSTRUCTIONS.contains("outline"));
         assert!(crate::harness::INSTRUCTIONS.contains("file seed"));
 
@@ -4004,14 +4956,14 @@ pub fn e() { a(); b(); c(); d(); }\n";
                 .clone()
         };
         let structure = advertised("code_structure");
-        for key in ["after_line", "limit", "kinds"] {
+        for key in ["after_line", "limit", "kinds", "max_chars"] {
             assert!(
                 structure["properties"].get(key).is_some(),
                 "code_structure takes `{key}`: {structure:?}"
             );
         }
         let impact = advertised("code_impact");
-        for key in ["file", "edges", "budget"] {
+        for key in ["file", "edges", "budget", "max_chars"] {
             assert!(
                 impact["properties"].get(key).is_some(),
                 "code_impact takes `{key}`: {impact:?}"
@@ -4022,10 +4974,12 @@ pub fn e() { a(); b(); c(); d(); }\n";
             "exactly one of `symbol` or `file`: {impact:?}"
         );
         let diagram = advertised("code_diagram");
-        assert!(
-            diagram["properties"].get("edges").is_some(),
-            "code_diagram takes `edges`: {diagram:?}"
-        );
+        for key in ["edges", "max_chars"] {
+            assert!(
+                diagram["properties"].get(key).is_some(),
+                "code_diagram takes `{key}`: {diagram:?}"
+            );
+        }
     }
 
     /// The three tools exist once: the dispatcher of the owner publishes them

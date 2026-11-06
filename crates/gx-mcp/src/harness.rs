@@ -136,7 +136,13 @@ and states every cut in `truncated: {reason, shown, total, next}`, with `next` \
 as the call that continues it. `unresolved` counts the names the book could not \
 pin down (resolution is by name, only while a name has at most five definers). \
 Those connections are syntactic, not typed: they are read from the code and may \
-be false positives. `code_diagram` turns the same neighbourhood into a `graph` \
+be false positives. Every answer of the book is bounded in characters as well: \
+it reports `chars` (what it spends) and `max_chars` (the envelope it had — the \
+ladder of the book by indexed files, 13,000 up to 150, 18,000 up to 500, \
+24,000 beyond, overridable with the `max_chars` argument up to 1.5 times), the \
+head keeps the full rows and the tail cliffs to one-line `pointers`, and a cut \
+in all three tools says `reason: \"budget\"` with the exact wider call in `next`. \
+`code_diagram` turns the same neighbourhood into a `graph` \
 document in `diagram`, ready to send to `render_diagram` with no repair: that \
 is the cheap diagram, drawn from the book instead of from the code; it takes \
 the same `edges` filter and keeps the 300/600 ceilings, so `truncated.reason` \
@@ -288,8 +294,8 @@ Read-only: it never touches the plan."
 default: only the declarations whose parent is `NULL`, ordered by span, each \
 with `name`, `kind`, `qname`, `line`, `column`, `end_line`, `end_column` and \
 `parent` (the qname of the declaration that contains it). The answer carries \
-`count`, `total` (every declaration of the chapter, filter included) and, when \
-children were hidden, \
+`count` (the full rows plus the pointer tail), `total` (every declaration of \
+the chapter, filter included) and, when children were hidden, \
 `collapsed: {hidden_symbols, declarations_with_children, next}`, where `next` \
 is the copy-pasteable call that reads them. To read a slice of the tree, send \
 `after_line` (start strictly after that line) and `limit` (1..=200): they are \
@@ -304,7 +310,11 @@ declarations». A cut answers `truncated: {reason, shown, total, next}` with \
 reason `collapsed` (the outline hid children) or `nodes` (the limit cut the \
 range). The answer carries the `content_hash` and `indexed_at` of the chapter, \
 the `book_key` of the book and `progress.state` (`indexing` means the first \
-pass is running). The book is on by default: `book_disabled` only answers when \
+pass is running). It is bounded in characters too (`chars`, `max_chars`): past \
+the envelope the full rows stop and the tail arrives as one-line `pointers` \
+(`{name, line, kind}`), the `after_line` cursor still reads what was left, and \
+the cut says reason `budget` with the exact wider call in `next`. The book is on \
+by default: `book_disabled` only answers when \
 the owner opted out with `GRAPHIUM_BOOK=off`, and a book that cannot be opened \
 answers `book_unavailable`. Read-only: it never touches the plan."
         }
@@ -328,7 +338,11 @@ hops, a cycle is answered once per symbol and never followed twice, and the \
 answer is bounded by `budget` nodes (600 by default, 2000 at most, with the \
 edges at twice the nodes). A cut answers `truncated: {reason, shown, total, \
 next}`: `nodes` or `edges` when the budget bit (then `next` is the same call \
-with twice the budget), `depth` when the request asked for more hops than 3 \
+with twice the budget), `budget` when the character envelope of the answer \
+(`chars`, `max_chars` — the ladder of the book by indexed files, overridable \
+up to 1.5 times) stopped the full rows and the rest arrived as one-line \
+`pointers` (then `next` is the wider call, or a narrower walk at the \
+ceiling), `depth` when the request asked for more hops than 3 \
 and the walk still had somewhere to go (`next` is `null`: the cap is the \
 answer). Nodes carry `file`, `line` and the hop they were reached at; the seed \
 travels with `content_hash`, `indexed_at` and the `book_key` of the book. An \
@@ -347,9 +361,14 @@ as it is, or to `validate_diagram` first: it respects the contract of the kind \
 narrows which kinds it follows. `truncated` is `{reason, shown, total, next}` \
 and tells the two cuts apart: `density` means the document was trimmed to \
 render (the walk itself was complete) and `nodes`/`edges` mean the walk was cut \
-first, because `budget` keeps the 300/600 ceilings of the kind; in both cases \
+first, because `budget` keeps the 300/600 ceilings of the kind; `budget` means \
+the character envelope of the answer (`chars`, `max_chars`, L7 — the ladder of \
+the book by indexed files, overridable up to 1.5 times) trimmed the document \
+after those ceilings, and the document still renders because an edge never \
+points at a node it dropped; in all cases \
 `next` is the `code_impact` call that answers the same question with the query \
-budget of the connections view. The connections are syntactic, not typed: the \
+budget of the connections view, or the same `code_diagram` with a bigger \
+`max_chars` when the envelope can still grow. The connections are syntactic, not typed: the \
 picture is the book's reading of the code. The start symbol travels with \
 `content_hash`, `indexed_at` and the `book_key` of the book; an ambiguous name \
 answers `ok: false` with `ambiguous_symbol` and `candidates[]`, and the book is \

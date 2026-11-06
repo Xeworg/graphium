@@ -62,6 +62,9 @@ pub struct StructureRequest {
     pub limit: Option<usize>,
     /// The declaration kinds to answer; empty answers the whole vocabulary.
     pub kinds: Vec<String>,
+    /// T4/C3: the character envelope of the answer (L7). `None` is the ladder
+    /// of the book; it never changes which rows the range asks for.
+    pub max_chars: Option<usize>,
 }
 
 impl StructureRequest {
@@ -371,6 +374,7 @@ mod tests {
                 after_line,
                 limit: Some(3),
                 kinds: Vec::new(),
+                max_chars: None,
             });
             assert!(answer.collapsed.is_none(), "a range is not an outline");
             seen.extend(answer.symbols.iter().map(|row| row.line));
@@ -393,6 +397,7 @@ mod tests {
             after_line: Some(0),
             limit: Some(usize::MAX),
             kinds: Vec::new(),
+            max_chars: None,
         });
         assert_eq!(answer.symbols.len(), 7, "the cap still answers the chapter");
         assert!(answer.truncated.is_none(), "nothing was left out");
@@ -401,6 +406,7 @@ mod tests {
             after_line: Some(0),
             limit: Some(2),
             kinds: Vec::new(),
+            max_chars: None,
         });
         assert_eq!(answer.symbols.len(), 2);
         assert_eq!(
@@ -441,6 +447,7 @@ mod tests {
             after_line: None,
             limit: Some(2),
             kinds: Vec::new(),
+            max_chars: None,
         });
         let ids: Vec<i64> = answer.symbols.iter().map(|row| row.id).collect();
         assert_eq!(ids, vec![1, 2]);
