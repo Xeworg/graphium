@@ -22,7 +22,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use notify::{RecursiveMode, Watcher};
 
 use crate::book::{Book, BookError, Progress};
-use crate::extract::{self, ParsedFile};
+use crate::lang::{self, ParsedFile};
 
 /// The byte ceiling of one batch (ideas §10.1: `cache_spill` takes an
 /// EXCLUSIVE lock, so the batch decides how long the writer holds it).
@@ -39,7 +39,21 @@ pub const DEBOUNCE: Duration = Duration::from_millis(400);
 pub const IDLE_TRUNCATE: Duration = Duration::from_secs(30);
 
 /// The directories the book never walks, whatever `.gitignore` says (D2).
-pub const HARD_EXCLUSIONS: [&str; 3] = [".git", ".graphium", ".graphium-book"];
+///
+/// `target` and `node_modules` are hard exclusions because the build artifacts
+/// they hold leak through the event path: rust-analyzer (or any build) writes
+/// `target/` while the watcher is armed, the debounced event names a deep
+/// directory, and whether the gitignore of the root applies to a walk that
+/// starts there must never decide what the book keeps (found live
+/// 2026-11-06: 31 generated `.rs` files of build scripts entered the book of
+/// this very repository).
+pub const HARD_EXCLUSIONS: [&str; 5] = [
+    ".git",
+    ".graphium",
+    ".graphium-book",
+    "target",
+    "node_modules",
+];
 
 /// Renders in flight in this process: the watcher parses with one thread only
 /// while there is one (ideas §10.1, «Backpressure»).
@@ -82,7 +96,7 @@ impl Default for IndexOptions {
     fn default() -> Self {
         Self {
             max_batch_bytes: MAX_BATCH_BYTES,
-            max_file_bytes: extract::MAX_FILE_BYTES,
+            max_file_bytes: lang::MAX_FILE_BYTES,
             parse_threads: MAX_PARSE_THREADS,
             debounce: DEBOUNCE,
             idle_truncate: IDLE_TRUNCATE,
@@ -285,14 +299,14 @@ impl Indexer {
                     continue;
                 }
             };
-            if extract::looks_binary(&bytes) {
+            if lang::looks_binary(&bytes) {
                 eprintln!("gx-index: skipping `{}`: it looks binary", file.relative);
                 summary.skipped += 1;
                 continue;
             }
             if skip_unchanged {
                 let existing = self.book.content_hash_of(&file.relative)?;
-                if existing.as_deref() == Some(extract::content_hash(&bytes).as_str()) {
+                if existing.as_deref() == Some(lang::content_hash(&bytes).as_str()) {
                     continue;
                 }
             }
@@ -512,7 +526,7 @@ fn collect(
         if !entry.file_type().is_some_and(|kind| kind.is_file()) {
             continue;
         }
-        if extract::language_for(path).is_none() {
+        if lang::language_for(path).is_none() {
             continue;
         }
         let Ok(metadata) = entry.metadata() else {
@@ -615,7 +629,7 @@ pub fn batches(files: Vec<SourceFile>, max_batch_bytes: usize) -> Vec<Vec<Source
 
 /// Parses the bytes already read for one source file.
 fn parse_source(file: &SourceFile, bytes: &[u8]) -> Result<ParsedFile, String> {
-    match extract::parse_rust(&file.relative, bytes, file.mtime_ns) {
+    match lang::parse(&file.relative, bytes, file.mtime_ns) {
         Ok(parsed) => Ok(parsed),
         Err(error) => Err(format!("cannot parse `{}`: {error}", file.relative)),
     }
@@ -631,6 +645,10 @@ fn parent_dirs(root: &Path, paths: &BTreeSet<PathBuf>) -> Vec<PathBuf> {
             root.join(path)
         };
         if !absolute.starts_with(root) {
+            continue;
+        }
+        // A build artifact never schedules a sync, even as an event.
+        if is_hard_excluded(&absolute) {
             continue;
         }
         let parent = if absolute.is_dir() {

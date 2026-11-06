@@ -695,9 +695,13 @@ fn a_binary_file_is_skipped_with_a_warning() {
 
 /// The switch of S5 and the disabled path never open a book.
 #[test]
-fn the_disabled_gate_is_the_flag_and_not_the_file_system() {
+fn the_disabled_gate_is_the_explicit_opt_out() {
+    assert!(
+        flag_from_value(None),
+        "no GRAPHIUM_BOOK at all keeps the book on (S5, L5)"
+    );
     assert!(flag_from_value(Some("on".into())));
-    assert!(!flag_from_value(None));
+    assert!(!flag_from_value(Some("off".into())));
     let scratch = Scratch::new("disabled");
     let error = gx_index::service::ensure(&gx_index::BooksConfig::disabled(), &scratch.root)
         .expect_err("the disabled gate answers an error");

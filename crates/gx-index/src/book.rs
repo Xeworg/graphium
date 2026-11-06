@@ -13,7 +13,7 @@ use std::sync::Mutex;
 
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::extract::ParsedFile;
+use crate::lang::ParsedFile;
 use crate::location::{path_string, BookEntry, BookLocation, BookRegistry};
 use crate::schema::{self, Identity, JournalMode, OpenReport, RebuildReason};
 use crate::search::{self, SearchOutcome, SearchRequest};
@@ -27,8 +27,8 @@ pub enum BookError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Location(#[from] crate::location::LocationError),
-    /// `GRAPHIUM_BOOK` is not on: the book is disabled (S5).
-    #[error("the book is disabled: GRAPHIUM_BOOK is not `on`")]
+    /// The project opted out with `GRAPHIUM_BOOK=off` (S5, L5).
+    #[error("the book is off for this project: GRAPHIUM_BOOK=off")]
     Disabled,
     /// There is no home directory and no books root override.
     #[error("no books root: HOME is not set and GRAPHIUM_BOOKS_ROOT is empty")]
@@ -329,12 +329,57 @@ impl Book {
     /// A `Connection` is not `Sync`, so the readers are per call; the writer
     /// keeps its own connection behind the mutex (ideas §10.1, «Pragmas»).
     pub fn search(&self, request: &SearchRequest) -> Result<SearchOutcome, BookError> {
+        let reader = self.reader()?;
+        Ok(search::search(&reader, request)?)
+    }
+
+    /// The containment tree of one chapter, or `None` when the path is not a
+    /// chapter of the book (S5, `code_structure`).
+    pub fn structure_at_path(
+        &self,
+        path: &str,
+    ) -> Result<Option<crate::structure::FileStructure>, BookError> {
+        let reader = self.reader()?;
+        Ok(crate::structure::file_structure(&reader, path)?)
+    }
+
+    /// The containment tree of the chapter that declares one symbol (S5).
+    pub fn structure_of_symbol(
+        &self,
+        symbol_id: i64,
+    ) -> Result<Option<crate::structure::FileStructure>, BookError> {
+        let reader = self.reader()?;
+        Ok(crate::structure::structure_of_symbol(&reader, symbol_id)?)
+    }
+
+    /// The bounded walk of the edges from one symbol (S7, `code_impact`).
+    pub fn impact(
+        &self,
+        request: &crate::impact::ImpactRequest,
+    ) -> Result<Option<crate::impact::Impact>, BookError> {
+        let reader = self.reader()?;
+        Ok(crate::impact::impact(&reader, request)?)
+    }
+
+    /// The connections of one chapter, with the walk from every declaration of
+    /// it and the grouping by file (T5, `code_impact` with a `file` seed).
+    pub fn file_impact(
+        &self,
+        path: &str,
+        request: &crate::impact::FileImpactRequest,
+    ) -> Result<Option<crate::impact::FileImpact>, BookError> {
+        let reader = self.reader()?;
+        Ok(crate::impact::file_impact(&reader, path, request)?)
+    }
+
+    /// A read-only connection of this book, with the pragmas of a reader.
+    fn reader(&self) -> Result<Connection, BookError> {
         let reader = Connection::open_with_flags(
             &self.location.database,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         schema::apply_reader_pragmas(&reader)?;
-        Ok(search::search(&reader, request)?)
+        Ok(reader)
     }
 
     /// A checkpoint that never blocks a reader: only when the queue of the
@@ -540,10 +585,35 @@ fn write_chapter(
         ids.push(id);
     }
 
+    // The relations go after the symbols they hang from, in the same savepoint:
+    // a chapter is its declarations and its edges, never half of them.
+    write_edges(connection, file, &ids)?;
+
     Ok(ChapterReport {
         written: true,
         symbols: file.symbols.len() as i64,
     })
+}
+
+/// Writes the relations of one chapter inside the caller's transaction.
+///
+/// Every edge is born with `dst_id IS NULL` and the target as the source
+/// spells it (S7): the target is resolved by `name_norm` when the readers walk
+/// it, so a chapter that introduces a second definer of a name does not need a
+/// rewrite of the edges that pointed at the first one.
+fn write_edges(connection: &Connection, file: &ParsedFile, ids: &[i64]) -> rusqlite::Result<i64> {
+    let mut written = 0i64;
+    for edge in &file.edges {
+        let Some(&src_id) = ids.get(edge.src) else {
+            continue;
+        };
+        connection.execute(
+            "INSERT INTO edge (src_id, dst_id, dst_name, kind) VALUES (?1, NULL, ?2, ?3)",
+            rusqlite::params![src_id, edge.dst_name, edge.kind],
+        )?;
+        written += 1;
+    }
+    Ok(written)
 }
 
 /// The qname of a symbol inside one chapter: `a::Config`, `a::Config#2`.
