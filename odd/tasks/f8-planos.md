@@ -91,3 +91,13 @@ prueba en vivo del corte `f2-cierre` T5 (2026-11-05).
   pueda actualizarlo si este fue actualizado».
 - L3 (2026-11-05): «dale» — se abre el corte con A (aislamiento + conmutador)
   primero y B (plano del usuario) después.
+- L6 (2026-11-05, verbatim): «ok, al precionar el boton de clonar se clona
+  varias veces en mi plano, no se puede cerrar el diagrama. al intentarlo en
+  diagramas abiertos este no se borra de mi plano se borra del principal
+  comportamiento normal pero en si no veo una forma de borrar los planos de
+  mi plano». Dos defectos del corte B: (1) `create_clone` no deduplica —
+  cada clic crea otro clon del mismo original; (2) no existe la vía de
+  borrar un clon del plano del usuario (hueco del spec S4). Fix acordado:
+  un clon por original (volver a clonar enfoca el existente) y «×» para
+  borrar el clon; cerrar el original NO borra el clon (foto), pero el
+  humano sí puede.

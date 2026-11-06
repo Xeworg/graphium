@@ -212,7 +212,17 @@ pub struct ClonePaint {
     /// The version of the original the drawing shows: the current one after a
     /// refresh, an older one while the human browses the history.
     pub version: u64,
-    pub svg: String,
+    /// The drawing to mount, when the owner has a new one. Absent when there is
+    /// nothing new to draw — the clone the human asked for already exists and
+    /// the page keeps what it shows (L6), or its photo is the only drawing and
+    /// the original closed — so the page never blanks a clone (S4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub svg: Option<String>,
+    /// Whether the page brings this clone on screen: the answer to a clone
+    /// request — a new clone or the one that already exists — travels to it
+    /// instead of leaving the human looking at another plan (L6). A version of
+    /// the history never moves the camera.
+    pub bring: bool,
 }
 
 impl PlanState {
@@ -244,6 +254,28 @@ impl PlanState {
         viewport: Option<Size>,
     ) -> Result<ClonePaint, gx_mcp::tools::ErrorPayload> {
         let store = gx_mcp::store::diagram_store();
+        // One view instance per original (L6 of `f8-planos.md`): a second click
+        // on the clone button of a diagram brings the clone that already exists
+        // — where the human left it — instead of stacking an identical copy on
+        // the user plan. It is asked before the store, so a clone whose original
+        // closed still answers with its photo instead of an error.
+        let existing = self
+            .clones
+            .lock()
+            .expect("clones lock")
+            .iter()
+            .find(|clone| clone.origin_diagram_id == diagram_id)
+            .cloned();
+        if let Some(existing) = existing {
+            return Ok(ClonePaint {
+                entry: existing.entry(store),
+                version: existing.snapshot_version,
+                // Nothing new to draw: the page keeps the drawing it has, and
+                // asks the owner for it again if it never had one.
+                svg: None,
+                bring: true,
+            });
+        }
         let Some(summary) = store.get(diagram_id) else {
             return Err(unknown_diagram(diagram_id, store));
         };
@@ -283,7 +315,8 @@ impl PlanState {
         Ok(ClonePaint {
             entry,
             version: current,
-            svg,
+            svg: Some(svg),
+            bring: true,
         })
     }
 
@@ -356,7 +389,10 @@ impl PlanState {
         Ok(ClonePaint {
             entry,
             version: target,
-            svg,
+            svg: Some(svg),
+            // A version of the history never moves the camera: the human is
+            // already looking at the clone (B2, B3).
+            bring: false,
         })
     }
 
@@ -372,6 +408,20 @@ impl PlanState {
         };
         clone.pos = pos;
         true
+    }
+
+    /// Removes a clone from the user plan (L6 of `f8-planos.md`): the human
+    /// closes their own view instance with its `×`.
+    ///
+    /// Answers `false` when the plan does not hold that id, so a repeated click
+    /// — or a page that has not read the last state yet — is a no-op instead of
+    /// an error the human would read in the banner. The diagram of the session,
+    /// its history and the other clones are untouched (S4).
+    pub fn remove_clone(&self, clone_id: &str) -> bool {
+        let mut clones = self.clones.lock().expect("clones lock");
+        let before = clones.len();
+        clones.retain(|clone| clone.clone_id != clone_id);
+        clones.len() != before
     }
 
     /// The rectangles the user plan already occupies: the objects of its own
@@ -782,9 +832,10 @@ pub fn build(keep_alive: bool, start_window: bool) -> (tauri::App<tauri::Wry>, A
             .and_then(viewport_of);
         match clone_state.create_clone(&payload.diagram_id, viewport) {
             Ok(paint) => {
-                // The drawing goes first: the page creates the object with it,
-                // so a state that lists a clone nobody has drawn yet never
-                // happens, and the clone the human asked for never flickers.
+                // The answer goes first: the page creates the object with it (or
+                // keeps the one it already has, L6), so a state that lists a
+                // clone nobody has drawn yet never happens, and the clone the
+                // human asked for never flickers.
                 let _ = clone_handle.emit("graphium://clone-paint", paint);
                 let _ = clone_handle.emit("graphium://state", plan_payload(&clone_state));
             }
@@ -843,6 +894,26 @@ pub fn build(keep_alive: bool, start_window: bool) -> (tauri::App<tauri::Wry>, A
             return;
         }
         let _ = move_handle.emit("graphium://state", plan_payload(&move_state));
+    });
+
+    // The human removes a clone from their own plan (L6 of `f8-planos.md`): the
+    // owner drops the view instance and the state that follows takes the object
+    // off the page. The diagram of the session, its history and the other
+    // clones stay where they are, and an id the plan does not hold is a no-op.
+    let remove_handle = handle.clone();
+    let remove_state = Arc::clone(&state);
+    handle.listen("graphium://clone-remove", move |event| {
+        #[derive(Deserialize)]
+        struct CloneRemovePayload {
+            clone_id: String,
+        }
+        let Ok(payload) = serde_json::from_str::<CloneRemovePayload>(event.payload()) else {
+            return;
+        };
+        if !remove_state.remove_clone(&payload.clone_id) {
+            return;
+        }
+        let _ = remove_handle.emit("graphium://state", plan_payload(&remove_state));
     });
 
     let settings_state = Arc::clone(&state);

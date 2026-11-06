@@ -442,7 +442,9 @@ body {
 
 /* El `×` vive **dentro** del rectángulo de su objeto, contra la esquina. Si
  * colgara afuera, el puntero tendría que salir del objeto para alcanzarlo y
- * el botón se escondería justo cuando uno va a apretarlo. */
+ * el botón se escondería justo cuando uno va a apretarlo. El `×` de un clon
+ * (`.clone-close`, L6 de `f8-planos.md`) usa esta misma regla: cierra la
+ * instancia de vista del plano del humano, no un diagrama de la sesión. */
 .diagram-close {
   position: absolute;
   top: 4px;
@@ -882,13 +884,17 @@ body {
 }
 
 /* The tools of a clone (B2, B3 of `f8-planos.md`, S4): the history of the
- * original and «Actualizar el clon», in the corner of the object and out of the
- * way until the pointer arrives, like the `×` of a diagram. They paint with the
- * tokens of the theme (RF22, S18). */
+ * original and «Actualizar el clon», against the corner of the object and out of
+ * the way until the pointer arrives, like the `×` of a diagram. They paint with
+ * the tokens of the theme (RF22, S18) and leave the corner to the `×` that
+ * removes the clone, so the two hang from the same place a diagram's `×` does
+ * (L6). */
 .diagram-clone-tools {
   position: absolute;
   top: 4px;
-  right: 4px;
+  /* The `×` of the clone is 20 px wide at 4 px of the corner: the tools start
+     past it, and the button keeps the grammar of every other object. */
+  right: 28px;
   z-index: 2;
   display: flex;
   align-items: center;
