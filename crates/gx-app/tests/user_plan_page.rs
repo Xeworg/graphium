@@ -431,8 +431,8 @@ fn dragging_a_clone_moves_it_and_the_background_still_pans() {
 fn the_clone_has_its_own_cross_and_it_asks_the_owner_to_remove_it() {
     let object = slice_between(JS, "function createCloneObject(clone) {", "\n}");
     assert!(
-        object.contains("createCloneClose(container)"),
-        "el `×` se arma con el objeto del clon: {object}"
+        object.contains("cloneTools.append(createCloneClose(container))"),
+        "el `×` vive DENTRO del pill del toolbar: un solo control anclado a la esquina, nada se desborda de la caja (L8): {object}"
     );
 
     let clone = slice_between(JS, "function createCloneClose(container) {", "\n}");
@@ -475,17 +475,30 @@ fn the_clone_has_its_own_cross_and_it_asks_the_owner_to_remove_it() {
         "un clon que el dueño ya no lista deja el plano: {ids}"
     );
 
-    // The tools of the clone leave the corner to the `×`, and the button
-    // paints with the tokens of the plan (RF22).
+    // The tools of the clone hang from the very corner with the `×` inside
+    // the pill (L8): one control, growing inward, wrapping when the object is
+    // narrow — nothing sticks out of the box the human sees.
     let tools = slice_between(CSS, ".diagram-clone-tools {", "}");
-    let offset = declaration(tools, "right");
-    let pixels: f64 = offset
-        .trim_end_matches("px")
-        .parse()
-        .unwrap_or_else(|_| panic!("the toolbar keeps a right offset: {tools}"));
     assert!(
-        pixels >= 24.0,
-        "la barra del clon deja lugar al `×` en la esquina: {offset}"
+        declaration(tools, "right").trim() == "4px",
+        "el toolbar se ancla en la esquina del objeto, como el `×` de siempre: {tools}"
+    );
+    assert!(
+        declaration(tools, "flex-wrap").contains("wrap"),
+        "un toolbar más ancho que la caja se parte en filas, no se desborda: {tools}"
+    );
+    assert!(
+        declaration(tools, "max-width").contains("100%"),
+        "el toolbar nunca es más ancho que su objeto: {tools}"
+    );
+    let close = slice_between(CSS, ".diagram-clone-tools .clone-close {", "}");
+    assert!(
+        declaration(close, "opacity").trim() == "1",
+        "el `×` dentro del pill se muestra cuando el pill se muestra: {close}"
+    );
+    assert!(
+        !declaration(close, "border").contains("solid"),
+        "dentro del pill el `×` no lleva su propio círculo: {close}"
     );
     assert!(
         CSS.contains(".diagram-close:hover"),
