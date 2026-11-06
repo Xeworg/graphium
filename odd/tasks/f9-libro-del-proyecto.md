@@ -110,6 +110,11 @@ análisis en specs y tareas; los § que cita viven en el doc de ideas.
   CodeGraph, L7); feature-flags por lenguaje para el techo RNF1-quater (L9);
   y el fix del flake de timing de `progress` en gx-mcp (falla 1 de N corridas
   bajo recompilación pesada — visto en el merge de C2).
+  Commits: `37733ae` (feature-flags de lenguajes, palanca RNF1-quater:
+  full 14,35 MB / slim rust+typescript 13,22 MB) y `b87a918` (flake
+  determinístico con `passes_done`/`PassInFlight` + `graphium books
+  list|prune|hook` + prune con cap KEEP_NEWEST_BOOKS=8 en el idle-exit).
+  **Falta del corte: el envelope (L7)** — el resto está completo.
 - T5 (respuesta acotada; S5, S7, D3, L7): los cuatro nombres de tool no
   cambian. `code_structure` responde **outline por defecto** (solo nivel
   superior; el árbol se reordena con `after_line`/`limit`, rango monotónico)
@@ -234,3 +239,25 @@ análisis en specs y tareas; los § que cita viven en el doc de ideas.
   guardián (no viaja en las respuestas MCP — el spec pide publicarlo, no
   servirlo); el ancla de módulo de Java se llama como el archivo, así que
   clases homónimas a su archivo son ambiguas por diseño honesto.
+- L10 (2026-11-06): T4/C3 implementado por worker, verificado y empaquetado
+  por el orquestador en dos unidades (`37733ae` feature-flags de lenguajes,
+  `b87a918` flake determinístico + books CLI/prune con cap). La barra del
+  flake se cumplió con 6 corridas completas limpias consecutivas (665/0)
+  y una más en cada verificación aislada. La palanca RNF1-quater quedó
+  medida por el orquestador: full 14,35 MB (91,3 % del techo) vs slim
+  rust+typescript 13,22 MB (84,2 %) — ~1,1 MB devueltos; el build slim
+  destapó un dead-code warning bajo cfg (dotted_directories es de
+  go/java) y se gateó. El flake tenía DOS raíces, no una: tests que
+  sondeaban la fila de progress mientras el primer pase del watcher
+  seguía en vuelo, y un shutdown_all por test que mataba los libros de
+  los otros — el arreglo hace los pases contables (passes_done /
+  passes_in_flight con guardia PassInFlight) y elimina el bucle de
+  realimentación Access(Open) que dejaba IDLE_TRUNCATE inalcanzable.
+  `graphium books list|prune|hook` es la puerta humana de S8/D4: prune
+  borra solo libros de roots desaparecidos, con --dry-run, doble
+  identidad (book_key o raíz canónica), cap KEEP_NEWEST_BOOKS=8 y
+  jamás el libro activo; el hook de ideas P8 solo imprime y su prune
+  es --dry-run siempre. **Queda abierto del corte: el envelope de L7**
+  (asignación por relevancia y acantilado a punteros) — sin nada a
+  medio cablear en el árbol; se decide con el humano si entra como
+  cierre de T4 o viaja a su propio corte.
