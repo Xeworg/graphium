@@ -2202,7 +2202,18 @@ mod tests {
         fn indexed(&self) -> std::sync::Arc<gx_index::service::BookHandle> {
             let handle = gx_index::service::ensure(&self.config(), &self.root()).expect("the book");
             handle.indexer().run_full().expect("the first index");
-            handle
+            // The watcher's own async first pass re-runs and may still hold the
+            // progress row at `indexing` when run_full returns; the answers the
+            // contract tests read must see the settled state (the live flake of
+            // `the_code_structure_contract_answers_a_file_and_a_symbol`).
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                match handle.book().progress() {
+                    Ok(progress) if progress.state == "indexed" => return handle,
+                    _ => std::thread::sleep(std::time::Duration::from_millis(20)),
+                }
+            }
+            panic!("the scratch book never reached the indexed state");
         }
     }
 
