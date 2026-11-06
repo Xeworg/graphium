@@ -18,6 +18,213 @@ pub mod session;
 pub mod store;
 pub mod tools;
 
+/// The door to the book of the project (`gx-index`) for the owner (F9, C0).
+///
+/// The engine lives in its own crate and `gx-app` never depends on it: the
+/// owner reaches it through this module, which is the only place that knows
+/// both the session record (to resolve the project, never `current_dir()`,
+/// D4) and the shape an agent reads.
+pub mod book {
+    use serde_json::{json, Value};
+
+    use crate::contract::ErrorPayload;
+
+    /// The book is off for this project: `GRAPHIUM_BOOK` is not `on` (S5).
+    pub const DISABLED_CODE: &str = "book_disabled";
+    /// The book could not be opened: the answer is an error, never a silent
+    /// empty result that the agent would read as «the symbol does not exist».
+    pub const UNAVAILABLE_CODE: &str = "book_unavailable";
+    /// The query fits more than one declaration: `candidates[]` names them
+    /// (P3, condition 2).
+    pub const AMBIGUOUS_CODE: &str = "ambiguous_symbol";
+
+    /// The project of the session: the record of the session, never the cwd
+    /// of the process (D4, ideas §7 explore 3).
+    pub fn project_of(session_id: &str) -> Option<String> {
+        crate::session::session_registry()
+            .get(session_id)
+            .and_then(|record| record.project)
+            .filter(|project| !project.trim().is_empty())
+    }
+
+    /// The configuration of the book of the owner: `GRAPHIUM_BOOK` and the
+    /// books root, read once (S5, D4).
+    pub fn config_from_env() -> gx_index::BooksConfig {
+        gx_index::BooksConfig::from_env()
+    }
+
+    /// Keeps a book running for every project of the open sessions (S9).
+    ///
+    /// The owner calls this from its poll loop; opening a book is idempotent,
+    /// so a project that already has one costs a map lookup.
+    pub fn maintain(config: &gx_index::BooksConfig, projects: &[String]) {
+        gx_index::service::maintain(config, projects);
+    }
+
+    /// Stops every watcher and closes every book cleanly (the idle exit).
+    pub fn shutdown_all() {
+        gx_index::service::shutdown_all();
+    }
+
+    /// Runs `code_search` for the session with the configuration of the owner.
+    pub fn code_search(session_id: &str, query: &str) -> Value {
+        let config = gx_index::BooksConfig::from_env();
+        code_search_with(&config, project_of(session_id).as_deref(), query)
+    }
+
+    /// Runs `code_search` with an explicit configuration and project.
+    ///
+    /// Both are parameters instead of environment reads, so the answer of the
+    /// tool can be checked for a project that is not this machine's and for
+    /// the disabled path without racing the process environment.
+    pub fn code_search_with(
+        config: &gx_index::BooksConfig,
+        project: Option<&str>,
+        query: &str,
+    ) -> Value {
+        let query = query.trim();
+        if query.is_empty() {
+            return failure(
+                "query",
+                "invalid_value",
+                "`query` is empty",
+                Some("send a symbol name, for example `render_diagram`"),
+            );
+        }
+        if query.chars().count() > gx_index::search::MAX_QUERY_CHARS {
+            return failure(
+                "query",
+                "invalid_value",
+                &format!(
+                    "`query` is longer than {} characters",
+                    gx_index::search::MAX_QUERY_CHARS
+                ),
+                Some("send the name of one symbol, not a sentence"),
+            );
+        }
+        if !config.is_enabled() {
+            return failure(
+                "book",
+                DISABLED_CODE,
+                "the book of the project is off for this project",
+                Some("the book is enabled with GRAPHIUM_BOOK=on; ask the human to turn it on for this project"),
+            );
+        }
+        let Some(project) = project.filter(|project| !project.trim().is_empty()) else {
+            return failure(
+                "session.project",
+                "invalid_value",
+                "the session has no project: the book cannot be resolved without one",
+                Some("the client declares the project with GRAPHIUM_PROJECT or through its working directory"),
+            );
+        };
+
+        let handle = match gx_index::service::ensure(config, std::path::Path::new(project)) {
+            Ok(handle) => handle,
+            Err(error) => {
+                return failure("book", UNAVAILABLE_CODE, &error.to_string(), None);
+            }
+        };
+        let book = handle.book();
+        let outcome = match book.search(&gx_index::SearchRequest {
+            query: query.to_string(),
+        }) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                return failure("book", UNAVAILABLE_CODE, &error.to_string(), None);
+            }
+        };
+
+        let progress = book.progress().unwrap_or_default();
+        let base = json!({
+            "query": query,
+            "book_key": book.key(),
+            "root": book.location().root_string(),
+            "project": project,
+            "progress": {
+                "state": progress.state,
+                "files_total": progress.files_total,
+                "files_done": progress.files_done,
+                "symbols": progress.symbols,
+            },
+        });
+
+        match outcome {
+            gx_index::SearchOutcome::Empty => {
+                let mut response = base;
+                response["ok"] = json!(true);
+                response["results"] = json!([]);
+                response["count"] = json!(0);
+                response
+            }
+            gx_index::SearchOutcome::Hits(hits) => {
+                let results: Vec<Value> = hits.iter().map(hit_json).collect();
+                let mut response = base;
+                response["ok"] = json!(true);
+                response["count"] = json!(results.len());
+                response["results"] = json!(results);
+                response
+            }
+            gx_index::SearchOutcome::Ambiguous(candidates) => {
+                let candidates: Vec<Value> = candidates
+                    .iter()
+                    .map(|candidate| {
+                        json!({
+                            "name": candidate.name,
+                            "kind": candidate.kind,
+                            "qname": candidate.qname,
+                            "file": candidate.file,
+                            "line": candidate.line,
+                            "occurrences": candidate.occurrences,
+                        })
+                    })
+                    .collect();
+                let mut response = base;
+                response["ok"] = json!(false);
+                response["candidates"] = json!(candidates);
+                response["errors"] = json!([ErrorPayload {
+                    path: "query".to_string(),
+                    code: AMBIGUOUS_CODE.to_string(),
+                    message: format!(
+                        "`{query}` fits more than one declaration: no single answer would be honest"
+                    ),
+                    hint: Some(
+                        "send the qname words of one candidate (for example `gx_mcp tools render`) to narrow the search".to_string()
+                    ),
+                }]);
+                response
+            }
+        }
+    }
+
+    /// One hit as the agent reads it: `file:line` plus what S7 requires.
+    fn hit_json(hit: &gx_index::SymbolHit) -> Value {
+        json!({
+            "file": hit.file,
+            "line": hit.line,
+            "column": hit.column,
+            "kind": hit.kind,
+            "name": hit.name,
+            "qname": hit.qname,
+            "content_hash": hit.content_hash,
+            "indexed_at": gx_index::book::iso8601_utc(hit.indexed_at),
+        })
+    }
+
+    /// The answer of a call that never reached the search.
+    fn failure(path: &str, code: &str, message: &str, hint: Option<&str>) -> Value {
+        json!({
+            "ok": false,
+            "errors": [ErrorPayload {
+                path: path.to_string(),
+                code: code.to_string(),
+                message: message.to_string(),
+                hint: hint.map(str::to_string),
+            }],
+        })
+    }
+}
+
 #[cfg(test)]
 mod test_support;
 
@@ -323,6 +530,29 @@ pub struct RenderDiagramParams {
     pub opts: Option<serde_json::Value>,
 }
 
+/// Description of the `code_search` tool, written for the agent (S5, S7).
+const CODE_SEARCH_DESCRIPTION: &str = "\
+Search the book of this project: the symbols that the indexer extracted, \
+without reading the files. It answers the places of ONE symbol: `file`, \
+`line`, `kind`, `name`, `qname`, `content_hash` and `indexed_at`, plus the \
+`book_key` of the book that answered. The query is split into words and every \
+word has to match (`render config` finds a symbol whose name carries both); \
+CamelCase and snake_case are both indexed. When the query fits more than one \
+declaration the tool answers `ok: false` with code `ambiguous_symbol` and \
+`candidates[]` (`name`, `kind`, `qname`, `file`, `line`, `occurrences`): send \
+the words of one candidate's qname to narrow it, never guess. A project \
+without `GRAPHIUM_BOOK=on` answers `book_disabled` and a book that cannot be \
+opened answers `book_unavailable`. `progress.state == \"indexing\"` means the \
+first pass is still running, so a missing symbol may be added in a moment.";
+
+/// Parameters of the `code_search` tool (F9, C0).
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeSearchParams {
+    /// The symbol to look for: one or more words of its name or qname.
+    pub query: String,
+}
+
 /// The MCP server of Graphium.
 ///
 /// It is a plain [`ServerHandler`]: the tool router comes from the
@@ -383,6 +613,9 @@ impl GraphiumServer {
         // are parsed by `gx-mcp`, in one place, so this path and the socket
         // relay cannot diverge.
         let response = tokio::task::spawn_blocking(move || {
+            // The indexer parses with one thread while a render is in flight
+            // (ideas §10.1, «Backpressure»).
+            let _render = gx_index::service::RenderGuard::enter();
             tools::render_diagram_from_json(&request, raw_opts.as_ref())
         })
         .await
@@ -630,6 +863,33 @@ impl GraphiumServer {
             &self.session_id,
             params.label.as_deref(),
         ))
+    }
+
+    #[tool(
+        name = "code_search",
+        description = CODE_SEARCH_DESCRIPTION,
+        annotations(
+            title = "Search the book of the project",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn code_search(
+        &self,
+        Parameters(params): Parameters<CodeSearchParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session_id = self.session_id.clone();
+        // The search opens the book of the session's project and reads it with
+        // a connection of its own: it runs off the async loop.
+        let response =
+            tokio::task::spawn_blocking(move || book::code_search(&session_id, &params.query))
+                .await
+                .map_err(|error| {
+                    ErrorData::internal_error(format!("the search task failed: {error}"), None)
+                })?;
+        structured(response)
     }
 }
 
@@ -1249,5 +1509,208 @@ mod tests {
             .expect("the service stops on EOF")
             .expect("the service task does not panic");
         assert!(finished.is_ok(), "{finished:?}");
+    }
+
+    // -----------------------------------------------------------------
+    // F9, C0 — `code_search`, the door to the book of the project
+    // -----------------------------------------------------------------
+
+    /// A worktree and a books root inside the system temp directory.
+    struct BookScratch {
+        base: std::path::PathBuf,
+    }
+
+    impl BookScratch {
+        fn new(name: &str) -> Self {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static COUNTER: AtomicUsize = AtomicUsize::new(0);
+            let base = std::env::temp_dir().join(format!(
+                "gx-mcp-book-{name}-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::SeqCst)
+            ));
+            std::fs::create_dir_all(base.join("worktree/src")).expect("the scratch tree");
+            Self { base }
+        }
+
+        fn root(&self) -> std::path::PathBuf {
+            self.base.join("worktree")
+        }
+
+        fn config(&self) -> gx_index::BooksConfig {
+            gx_index::BooksConfig::at(self.base.join("books"))
+        }
+
+        fn write(&self, relative: &str, text: &str) {
+            let path = self.root().join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).expect("the parent");
+            }
+            std::fs::write(path, text).expect("the file");
+        }
+
+        /// Opens the book and indexes it once, synchronously.
+        fn indexed(&self) -> std::sync::Arc<gx_index::service::BookHandle> {
+            let handle = gx_index::service::ensure(&self.config(), &self.root()).expect("the book");
+            handle.indexer().run_full().expect("the first index");
+            handle
+        }
+    }
+
+    impl Drop for BookScratch {
+        fn drop(&mut self) {
+            gx_index::service::shutdown_all();
+            let _ = std::fs::remove_dir_all(&self.base);
+        }
+    }
+
+    /// S5/S7: the answer carries `file:line`, `kind`, `qname`, `content_hash`,
+    /// `indexed_at` and the `book_key` of the book that answered.
+    #[test]
+    fn the_code_search_contract_carries_the_location_and_the_book_key() {
+        let scratch = BookScratch::new("contract");
+        scratch.write(
+            "src/tools.rs",
+            "pub fn render_diagram() {}\npub struct Session;\n",
+        );
+        let handle = scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response =
+            crate::book::code_search_with(&scratch.config(), Some(&project), "render_diagram");
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(response["count"], 1, "{response}");
+        assert_eq!(response["book_key"], handle.book().key(), "{response}");
+        let hit = &response["results"][0];
+        assert_eq!(hit["file"], "src/tools.rs", "{response}");
+        assert_eq!(hit["line"], 1, "{response}");
+        assert_eq!(hit["kind"], "fn", "{response}");
+        assert_eq!(hit["name"], "render_diagram", "{response}");
+        assert_eq!(hit["qname"], "tools::render_diagram", "{response}");
+        assert!(
+            hit["content_hash"]
+                .as_str()
+                .is_some_and(|hash| hash.len() == 64),
+            "{response}"
+        );
+        assert!(
+            hit["indexed_at"]
+                .as_str()
+                .is_some_and(|at| at.ends_with('Z') && at.contains('T')),
+            "indexed_at is ISO-8601 at the edge of the tool: {response}"
+        );
+        assert_eq!(response["progress"]["state"], "indexed", "{response}");
+
+        // An unknown name is an empty answer, not an error.
+        let empty =
+            crate::book::code_search_with(&scratch.config(), Some(&project), "nothing_like_this");
+        assert_eq!(empty["ok"], true, "{empty}");
+        assert_eq!(empty["count"], 0, "{empty}");
+        assert_eq!(empty["results"].as_array().map(Vec::len), Some(0));
+    }
+
+    /// S5: without `GRAPHIUM_BOOK=on` the tool answers its own code and never
+    /// touches the books root.
+    #[test]
+    fn the_disabled_path_answers_book_disabled() {
+        let scratch = BookScratch::new("disabled");
+        let project = scratch.root().to_string_lossy().to_string();
+        let response = crate::book::code_search_with(
+            &gx_index::BooksConfig::disabled(),
+            Some(&project),
+            "anything",
+        );
+        assert_eq!(response["ok"], false, "{response}");
+        assert_eq!(
+            response["errors"][0]["code"],
+            crate::book::DISABLED_CODE,
+            "{response}"
+        );
+        assert_eq!(response["errors"][0]["path"], "book", "{response}");
+        assert!(
+            !scratch.base.join("books").exists(),
+            "the disabled path never creates a books root"
+        );
+    }
+
+    /// P3, condition 2: an ambiguous name answers `ambiguous_symbol` with
+    /// `candidates[]`, never one confident answer.
+    #[test]
+    fn an_ambiguous_query_answers_the_code_and_the_candidates() {
+        let scratch = BookScratch::new("ambiguous");
+        scratch.write("src/one.rs", "pub fn parse() {}\n");
+        scratch.write("src/two.rs", "pub fn parse() {}\n");
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response = crate::book::code_search_with(&scratch.config(), Some(&project), "parse");
+        assert_eq!(response["ok"], false, "{response}");
+        assert_eq!(
+            response["errors"][0]["code"],
+            crate::book::AMBIGUOUS_CODE,
+            "{response}"
+        );
+        assert_eq!(response["errors"][0]["path"], "query", "{response}");
+        let candidates = response["candidates"]
+            .as_array()
+            .expect("the candidates travel");
+        assert_eq!(candidates.len(), 2, "{response}");
+        let qnames: Vec<&str> = candidates
+            .iter()
+            .filter_map(|candidate| candidate["qname"].as_str())
+            .collect();
+        assert!(qnames.contains(&"one::parse"), "{qnames:?}");
+        assert!(qnames.contains(&"two::parse"), "{qnames:?}");
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate["occurrences"] == 2));
+
+        // Narrowing with the words of one qname answers that one symbol.
+        let narrowed =
+            crate::book::code_search_with(&scratch.config(), Some(&project), "one parse");
+        assert_eq!(narrowed["ok"], true, "{narrowed}");
+        assert_eq!(narrowed["results"][0]["qname"], "one::parse", "{narrowed}");
+    }
+
+    /// D4: the book is the one of the session's project, read from the
+    /// session record, never from the process cwd.
+    #[test]
+    fn the_project_of_a_search_is_the_project_of_the_session_record() {
+        let scratch = BookScratch::new("session");
+        let project = scratch.root().to_string_lossy().to_string();
+        let identity = crate::session::ResolvedIdentity {
+            id: Some("book-session".to_string()),
+            family: crate::session::SessionFamily::Other,
+            client_name: None,
+            client_version: None,
+            project: Some(project.clone()),
+            source: crate::session::IdentitySource::Declared,
+        };
+        crate::session::session_registry().connect("book-session", &identity);
+
+        assert_eq!(
+            crate::book::project_of("book-session").as_deref(),
+            Some(project.as_str())
+        );
+        assert!(
+            crate::book::project_of("a-session-that-never-existed").is_none(),
+            "an unknown session resolves no project: the cwd is never the fallback"
+        );
+    }
+
+    /// The dispatcher of the owner reaches the same implementation, and an
+    /// empty call is rejected before touching any book.
+    #[test]
+    fn the_dispatcher_exposes_code_search_and_requires_a_query() {
+        let schema = crate::dispatch::tool_schema("code_search");
+        assert_eq!(schema["required"][0], "query");
+
+        let error = crate::dispatch::call_tool("code_search", &serde_json::json!({}), "s")
+            .expect_err("`query` is required");
+        assert!(error.contains("query"), "{error}");
+        assert!(
+            crate::dispatch::TOOL_NAMES.contains(&"code_search"),
+            "the tool has to be in the index of the server"
+        );
     }
 }

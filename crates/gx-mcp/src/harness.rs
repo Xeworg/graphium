@@ -105,7 +105,21 @@ one) and `get_diagram_version` returns the exact document of one version; both \
 are read-only, so browsing history never touches the plan. To go back, take the \
 document of the version and render it again (with `opts.replace_id` to stay on \
 the same diagram). Use them when the human asks what changed or wants an older \
-shape back; the versions live only while the diagram is open.";
+shape back; the versions live only while the diagram is open.
+
+THE BOOK. `code_search` answers from the index of the project instead of \
+reading files: it returns the `file`, `line`, `kind`, `name`, `qname`, \
+`content_hash` and `indexed_at` of one symbol, plus the `book_key` of the book \
+that answered. Use it to locate the code behind a diagram, or to find a \
+function by name before drawing its flow. Every word of `query` has to match \
+and the tool never guesses: a query that fits more than one declaration \
+answers `ok: false` with `code_search`'s `ambiguous_symbol` code and \
+`candidates[]`, so send the words of one candidate's `qname` to narrow it. \
+The book is off unless the project turns it on: without `GRAPHIUM_BOOK=on` the \
+answer is `book_disabled`, and a book that cannot be opened answers \
+`book_unavailable`. `progress.state` tells whether the first pass is still \
+`indexing`, so a symbol that is not there yet may appear in a moment. The \
+book is a cache of the project and never changes the plan.";
 
 /// The description of `register_session`, written for the agent (S3, D2).
 ///
@@ -225,6 +239,21 @@ only open diagram of the session and answers `ambiguous_diagram` when there are 
 several. `opts.scale` (default 1.0, ceiling 3.0) and `opts.max_px` (default \
 16 Mpx, ceiling 64 Mpx) govern the PNG; inline SVG is capped at 1 MB. Exporting \
 never changes the plan."
+        }
+        "code_search" => {
+            "\
+Search the book of this project: the symbols the indexer extracted, without \
+reading the files. It answers the places of ONE symbol with `file`, `line`, \
+`kind`, `name`, `qname`, `content_hash` and `indexed_at`, plus the `book_key` \
+of the book that answered. `query` is split into words and every word has to \
+match (`render config` finds a symbol whose name carries both); CamelCase and \
+snake_case are both indexed. When the query fits more than one declaration \
+the answer is `ok: false` with code `ambiguous_symbol` and `candidates[]` \
+(`name`, `kind`, `qname`, `file`, `line`, `occurrences`): send the words of \
+one candidate's qname to narrow it, never guess. A project without \
+`GRAPHIUM_BOOK=on` answers `book_disabled`, a book that cannot be opened \
+answers `book_unavailable`, and `progress.state == \"indexing\"` means the \
+first pass is still running. Read-only: it never touches the plan."
         }
         "clear_canvas" => {
             "\

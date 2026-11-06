@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 gx-core = { workspace = true }
 gx-kinds = { workspace = true }
+gx-index = { workspace = true }
 rmcp = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }

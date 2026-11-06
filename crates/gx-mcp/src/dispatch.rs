@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use crate::contract;
 
 /// Every tool of the server, in the order the index reports them.
-pub const TOOL_NAMES: [&str; 11] = [
+pub const TOOL_NAMES: [&str; 12] = [
     "render_diagram",
     "validate_diagram",
     "get_diagram_schema",
@@ -22,6 +22,7 @@ pub const TOOL_NAMES: [&str; 11] = [
     "get_diagram_version",
     "clear_canvas",
     "register_session",
+    "code_search",
 ];
 
 /// Calls a tool by name with its JSON arguments.
@@ -38,6 +39,9 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
                 .ok_or_else(|| "`diagram` is required".to_string())?;
             // The same implementation the stdio server uses: `opts` cannot
             // work on one path and be ignored on the other.
+            // The indexer parses with one thread while a render is in flight
+            // (ideas §10.1, «Backpressure»).
+            let _render = gx_index::service::RenderGuard::enter();
             let response = crate::tools::render_diagram_from_json(
                 &crate::tools::RenderRequest {
                     document: document.to_string(),
@@ -141,6 +145,16 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
             let response = contract::register_session(session_id, label);
             serde_json::to_value(&response).map_err(|error| error.to_string())
         }
+        "code_search" => {
+            let query = arguments
+                .get("query")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "`query` is required".to_string())?;
+            // The same implementation the stdio server uses, with the same
+            // reading of the session: a forwarded client searches the book of
+            // its own project, never another one (D4).
+            Ok(crate::book::code_search(session_id, query))
+        }
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -227,6 +241,16 @@ pub fn tool_schema(name: &str) -> Value {
                     "description": "The name the human sees for this session; it is trimmed. Without it the tool only answers the session. An empty or whitespace-only label is `invalid_value`."
                 }
             }
+        }),
+        "code_search" => json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The symbol to look for: one or more words of its name or qname. Every word has to match; an ambiguous query answers `ambiguous_symbol` with `candidates[]`."
+                }
+            },
+            "required": ["query"]
         }),
         _ => json!({ "type": "object" }),
     }

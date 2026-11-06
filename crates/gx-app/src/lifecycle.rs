@@ -140,9 +140,15 @@ pub fn watch(handle: tauri::AppHandle) {
     install_signal_handler();
     std::thread::spawn(move || {
         let registry = gx_mcp::session::session_registry();
+        // The flag and the books root are read once, by the owner: the
+        // watcher and the tool share the same configuration (F9, S5).
+        let books = gx_mcp::book::config_from_env();
         let mut shutdown = Shutdown::default();
         loop {
             sync_ui_session(registry, window_visible(&handle), SystemTime::now());
+            // The monitor of the project starts with the owner, one book per
+            // project of the open sessions (F9, S9; ideas §3 «adopta 6»).
+            gx_mcp::book::maintain(&books, &session_projects(registry));
             if quit_requested() {
                 drain_and_exit(&handle);
                 return;
@@ -170,7 +176,24 @@ pub fn drain_and_exit(handle: &tauri::AppHandle) {
         SystemTime::now(),
     );
     let _ = drain(DRAIN_TIMEOUT);
+    // The books of the sessions stop and close cleanly: the `TRUNCATE`
+    // checkpoint and the `clean_shutdown` marker of F9 (ideas §10.1).
+    gx_mcp::book::shutdown_all();
     handle.exit(0);
+}
+
+/// The projects of the open sessions, without repeats (F9, D4: the project of
+/// a session is the record of the session, never `current_dir()`).
+fn session_projects(registry: &SessionRegistry) -> Vec<String> {
+    let mut projects: Vec<String> = registry
+        .list()
+        .into_iter()
+        .filter_map(|record| record.project)
+        .filter(|project| !project.trim().is_empty())
+        .collect();
+    projects.sort();
+    projects.dedup();
+    projects
 }
 
 /// Whether the plan window is on screen (S6).
@@ -209,7 +232,8 @@ mod tests {
     use gx_mcp::session::{SessionFamily, SessionRegistry, SessionState};
 
     use super::{
-        drain, sync_ui_session, ui_identity, Shutdown, DRAIN_TIMEOUT, IDLE_GRACE, UI_SESSION_ID,
+        drain, session_projects, sync_ui_session, ui_identity, Shutdown, DRAIN_TIMEOUT, IDLE_GRACE,
+        UI_SESSION_ID,
     };
 
     fn project_of_this_process() -> Option<String> {
@@ -344,6 +368,34 @@ mod tests {
         let empty_again = back + Duration::from_secs(1);
         assert!(!shutdown.observe(0, 0, empty_again));
         assert!(shutdown.observe(0, 0, empty_again + IDLE_GRACE));
+    }
+
+    /// F9/S9: the owner monitors the project of every open session, once per
+    /// project even when two sessions share it (D4).
+    #[test]
+    fn the_projects_of_the_sessions_are_the_ones_the_owner_monitors() {
+        let registry = SessionRegistry::new();
+        for (id, project) in [
+            ("a", Some("/work/alpha")),
+            ("b", Some("/work/beta")),
+            ("c", Some("/work/alpha")),
+            ("d", None),
+        ] {
+            let identity = gx_mcp::session::ResolvedIdentity {
+                id: Some(id.to_string()),
+                family: SessionFamily::Other,
+                client_name: None,
+                client_version: None,
+                project: project.map(str::to_string),
+                source: gx_mcp::session::IdentitySource::Declared,
+            };
+            registry.connect(id, &identity);
+        }
+        assert_eq!(
+            session_projects(&registry),
+            vec!["/work/alpha".to_string(), "/work/beta".to_string()],
+            "one book per project, and a session without one adds nothing"
+        );
     }
 
     /// S7: with nothing in flight the drain returns at once instead of
