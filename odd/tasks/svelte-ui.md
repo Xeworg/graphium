@@ -39,7 +39,7 @@ in hand. Everything stays in this worktree and the `feature/svelte-ui` branch.
 - T2 (S2; route: worker; commit: —): port the plane — isometric grid,
   camera, objects, clones, culling; contract numbers identical (grid.rs
   pins live in `plan.js`; Svelte keeps the same values discoverable).
-- T3 (S2; route: worker; commit: —): port the panels — per-kind forms,
+- T3 (S2; route: worker; commit: worker commits the green unit (L7)): port the panels — per-kind forms,
   ×, version preview ◀v3/7▶, sessions panel, themes.
 - T4 (S2 S3; route: worker; commit: —): parity checklist against the T1
   map, item by item; the A/B switch documented end to end.
