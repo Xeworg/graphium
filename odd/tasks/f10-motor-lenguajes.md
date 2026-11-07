@@ -64,3 +64,33 @@ languages ride on it.
   gentle-ai-explore (background). Binary ceiling is a first-class
   constraint: at 5 languages the full build already sits at 91.3% of
   RNF1-quater; the T1 proposal must size 20 grammars under feature-flags.
+- L3 (2026-11-07, orchestrator, T1 result): the analysis, from the engine
+  map taken on this branch (staging @ ab12f60 base).
+  - Engine reuse map: the `parse()` skeleton is a 30-line identical copy in
+    all 5 extractors (node-kind→kind tables + transparent-container lists)
+    — the main declarative-izable piece. Genuinely imperative per-language
+    hooks that stay: Go `attach_receivers` 2nd pass, Rust impl naming, TS
+    export unwrap, Java package path, `called_name` chains.
+  - Schema: `schema.rs:425` CHECK hardcodes the 5 lang values → every new
+    language without parameterization costs a `SCHEMA_VERSION` bump +
+    delete-and-reindex. T2 makes the lang values data-driven WITHOUT a
+    schema bump (stored data of the 5 existing languages stays valid).
+  - D3 weaknesses in code: stdlib/builtin targets never resolve (Python
+    `str`/`int`/`len`, Go `fmt`/`len`, Rust `Path`), Python declares only
+    module-scope constants (`self.x` deliberately not symbols), Go package
+    imports unresolvable, name fanout cap `MAX_NAME_FANOUT=5`.
+  - Cost of language N+1 today: 3 Cargo.toml manifests + module + GRAMMARS
+    line + kind mapping + schema CHECK + per-language fixture/floor + PRD
+    row + binary re-measure.
+  - Binary: full 14.32 MB = 91.2% of the RNF1-quater ceiling; slim lever
+    measured -1.12 MB for 3 grammars → the 15 new grammars must be
+    default-off (feature flags, decided in f9 C3).
+  - Proposal (usage-ranked, Octoverse 2025 / TIOBE / SO 2025 / RedMonk):
+    JavaScript/JSX, C, C++, C#, PHP, Ruby, SQL, Shell, Swift, Kotlin,
+    Dart, Scala, R, Lua, Zig (alternates: Objective-C, Julia, Elixir,
+    OCaml).
+- L4 (2026-11-07, user, verbatim): «luego segui con el cambio del motor
+  este es importante ya que lleva bastante escritura». Checkpoint outcome:
+  the ENGINE REFACTOR (T2) is approved to start; the 15-language LIST
+  stays an open checkpoint until the first grammar batch (T3) — T2 does
+  not land any new language.
