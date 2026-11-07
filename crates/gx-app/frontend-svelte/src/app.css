@@ -32,6 +32,12 @@
   --zoom: 1;
   --accent: #6ea8fe;
   --code-bg: rgba(255, 255, 255, 0.08);
+  /* The chrome tokens of the objects (style.css:17-77): the box and the `×`
+     paint with them. The theme blocks stay T3; these three carry the values
+     of the `plano` preset the same way the grid tokens already do. */
+  --surface: #232329;
+  --surface-border: #3a3a44;
+  --hairline: rgba(255, 255, 255, 0.35);
 }
 
 *,
@@ -106,18 +112,134 @@ body {
   transform-origin: 0 0;
 }
 
-/* The T1 placeholder object: the drawing where Rust placed it, in plan units
-   and never rescaled on its own (PRD §7.2). T2 replaces it with the real
-   object (`plan.js:1889`, `insertDiagram`). */
-.diagram-t1 {
+/* One container per diagram. The camera transform lives on the camera layer
+ * (`plan.js:385-402` applies the same transform to every object; one write on
+ * the layer is the same result). The SVG inside keeps plan units and is never
+ * rescaled on its own (PRD §7.2). */
+.diagram {
   position: absolute;
   left: 0;
   top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
-.diagram-t1 svg {
+.diagram > .content {
+  position: absolute;
+}
+
+/* The object of a plan the human is not looking at (A2 of `f8-planos.md`):
+ * out of the paint, never closed. It keeps its place, its rectangle and its
+ * diagrams in Rust, so coming back to its plan puts it back exactly where it
+ * was. */
+.diagram.plan-hidden {
+  display: none;
+}
+
+.diagram svg {
   display: block;
   overflow: visible;
+}
+
+/* The `×` of the object (PRD §7 RF28, S3): it shows up when the pointer walks
+ * over the diagram and never before, so the plan stays clean. It sits in the
+ * padding ring of the object, so it never covers the drawing. */
+/* El contorno del objeto aparece al pasar el puntero: el `×` cuelga de la
+ * esquina de su objeto, y sin el contorno parece flotar en el vacío cuando la
+ * esquina del rectángulo no tiene tinta (un árbol es ancho abajo, no arriba).
+ * El contorno no ocupa lugar: `outline` no entra en el layout. */
+.diagram:hover > .content,
+.diagram:focus-within > .content {
+  outline: 1px dashed var(--hairline);
+  outline-offset: 0;
+  border-radius: 8px;
+}
+
+/* El `×` vive **dentro** del rectángulo de su objeto, contra la esquina. Si
+ * colgara afuera, el puntero tendría que salir del objeto para alcanzarlo y
+ * el botón se escondería justo cuando uno va a apretarlo. */
+.diagram-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.diagram:hover .diagram-close,
+.diagram-close:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.diagram-close:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* The box that stands in for a diagram whose SVG left the DOM (PRD RNF1-ter,
+ * §7.2, §7.3): the very rectangle of the object, with a dashed border and its
+ * title and size. It is chrome of the plan, never part of a drawing, so it
+ * paints with the tokens of the theme and reads in both of them (RF22, S18);
+ * and it never takes the pointer, because the wheel and the drag of the
+ * camera belong to the plan. */
+.diagram-box {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px dashed var(--hairline);
+  border-radius: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  pointer-events: none;
+  user-select: none;
+}
+
+.diagram-box-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The object of a clone (B1 of `f8-planos.md`, S4): it reads as something the
+ * hand can grab, because dragging it is how the human places it on their own
+ * plan (B3 — the move itself is T3, C11; the cursor already announces it).
+ * The background keeps panning the camera, as it always did. */
+.diagram.clone {
+  cursor: grab;
+}
+
+.plan.dragging .diagram.clone {
+  cursor: grabbing;
+}
+
+/* The content **is** the rectangle the owner keeps: the drawing centers inside
+ * it, so the object moves as one piece and the tools hang from its corner. */
+.diagram.clone > .content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .empty {

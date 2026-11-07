@@ -54,6 +54,13 @@ export const SETTINGS_KEYS = [
 /** The themes the panel lists (`Theme` in `gx-core/src/render.rs`). */
 export const THEMES = ["dark", "light", "brasa", "arcilla", "aurora", "neblina", "pitaya"];
 
+// --- Plans (plan.js:1185-1188, `f8-planos.md` B1) -----------------------
+
+/** The sentinel id of the plan of the human: never a session id. */
+export const USER_PLAN_ID = "user";
+/** The plan of the human, as the switcher names it (its row is T3). */
+export const USER_PLAN = { id: USER_PLAN_ID, label: "Mi plano" };
+
 // --- Events -------------------------------------------------------------
 
 // The names are the wire contract: a typo is a silent timeout in Rust

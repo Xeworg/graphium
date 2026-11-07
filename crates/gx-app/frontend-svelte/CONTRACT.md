@@ -239,14 +239,14 @@ family (`--shift-a`, `--shift-b`).
 | `fillSwatches` | `199-214` | the colour dots of the theme chips | R1, T3 | T3 |
 | DOM handles + state | `216-290` | every element by id and the page state | — | partial (only what T1 needs) |
 | Tauri bridge | `292-331` | `emit`/`listen` with the two doors | §1 | done (`src/lib/tauri.js`) |
-| camera | `333-637` | grid paint, camera transform, wheel zoom, pan drag, clone move, camera intents, pan animation, resize | B2, A1, A3, A5 | stub (grid done, movement T2) |
+| camera | `333-637` | grid paint, camera transform, wheel zoom, pan drag, clone move, camera intents, pan animation, resize | B2, A1, A3, A5 | **T2 done** (movement, intents, pan, resize; clone move T3) |
 | settings panel | `639-833` | read/fill/apply the panel, throttled save, open/close, Escape | B4, R1, A4, T3 | stub (payload + apply done, panel T3) |
 | panel of open diagrams | `835-1006` | the list, `×`, `⧉`, selection, the camera focus | B5, B7, T3 | T3 |
 | history of versions | `1008-1150` | `◀ v3/7 ▶`, `version-view`, the preview in place | B6, R4, T3 | T3 |
-| switcher of plans | `1152-1508` | families, `activePlan`, one camera per plan, the notice, «Mi plano» | R2, T3 | T3 |
-| plan of the human (clones) | `1510-1877` | the clone object, its `×`, `↻`, its history, drag | B8, B9, B10, R5, T3 | T3 |
-| diagrams | `1879-2062` | `insertDiagram`: the object, its box, `×`, placement, the camera intent, the ack | B5, B3, R3 | stub (mount + ack; object/box T2) |
-| culling | `2064-2301` | `visibleRect`, `applyCulling`, `readObject`, `syncObjects` | R2, T2 | T2 |
+| switcher of plans | `1152-1508` | families, `activePlan`, one camera per plan, the notice, «Mi plano» | R2, T3 | cameras+visibility **T2**; rows T3 |
+| plan of the human (clones) | `1510-1877` | the clone object, its `×`, `↻`, its history, drag | B8, B9, B10, R5, T3 | objects+paint **T2**; tools T3 |
+| diagrams | `1879-2062` | `insertDiagram`: the object, its box, `×`, placement, the camera intent, the ack | B5, B3, R3 | **T2 done** (object, box, `×`, placement, camera intent, ack) |
+| culling | `2064-2301` | `visibleRect`, `applyCulling`, `readObject`, `syncObjects` | R2, T2 | **T2 done** |
 | banner + ghost | `2303-2330` | `showError`, `showPending`, `hidePending` | R6, R8 | T3 |
 | listeners | `2332-2449` | every `listen(...)` and the `ready` emit | §2, §3 | done/stub |
 
@@ -272,7 +272,7 @@ family (`--shift-a`, `--shift-b`).
 | `:root` tokens (grid, camera, palette, families, chrome) | `17-77` | the defaults of the `plano` preset | partly (grid tokens copied to `src/app.css`) |
 | theme blocks `[data-theme=…]` | `78-195` | the 7 themes of RF22 | T3 |
 | `.plan`, `.plan.dragging`, `.plan::before` | `345-395` | surface, grid mesh, camera layer | done (copied) |
-| `.diagrams`, `.diagram*`, `.content`, `.diagram-close`, `.diagram-box*` | `396-519` | the camera layer, the objects, the box and the `×` | T2 |
+| `.diagrams`, `.diagram*`, `.content`, `.diagram-close`, `.diagram-box*` | `396-519` | the camera layer, the objects, the box and the `×` | T2 | **T2 done** |
 | `.empty*` | `532-560` | the empty states | done (`#empty` only) |
 | `.banner*`, `.ghost*` | `561-635` | the error banner and the render ghost | T3 |
 | `.panel*`, `.sessions-*`, `.session-*` | `636-1146` | the three panels and the switcher rows | T3 |
@@ -292,7 +292,7 @@ document. `T1` marks what the scaffold already satisfies (verified by
 - [ ] C3 `graphium://ready` is emitted once, with `{}`, after the surface exists. — **T1 done**
 - [ ] C4 `render_ack ok:true` is emitted after two `requestAnimationFrame`, and
       `ok:false` only when the payload has no `<svg>`. — **T1 done** (placeholder mount)
-- [ ] C5 `camera-changed` is throttled to 100 ms and carries `{tx,ty,zoom}`. — T2
+- [ ] C5 `camera-changed` is throttled to 100 ms and carries `{tx,ty,zoom}`. — **T2 done**
 - [ ] C6 `settings-changed` is throttled to 100 ms, deduplicated by `settingsId`,
       and never sent before the first `graphium://settings`. — T3
 
@@ -306,29 +306,29 @@ document. `T1` marks what the scaffold already satisfies (verified by
       `--grid-step: 41.72px`, the tile `calc(diagonal * tan * zoom) ×
       calc(diagonal * zoom)` and the two per-family phases. — **T1 done**
 - [ ] C10 Zoom clamps to `[0.05, 4.0]` with step 1.1 and keeps the world point
-      under the cursor fixed; a wheel cancels the pan in flight. — T2
+      under the cursor fixed; a wheel cancels the pan in flight. — **T2 done**
 - [ ] C11 Drag pans the camera; drag on a clone of the user plan moves the clone
-      (screen px ÷ zoom) and emits `graphium://clone-move` only when it moved. — T2 (clone move: T3)
+      (screen px ÷ zoom) and emits `graphium://clone-move` only when it moved. — **T2 done** (pan half; clone move: T3)
 - [ ] C12 A camera intent (`render.camera`) sets the camera and cancels the pan;
-      without an intent the camera pans (`PAN_MS`, cubic) and never changes the zoom. — T2
-- [ ] C13 A window resize keeps the world point under the centre (no refit). — T2
+      without an intent the camera pans (`PAN_MS`, cubic) and never changes the zoom. — **T2 done**
+- [ ] C13 A window resize keeps the world point under the centre (no refit). — **T2 done**
 - [ ] C14 Culling keeps at most 3 live SVGs, culls out-of-view objects and any
       zoom below 0.4, breaks ties by distance to the view centre, and every
-      `applyCamera` re-decides. — T2
+      `applyCamera` re-decides. — **T2 done**
 - [ ] C15 A culled object becomes a box reading `<title> — <w> × <h>` in plan
-      units, with the title falling back to the `diagram_id`. — T2
+      units, with the title falling back to the `diagram_id`. — **T2 done**
 - [ ] C16 Each plan keeps its own camera; the first object of a plan is framed by
-      the event's camera, later ones pan; `plan-hidden` hides and never closes. — T2 (switch: T3)
+      the event's camera, later ones pan; `plan-hidden` hides and never closes. — **T2 done** (cameras, plan-hidden; switch: T3)
 
 **Objects and state**
 
 - [ ] C17 `graphium://state` replaces `diagrams`/`sessions`/`clones` wholesale;
-      nothing on screen exists that the event does not carry. — **T1 partial** (count only) / T2
+      nothing on screen exists that the event does not carry. — **T2 done**
 - [ ] C18 Objects are dropped when the state no longer lists them; `selectedId`
-      clears; titles and rectangles are refreshed from the state. — T2
+      clears; titles and rectangles are refreshed from the state. — **T2 done**
 - [ ] C19 A render of a `diagram_id` already on the plan replaces the object (and
-      drops its preview). — T2
-- [ ] C20 `placement` is the object corner: the SVG sits `OBJECT_PADDING` inside. — **T1 done** (placeholder)
+      drops its preview). — **T2 done**
+- [ ] C20 `placement` is the object corner: the SVG sits `OBJECT_PADDING` inside. — **T2 done** (real object)
 - [ ] C21 A render payload whose `svg` holds no `<svg>` gets `render_ack ok:false`
       and mounts nothing. — **T1 done**
 - [ ] C22 Rust's `graphium://state` after the ack is the only source of the panel. — T3
@@ -390,7 +390,7 @@ document. `T1` marks what the scaffold already satisfies (verified by
 
 - [ ] C42 The parallel build carries the whole of `style.css` (all three panels,
       the objects, the boxes, the banner, the ghost) with the same class names
-      as today. — T2/T3
+      as today. — **T2 partial** (objects, boxes, `×`); panels T3
 - [ ] C43 No inline `style="…"` attribute in markup: CSS variables go through
       CSSOM (`setProperty`), which the CSP (`tauri.conf.json:12`,
       `default-src 'self'`) does not police. — **T1 done**
@@ -420,6 +420,25 @@ culling, the two-rAF ack kept as is).
 The camera itself is the identity and does not move yet: the page pushes it once
 with `camera-changed` on mount so the owner never places a diagram against a
 camera it did not read — the throttle and the movement are T2 (C5, C10-C13).
+
+**What T2 delivered (2026-11-07):** the plane, in `src/App.svelte` +
+`src/lib/plane.js` (pure camera/culling math) + the object blocks of
+`src/app.css`. The camera: wheel anchored at the cursor (step 1.1, clamp
+0.05-4.0), drag pan with pointer capture, the 250 ms cubic pan, camera
+intents, the 100 ms trailing throttle, resize keeping the centre point. The
+objects: real `.diagram` objects with box, `×` and placement (the
+`.diagram-t1` placeholder is gone), replaced on re-render, reconciled
+wholesale from `graphium://state`. The culling: ≤ 3 live SVGs, zoom 0.4,
+distance tie-break, per-plan visibility (`plan-hidden`). The clones: objects
+of the user plan born culled, painted by `graphium://clone-paint`, `bring`
+brings the plan on screen — the tools pill, the clone move and the history
+stay T3. The camera layer carries one transform instead of one per object
+(same result, one write). Evidence: `npx vite build` green (bundle 34.6 →
+49.3 kB), `cargo test -p gx-app` green (22 suites, 0 failed), the
+`TAURI_CONFIG` build embeds the Svelte chunks and no `plan.js`, `git status`
+shows changes only under `frontend-svelte/`, and `DISPLAY=:0
+scripts/svelte-smoke.sh` → `rendered=true reason=none` — ready + paint ack
+observed through the real T2 UI.
 
 **T3 inherits:** `settingsFromPayload`/`settingsId`/`palettePaint` (the settings
 read side is done), the `graphium://settings`/`graphium://state` handlers to
