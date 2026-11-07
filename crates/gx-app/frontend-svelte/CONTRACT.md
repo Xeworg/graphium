@@ -231,52 +231,53 @@ family (`--shift-a`, `--shift-b`).
 
 ### 7.1 `plan.js` sections (in file order)
 
-| Section | Lines | What it is | Contract items | T1 |
+| Section | Lines | What it is | Contract items | State |
 | --- | --- | --- | --- | --- |
 | contract numbers | `1-31` | grid, zoom, throttles, pan, padding, culling | §6 | done (same values in `src/lib/contract.js`) |
 | `SETTINGS_KEYS` / `THEMES` | `34-53` | the 13 keys and the 7 themes | §5.6 | done (`src/lib/contract.js`) |
-| `PLAN_PRESETS` / `THEME_PRESETS` | `58-197` | the 8 presets and the theme→preset chips | R1, T3 | T3 |
-| `fillSwatches` | `199-214` | the colour dots of the theme chips | R1, T3 | T3 |
-| DOM handles + state | `216-290` | every element by id and the page state | — | partial (only what T1 needs) |
+| `PLAN_PRESETS` / `THEME_PRESETS` | `58-197` | the 8 presets and the theme→preset chips | R1, T3 | **T3 done** (`src/lib/presets.js`) |
+| `fillSwatches` | `199-214` | the colour dots of the theme chips | R1, T3 | **T3 done** (`SettingsPanel.svelte`, four dots from `THEME_CHIPS`) |
+| DOM handles + state | `216-290` | every element by id and the page state | — | done (ids kept, state in `App.svelte`) |
 | Tauri bridge | `292-331` | `emit`/`listen` with the two doors | §1 | done (`src/lib/tauri.js`) |
-| camera | `333-637` | grid paint, camera transform, wheel zoom, pan drag, clone move, camera intents, pan animation, resize | B2, A1, A3, A5 | **T2 done** (movement, intents, pan, resize; clone move T3) |
-| settings panel | `639-833` | read/fill/apply the panel, throttled save, open/close, Escape | B4, R1, A4, T3 | stub (payload + apply done, panel T3) |
-| panel of open diagrams | `835-1006` | the list, `×`, `⧉`, selection, the camera focus | B5, B7, T3 | T3 |
-| history of versions | `1008-1150` | `◀ v3/7 ▶`, `version-view`, the preview in place | B6, R4, T3 | T3 |
-| switcher of plans | `1152-1508` | families, `activePlan`, one camera per plan, the notice, «Mi plano» | R2, T3 | cameras+visibility **T2**; rows T3 |
-| plan of the human (clones) | `1510-1877` | the clone object, its `×`, `↻`, its history, drag | B8, B9, B10, R5, T3 | objects+paint **T2**; tools T3 |
+| camera | `333-637` | grid paint, camera transform, wheel zoom, pan drag, clone move, camera intents, pan animation, resize | B2, A1, A3, A5 | **T2 + T3 done** (the clone move landed in T3) |
+| settings panel | `639-833` | read/fill/apply the panel, throttled save, open/close, Escape | B4, R1, A4, T3 | **T3 done** (`SettingsPanel.svelte`, C6/C37/C38) |
+| panel of open diagrams | `835-1006` | the list, `×`, `⧉`, selection, the camera focus | B5, B7, T3 | **T3 done** (`PlanPanel.svelte`) |
+| history of versions | `1008-1150` | `◀ v3/7 ▶`, `version-view`, the preview in place | B6, R4, T3 | **T3 done** (`history.js`, `App.svelte`) |
+| switcher of plans | `1152-1508` | families, `activePlan`, one camera per plan, the notice, «Mi plano» | R2, T3 | **T2 + T3 done** (`SessionsPanel.svelte`, `labels.js`) |
+| plan of the human (clones) | `1510-1877` | the clone object, its `×`, `↻`, its history, drag | B8, B9, B10, R5, T3 | **T2 + T3 done** (`CloneTools.svelte`, the move in `App.svelte`) |
 | diagrams | `1879-2062` | `insertDiagram`: the object, its box, `×`, placement, the camera intent, the ack | B5, B3, R3 | **T2 done** (object, box, `×`, placement, camera intent, ack) |
 | culling | `2064-2301` | `visibleRect`, `applyCulling`, `readObject`, `syncObjects` | R2, T2 | **T2 done** |
-| banner + ghost | `2303-2330` | `showError`, `showPending`, `hidePending` | R6, R8 | T3 |
-| listeners | `2332-2449` | every `listen(...)` and the `ready` emit | §2, §3 | done/stub |
+| banner + ghost | `2303-2330` | `showError`, `showPending`, `hidePending` | R6, R8 | **T3 done** (`App.svelte`) |
+| listeners | `2332-2449` | every `listen(...)` and the `ready` emit | §2, §3 | done (all eight, in `App.svelte`) |
 
 ### 7.2 `index.html` sections (by id)
 
-| Element(s) | Lines | Role | T1 |
+| Element(s) | Lines | Role | State |
 | --- | --- | --- | --- |
 | `#plan` / `#diagrams` | `11-13` | the surface and the camera layer | done |
-| `#panel-toggle` / `#panel` / `#panel-list` / `#panel-empty` | `21-35` | open diagrams panel | T3 |
-| `#sessions-toggle` / `#sessions-panel` / `#session-list` / `#session-notice` | `49-63` | switcher of plans | T3 |
+| `#panel-toggle` / `#panel` / `#panel-list` / `#panel-empty` | `21-35` | open diagrams panel | **T3 done** (`PlanPanel.svelte`) |
+| `#sessions-toggle` / `#sessions-panel` / `#session-list` / `#session-notice` | `49-63` | switcher of plans | **T3 done** (`SessionsPanel.svelte`) |
 | `#empty` | `67-74` | state 1: no agent yet | done |
-| `#empty-user` | `76-82` | state 1 of the user plan | T3 |
-| `#banner` … `#banner-close` | `85-93` | state 3: error banner | T3 |
-| `#ghost` / `#ghost-text` | `96-98` | state 2: a render in flight | T3 |
-| `#settings-toggle` / `#settings-panel` / `#settings-close` | `105-126` | the human's settings | T3 |
-| `#settings-*` inputs | `129-209` | 6 grid/palette pickers | T3 |
-| the theme fieldset (7 radios + swatches) | `211-248` | the one selector of the look (RF22) | T3 |
+| `#empty-user` | `76-82` | state 1 of the user plan | **T3 done** (C34) |
+| `#banner` … `#banner-close` | `85-93` | state 3: error banner | **T3 done** (C35) |
+| `#ghost` / `#ghost-text` | `96-98` | state 2: a render in flight | **T3 done** (C36) |
+| `#settings-toggle` / `#settings-panel` / `#settings-close` | `105-126` | the human's settings | **T3 done** (`SettingsPanel.svelte`) |
+| `#settings-*` inputs | `129-209` | 6 grid/palette pickers + the 6 colour overrides, same ids | **T3 done** (same ids, generated from the field table) |
+| the theme fieldset (7 radios + swatches) | `211-248` | the one selector of the look (RF22) | **T3 done** (7 chips, 4 dots each) |
 
 ### 7.3 `style.css` sections
 
-| Block | Lines | Role | T1 |
+| Block | Lines | Role | State |
 | --- | --- | --- | --- |
-| `:root` tokens (grid, camera, palette, families, chrome) | `17-77` | the defaults of the `plano` preset | partly (grid tokens copied to `src/app.css`) |
-| theme blocks `[data-theme=…]` | `78-195` | the 7 themes of RF22 | T3 |
-| `.plan`, `.plan.dragging`, `.plan::before` | `345-395` | surface, grid mesh, camera layer | done (copied) |
-| `.diagrams`, `.diagram*`, `.content`, `.diagram-close`, `.diagram-box*` | `396-519` | the camera layer, the objects, the box and the `×` | T2 | **T2 done** |
-| `.empty*` | `532-560` | the empty states | done (`#empty` only) |
-| `.banner*`, `.ghost*` | `561-635` | the error banner and the render ghost | T3 |
-| `.panel*`, `.sessions-*`, `.session-*` | `636-1146` | the three panels and the switcher rows | T3 |
-| `.settings-*`, `.swatch*`, clone tools (`892-984`) | `1147-1352` | the settings dialog, the clone pill, the focus rings | T3 (clone tools belong to T2/T3) |
+| `:root` tokens (grid, camera, palette, families, chrome) | `17-77` | the defaults of the `plano` preset | done (whole block, `src/app.css`) |
+| theme blocks `[data-theme=…]` | `78-195` | the 7 themes of RF22 | **T3 done** (all seven, byte for byte) |
+| `.graphium …` token rules | `197-341` | the classes the drawings paint with | **T3 done** (the whole block was missing while the port was partial) |
+| `.plan`, `.plan.dragging`, `.plan::before` | `345-395` | surface, grid mesh, camera layer | done |
+| `.diagrams`, `.diagram*`, `.content`, `.diagram-close`, `.diagram-box*` | `396-519` | the camera layer, the objects, the box and the `×` | **T2 done** |
+| `.empty*` | `532-560` | the empty states | done (both states) |
+| `.banner*`, `.ghost*` | `561-635` | the error banner and the render ghost | **T3 done** |
+| `.panel*`, `.sessions-*`, `.session-*` | `636-1146` | the three panels and the switcher rows | **T3 done** |
+| `.settings-*`, `.swatch*`, clone tools (`892-984`) | `1147-1352` | the settings dialog, the clone pill, the focus rings | **T3 done** |
 
 ## 8. Parity checklist for T4
 
@@ -294,7 +295,10 @@ document. `T1` marks what the scaffold already satisfies (verified by
       `ok:false` only when the payload has no `<svg>`. — **T1 done** (placeholder mount)
 - [ ] C5 `camera-changed` is throttled to 100 ms and carries `{tx,ty,zoom}`. — **T2 done**
 - [ ] C6 `settings-changed` is throttled to 100 ms, deduplicated by `settingsId`,
-      and never sent before the first `graphium://settings`. — T3
+      and never sent before the first `graphium://settings`. — **T3 done**
+      (`notifySettings`/`onSettingsChange` in `App.svelte`; observed in the
+      browser harness: nothing leaves the page before the first settings, a
+      burst of two inputs is one write, a repeated value is no write)
 
 **Grid, camera, culling**
 
@@ -308,7 +312,8 @@ document. `T1` marks what the scaffold already satisfies (verified by
 - [ ] C10 Zoom clamps to `[0.05, 4.0]` with step 1.1 and keeps the world point
       under the cursor fixed; a wheel cancels the pan in flight. — **T2 done**
 - [ ] C11 Drag pans the camera; drag on a clone of the user plan moves the clone
-      (screen px ÷ zoom) and emits `graphium://clone-move` only when it moved. — **T2 done** (pan half; clone move: T3)
+      (screen px ÷ zoom) and emits `graphium://clone-move` only when it moved. — **T2 + T3 done** (`cloneUnder`/`moveCloneStart`/`endDrag` in `App.svelte`:
+      the move is `screen px ÷ zoom`, a click writes nothing)
 - [ ] C12 A camera intent (`render.camera`) sets the camera and cancels the pan;
       without an intent the camera pans (`PAN_MS`, cubic) and never changes the zoom. — **T2 done**
 - [ ] C13 A window resize keeps the world point under the centre (no refit). — **T2 done**
@@ -318,7 +323,8 @@ document. `T1` marks what the scaffold already satisfies (verified by
 - [ ] C15 A culled object becomes a box reading `<title> — <w> × <h>` in plan
       units, with the title falling back to the `diagram_id`. — **T2 done**
 - [ ] C16 Each plan keeps its own camera; the first object of a plan is framed by
-      the event's camera, later ones pan; `plan-hidden` hides and never closes. — **T2 done** (cameras, plan-hidden; switch: T3)
+      the event's camera, later ones pan; `plan-hidden` hides and never closes. — **T2 + T3 done** (cameras and `plan-hidden` in T2; the switch is the
+      switcher rows of T3)
 
 **Objects and state**
 
@@ -331,49 +337,75 @@ document. `T1` marks what the scaffold already satisfies (verified by
 - [ ] C20 `placement` is the object corner: the SVG sits `OBJECT_PADDING` inside. — **T2 done** (real object)
 - [ ] C21 A render payload whose `svg` holds no `<svg>` gets `render_ack ok:false`
       and mounts nothing. — **T1 done**
-- [ ] C22 Rust's `graphium://state` after the ack is the only source of the panel. — T3
+- [ ] C22 Rust's `graphium://state` after the ack is the only source of the panel. — **T3 done** (`PlanPanel` reads the `diagrams` prop, which is exactly
+      `state.diagrams`)
 
 **Panels**
 
 - [ ] C23 Panel of open diagrams: title, kind, `updated_at` in `es` short format,
-      `×` (emit close), `⧉` (emit clone), selection marks and pans. — T3
+      `×` (emit close), `⧉` (emit clone), selection marks and pans. — **T3 done**
+      (`PlanPanel.svelte`, `formatUpdated`/`labels.js`, `selectDiagram`)
 - [ ] C24 «sin diagramas abiertos» while the list is empty; the toggle flips
-      `aria-expanded`. — T3
+      `aria-expanded`. — **T3 done** (starts open, like `index.html:21-35`)
 - [ ] C25 Version nav `◀ v3/7 ▶` only when `version_count > 1`, disabled at the
-      ends, position `at - oldest_version + 1` over `version_count`. — T3
+      ends, position `at - oldest_version + 1` over `version_count`. — **T3 done**
+      (`history.js`; observed: `v7/7` at the live drawing, `◀` → `v6/7` and a
+      `graphium://version-view {diagram_id, version: 10}`)
 - [ ] C26 `graphium://version-view` for an older version, live drawing restored
       (no event) at the newest; the first version the history discarded falls
-      back to the newest. — T3
+      back to the newest. — **T3 done** (observed: `▶` back to the newest emits
+      nothing and returns to `v7/7`; an out-of-range view reads as the live one)
 - [ ] C27 A preview replaces the drawing in place, keeps the object rectangle and
-      is what the culling re-mounts. — T3
+      is what the culling re-mounts. — **T3 done** (`paintPreview`/`restoreLive`;
+      the `svgMount` action mounts `previewSvg` before `svg`)
 - [ ] C28 Switcher: «Mi plano» first, then one row per session (family dot,
       label, count, family name, project last segment or «sin proyecto»,
-      `activa`/`en gracia`), the chosen plan marked. — T3
+      `activa`/`en gracia`), the chosen plan marked. — **T3 done**
+      (`SessionsPanel.svelte`, `labels.js`)
 - [ ] C29 `initialPlan` = first session with diagrams, else first session, else
-      none; a session that vanished shows the notice and switches. — T3
+      none; a session that vanished shows the notice and switches. — **T3 done**
+      (observed notice: `la sesión «graphium-1» terminó; muestro el plano de «sesión dos»`)
 - [ ] C30 `←`/`→` walk the history of the selected object (clone or diagram) and
-      never steal arrows from an `input`/`textarea`/`select`. — T3
+      never steal arrows from an `input`/`textarea`/`select`. — **T3 done**
+      (`onKeyDown` in `App.svelte`; a clone walks the history of its original)
 - [ ] C31 User plan: clone object with its `×`, `↻`, `◀ n/m ▶` pill (no `v`
       prefix), refresh disabled unless `updatable`, history only with
-      `version_count > 1`. — T3
+      `version_count > 1`. — **T3 done** (`CloneTools.svelte`; observed `2/7`,
+      the refresh disabled and its title `el original ya no está en el plan` once
+      `updatable` is false, and the `×` emitting `graphium://clone-remove`).
+      L8 note: the pill measures itself against the **object's** width
+      (`.content.clientWidth`), so a wide clone keeps it at the corner and a
+      narrow one hangs it centered; the vanilla measured the `.diagram`
+      container, which has no width (all its children are absolute), so it always
+      applied `.overhang`. The port follows the written rule (L8/C31: «overhang
+      centered when the object is narrower»); T4 should know this is the one
+      observed visual difference of the pill on wide objects.
 - [ ] C32 `graphium://clone-view` without version for the refresh, with version
-      for a step; a version equal to `snapshot_version` sends the refresh form. — T3
+      for a step; a version equal to `snapshot_version` sends the refresh form. — **T3 done** (`refreshClone` emits `{clone_id}`; `viewCloneVersion` emits
+      `{clone_id, version}` and, at the photo, resets the view — `refreshClone`'s
+      form, as `plan.js:1830-1877` writes it)
 - [ ] C33 A clone paint with a newer version ends the browsing; an older one is a
       preview; `bring` brings the user plan on screen and pans (the first object
-      just takes the plan's camera). — T3
+      just takes the plan's camera). — **T3 done** (`applyClonePaint`)
 - [ ] C34 Empty states: `#empty` only when the plan on screen has no objects and
-      is not the user plan; `#empty-user` on the user plan. — T3
+      is not the user plan; `#empty-user` on the user plan. — **T3 done**
+      (`showEmpty`/`showEmptyUser`, both derived from the plan on screen)
 - [ ] C35 Banner shows `path`, `message`, `hint` and `+N errores` when `extra > 0`;
-      the close button hides it; `graphium://error` also hides the ghost. — T3
+      the close button hides it; `graphium://error` also hides the ghost. — **T3 done**
 - [ ] C36 Ghost: «calculando layout…» then `N nodos, M edges` after 2000 ms;
       hidden by a render or an error. (`graphium://pending` has no emitter: keep
-      the handler, do not invent an event.) — T3
+      the handler, do not invent an event.) — **T3 done** (observed: the counts
+      after the 2 s timer, hidden by `graphium://error` and by a render)
 - [ ] C37 Settings panel: 6 pickers + 7 theme radios with swatches from
       `PLAN_PRESETS`/`THEME_PRESETS`, values next to the sliders, Escape closes,
-      focus goes back to the toggle. — T3
+      focus goes back to the toggle. — **T3 done** (`SettingsPanel.svelte`: the
+      six grid/palette pickers, the six colour overrides of the same panel, and
+      the seven chips with four dots each from `THEME_CHIPS`; `0.10`, `100px`
+      and `45°` beside the sliders; Escape closes and the focus returns)
 - [ ] C38 No control may emit `settings-changed` before the first
       `graphium://settings` arrives, and every input change repaints the grid
-      and the palette immediately. — T3
+      and the palette immediately. — **T3 done** (observed: `data-theme` and
+      `--bg` follow the new settings, `#plan`'s `--grid-color` repaints at once)
 - [ ] C39 `data-theme` on the root element follows the settings theme (unknown →
       `dark`), and the palette variables are painted over it. — **T1 done** (root + palette)
 
@@ -384,18 +416,23 @@ document. `T1` marks what the scaffold already satisfies (verified by
 - [ ] C41 Every user-visible string is the vanilla one, verbatim (Spanish), e.g.
       `esperando al agente…`, `sin diagramas abiertos`, `en gracia`,
       `actualizar el clon`, `el original ya no está en el plan`,
-      `la sesión «…» terminó; muestro el plano de «…»`. — T3
+      `la sesión «…» terminó; muestro el plano de «…»`. — **T3 done** (the
+      built strings live in `src/lib/labels.js`; the markup keeps its own;
+      observed character by character in the browser harness)
 
 **Stylesheet**
 
 - [ ] C42 The parallel build carries the whole of `style.css` (all three panels,
       the objects, the boxes, the banner, the ghost) with the same class names
-      as today. — **T2 partial** (objects, boxes, `×`); panels T3
+      as today. — **T2 + T3 done** (`src/app.css` is the vanilla stylesheet byte
+      for byte, plus the `#app { height: 100% }` rule the Svelte mount needs;
+      the palette, the seven theme blocks and the `.graphium` drawing classes
+      arrived with T3)
 - [ ] C43 No inline `style="…"` attribute in markup: CSS variables go through
       CSSOM (`setProperty`), which the CSP (`tauri.conf.json:12`,
       `default-src 'self'`) does not police. — **T1 done**
 
-## 9. What T1 delivered, and what T2/T3 inherit
+## 9. What the tasks delivered, and what T4 inherits
 
 `crates/gx-app/frontend-svelte/`:
 
@@ -405,21 +442,24 @@ document. `T1` marks what the scaffold already satisfies (verified by
 | `README.md` | how to build, how the switch works, how the evidence was taken |
 | `package.json`, `package-lock.json`, `vite.config.js`, `index.html` | the Vite app |
 | `src/main.js` | `mount(App)`, imports `app.css` |
-| `src/App.svelte` | the surface, the grid, the handshake, the state counter, the placeholder mount |
-| `src/app.css` | the grid and the surface, copied from `style.css` with the same values || `src/lib/contract.js` | event names, contract numbers, `SETTINGS_KEYS`, `THEMES` |
+| `src/App.svelte` | the surface, the camera, the objects, the clones, the culling, the state, the wire, the banner and the ghost |
+| `src/app.css` | the whole vanilla `style.css`, byte for byte, plus `#app { height: 100% }` |
+| `src/lib/contract.js` | event names, contract numbers, `SETTINGS_KEYS`, `THEMES`, `USER_PLAN` |
 | `src/lib/tauri.js` | the bridge with the vanilla fallback |
 | `src/lib/grid.js` | `GRID_FALLBACK`, `settingsFromPayload`, `settingsId`, `gridPaint`, `palettePaint` |
+| `src/lib/plane.js` | the pure camera and culling math |
+| `src/lib/presets.js` | `PLAN_PRESETS`, `THEME_PRESETS`, `THEME_CHIPS` (the swatches of the chips) |
+| `src/lib/labels.js` | the built strings and the `es` date, verbatim from the vanilla page |
+| `src/lib/history.js` | where the indicator of a diagram/clone sits and what a step asks for |
+| `src/lib/PlanPanel.svelte` | the panel of open diagrams (list, `×`, `⧉`, history) |
+| `src/lib/SessionsPanel.svelte` | the switcher of plans («Mi plano» + one row per session + notice) |
+| `src/lib/SettingsPanel.svelte` | the settings dialog: the 12 controls, the 7 theme chips, Escape/focus |
+| `src/lib/CloneTools.svelte` | the pill of a clone: history, `↻` and the `×` that removes the view |
 | `.gitignore` | `dist/`, `node_modules/` |
 
-**T2 inherits:** `src/lib/contract.js` (numbers already discoverable),
-`gridPaint` (the grid is finished: pan/zoom only have to feed the camera
-object), `src/app.css`'s `.plan`/`.diagrams`/`.plan::before` blocks and the
-`.diagram-t1` placeholder to replace with the real object (box, `×`, placement,
-culling, the two-rAF ack kept as is).
-
-The camera itself is the identity and does not move yet: the page pushes it once
-with `camera-changed` on mount so the owner never places a diagram against a
-camera it did not read — the throttle and the movement are T2 (C5, C10-C13).
+**What T1 delivered:** the bridge, the `graphium://ready` handshake, the paint
+confirmation and the isometric grid, with the contract numbers in
+`src/lib/contract.js`. The camera itself was the identity and did not move yet.
 
 **What T2 delivered (2026-11-07):** the plane, in `src/App.svelte` +
 `src/lib/plane.js` (pure camera/culling math) + the object blocks of
@@ -431,24 +471,50 @@ objects: real `.diagram` objects with box, `×` and placement (the
 wholesale from `graphium://state`. The culling: ≤ 3 live SVGs, zoom 0.4,
 distance tie-break, per-plan visibility (`plan-hidden`). The clones: objects
 of the user plan born culled, painted by `graphium://clone-paint`, `bring`
-brings the plan on screen — the tools pill, the clone move and the history
-stay T3. The camera layer carries one transform instead of one per object
-(same result, one write). Evidence: `npx vite build` green (bundle 34.6 →
-49.3 kB), `cargo test -p gx-app` green (22 suites, 0 failed), the
-`TAURI_CONFIG` build embeds the Svelte chunks and no `plan.js`, `git status`
-shows changes only under `frontend-svelte/`, and `DISPLAY=:0
-scripts/svelte-smoke.sh` → `rendered=true reason=none` — ready + paint ack
-observed through the real T2 UI.
+brings the plan on screen. The camera layer carries one transform instead of
+one per object (same result, one write). Evidence: `npx vite build` green
+(bundle 34.6 → 49.3 kB), `cargo test -p gx-app` green (22 suites, 0 failed),
+the `TAURI_CONFIG` build embeds the Svelte chunks and no `plan.js`, `git
+status` shows changes only under `frontend-svelte/`, and `DISPLAY=:0
+scripts/svelte-smoke.sh` → `rendered=true reason=none`.
 
-**T3 inherits:** `settingsFromPayload`/`settingsId`/`palettePaint` (the settings
-read side is done), the `graphium://settings`/`graphium://state` handlers to
-extend into the panels, and the Spanish strings already copied in
-`src/App.svelte` (`esperando al agente…`, `graphium mcp-config`).
+**What T3 delivered (2026-11-07):** every remaining piece of chrome, in the
+components of the table above and the pure helpers `presets.js`, `labels.js`
+and `history.js`. The settings panel (the 12 controls with their values, the 7
+theme chips with the four dots of their preset, `data-theme` + the palette
+repainted at once, the throttled and deduplicated `settings-changed` gated on
+the first `graphium://settings`, Escape and the focus back to the gear); the
+panel of open diagrams (title, kind, `es` date, `×`, `⧉`, selection marks, the
+`◀ v3/7 ▶` history); the switcher of plans («Mi plano» first with its clone
+count, one row per session, the notice, the chosen plan marked); the tools pill
+of a clone (the `◀ n/m ▶` without the `v`, «Actualizar el clon», the `×` inside
+the pill, one compact row with the overhang when the object is narrower); the
+clone move by drag and the `graphium://clone-move` that only fires when it moved;
+the `←`/`→` of the selected object; the two empty states; the error banner and
+the render ghost; and the whole vanilla stylesheet — the seven theme blocks and
+the `.graphium` drawing classes included. The scaffold diagnostic chip is gone
+(§9 of this document said it would go when the panels landed).
 
-**T4 inherits:** the checklist of §8 and the smoke test of §10. The scaffold
-diagnostic chip (`src/App.svelte`, `.scaffold` in `src/app.css`) is **not** part
-of the parity contract: it exists only to tell the two builds apart while the
-port is partial, and it goes away when the panels land.
+How T3 was verified (the record is in `odd/tasks/svelte-ui.md`, L8):
+`npx vite build` exit 0; `cargo test -p gx-app` exit 0 (22 suites, 0 failed,
+vanilla path untouched: `git diff --stat main -- crates/gx-app/frontend/`
+empty); `TAURI_CONFIG='{"build":{"frontendDist":"frontend-svelte/dist"}}'
+cargo build -p gx-app` exit 0 and the binary embeds the Svelte chunks and zero
+`plan.js`; `DISPLAY=:0 scripts/svelte-smoke.sh` → `rendered=true reason=none`;
+plus a browser harness that runs the real bundle with a faked Tauri bridge and
+checks 92 DOM-observable rules of §8 (C6, C23-C38, C41, L8), and two
+pixel-for-pixel comparisons against the vanilla page: the default state and a
+rich state (light theme, two diagrams, one clone, the settings panel open, a
+version preview) render **byte-identical screenshots**. There is no JS test
+runner in this package and adding one would mutate dependencies, so those
+checks are evidence of this task, not committed tests.
+
+**T4 inherits:** the checklist of §8 (every item is now marked), the smoke test
+of §10 and the two documented findings: (1) the pill of a clone measures itself
+against the object's width, so a wide clone keeps it at the corner while the
+vanilla page always applied `.overhang` (see the C31 note); (2) `+N errores` in
+the banner is unreachable because Rust never sends `extra` (§5.7). The scaffold
+diagnostic chip and its `.scaffold` CSS are gone with T3.
 
 ## 10. Selecting the Svelte build, and the evidence T1 took
 

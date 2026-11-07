@@ -63,18 +63,32 @@ the human, and it quits the owner it started.
 
 ## What is ported so far
 
-T1 of `odd/tasks/svelte-ui.md`:
+T1 of `odd/tasks/svelte-ui.md`: the bridge (`src/lib/tauri.js`) with the same
+two doors as the vanilla page, the `graphium://ready` handshake and the
+`render_ack` of a render, the isometric grid of PRD §7.1 RF24/RF25 with the
+contract numbers of `crates/gx-app/tests/grid.rs` (`src/lib/grid.js`,
+`src/app.css`), and `data-theme` plus the palette variables of
+`graphium://settings`. The contract map and the parity checklist are in
+[`CONTRACT.md`](./CONTRACT.md).
 
-- the bridge (`src/lib/tauri.js`) with the same two doors as the vanilla page;
-- the `graphium://ready` handshake and the `render_ack` of a render, with a
-  placeholder object instead of the real plane;
-- the isometric grid of PRD §7.1 RF24/RF25 with the contract numbers of
-  `crates/gx-app/tests/grid.rs` (`src/lib/grid.js`, `src/app.css`);
-- `data-theme` and the palette variables from `graphium://settings`.
+T2: the plane — the camera (wheel anchored at the cursor, the 250 ms cubic
+pan, camera intents, the throttles, resize), the objects with their box and
+their `×`, the culling (≤ 3 live SVGs, `plan-hidden`), and the clones of the
+user plan as objects of the plane (`src/App.svelte`, `src/lib/plane.js`).
 
-T2 (plane: camera, objects, clones, culling) and T3 (panels, versions, themes)
-are still the vanilla page's job. The `src/App.svelte` component says which
-parts are placeholders; `CONTRACT.md` §8 says which task owns each item.
+T3: every remaining piece of chrome — the panel of open diagrams with the
+`◀ v3/7 ▶` history, the switcher of plans («Mi plano» first), the settings
+panel (the 12 controls, the 7 theme chips with their palettes, Escape and the
+focus back to the gear), the tools pill of a clone (history, «Actualizar el
+clon», the `×` that removes the view instance), the clone move by drag, the
+`←`/`→` of the selected object, the two empty states, the error banner and the
+render ghost (`src/lib/*.svelte`, `src/lib/{presets,labels,history}.js`). The
+whole vanilla `style.css` — the seven theme blocks and the `.graphium` drawing
+classes included — is `src/app.css`.
+
+The scaffold diagnostic chip is gone: the two builds are told apart by the
+`TAURI_CONFIG` switch, not by a label in the window. `CONTRACT.md` §8 says, item
+by item, what is done and how it was observed.
 
 ## Writing rules that come from the shell, not from taste
 
