@@ -230,3 +230,15 @@ in hand. Everything stays in this worktree and the `feature/svelte-ui` branch.
     entry. What stays open for T4: the item-by-item walk of §8 with the
     checklist in hand, the A/B switch documented end to end, and the two
     findings above; T5 keeps the bench harness and the comparative results.
+- L9 (2026-11-07, user decision via orchestrator): the Svelte diagram
+  LIBRARY is out of this cut's scope — «primero medir». The human confirmed
+  the factual review (the user sees an SVG picture: Rust's renderer bakes
+  theme colors as literal RGB, the page mounts it opaquely with no
+  per-node attributes) and chose to keep this branch a FAIR measurement:
+  T4 walks the parity checklist and T5 benches vanilla vs Svelte as both
+  render SVG today. The native diagram library (real elements per
+  node/edge, interactive, the F3 of the PRD) opens as its own cut (f11)
+  with the T5 numbers in hand; its first spike is an overlay (Rust emits
+  node positions it already computes, Svelte mounts hit-areas) before any
+  native re-render. Scope guard: nothing in this branch may drift into
+  native rendering or interactive overlays.
