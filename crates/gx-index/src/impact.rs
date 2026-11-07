@@ -431,9 +431,26 @@ pub fn impact(
     };
 
     let mut ordered: Vec<ImpactNode> = nodes.into_values().collect();
+    // The answer is ranked by **relevance**, not by the alphabet (L7): the hop
+    // that reached a node first, then the distinct edges of this answer that
+    // touch it. A capped hub answer leads with its most connected neighbours,
+    // which is what makes the character envelope's cliff a ranking and not an
+    // arbitrary slice.
+    let mut degree: BTreeMap<i64, usize> = BTreeMap::new();
+    for edge in &edges {
+        *degree.entry(edge.from).or_default() += 1;
+        *degree.entry(edge.to).or_default() += 1;
+    }
     ordered.sort_by(|left, right| {
         left.depth
             .cmp(&right.depth)
+            .then_with(|| {
+                degree
+                    .get(&right.id)
+                    .copied()
+                    .unwrap_or_default()
+                    .cmp(&degree.get(&left.id).copied().unwrap_or_default())
+            })
             .then_with(|| left.qname.cmp(&right.qname))
     });
     Ok(Some(Impact {

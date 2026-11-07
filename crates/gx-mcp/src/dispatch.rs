@@ -171,6 +171,10 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
                     .and_then(Value::as_u64)
                     .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX)),
                 kinds: string_array(arguments.get("kinds")).unwrap_or_default(),
+                max_chars: arguments
+                    .get("max_chars")
+                    .and_then(Value::as_u64)
+                    .map(|max| usize::try_from(max).unwrap_or(usize::MAX)),
             };
             Ok(crate::book::code_structure(
                 session_id, file, symbol, &request,
@@ -202,6 +206,10 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
                     .get("budget")
                     .and_then(Value::as_u64)
                     .map(|budget| usize::try_from(budget).unwrap_or(usize::MAX)),
+                max_chars: arguments
+                    .get("max_chars")
+                    .and_then(Value::as_u64)
+                    .map(|max| usize::try_from(max).unwrap_or(usize::MAX)),
             };
             Ok(crate::book::code_impact(session_id, &question))
         }
@@ -215,11 +223,16 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
                 .and_then(Value::as_u64)
                 .map(|depth| depth.min(u32::MAX as u64) as u32);
             let edges = string_array(arguments.get("edges"));
+            let max_chars = arguments
+                .get("max_chars")
+                .and_then(Value::as_u64)
+                .map(|max| usize::try_from(max).unwrap_or(usize::MAX));
             Ok(crate::book::code_diagram(
                 session_id,
                 symbol,
                 depth,
                 edges.as_deref(),
+                max_chars,
             ))
         }
         other => Err(format!("unknown tool: {other}")),
@@ -356,6 +369,10 @@ pub fn tool_schema(name: &str) -> Value {
                         "enum": ["fn", "method", "type", "class", "trait", "impl", "module", "const", "static"]
                     },
                     "description": "The declaration kinds to answer; `total` keeps counting the whole chapter."
+                },
+                "max_chars": {
+                    "type": ["integer", "null"],
+                    "description": "The character envelope of the answer: by default the ladder of the book (13,000 up to 150 indexed files, 18,000 up to 500, 24,000 beyond), overridable up to 1.5 times that. Past it the rows cliff to `pointers`."
                 }
             }
         }),
@@ -390,6 +407,10 @@ pub fn tool_schema(name: &str) -> Value {
                 "budget": {
                     "type": ["integer", "null"],
                     "description": "The query budget in nodes: 600 by default and 2000 at most (the edges are twice the nodes)."
+                },
+                "max_chars": {
+                    "type": ["integer", "null"],
+                    "description": "The character envelope of the answer: by default the ladder of the book (13,000 up to 150 indexed files, 18,000 up to 500, 24,000 beyond), overridable up to 1.5 times that. Past it the nodes cliff to `pointers`."
                 }
             }
         }),
@@ -411,6 +432,10 @@ pub fn tool_schema(name: &str) -> Value {
                         "enum": ["calls", "imports", "inherits", "uses"]
                     },
                     "description": "The edge kinds the walk follows; omitted follows all four."
+                },
+                "max_chars": {
+                    "type": ["integer", "null"],
+                    "description": "The character envelope of the answer: by default the ladder of the book, overridable up to 1.5 times that. The document is trimmed inside it and stays renderable."
                 }
             },
             "required": ["symbol"]

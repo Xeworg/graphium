@@ -10,6 +10,11 @@
 //! A `total` of `None` is honest: the hop cap cuts a walk whose deeper answer
 //! is not knowable without asking again, so the book says «no sé» instead of
 //! inventing a number.
+//!
+//! The character envelope (L7) adds the last reason: `budget`. The node and
+//! edge caps bound the walk; the envelope bounds the answer the agent's window
+//! pays for, and when it is what stopped the answer, it says so with its own
+//! `chars` and `max_chars` on the answer.
 
 /// Why the answer stopped short of the complete one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +32,9 @@ pub enum CutReason {
     /// The document was trimmed to the density its kind accepts, so it
     /// renders without a repair.
     Density,
+    /// The answer reached the character envelope of the book (L7) before the
+    /// question was exhausted: the full rows stop and the tail is pointed.
+    Budget,
 }
 
 impl CutReason {
@@ -38,6 +46,7 @@ impl CutReason {
             CutReason::Depth => "depth",
             CutReason::Collapsed => "collapsed",
             CutReason::Density => "density",
+            CutReason::Budget => "budget",
         }
     }
 }
@@ -67,16 +76,17 @@ impl Truncation {
 mod tests {
     use super::{CutReason, Truncation};
 
-    /// T5: the five reasons are the vocabulary the three tools share, and the
-    /// notice keeps the three numbers the agent branches on.
+    /// T5/L7: the six reasons are the vocabulary the three tools share, and
+    /// the notice keeps the three numbers the agent branches on.
     #[test]
-    fn the_reasons_are_the_five_the_tools_speak() {
+    fn the_reasons_are_the_six_the_tools_speak() {
         for (reason, text) in [
             (CutReason::Nodes, "nodes"),
             (CutReason::Edges, "edges"),
             (CutReason::Depth, "depth"),
             (CutReason::Collapsed, "collapsed"),
             (CutReason::Density, "density"),
+            (CutReason::Budget, "budget"),
         ] {
             assert_eq!(reason.as_str(), text);
             assert_eq!(Truncation::new(reason, 1, Some(2)).reason, reason);

@@ -113,8 +113,11 @@ análisis en specs y tareas; los § que cita viven en el doc de ideas.
   Commits: `37733ae` (feature-flags de lenguajes, palanca RNF1-quater:
   full 14,35 MB / slim rust+typescript 13,22 MB) y `b87a918` (flake
   determinístico con `passes_done`/`PassInFlight` + `graphium books
-  list|prune|hook` + prune con cap KEEP_NEWEST_BOOKS=8 en el idle-exit).
-  **Falta del corte: el envelope (L7)** — el resto está completo.
+  list|prune|hook` + prune con cap KEEP_NEWEST_BOOKS=8 en el idle-exit)
+  y `753da27` (el envelope de L7: el Pack mide cada fila al serializarla,
+  escalera 13K/18K/24K con techo 1,5×, ranking por relevancia en
+  `code_impact`, acantilado a punteros; gates ×2 678/0, +27 tests;
+  probe en vivo 32/32 — L11). El corte queda completo.
 - T5 (respuesta acotada; S5, S7, D3, L7): los cuatro nombres de tool no
   cambian. `code_structure` responde **outline por defecto** (solo nivel
   superior; el árbol se reordena con `after_line`/`limit`, rango monotónico)
@@ -257,7 +260,21 @@ análisis en specs y tareas; los § que cita viven en el doc de ideas.
   borra solo libros de roots desaparecidos, con --dry-run, doble
   identidad (book_key o raíz canónica), cap KEEP_NEWEST_BOOKS=8 y
   jamás el libro activo; el hook de ideas P8 solo imprime y su prune
-  es --dry-run siempre. **Queda abierto del corte: el envelope de L7**
-  (asignación por relevancia y acantilado a punteros) — sin nada a
-  medio cablear en el árbol; se decide con el humano si entra como
-  cierre de T4 o viaja a su propio corte.
+  es --dry-run siempre.
+- L11 (2026-11-07): el envelope de L7 cierra T4. Commit `753da27`
+  (atómico por L8; gates ×2 678/0; +27 tests). Probe en vivo del
+  orquestador: **32/32 verdes** sobre /tmp/gxbig recreado (444 funciones,
+  26 archivos — escalera pequeña —, hub con 290 llamadas, 40 callees
+  «ricas» de grado 4): rung 13.000 con razón `budget` (chars 12.956),
+  acantilado de 68 filas completas + 38 punteros (126 vs 57 chars de
+  promedio), ranking por relevancia (las ricas primeras a profundidad 1,
+  profundidades ordenadas), total honesto 294, `next` propone la llamada
+  ancha (max_chars 19.500) y al techo la walk de profundidad 1, piso del
+  knob en 1.200 (respuesta válida con cero filas; con 1.600 ya trae 4),
+  `max_chars: 0` → `invalid_value`, `code_structure` pagina con
+  `after_line` sin repetidos (capítulo de 20 completo en 2 páginas),
+  `code_diagram` renderiza bajo techos (190 nodos / 91 edges, conteos
+  consistentes). Driver: `/tmp/gxbook/drive_envelope.py`; fixture:
+  `/tmp/gxbook/make_gxbig.py`. Hallazgo del probe: un símbolo homónimo
+  a su módulo (fn `hub` en `hub.rs`) es ambiguo honesto — `candidates[]`
+  pide el qname (`hub::hub`), como documenta el harness.
