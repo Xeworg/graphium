@@ -720,9 +720,53 @@ pub fn delete_database_files(path: &Path) -> std::io::Result<()> {
 mod tests {
     use std::path::Path;
 
+    use rusqlite::Connection;
+
     use super::{
         is_remote_fstype, probe_journal_mode, synced_folder_reason, JournalMode, RebuildReason,
+        SCHEMA_SQL, SCHEMA_VERSION,
     };
+
+    /// S3/T2: the versions and the languages of the book are data, not a second
+    /// list to keep in sync. Every grammar of the build writes a `lang` the
+    /// schema accepts, a language the engine has no grammar for is still
+    /// refused, and the schema stayed v1: a book written before the engine of
+    /// T2 is read by it and never reindexed (D1 is for real doubts, not for a
+    /// refactor).
+    #[test]
+    fn the_schema_keeps_the_languages_and_the_version_of_the_stored_books() {
+        assert_eq!(SCHEMA_VERSION, 1, "T2 must not bump the schema");
+
+        let connection = Connection::open_in_memory().expect("in memory");
+        connection.execute_batch(SCHEMA_SQL).expect("the schema");
+        for grammar in crate::lang::GRAMMARS {
+            let extension = grammar.extensions.first().copied().unwrap_or("txt");
+            connection
+                .execute(
+                    "INSERT INTO file (path, lang, content_hash, size, mtime_ns, indexed_at)
+                     VALUES (?1, ?2, 'hash', 0, 0, 0)",
+                    (format!("src/one.{extension}"), grammar.lang),
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "the schema must accept a chapter of `{}`: {error}",
+                        grammar.lang
+                    )
+                });
+        }
+
+        // A language the engine cannot parse is not a chapter of the book.
+        assert!(
+            connection
+                .execute(
+                    "INSERT INTO file (path, lang, content_hash, size, mtime_ns, indexed_at)
+                     VALUES ('src/one.rb', 'ruby', 'hash', 0, 0, 0)",
+                    [],
+                )
+                .is_err(),
+            "the schema accepted a language the book has no grammar for"
+        );
+    }
 
     /// Ideas §8, transversal 2 and D4: WAL is invalid on a network filesystem
     /// and replicates badly from a synced folder, so the probe steps down to

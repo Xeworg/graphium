@@ -20,58 +20,57 @@
 //!
 //! JSX is markup: a JSX element name is not a call and an attribute is not a
 //! relation.
+//!
+//! What is TypeScript's alone is here; the declarations the book keeps are the
+//! tables of [`crate::lang::registry::TYPESCRIPT`] and the pipeline is
+//! [`crate::lang::engine`] (S3, T2). The one hook the tables cannot cover is the
+//! declaration group: a module-level `const`/`let`/`var` is the `const` of the
+//! language by each of its declarators.
 
-use crate::lang::emit::{anchor_symbol, chapter_anchor_name, emit, last_segment, prefix_of, text};
-use crate::lang::model::{content_hash, ExtractError, ParsedFile, ParsedSymbol};
-use crate::lang::Grammar;
-use crate::relations::{attach, push_edges, RawEdge, CALLS, IMPORTS, INHERITS, USES};
-
-/// The TypeScript grammar of the book: `.ts` and `.tsx` in one module.
-pub const GRAMMAR: Grammar = Grammar {
-    lang: LANGUAGE,
-    extensions: &["ts", "tsx"],
-    parse,
-};
+use crate::lang::emit::{emit, last_segment, text};
+use crate::lang::engine::{Body, Nesting};
+use crate::lang::model::ParsedSymbol;
+use crate::relations::{push_edges, RawEdge, CALLS, IMPORTS, INHERITS, USES};
 
 /// The language of the chapter, as the table `file` spells it.
 pub const LANGUAGE: &str = "typescript";
 
-/// Parses one TypeScript (or TSX) file into the chapter of the book.
-pub fn parse(path: &str, bytes: &[u8], mtime_ns: i64) -> Result<ParsedFile, ExtractError> {
+/// The tree-sitter grammar of a TypeScript path: one module answers `.tsx` with
+/// the TSX grammar and `.ts` with the TypeScript one, and both write the same
+/// language to the table `file`.
+pub fn language(path: &str) -> tree_sitter::Language {
     let language = if path.ends_with(".tsx") {
         tree_sitter_typescript::LANGUAGE_TSX
     } else {
         tree_sitter_typescript::LANGUAGE_TYPESCRIPT
     };
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter::Language::new(language))
-        .map_err(|error| ExtractError::Grammar {
-            language: LANGUAGE,
-            detail: error.to_string(),
-        })?;
-    let tree = parser
-        .parse(bytes, None)
-        .ok_or(ExtractError::NoTree { language: LANGUAGE })?;
+    tree_sitter::Language::new(language)
+}
 
-    let module = module_path(path);
-    let prefix = prefix_of(&module, ".");
-    let mut symbols = Vec::new();
-    walk(&tree.root_node(), &prefix, None, bytes, &mut symbols);
-
-    let raw = relations(&tree.root_node(), bytes);
-    let anchor = anchor_symbol(&module, &chapter_anchor_name(path, &module));
-    let edges = attach(raw, &mut symbols, anchor);
-
-    Ok(ParsedFile {
-        path: path.to_string(),
-        lang: LANGUAGE,
-        content_hash: content_hash(bytes),
-        size: bytes.len() as i64,
-        mtime_ns,
-        symbols,
-        edges,
-    })
+/// A module-level `const`/`let`/`var`: the declaration of the book is each
+/// `variable_declarator` of the group, and the arrow function it holds is part
+/// of its span, so the calls of the closure hang from it (T2: this one stays
+/// imperative).
+pub(crate) fn declarators(
+    node: &tree_sitter::Node,
+    nesting: &Nesting,
+    source: &[u8],
+    out: &mut Vec<ParsedSymbol>,
+) -> Option<Body> {
+    let mut cursor = node.walk();
+    for declarator in node.named_children(&mut cursor) {
+        if declarator.kind() == "variable_declarator" {
+            emit(
+                &declarator,
+                "const",
+                nesting.prefix,
+                nesting.parent,
+                source,
+                out,
+            );
+        }
+    }
+    None
 }
 
 /// The module path of a TypeScript file: its directories and its name without
@@ -81,74 +80,8 @@ pub fn module_path(relative: &str) -> String {
     crate::lang::emit::dotted_module(relative, &["index"])
 }
 
-/// Walks the declarations of a node; a body is walked with the container as the
-/// parent, so the containment tree of the chapter is the tree of the file.
-fn walk(
-    node: &tree_sitter::Node,
-    prefix: &str,
-    parent: Option<usize>,
-    source: &[u8],
-    out: &mut Vec<ParsedSymbol>,
-) {
-    let mut cursor = node.walk();
-    for child in node.named_children(&mut cursor) {
-        match child.kind() {
-            // `export`/`declare` wrap a declaration: the declaration is what
-            // the book keeps, at the same nesting.
-            "export_statement" | "ambient_declaration" => {
-                walk(&child, prefix, parent, source, out);
-            }
-            // The body of a class, an interface or a namespace: the nesting is
-            // the container that owns it.
-            "class_body" | "interface_body" | "statement_block" => {
-                walk(&child, prefix, parent, source, out);
-            }
-            "class_declaration" | "abstract_class_declaration" => {
-                if let Some(index) = emit(&child, "class", prefix, parent, source, out) {
-                    let own = format!("{prefix}{}.", out[index].name);
-                    walk(&child, &own, Some(index), source, out);
-                }
-            }
-            "interface_declaration" => {
-                if let Some(index) = emit(&child, "trait", prefix, parent, source, out) {
-                    let own = format!("{prefix}{}.", out[index].name);
-                    walk(&child, &own, Some(index), source, out);
-                }
-            }
-            // A namespace (`namespace Tools {}`) is the module of the language.
-            "internal_module" => {
-                if let Some(index) = emit(&child, "module", prefix, parent, source, out) {
-                    let own = format!("{prefix}{}.", out[index].name);
-                    walk(&child, &own, Some(index), source, out);
-                }
-            }
-            "function_declaration" => {
-                emit(&child, "fn", prefix, parent, source, out);
-            }
-            "method_definition" | "method_signature" | "abstract_method_signature" => {
-                emit(&child, "method", prefix, parent, source, out);
-            }
-            "type_alias_declaration" | "enum_declaration" => {
-                emit(&child, "type", prefix, parent, source, out);
-            }
-            // A module-level `const`/`let`/`var` is a declaration of the file;
-            // the arrow function it holds is part of its span, so the calls of
-            // the closure hang from it.
-            "lexical_declaration" | "variable_declaration" => {
-                let mut declarators = child.walk();
-                for declarator in child.named_children(&mut declarators) {
-                    if declarator.kind() == "variable_declarator" {
-                        emit(&declarator, "const", prefix, parent, source, out);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
 /// The relations of one TypeScript chapter, as the grammar sees them.
-fn relations(root: &tree_sitter::Node, source: &[u8]) -> Vec<RawEdge> {
+pub(crate) fn relations(root: &tree_sitter::Node, source: &[u8]) -> Vec<RawEdge> {
     let mut out = Vec::new();
     visit(root, source, &mut out);
     out
@@ -361,7 +294,8 @@ fn specifiers(node: &tree_sitter::Node, kind: &str, source: &[u8], out: &mut Vec
 
 #[cfg(test)]
 mod tests {
-    use super::{module_path, parse};
+    use super::module_path;
+    use crate::lang::registry::TYPESCRIPT;
 
     /// The module path is the prefix of every `qname`: the path of the file
     /// without the extension, and `index` naming its directory.
@@ -378,7 +312,9 @@ mod tests {
     #[test]
     fn a_typescript_file_with_a_syntax_error_still_yields_what_it_recovers() {
         let broken = "export function one() {}\nexport class Two {\n";
-        let parsed = parse("src/broken.tsx", broken.as_bytes(), 0).expect("parses");
+        let parsed = TYPESCRIPT
+            .parse("src/broken.tsx", broken.as_bytes(), 0)
+            .expect("parses");
         assert!(
             parsed.symbols.iter().any(|symbol| symbol.name == "one"),
             "{:?}",

@@ -1,15 +1,21 @@
-//! The grammars of the book: one module per language (S3, L5).
+//! The grammars of the book: one module per language (S3, L5) over one shared
+//! engine (S3, T2).
 //!
-//! This directory is the whole of Tree-sitter in the engine. A language is one
-//! module that exports a [`Grammar`] — the `lang` it writes to the table
-//! `file`, the extensions it answers to and its `parse` — and one entry in
-//! [`GRAMMARS`]. Nothing outside this directory moves: the schema, the queries,
-//! the watcher and the tools speak of [`ParsedFile`], whichever grammar
+//! This directory is the whole of Tree-sitter in the engine. A language
+//! contributes what only it knows — the tree-sitter grammar, the module path of
+//! a file, the relations it reads and the few hooks its grammar needs
+//! ([`engine`]) — and its node-kind → kind tables, its transparent kinds and its
+//! containers live in one registry next to the tables of the other four
+//! ([`registry`]). Nothing outside this directory moves: the schema, the
+//! queries, the watcher and the tools speak of [`ParsedFile`], whichever grammar
 //! produced it, and the relation vocabulary of the edges is the schema's, not
 //! the language's.
 //!
-//! Adding a language (T3/C2) is therefore: a grammar dependency in
-//! `Cargo.toml`, a module next to the others, and its line in [`GRAMMARS`].
+//! Adding a language (T3) is therefore: a grammar dependency and a cargo feature
+//! in `Cargo.toml`, a module next to the others with its `language()`,
+//! `module_path()` and `relations()` (plus a hook only where its grammar names a
+//! declaration in a way the tables cannot), its entry in [`registry::GRAMMARS`].
+//! The pipeline (`engine::extract`) and the queries are not touched.
 //!
 //! Each language is also a **cargo feature** of the engine (T4/C3, the lever of
 //! RNF1-quater): `lang-rust`, `lang-typescript`, `lang-python`, `lang-go` and
@@ -20,6 +26,7 @@
 //! grammars of the build, and everything outside here speaks of [`ParsedFile`].
 
 mod emit;
+pub mod engine;
 #[cfg(feature = "lang-go")]
 pub mod go;
 #[cfg(feature = "lang-java")]
@@ -27,47 +34,22 @@ pub mod java;
 pub mod model;
 #[cfg(feature = "lang-python")]
 pub mod python;
+pub mod registry;
 #[cfg(feature = "lang-rust")]
 pub mod rust;
 #[cfg(feature = "lang-typescript")]
 pub mod typescript;
 
 pub use crate::relations::ParsedEdge;
+pub use engine::Grammar;
 pub use model::{
     content_hash, looks_binary, name_norm, search_text_for, ExtractError, ParsedFile, ParsedSymbol,
 };
+pub use registry::GRAMMARS;
 
 /// Files bigger than this are skipped with a warning (D2): a source that big is
 /// generated, and parsing it costs more than it answers.
 pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
-
-/// One grammar of the book.
-#[derive(Debug, Clone, Copy)]
-pub struct Grammar {
-    /// The language as the table `file` spells it: `rust`, `typescript`…
-    pub lang: &'static str,
-    /// The extensions the grammar answers to, without the dot.
-    pub extensions: &'static [&'static str],
-    /// Parses one file into the pruned chapter of the book.
-    pub parse: fn(&str, &[u8], i64) -> Result<ParsedFile, ExtractError>,
-}
-
-/// Every grammar this build ships, in the order the book lists them.
-///
-/// The list is what the features left (T4/C3): the five languages of C2 by
-/// default, fewer in a slim build, and never a grammar that is not compiled.
-pub const GRAMMARS: &[Grammar] = &[
-    #[cfg(feature = "lang-rust")]
-    rust::GRAMMAR,
-    #[cfg(feature = "lang-typescript")]
-    typescript::GRAMMAR,
-    #[cfg(feature = "lang-python")]
-    python::GRAMMAR,
-    #[cfg(feature = "lang-go")]
-    go::GRAMMAR,
-    #[cfg(feature = "lang-java")]
-    java::GRAMMAR,
-];
 
 /// The grammar of a language, by the `lang` name.
 pub fn grammar(lang: &str) -> Option<&'static Grammar> {
@@ -92,7 +74,7 @@ pub fn parse(path: &str, bytes: &[u8], mtime_ns: i64) -> Result<ParsedFile, Extr
     let grammar = grammar_for(std::path::Path::new(path)).ok_or(ExtractError::Unreadable {
         language: "unknown",
     })?;
-    (grammar.parse)(path, bytes, mtime_ns)
+    grammar.parse(path, bytes, mtime_ns)
 }
 
 #[cfg(test)]
