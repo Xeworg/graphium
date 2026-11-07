@@ -141,3 +141,20 @@ languages ride on it.
     commits vs origin/main); the feature's own slice after this commit is
     3 commits ≈ 900 authored lines (2 docs + T2 unit) — one unit, review
    able as such.
+- L6 (2026-11-07, user decision via orchestrator): the T1 checkpoint is
+  CLOSED — «la lista ya la tenias, pero si no es asi busca los mas usados y
+  agrega eso». The approved list is the T1 proposal, usage-ranked
+  (Octoverse 2025 / TIOBE Oct-Nov 2026 / SO 2025 / RedMonk): JavaScript/JSX,
+  C, C++, C#, PHP, Ruby, SQL, Shell, Swift, Kotlin, Dart, Scala, R, Lua,
+  Zig (alternates if a grammar proves unviable: Objective-C, Julia,
+  Elixir, OCaml). Batching by grammar family (each batch: registry entry +
+  module + default-OFF feature + fixtures/floors + D3 published + PRD row +
+  binary re-measure):
+  - Batch 1: JavaScript/JSX, C, C++, C# — plus the ONE schema evolution to
+    data-driven lang values (L5's open item): the worker evaluates the
+    options with evidence and lands it once, so batches 2-4 ride free.
+  - Batch 2: PHP, Ruby, SQL, Shell.  Batch 3: Swift, Kotlin, Dart.
+  - Batch 4: Scala, R, Lua, Zig.
+  Default build keeps the original five ON and the new ones OFF: the
+  default binary must stay ~14.36 MB per batch (RNF1-quater); the
+  20-grammar re-measure is T6.
