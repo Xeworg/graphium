@@ -109,3 +109,39 @@ in hand. Everything stays in this worktree and the `feature/svelte-ui` branch.
     `src/` 6 files, 597 lines (`App.svelte` 156, `app.css` 168, `grid.js` 126,
     `contract.js` 86, `tauri.js` 51, `main.js` 10); the rest of the directory is
     the lockfile and the generated `dist/`.
+- L5 (2026-11-07, orchestrator, T2: S2): the plane ported inline (the writer
+  runtime routed it back: single unit of behaviour). Camera, objects, clones
+  and culling with the contract numbers of `contract.js`; the vanilla
+  frontend byte-identical, the switch the only selector.
+  - Files: `src/App.svelte` (the plane: camera, records, wiring), NEW
+    `src/lib/plane.js` (pure camera/culling math: `clampZoom`,
+    `zoomAtPoint`, `cameraOn`, `visibleRect`, `rectsIntersect`,
+    `distanceToView`, `objectCenter`), `src/lib/contract.js` (+`USER_PLAN_ID`
+    /`USER_PLAN`), `src/app.css` (object blocks of `style.css` 396-519 + the
+    clone cursor bits; `.diagram-t1` placeholder removed; `--surface`,
+    `--surface-border`, `--hairline` tokens added).
+  - Delivered (CONTRACT.md marks updated in-place): C5, C10-C16 (C11 pan
+    half; clone move T3; C16 switch T3), C17-C20, C42 objects half. Clone
+    tools pill, history, keyboard arrows, panels: T3.
+  - Design note: the camera transform is one write on the `.diagrams` layer
+    (`plan.js` writes it per object; same result for one write), and the
+    culling DOM swap lives in one Svelte action (`svgMount`) driven by the
+    `culled` flag, so the ≤3-live-SVGs rule runs on the same flags the
+    vanilla page keeps.
+  - Evidence (real exit codes): `npx vite build` → 0 (bundle 34.6 → 49.3 kB
+    JS, CSS 3.46 kB); `cargo test -p gx-app` → 0 (22 suites, 0 failed,
+    vanilla untouched: `git diff --stat main -- crates/gx-app/frontend/`
+    empty); `TAURI_CONFIG='{"build":{"frontendDist":"frontend-svelte/dist"}}'
+    cargo build -p gx-app` → 0, binary embeds `assets/index-*.js` and zero
+    `plan.js`; `git status` shows changes only under `frontend-svelte/`;
+    `DISPLAY=:0 scripts/svelte-smoke.sh` → `rendered=true reason=none`
+    through the real T2 UI (ready + two-rAF ack + object mount).
+  - Raw numbers for T5: Svelte `src/` now 7 files (adds `plane.js`, 83
+    lines); `App.svelte` 636 lines. T3 inherits the state handlers it must
+    extend into panels and the clone records that already carry
+    `cloneState`/`caption` for the pill.
+- L6 (2026-11-07, orchestrator): slice boundary recorded — 4 commits /
+  ~2600 authored lines on `feature/svelte-ui` since `origin/main`
+  (T1 scaffold + fix, T2 plane + docs). Per S1 this branch does not merge
+  until the human decides with the measurements in hand (T5); the chained
+  review slices, if any, are decided at that delivery, not now.
