@@ -145,3 +145,16 @@ in hand. Everything stays in this worktree and the `feature/svelte-ui` branch.
   (T1 scaffold + fix, T2 plane + docs). Per S1 this branch does not merge
   until the human decides with the measurements in hand (T5); the chained
   review slices, if any, are decided at that delivery, not now.
+- L7 (2026-11-07, user, verbatim): «ese review a veces me falla ya lo
+  deshabilite, los commits de la rama de svelte los puedes hacer sin
+  problema asi tendre tambien visibilidad de los cambios, y puedes dejar
+  que el agente haga los commits al finalizar el cambio solo que no puede
+  hacer pr ni merge, ya sabes que esta rama sera solo para tener claro si
+  existira un beneficio en esta migracion temprana, luego segui con el
+  cambio del motor este es importante ya que lleva bastante escritura».
+  Consecuencias: (1) el review nativo quedó deshabilitado por el humano —
+  no se invoca más en este corte; (2) los commits sobre
+  `feature/svelte-ui` están autorizados, y los workers pueden commitear su
+  unidad al cerrarla; (3) PR y merge siguen PROHIBIDOS en esta rama (S1
+  queda en pie); (4) el propósito de la rama es medir el beneficio de la
+  migración temprana (S4); (5) el corte continúa después del motor (f10).
