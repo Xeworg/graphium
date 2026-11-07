@@ -94,3 +94,50 @@ languages ride on it.
   the ENGINE REFACTOR (T2) is approved to start; the 15-language LIST
   stays an open checkpoint until the first grammar batch (T3) — T2 does
   not land any new language.
+- L5 (2026-11-07, worker+orchestrator, T2: S1 S3): the engine refactor
+  landed — behaviour-preserving, differential-verified.
+  - Design: NEW `lang/engine.rs` holds the shared pipeline (`Grammar::parse`
+    → `extract`: parser → module path → walk → relations → anchor → attach
+    → `ParsedFile`), the declarative types (`Rules`/`Container`/`Leaf`/
+    `Walk`/`ModuleSource`/`Anchor`/`Hook`/`Nesting`/`Body`) and the table
+    walker; NEW `lang/registry.rs` holds the five `Grammar` entries with
+    their node-kind tables side by side, feature-gated, plus `GRAMMARS`.
+    Per-language modules keep only `LANGUAGE`, `language()`,
+    `module_path()`/Java `package` path, `relations()` and the imperative
+    hooks of L3 (Go `Walk::Custom(go::walk)` for `attach_receivers`, Rust
+    `impl` naming, TS declarators, Python `module_constant`, Java
+    `ModuleSource::Tree`). `Leaf.inside` makes context-dependent kinds data
+    (`fn` in `impl`/`trait` → `method`). Net −293 lines.
+  - Schema untouched: `SCHEMA_VERSION` stays 1, the `lang` CHECK stays the
+    v1 pack (stored indexes stay valid; no reindex). NEW tests: schema pins
+    version 1, accepts every registry language, refuses `ruby`; the
+    registry validates every table node kind against its tree-sitter
+    grammar (`node_kind_for_id`) so a table typo fails loudly. **Open for
+    T3**: the first new language needs the planned data-driven lang CHECK
+    evolution (schema decision at that cut, not a silent CHECK widen).
+  - D3 unchanged (floors held): typescript 12/25=48.0%, rust 4/11=36.4%,
+    java 8/27=29.6%, go 5/29=17.2%, python 4/27=14.8% — measured by
+    `cargo test -p gx-index --test languages … -- --nocapture`.
+  - Binary (release, opt-level=z, lto, strip): full `graphium`
+    14,363,032 → 14,358,936 B (−4 KB); `--no-default-features` 9,165,208 B
+    identical; `--features "lang-rust,lang-typescript"` 13,241,496 B.
+  - Parity technique (reusable for T3/T6): base tree via `git archive HEAD
+    | tar -x -C <mktemp>`, one scratch integration test in both trees
+    parsing a fixed corpus through the stable `lang::{grammar_for, parse}`
+    API, dumps of every symbol field + edge diffed — 125 chapters
+    byte-identical.
+  - Gates (orchestrator-verified): `cargo fmt --check` 0; `cargo clippy
+    --workspace` 0; `cargo test --workspace` 0 (42 suites ok, 0 failed).
+    Pre-existing, NOT regressions: `cargo test -p gx-index
+    --no-default-features` exits 101 with 10 integration failures at the
+    base commit too (book.rs/watcher assume ≥1 grammar); the zero-language
+    lib build warns about 5 unused emit helpers (11 at base).
+  - Payoff for T3 (what language N+1 provides now): one registry entry
+    (tables + extensions + module/anchor + relations), one module with
+    `LANGUAGE`/`language()`/`module_path()`/`relations()` and — only if
+    genuinely needed — imperative hooks; plus the manifest/fixture/floor
+    checklist of L3.
+  - Slice boundary: this branch carries inherited staging history (78
+    commits vs origin/main); the feature's own slice after this commit is
+    3 commits ≈ 900 authored lines (2 docs + T2 unit) — one unit, review
+   able as such.
