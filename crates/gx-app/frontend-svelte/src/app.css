@@ -1,0 +1,168 @@
+/* Styles of the Svelte scaffold (T1).
+ *
+ * Only the surface and the grid are here: they are copied from
+ * `../frontend/style.css` with the same values, so the Svelte build paints the
+ * same mesh as the vanilla page (PRD §7.1 RF24/RF25, decision S23). The rest
+ * of the stylesheet — panels, objects, boxes, ghosts, banner, theme chips —
+ * belongs to T2/T3 and stays in the vanilla page until those sections land.
+ */
+
+:root {
+  --bg: #1b1b1b;
+  --text: #e9e9ec;
+  --grid-color: rgba(255, 255, 255, 0.14);
+  /* The deviation of the lines from the vertical (RF24: 45 degrees). */
+  --grid-angle: 45deg;
+  /* The diagonal of the rhombus: the measure the human sees. */
+  --grid-diagonal: 59px;
+  /* sin and cos of the deviation, kept in sync with --grid-angle. */
+  --grid-sin: 0.7071;
+  --grid-cos: 0.7071;
+  /* The tangent of the angle: the tile of the mesh is `diagonal * tan(angle)`
+     wide and `diagonal` tall, which keeps the lattice seamless. */
+  --grid-tan: 1;
+  /* The perpendicular step between two lines of the same family:
+     diagonal * sin(angle). */
+  --grid-step: 41.72px;
+  --grid-line: 1px;
+  --grid-opacity: 1;
+  --tx: 0px;
+  --ty: 0px;
+  /* The zoom of the camera: the tile of the grid scales with it. */
+  --zoom: 1;
+  --accent: #6ea8fe;
+  --code-bg: rgba(255, 255, 255, 0.08);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 14px;
+}
+
+#app {
+  height: 100%;
+}
+
+.plan {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background-color: var(--bg);
+  cursor: grab;
+  /* Phase of every family: the pan projected on the normal of that family.
+     A single offset for both families would make them drift apart while the
+     camera moves, and the cells would stop being congruent. */
+  --shift-a: calc(var(--grid-cos) * var(--tx) - var(--grid-sin) * var(--ty));
+  --shift-b: calc(var(--grid-cos) * var(--tx) + var(--grid-sin) * var(--ty));
+}
+
+/* The grid: two repeating gradients, one per family of diagonal lines.
+ * The period (--grid-step) is the perpendicular step in screen pixels and
+ * grows with the zoom; the line thickness (--grid-line) stays 1px. */
+.plan::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--grid-opacity);
+  background-image:
+    repeating-linear-gradient(
+      calc(90deg - var(--grid-angle)),
+      transparent 0 calc(var(--grid-step) - var(--grid-line)),
+      var(--grid-color) 0 var(--grid-step)
+    ),
+    repeating-linear-gradient(
+      calc(90deg + var(--grid-angle)),
+      transparent 0 calc(var(--grid-step) - var(--grid-line)),
+      var(--grid-color) 0 var(--grid-step)
+    );
+  /* The tile is one cell of the mesh (the diagonal of the rhombus) and it
+     scales with the camera: a tile at the size of the viewport breaks the
+     mesh into strips while the camera moves. */
+  background-size:
+    calc(var(--grid-diagonal) * var(--grid-tan) * var(--zoom))
+      calc(var(--grid-diagonal) * var(--zoom));
+  background-position:
+    calc(var(--grid-cos) * var(--shift-a)) calc(-1 * var(--grid-sin) * var(--shift-a)),
+    calc(var(--grid-cos) * var(--shift-b)) calc(var(--grid-sin) * var(--shift-b));
+}
+
+.diagrams {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+/* The T1 placeholder object: the drawing where Rust placed it, in plan units
+   and never rescaled on its own (PRD §7.2). T2 replaces it with the real
+   object (`plan.js:1889`, `insertDiagram`). */
+.diagram-t1 {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.diagram-t1 svg {
+  display: block;
+  overflow: visible;
+}
+
+.empty {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.empty-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.empty-hint {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+.empty code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  background: var(--code-bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* Scaffold diagnostic (see `App.svelte`): it exists only while the Svelte page
+   is a partial port, so the human can tell the two builds apart at a glance. */
+.scaffold {
+  position: fixed;
+  right: 10px;
+  top: 10px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 6px;
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+.hidden {
+  display: none !important;
+}

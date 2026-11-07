@@ -65,3 +65,47 @@ in hand. Everything stays in this worktree and the `feature/svelte-ui` branch.
   those tests never see the Svelte build. Prior decision on record (mnexis,
   2026-11-05): «análisis Svelte — no adoptar ahora»; this experiment is
   the data-gathering path the human chose instead.
+- L4 (2026-11-07, worker, T1: S1 S2 S3): contract map + Svelte scaffold. No
+  tracked file outside the allowed surfaces changed (`git diff --stat` empty)
+  and `crates/gx-app/tauri.conf.json` still says `frontendDist: "frontend"`.
+  - Contract map: `crates/gx-app/frontend-svelte/CONTRACT.md` — 10 JS→Rust
+    intents (`plan.js:2449/410/1910,2042/770/849/1090/861/1838,1872,2289/536/1592`
+    → `app.rs:803/727/732/921/747/772/821/850/876/905`), 8 Rust→page events
+    (`app.rs:805/945, 762,809,840,863,896,916,1172, 1158, 783, 839,864, 796,
+    758`, and `graphium://pending` which has no emitter), the ack/timeout table
+    (ready `app.rs:23` 2000 ms, paint `app.rs:17` 2000 ms, camera + settings
+    throttles 100 ms, pan 250 ms), every payload shape, the contract numbers
+    (59/45°/41.72/24/3/0.4/zoom 0.05-4.0), the `plan.js`/`index.html`/
+    `style.css` section inventory with line ranges, and the C1-C43 parity
+    checklist T4 walks.
+  - Switch: `TAURI_CONFIG` works with this Tauri — both
+    `tauri-build-2.7.4` (`lib.rs:655,681`, `cargo:rerun-if-env-changed`) and
+    the codegen of `tauri::generate_context!()`
+    (`tauri-codegen-2.7.4/lib.rs:56-91`) merge it as a JSON patch, and
+    `frontendDist` resolves against `crates/gx-app`. So:
+    `TAURI_CONFIG='{"build":{"frontendDist":"frontend-svelte/dist"}}'
+    cargo build -p gx-app` (~11 s recompile of `gx-app` only). No second conf
+    file was needed.
+  - Evidence: `cargo test -p gx-app` green with the default config (22 suites,
+    all `test result: ok`, 0 failed). `scripts/svelte-build.sh` →
+    `dist/` 44K, 3 files (js 34.6 kB, css 2.1 kB, html 0.58 kB; js 13.4 kB
+    gzip). The Svelte binary embeds `assets/index-DS7FkpqO.js` +
+    `index-BBA6K-Tu.css` and no `plan.js`; the vanilla binary embeds the
+    opposite. `DISPLAY=:0 scripts/svelte-smoke.sh` (own
+    `XDG_RUNTIME_DIR`/`HOME` under `/tmp`, owner quit afterwards) reports
+    `rendered=true reason=none` for both binaries — `rendered:true` only
+    happens after `graphium://ready` (else `ui_error`) and `render_ack` (else
+    `ui_timeout`). A screenshot of the Svelte window shows the isometric grid
+    and the chip `svelte · dark · 0 diagramas · 0 pintados`, i.e. the settings
+    and the state arrived.
+  - Inherited by T2: `src/lib/contract.js` (the numbers), `gridPaint` (grid
+    finished), `.plan`/`.diagrams`/`.plan::before` in `src/app.css`, and the
+    `.diagram-t1` placeholder to replace with the real object. By T3:
+    `settingsFromPayload`/`settingsId`/`palettePaint` and the
+    `graphium://settings`/`graphium://state` handlers to extend into the panels.
+  - Raw numbers for T5 to re-measure (not the benchmark yet): vanilla frontend
+    133,290 B / 4059 lines (`plan.js` 89,635 B, `style.css` 33,304 B,
+    `index.html` 10,351 B) vs Svelte `dist/` 37,290 B / 3 files. T1 LOC:
+    `src/` 6 files, 597 lines (`App.svelte` 156, `app.css` 168, `grid.js` 126,
+    `contract.js` 86, `tauri.js` 51, `main.js` 10); the rest of the directory is
+    the lockfile and the generated `dist/`.

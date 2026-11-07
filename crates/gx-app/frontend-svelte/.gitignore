@@ -1,0 +1,6 @@
+# Build outputs of the Svelte app. `dist/` is what
+# `TAURI_CONFIG='{"build":{"frontendDist":"frontend-svelte/dist"}}'` embeds;
+# `node_modules/` is the local install. Neither is source, and the vanilla
+# `frontend/` stays the default `frontendDist` of `tauri.conf.json`.
+/dist
+/node_modules
