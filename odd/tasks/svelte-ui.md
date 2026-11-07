@@ -158,3 +158,75 @@ in hand. Everything stays in this worktree and the `feature/svelte-ui` branch.
   unidad al cerrarla; (3) PR y merge siguen PROHIBIDOS en esta rama (S1
   queda en pie); (4) el propósito de la rama es medir el beneficio de la
   migración temprana (S4); (5) el corte continúa después del motor (f10).
+- L8 (2026-11-07, worker, T3: S2): the chrome ported — panels, versions,
+  themes and the clone tools. The Svelte build reaches functional parity with
+  the vanilla page: every item of CONTRACT.md §8 is now marked (C6,
+  C11 clone-move half, C16 switch, C22-C38, C41-C42), with the wire strings,
+  the payload keys and the numbers of the map; the C38/C39 pair was already
+  done in T1.
+  - Files (all inside `crates/gx-app/frontend-svelte/`): `src/App.svelte`
+    (1398 lines: state, wire, camera, objects, clones, clone move, keyboard,
+    banner, ghost, the settings throttle), `src/app.css` (the whole vanilla
+    `style.css`, 1368 lines, byte for byte plus the `#app { height: 100% }`
+    rule the Svelte mount needs — the seven `[data-theme]` blocks and the
+    `.graphium` drawing classes were missing while the port was partial), NEW
+    `src/lib/PlanPanel.svelte` (the list, `×`, `⧉`, the `◀ v3/7 ▶` history),
+    NEW `src/lib/SessionsPanel.svelte` («Mi plano» + one row per session + the
+    notice), NEW `src/lib/SettingsPanel.svelte` (12 controls, 7 theme chips
+    with their four dots, Escape/focus), NEW `src/lib/CloneTools.svelte` (the
+    pill: `◀ n/m ▶`, `↻`, the `×` inside it, the overhang), NEW
+    `src/lib/presets.js` (PLAN_PRESETS/THEME_PRESETS/THEME_CHIPS), NEW
+    `src/lib/labels.js` (the built Spanish strings, `es` short date, the
+    notice), NEW `src/lib/history.js` (where an indicator sits, what a step
+    asks for), `README.md` and `CONTRACT.md` (§7 tables + §8 marks + §9).
+    The scaffold diagnostic chip is gone, as §9 of the contract said.
+  - Gates (real exit codes, captured without pipes):
+    `npx vite build` → 0 (JS 72.88 kB / 26.29 kB gzip, CSS 16.71 kB / 3.64 kB
+    gzip, HTML 0.58 kB; `dist/` 90,193 B, 3 files);
+    `cargo test -p gx-app` → 0 (22 suites, `test result: ok`, 0 failed;
+    `git diff --stat main -- crates/gx-app/frontend/` empty — the vanilla path
+    is byte-identical and the tests that `include_str!` it never see Svelte);
+    `TAURI_CONFIG='{"build":{"frontendDist":"frontend-svelte/dist"}}' cargo
+    build -p gx-app` → 0 (binary embeds `assets/index-BCk072b7.js` +
+    `assets/index-BqaTbq4Y.css` and zero `plan.js`);
+    `DISPLAY=:0 scripts/svelte-smoke.sh` → `rendered=true reason=none`
+    (ready + paint ack through the real T3 UI).
+  - Verification beyond the gates (no JS test runner in this package and
+    adding one would mutate dependencies, so these are evidence of the task,
+    not committed tests; the harness lives only in `/tmp` and was removed with
+    the session): a browser harness runs the **real built bundle** with a
+    faked Tauri bridge and checks 92 DOM-observable rules of §8 — nothing
+    leaves the page before the first `graphium://settings`, a burst of two
+    slider inputs is exactly one `settings-changed`, a repeated value sends
+    nothing, the palette/`data-theme`/grid repaint at once, the panel item and
+    the `v3/7` indicator, `◀` → `graphium://version-view{version:10}` and `▶`
+    back to the live drawing with no event, the preview painted on the object,
+    the switcher rows and the verbatim notice, both empty states, the pill
+    (`2/7`, refresh disabled once `updatable` is false with
+    `el original ya no está en el plan`, `graphium://clone-view` with/without
+    version, `graphium://clone-remove`), the keyboard and its input guard, and
+    the banner (`+2 errores`) and the ghost (`calculando layout…` → `4 nodos, 3
+    edges` → hidden by error and by render). Two pixel-for-pixel comparisons
+    against the vanilla page: the default state and a rich state (light theme,
+    two diagrams, one clone, the settings panel open, a version preview) render
+    **byte-identical screenshots** (1280×800, same PNG hash).
+  - Typeface/LOC for T5 (raw numbers, not the benchmark yet): Svelte `src/`
+    is now 14 files / 4,057 lines (App.svelte 1398, app.css 1368, the six
+    lib modules 499, the four components 605, main.js 10) vs the vanilla
+    133,290 B / 4,059 lines. `dist/` 90,193 B vs 44K at T1 and 52K at T2.
+  - Findings left for T4 (recorded in CONTRACT.md §8/§9): (1) the clone pill
+    measures itself against the **object** width, so a wide clone keeps it at
+    the corner; the vanilla measured the `.diagram` container, which has no
+    width (every child is absolute), so it always applied `.overhang` — the
+    port follows the written L8/C31 rule, and this is the one observed visual
+    difference on wide clones (verified by reading the class of both pages in
+    the same state). (2) `+N errores` is unreachable: Rust never sends
+    `extra` (§5.7). (3) `graphium://pending` still has no emitter: the handler
+    is kept exactly as the vanilla page has it and the event is not invented
+    (C36), so the ghost is unreachable from Rust today.
+  - Commits on `feature/svelte-ui` (L7; no push, no PR, no merge):
+    `11d8a97` feat(ui): the chrome — panels, versions, themes and the clone
+    tools (code + CONTRACT.md + README.md), and the docs commit of this
+    entry. What stays open for T4: the item-by-item walk of §8 with the
+    checklist in hand, the A/B switch documented end to end, and the two
+    findings above; T5 keeps the bench harness and the comparative results.
