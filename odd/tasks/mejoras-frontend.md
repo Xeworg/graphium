@@ -82,3 +82,46 @@ orquestador). Persisted in project memory: `analisis-frontend-*` and
   planCameras prune (T1), will-change (T2), invisible focus ◀/▶ (T3), mute
   notice (T3), reduced-motion (T3), keyboard-unreachable history (T3),
   pinch absent (T4).
+- L4 (2026-11-07, worker T1): plomería fina entregada como refactor puro, con
+  las puertas verdes y sus códigos reales: `cargo test --workspace` 0 failed,
+  `cargo fmt --check` exit 0, `cargo clippy --workspace` exit 0, `npm run
+  build` exit 0, `node tools/parity.mjs` 57/57 exit 0, `DISPLAY=:0
+  scripts/smoke.sh` → `rendered=true reason=none` exit 0.
+  Qué cambió: (1) `svelte:window onresize onkeydown` reemplaza el par manual
+  `window.addEventListener("resize"/"keydown")` y con él muere el bloque de
+  `removeEventListener` de esas dos; el wheel y el pointer de `#plan` siguen
+  imperativos (su disposición es el test empírico de T4). (2) el cleanup de
+  `onMount` limpia también `cameraTimer`, `settingsTimer`/`settingsPending` y
+  `ghostTimer`: un timer que dispara después del desmontaje escribe en una
+  página que ya no está. (3) el grid se publica en DOS pares derived+effect:
+  `gridPaintStatic` (las 6 vars de settings) y `gridPaintCamera`
+  (`--grid-step`, `--grid-opacity`, `--tx`, `--ty`, `--zoom`). (4) `state` es
+  `$state.raw`, reemplazado wholesale en el listener de `graphium://state`.
+  (5) `prunePlanCameras()` en `reconcileActivePlan`. (6) props muertos fuera:
+  `ontoggle` de PlanPanel, `sessions` de SessionsPanel.
+  Evidencia del split (medida, no argumento): sobre el bundle construido, un
+  sello en `CSSStyleDeclaration.prototype.setProperty` más un wheel por CDP —
+  antes: 11 escrituras por frame de pan, las 6 de settings incluidas (el
+  efecto único escribía 11 vars, no 10: el documento contaba de menos);
+  después: 5 por frame, y 0 de las 6 estáticas en los frames siguientes. Un
+  cambio de settings sigue escribiendo las 11 (+7 de paleta = 18, idéntico a
+  antes), así que los valores no cambiaron de forma: `parity.mjs` 57/57 lo
+  confirma leyendo `--grid-opacity`/`--tx`/`--ty`/`--zoom` con
+  `getPropertyValue`.
+  Verificación de `$state.raw`: se buscaron escrituras campo por campo y no
+  había ninguna fuera del listener — las tres asignaciones
+  (`state.diagrams/sessions/clones = …`) **eran** el listener, y cada evento
+  trae los tres arrays, así que pasaron a un solo reemplazo del objeto (misma
+  semántica de reemplazo C17). Quedan 18 sitios de lectura (`find`, `filter`,
+  `map`, `length`, índices), ninguna llamada mutadora sobre los arrays
+  (`push`/`splice`/`sort`/…) y `CloneTools` solo lee (`clone.updatable`). El
+  proxy profundo envolvía cada diagrama y cada clon del payload sin que nadie
+  lo necesitara.
+  Prune de `planCameras`: `prunePlanCameras()` corre al final de
+  `reconcileActivePlan` — después de `showPlan`, que acaba de guardar la
+  cámara del plano que deja, incluido el que terminó — y borra toda entrada
+  que el state ya no lista (más `user`). Prueba: s1 visitada y paneada, s1
+  desaparece del state, s1 vuelve con el mismo id y se la elige de nuevo —
+  antes la cámara volvía al valor viejo (275.99/67.32 @1.331), ahora cae al
+  fallback `newestCenter` (296.36/97.56 @1.21). El mapa deja de crecer con
+  una entrada por sesión que el humano visitó.

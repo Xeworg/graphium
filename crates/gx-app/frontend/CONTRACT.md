@@ -568,7 +568,7 @@ document.
 | `src/app.css` | the whole vanilla `style.css`, byte for byte, plus `#app { height: 100% }` |
 | `src/lib/contract.js` | event names, contract numbers, `SETTINGS_KEYS`, `THEMES`, `USER_PLAN` |
 | `src/lib/tauri.js` | the bridge with the vanilla fallback |
-| `src/lib/grid.js` | `GRID_FALLBACK`, `settingsFromPayload`, `settingsId`, `gridPaint`, `palettePaint` |
+| `src/lib/grid.js` | `GRID_FALLBACK`, `settingsFromPayload`, `settingsId`, `gridPaintStatic`, `gridPaintCamera`, `palettePaint` |
 | `src/lib/plane.js` | the pure camera and culling math |
 | `src/lib/presets.js` | `PLAN_PRESETS`, `THEME_PRESETS`, `THEME_CHIPS` (the swatches of the chips) |
 | `src/lib/labels.js` | the built strings and the `es` date, verbatim from the vanilla page |

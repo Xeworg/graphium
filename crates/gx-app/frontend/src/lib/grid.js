@@ -80,21 +80,41 @@ export function settingsId(next) {
  * The thickness stays one screen pixel because it is a length of the
  * gradient, not a scaled one; the phase of each family is the pan projected
  * on its own normal, and a single offset would break the lattice.
+ *
+ * It is published in two halves (T1 of `odd/tasks/mejoras-frontend.md`), which
+ * is what keeps a pan frame from rewriting what only the settings decide:
+ * `gridPaintStatic` holds the six variables that are a function of the settings
+ * alone and `gridPaintCamera` the five that move with the camera. The union of
+ * the two is the object the single `gridPaint` returned, value for value.
  */
-export function gridPaint(settings, camera) {
+export function gridPaintStatic(settings) {
   const grid = gridSettings(settings);
   const radians = (grid.grid_angle_degrees * Math.PI) / 180;
-  const sine = Math.sin(radians);
-  const visible = grid.grid_visible && camera.zoom >= GRID_HIDE_ZOOM;
 
   return {
     "--grid-angle": `${grid.grid_angle_degrees}deg`,
-    "--grid-sin": sine.toFixed(4),
+    "--grid-sin": Math.sin(radians).toFixed(4),
     "--grid-cos": Math.cos(radians).toFixed(4),
     "--grid-tan": Math.tan(radians).toFixed(4),
     "--grid-diagonal": `${grid.grid_diagonal}px`,
     "--grid-color": grid.grid_color,
-    "--grid-step": `${(grid.grid_diagonal * sine * camera.zoom).toFixed(2)}px`,
+  };
+}
+
+/**
+ * The variables of the grid that move with the camera, plus the camera itself
+ * (`plan.js:362-383`). The step and the opacity read the settings too — the
+ * diagonal and the angle scale the step, `grid_visible` and `grid_opacity`
+ * fade the grid — but they are written with the camera, because the zoom is
+ * what changes them on a pan or on a wheel, frame after frame.
+ */
+export function gridPaintCamera(settings, camera) {
+  const grid = gridSettings(settings);
+  const radians = (grid.grid_angle_degrees * Math.PI) / 180;
+  const visible = grid.grid_visible && camera.zoom >= GRID_HIDE_ZOOM;
+
+  return {
+    "--grid-step": `${(grid.grid_diagonal * Math.sin(radians) * camera.zoom).toFixed(2)}px`,
     "--grid-opacity": visible ? String(grid.grid_opacity) : "0",
     "--tx": `${camera.tx}px`,
     "--ty": `${camera.ty}px`,

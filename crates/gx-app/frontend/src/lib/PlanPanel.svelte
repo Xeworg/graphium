@@ -16,7 +16,6 @@
     diagrams = [],
     selectedId = null,
     viewed = {},
-    ontoggle,
     onselect,
     onclose,
     onclone,
@@ -36,10 +35,7 @@
   aria-expanded={open}
   aria-controls="panel"
   title="diagramas abiertos"
-  onclick={() => {
-    open = !open;
-    ontoggle?.(open);
-  }}>☰</button
+  onclick={() => (open = !open)}>☰</button
 >
 
 <aside id="panel" class="panel" class:hidden={!open} aria-label="diagramas abiertos">

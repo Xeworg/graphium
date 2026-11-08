@@ -31,7 +31,8 @@
   } from "./lib/contract.js";
   import { emit, listen } from "./lib/tauri.js";
   import {
-    gridPaint,
+    gridPaintCamera,
+    gridPaintStatic,
     palettePaint,
     settingsFromPayload,
     settingsId,
@@ -59,8 +60,11 @@
   // The settings of the human. `null` until the first `graphium://settings`.
   let settings = $state(null);
   // The state Rust owns (PRD §8.6.1): the truth about what the plan shows and
-  // the only source of the panels (C22).
-  let state = $state({ diagrams: [], sessions: [], clones: [] });
+  // the only source of the panels (C22). It is `$state.raw` because it is
+  // replaced wholesale on every `graphium://state` (C17) and no code writes one
+  // of its three arrays in place: the deep proxy would only wrap every diagram
+  // and every clone of the payload for nothing.
+  let state = $state.raw({ diagrams: [], sessions: [], clones: [] });
   // The objects of the plane, in arrival order — the same order the vanilla
   // `objects` Map iterates (plan.js:275). Diagrams and clones share it; the
   // ids never collide (the store numbers `d-…`, the owner numbers `c-…`).
@@ -113,7 +117,13 @@
   // The timer of «calculando layout…» -> `N nodos, M edges` (C36).
   let ghostTimer = null;
 
-  const grid = $derived(gridPaint(settings, camera));
+  // The grid is published in the two halves it is written in (T1): the six
+  // variables that only the settings decide — written once per settings change
+  // — and the five the camera derives, written on every camera write. One
+  // effect for all eleven rewrote the six on every pan frame: six CSSOM writes
+  // per frame that could not change anything.
+  const gridStatic = $derived(gridPaintStatic(settings));
+  const gridCamera = $derived(gridPaintCamera(settings, camera));
   const palette = $derived(palettePaint(settings));
   // The camera transform of the layer. The vanilla page applies the same
   // transform to every object (`plan.js:393-396`); one transform on the
@@ -144,10 +154,17 @@
   );
 
   // The grid and the palette, published to the stylesheets exactly like
-  // `applyGrid`/`applySettings` do (`plan.js:362-383`, `plan.js:729-742`).
+  // `applyGrid`/`applySettings` do (`plan.js:362-383`, `plan.js:729-742`). The
+  // static half depends on `settings` alone, so a pan frame never enters it.
   $effect(() => {
     if (!planEl) return;
-    for (const [name, value] of Object.entries(grid)) {
+    for (const [name, value] of Object.entries(gridStatic)) {
+      planEl.style.setProperty(name, value);
+    }
+  });
+  $effect(() => {
+    if (!planEl) return;
+    for (const [name, value] of Object.entries(gridCamera)) {
       planEl.style.setProperty(name, value);
     }
   });
@@ -579,23 +596,45 @@
 
   /** The session of the plan on screen is gone: switch, never stay empty. */
   function reconcileActivePlan() {
+    if (planOnScreenEnded()) {
+      const ended = activePlan;
+      const next = initialPlan();
+      showPlan(next === null ? null : { id: next.id, label: next.label });
+      if (ended !== null) {
+        sessionMessage = sessionEndedNotice(ended, next);
+      }
+    }
+    // A plan the state no longer lists has nobody to come back to: its camera
+    // leaves with the session, or the map grows with one entry per session the
+    // human ever visited (A2). After `showPlan`, which saves the camera of the
+    // plan it leaves — including the one that just ended.
+    prunePlanCameras();
+  }
+
+  /**
+   * Whether the plan on screen has to leave (A2): its session is gone, or no
+   * plan has come on screen yet — the first state has to show one.
+   */
+  function planOnScreenEnded() {
     // The plan of the human does not end with a session.
-    if (activePlan !== null && activePlan.id === USER_PLAN.id) {
-      return;
+    if (activePlan === null) {
+      return true;
     }
-    if (
-      activePlan !== null &&
-      state.sessions.some((session) => session.id === activePlan.id)
-    ) {
-      return;
+    if (activePlan.id === USER_PLAN.id) {
+      return false;
     }
-    const ended = activePlan;
-    const next = initialPlan();
-    showPlan(next === null ? null : { id: next.id, label: next.label });
-    if (ended === null) {
-      return;
+    return !state.sessions.some((session) => session.id === activePlan.id);
+  }
+
+  /** Forgets the camera of every plan the state does not list any more. */
+  function prunePlanCameras() {
+    const live = new Set(state.sessions.map((session) => session.id));
+    live.add(USER_PLAN_ID);
+    for (const planId of [...planCameras.keys()]) {
+      if (!live.has(planId)) {
+        planCameras.delete(planId);
+      }
     }
-    sessionMessage = sessionEndedNotice(ended, next);
   }
 
   // --- diagrams (plan.js:1879-2062) -------------------------------------------
@@ -1183,14 +1222,13 @@
 
     // The listeners of the surface, attached the way the vanilla page does:
     // the wheel is not passive, because it calls `preventDefault`
-    // (plan.js:398-412).
+    // (plan.js:398-412). The resize and the keyboard are not here: they belong
+    // to `<svelte:window>` below, which removes them when the page goes.
     planEl.addEventListener("wheel", onWheel, { passive: false });
     planEl.addEventListener("pointerdown", onPointerDown);
     planEl.addEventListener("pointermove", onPointerMove);
     planEl.addEventListener("pointerup", endDrag);
     planEl.addEventListener("pointercancel", endDrag);
-    window.addEventListener("resize", onResize);
-    window.addEventListener("keydown", onKeyDown);
 
     // Every listener is registered **before** `graphium://ready` leaves, or
     // the burst Rust answers with would reach nobody (C2).
@@ -1209,9 +1247,14 @@
     listen(EVENTS.state, (event) => {
       // The model lives in Rust (PRD §8.6.1): the page only reads the state.
       const payload = event.payload || {};
-      state.diagrams = Array.isArray(payload.diagrams) ? payload.diagrams : [];
-      state.sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
-      state.clones = Array.isArray(payload.clones) ? payload.clones : [];
+      // Wholesale, never field by field: `state` is `$state.raw`, so the three
+      // arrays are new on every event and the identity of the object is what
+      // tells the page the state moved (C17).
+      state = {
+        diagrams: Array.isArray(payload.diagrams) ? payload.diagrams : [],
+        sessions: Array.isArray(payload.sessions) ? payload.sessions : [],
+        clones: Array.isArray(payload.clones) ? payload.clones : [],
+      };
       // A session the owner dropped takes its plan away: switch, never an
       // empty surface without explanation (A2, C29).
       reconcileActivePlan();
@@ -1247,16 +1290,30 @@
     emit(EVENTS.ready, {});
 
     return () => {
+      // The wheel and the pointer are still imperative (T1: whether they move
+      // to the template is the empirical test of T4), so they are removed here.
       planEl.removeEventListener("wheel", onWheel);
       planEl.removeEventListener("pointerdown", onPointerDown);
       planEl.removeEventListener("pointermove", onPointerMove);
       planEl.removeEventListener("pointerup", endDrag);
       planEl.removeEventListener("pointercancel", endDrag);
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("keydown", onKeyDown);
+      // A timer that fires after the component is gone writes to a page that
+      // is no longer there: the two throttles and the ghost of a render in
+      // flight leave with it.
+      window.clearTimeout(cameraTimer);
+      cameraTimer = null;
+      window.clearTimeout(settingsTimer);
+      settingsTimer = null;
+      settingsPending = null;
+      window.clearTimeout(ghostTimer);
+      ghostTimer = null;
     };
   });
 </script>
+
+<!-- The resize and the keyboard of the page: the template owns both, so the
+     component removes them when it goes (the teardown bug of T1). -->
+<svelte:window onresize={onResize} onkeydown={onKeyDown} />
 
 <!-- The plan: an infinite surface with a grid. The camera lives here
      (PRD §7.1, `index.html:11-13`). -->

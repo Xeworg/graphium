@@ -19,7 +19,6 @@
   } from "./labels.js";
 
   let {
-    sessions = [],
     rows = [],
     clones = [],
     activePlanId = null,
