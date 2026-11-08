@@ -1007,6 +1007,7 @@ fn the_book_refuses_a_chapter_of_a_language_the_registry_does_not_know() {
         mtime_ns: 0,
         symbols: Vec::new(),
         edges: Vec::new(),
+        tables: None,
     };
 
     let scratch = Scratch::new("languages");

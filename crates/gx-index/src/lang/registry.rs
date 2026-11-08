@@ -174,6 +174,7 @@ pub const RUST: Grammar = Grammar {
     }),
     builtins: &[],
     relations: rust::relations,
+    detail: None,
 };
 
 /// TypeScript and TSX: one language, one module, the nesting of the language in
@@ -221,6 +222,7 @@ pub const TYPESCRIPT: Grammar = Grammar {
     }),
     builtins: &[],
     relations: typescript::relations,
+    detail: None,
 };
 
 /// The runtime names of Python (T6): the builtins of the language and the
@@ -401,6 +403,7 @@ pub const PYTHON: Grammar = Grammar {
     }),
     builtins: PYTHON_BUILTINS,
     relations: python::relations,
+    detail: None,
 };
 
 /// The runtime names of Go (T6): the predeclared identifiers of the language
@@ -539,6 +542,7 @@ pub const GO: Grammar = Grammar {
     walk: Walk::Custom(go::walk),
     builtins: GO_BUILTINS,
     relations: go::relations,
+    detail: None,
 };
 
 /// The runtime names of Java (T6): `java.lang` (which every file imports
@@ -693,6 +697,7 @@ pub const JAVA: Grammar = Grammar {
     }),
     builtins: JAVA_BUILTINS,
     relations: java::relations,
+    detail: None,
 };
 
 /// JavaScript and JSX: one grammar, one module, the nesting of the language in
@@ -725,6 +730,7 @@ pub const JAVASCRIPT: Grammar = Grammar {
     }),
     builtins: &[],
     relations: javascript::relations,
+    detail: None,
 };
 
 /// C: the declarations of a translation unit, named by their declarators and
@@ -764,6 +770,7 @@ pub const C: Grammar = Grammar {
     }),
     builtins: &[],
     relations: c::relations,
+    detail: None,
 };
 
 /// C++: the types and the functions of a translation unit, with the methods of
@@ -807,6 +814,7 @@ pub const CPP: Grammar = Grammar {
     }),
     builtins: &[],
     relations: cpp::relations,
+    detail: None,
 };
 
 /// C#: the types of a file, with their constructors and methods as children,
@@ -846,6 +854,7 @@ pub const CSHARP: Grammar = Grammar {
     }),
     builtins: &[],
     relations: csharp::relations,
+    detail: None,
 };
 
 /// PHP: the types of a file, with their methods as children, nested under the
@@ -886,6 +895,7 @@ pub const PHP: Grammar = Grammar {
     }),
     builtins: &[],
     relations: php::relations,
+    detail: None,
 };
 
 /// Ruby: the classes and the modules of a file, with the methods of both under
@@ -915,6 +925,7 @@ pub const RUBY: Grammar = Grammar {
     }),
     builtins: &[],
     relations: ruby::relations,
+    detail: None,
 };
 
 /// SQL: the objects a schema declares — the tables, the views and the types as
@@ -947,6 +958,7 @@ pub const SQL: Grammar = Grammar {
     }),
     builtins: &[],
     relations: sql::relations,
+    detail: Some(sql::tables),
 };
 
 /// Shell: the functions of a script and the variables assigned at its root,
@@ -975,6 +987,7 @@ pub const SHELL: Grammar = Grammar {
     }),
     builtins: &[],
     relations: shell::relations,
+    detail: None,
 };
 
 /// Swift: the declarations of a file with their methods, and the module named
@@ -1031,6 +1044,7 @@ pub const SWIFT: Grammar = Grammar {
     }),
     builtins: &[],
     relations: swift::relations,
+    detail: None,
 };
 
 /// Kotlin: the types of a file with their functions, nested under the `package`
@@ -1078,6 +1092,7 @@ pub const KOTLIN: Grammar = Grammar {
     }),
     builtins: &[],
     relations: kotlin::relations,
+    detail: None,
 };
 
 /// Dart: the types of a file with their methods and constructors, and the
@@ -1135,6 +1150,7 @@ pub const DART: Grammar = Grammar {
     }),
     builtins: &[],
     relations: dart::relations,
+    detail: None,
 };
 
 /// Scala: the types of a file with their members, nested under the `package`
@@ -1195,6 +1211,7 @@ pub const SCALA: Grammar = Grammar {
     }),
     builtins: &[],
     relations: scala::relations,
+    detail: None,
 };
 
 /// R: the functions a script binds with `<-` as `fn` and every other binding as
@@ -1224,6 +1241,7 @@ pub const R: Grammar = Grammar {
     }),
     builtins: &[],
     relations: r::relations,
+    detail: None,
 };
 
 /// Lua: the tables of a file as `module`s with their functions under them, and
@@ -1254,6 +1272,7 @@ pub const LUA: Grammar = Grammar {
     }),
     builtins: &[],
     relations: lua::relations,
+    detail: None,
 };
 
 /// Zig: the `const`s of a file, where a `const` that holds a `struct`, `union`,
@@ -1288,6 +1307,7 @@ pub const ZIG: Grammar = Grammar {
     }),
     builtins: &[],
     relations: zig::relations,
+    detail: None,
 };
 
 /// Every grammar this build ships, in the order the book lists them.

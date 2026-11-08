@@ -73,6 +73,74 @@ pub struct ParsedFile {
     /// The relations of the chapter (S7): syntactic edges with their target as
     /// the source spells it, and the symbol that owns each one.
     pub edges: Vec<ParsedEdge>,
+    /// The detail a grammar reads beside its symbols — SQL's columns (S3, S4 of
+    /// f12) — and `None` for every chapter whose book is its declarations and
+    /// relations only. It never reaches the schema: a column is not a `symbol`
+    /// row, and the diagram side is the one that reads it.
+    pub tables: Option<Vec<ParsedTable>>,
+}
+
+/// The columns detail of one SQL table (S3, S4 of f12): what a `CREATE TABLE`
+/// declares inside its parentheses.
+///
+/// It is **detail**, not a declaration: the chapter keeps the table as a `type`
+/// symbol and these columns beside it, so the `symbol` and `edge` tables of the
+/// schema stay exactly what they were (a column is a field of the table, as a
+/// field of a class is not a declaration of the book either).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedTable {
+    /// The table name as the DDL writes it: `schema.store` keeps `store`, the
+    /// name the chapter's `type` symbol carries.
+    pub name: String,
+    /// The columns, in the order the DDL declares them.
+    pub columns: Vec<ParsedColumn>,
+    /// The foreign keys the table declares outside its column list
+    /// (`FOREIGN KEY (store_id) REFERENCES store (id)`).
+    pub foreign_keys: Vec<ParsedForeignKey>,
+}
+
+/// One column of a SQL table, as the DDL spells it (S4 of f12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedColumn {
+    /// The name the DDL writes: `store_id`.
+    pub name: String,
+    /// The type as the schema spells it, parentheses included: `BIGINT`,
+    /// `VARCHAR(255)`.
+    pub type_name: String,
+    /// Whether the DDL writes `NOT NULL`. A `PRIMARY KEY` implies it in SQL,
+    /// but the detail keeps what the schema declares — the diagram shows the
+    /// author's declaration, not a rule inferred from it.
+    pub not_null: bool,
+    /// Whether the column is a key: an inline `… PRIMARY KEY`, or a table-level
+    /// `PRIMARY KEY (…)` that names it — so a composite key marks every one of
+    /// its columns.
+    pub primary_key: bool,
+    /// The target of an inline `REFERENCES` (`store_id BIGINT REFERENCES
+    /// store (id)`), if the column declares one.
+    pub references: Option<ParsedReference>,
+}
+
+/// The object an inline `REFERENCES` of a column points to (S4 of f12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedReference {
+    /// The table the key points to: `store`.
+    pub table: String,
+    /// The columns of that table it points to (`id`), empty when the DDL names
+    /// none.
+    pub columns: Vec<String>,
+}
+
+/// One foreign key a table declares outside its columns (S4 of f12):
+/// `FOREIGN KEY (store_id) REFERENCES store (id)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedForeignKey {
+    /// The columns of this table the key holds: `store_id`.
+    pub columns: Vec<String>,
+    /// The table it points to: `store`.
+    pub table: String,
+    /// The columns of that table it points to (`id`), empty when the DDL names
+    /// none.
+    pub target_columns: Vec<String>,
 }
 
 /// Whether a file looks binary: a NUL byte in the first 8 KiB. The book never

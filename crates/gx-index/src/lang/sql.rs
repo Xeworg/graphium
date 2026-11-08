@@ -35,12 +35,57 @@
 //! (`CONSTRAINT fk FOREIGN KEY …`) is not in its rules and parses as an error
 //! node, so the book keeps no relation for it and the fixture of the tests
 //! writes the inline form.
+//!
+//! **The detail of a table (S3, S4 of f12).** SQL is the one language of the
+//! book whose schema hands the diagram a shape, and that shape is **not** a
+//! declaration: a `CREATE TABLE` declares a table, and its columns are detail
+//! carried beside the symbols — on [`crate::lang::model::ParsedFile::tables`] —
+//! never in the `symbol` or `edge` tables of the schema (the CHECK at
+//! `schema.rs:449` stays what it is, and no schema version moves). This module
+//! reads that detail with [`tables`]; [`crate::lang::engine::Grammar`] carries
+//! it without knowing which language asked for it.
+//!
+//! What the pinned grammar (`tree-sitter-sequel 0.3.11`) gives, and what it does
+//! not:
+//!
+//! - a column is a `column_definition`: `name` and `type` are fields of the
+//!   node and the type is whole (`VARCHAR(255)`); the constraints are children
+//!   — `keyword_not` + `keyword_null` (a bare `keyword_null` is the explicit
+//!   `NULL`), the inline `keyword_primary` + `keyword_key`, and an inline
+//!   `keyword_references` + `object_reference` + the target's columns;
+//! - the table-level constraints land as `constraint` children of
+//!   `column_definitions`, **not** as the `_primary_key_constraint` and
+//!   `_key_constraint` rules the grammar spells: a rule whose name starts with
+//!   `_` is hidden and inlined, so the node kind to match is `constraint` and
+//!   the keywords it carries are what tells its forms apart (`keyword_primary`
+//!   is a primary key; a `keyword_key` with `keyword_references` is a foreign
+//!   key). T2 builds on exactly this;
+//! - a table-level `PRIMARY KEY (a, b)` arrives whole, so every column it names
+//!   is marked as a key and a composite key is carried as what it is. Mapping a
+//!   composite key onto a single-key document is a decision of the side that
+//!   builds the diagram (T2), not of this chapter;
+//! - a *named* foreign key (`CONSTRAINT fk FOREIGN KEY …`) is not in the
+//!   grammar's rules at this version (its `_constraint_literal` admits only
+//!   `PRIMARY KEY` and `CHECK`), so it parses as an error node and the chapter
+//!   keeps neither a relation nor a detail for it: the fixtures write the inline
+//!   and the unnamed table-level forms. A named primary key
+//!   (`CONSTRAINT pk PRIMARY KEY (…)`) does parse, and the keyword check reads
+//!   it like the unnamed one;
+//! - the relations of the chapter do not change with this detail: its `uses`
+//!   edges stay the three forms [`visit`] reads, and a table-level foreign key
+//!   lives in [`crate::lang::model::ParsedTable::foreign_keys`] only. Its
+//!   relation is drawn by whoever builds the diagram out of the detail;
+//! - a `CREATE TABLE … AS SELECT` writes no column list, so it stays a `type`
+//!   of the chapter and is not an entry of the detail: the detail is what the
+//!   DDL writes between the parentheses.
 
 use tree_sitter::Node;
 
 use crate::lang::emit::{dotted_module, emit_named, text};
 use crate::lang::engine::{Body, Nesting};
-use crate::lang::model::ParsedSymbol;
+use crate::lang::model::{
+    ParsedColumn, ParsedForeignKey, ParsedReference, ParsedSymbol, ParsedTable,
+};
 use crate::relations::{push_edges, RawEdge, USES};
 
 /// The language of the chapter, as the table `file` spells it.
@@ -114,40 +159,165 @@ fn visit(node: &Node, source: &[u8], out: &mut Vec<RawEdge>) {
         _ => {}
     }
 
-    let mut cursor = node.walk();
-    let children: Vec<Node> = node.named_children(&mut cursor).collect();
-    for child in children {
+    for child in children(node) {
         visit(&child, source, out);
     }
 }
 
 /// The tables an `object_reference` of a node names, at the top of the node.
 fn referenced(node: &Node, source: &[u8]) -> Vec<String> {
-    let mut cursor = node.walk();
-    node.named_children(&mut cursor)
+    children(node)
+        .into_iter()
         .filter(|child| child.kind() == "object_reference")
         .filter_map(|reference| reference_name(&reference, source))
         .collect()
 }
 
-/// The table a `REFERENCES` clause points to.
+/// The table a `REFERENCES` clause points to, as the relations read it.
 fn foreign_key(node: &Node, source: &[u8]) -> Vec<String> {
-    let mut cursor = node.walk();
-    let children: Vec<Node> = node.named_children(&mut cursor).collect();
-    let mut names = Vec::new();
-    for (index, child) in children.iter().enumerate() {
-        if child.kind() != "keyword_references" {
-            continue;
-        }
-        if let Some(name) = children
-            .get(index + 1)
-            .filter(|target| target.kind() == "object_reference")
-            .and_then(|target| reference_name(target, source))
-        {
-            names.push(name);
+    reference(node, source)
+        .map(|target| vec![target.table])
+        .unwrap_or_default()
+}
+
+/// The columns detail of a chapter (S3, S4 of f12): every `CREATE TABLE` whose
+/// DDL declares columns, with its columns and its keys.
+pub(crate) fn tables(root: &Node, source: &[u8]) -> Vec<ParsedTable> {
+    let mut out = Vec::new();
+    collect_tables(root, source, &mut out);
+    out
+}
+
+/// Walks the tree once and records the detail of every table it finds.
+fn collect_tables(node: &Node, source: &[u8], out: &mut Vec<ParsedTable>) {
+    if node.kind() == "create_table" {
+        if let Some(table) = table(node, source) {
+            out.push(table);
         }
     }
-    names
+    for child in children(node) {
+        collect_tables(&child, source, out);
+    }
+}
+
+/// One `CREATE TABLE`: its columns and the keys it declares at table level.
+///
+/// The table whose DDL writes no column list (`CREATE TABLE … AS SELECT`) has
+/// no detail: there is nothing between the parentheses to read.
+fn table(node: &Node, source: &[u8]) -> Option<ParsedTable> {
+    let name = declared(node, source)?;
+    let definitions = children(node)
+        .into_iter()
+        .find(|child| child.kind() == "column_definitions")?;
+    let mut table = ParsedTable {
+        name,
+        columns: Vec::new(),
+        foreign_keys: Vec::new(),
+    };
+    for child in children(&definitions) {
+        match child.kind() {
+            "column_definition" => {
+                if let Some(column) = column(&child, source) {
+                    table.columns.push(column);
+                }
+            }
+            "constraints" => table_constraints(&child, source, &mut table),
+            _ => {}
+        }
+    }
+    Some(table)
+}
+
+/// One `column_definition`: the name, the type as the DDL spells it, the
+/// nullability and the key the DDL gives it, and an inline `REFERENCES`.
+fn column(node: &Node, source: &[u8]) -> Option<ParsedColumn> {
+    let name = node
+        .child_by_field_name("name")
+        .and_then(|name| text(&name, source))?;
+    let parts = children(node);
+    Some(ParsedColumn {
+        name,
+        type_name: node
+            .child_by_field_name("type")
+            .and_then(|kind| text(&kind, source))
+            .unwrap_or_default(),
+        // `NOT NULL` is a sequence of two keywords, so a `NOT` of some other
+        // clause (inside an expression) is never taken for it.
+        not_null: parts
+            .windows(2)
+            .any(|pair| pair[0].kind() == "keyword_not" && pair[1].kind() == "keyword_null"),
+        primary_key: parts.iter().any(|part| part.kind() == "keyword_primary"),
+        references: reference(node, source),
+    })
+}
+
+/// The constraints a table declares outside its columns: a `PRIMARY KEY (…)`
+/// marks every column it names, and a `FOREIGN KEY (…) REFERENCES …` is one of
+/// the table's keys. A `UNIQUE`, an `INDEX` or a `CHECK` is not detail the
+/// diagram reads, so it is not carried.
+fn table_constraints(node: &Node, source: &[u8], table: &mut ParsedTable) {
+    for constraint in children(node) {
+        if constraint.kind() != "constraint" {
+            continue;
+        }
+        let parts = children(&constraint);
+        let columns = parts
+            .iter()
+            .find(|part| part.kind() == "ordered_columns")
+            .map(|ordered| ordered_columns(ordered, source))
+            .unwrap_or_default();
+        if parts.iter().any(|part| part.kind() == "keyword_primary") {
+            for column in &mut table.columns {
+                if columns.contains(&column.name) {
+                    column.primary_key = true;
+                }
+            }
+        } else if let Some(target) = reference(&constraint, source) {
+            table.foreign_keys.push(ParsedForeignKey {
+                columns,
+                table: target.table,
+                target_columns: target.columns,
+            });
+        }
+    }
+}
+
+/// The columns an `ordered_columns` names: `(id, code)` → `id`, `code`.
+fn ordered_columns(node: &Node, source: &[u8]) -> Vec<String> {
+    children(node)
+        .iter()
+        .filter(|child| child.kind() == "column")
+        .filter_map(|child| child.child_by_field_name("name"))
+        .filter_map(|name| text(&name, source))
+        .collect()
+}
+
+/// The `REFERENCES` clause of a column or a constraint: the table it names and
+/// the columns of that table, when the DDL spells them.
+fn reference(node: &Node, source: &[u8]) -> Option<ParsedReference> {
+    let parts = children(node);
+    let at = parts
+        .iter()
+        .position(|part| part.kind() == "keyword_references")?;
+    let table = parts
+        .get(at + 1)
+        .filter(|target| target.kind() == "object_reference")
+        .and_then(|target| reference_name(target, source))?;
+    Some(ParsedReference {
+        table,
+        columns: parts[at + 2..]
+            .iter()
+            .take_while(|part| part.kind() == "identifier")
+            .filter_map(|part| text(part, source))
+            .collect(),
+    })
+}
+
+/// The named children of a node, collected so a walk may recurse while it holds
+/// them.
+fn children<'tree>(node: &Node<'tree>) -> Vec<Node<'tree>> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor).collect()
 }
 
 /// The table name of an `object_reference`: `name` of the `schema.name` or
