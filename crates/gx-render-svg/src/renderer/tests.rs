@@ -745,6 +745,8 @@ fn group(id: &str, label: Option<&str>, bbox: Rect) -> gx_core::LayoutGroup {
         label: label.map(str::to_string),
         bbox,
         depth: 0,
+        members: Vec::new(),
+        gutter: Some(0.0),
     }
 }
 

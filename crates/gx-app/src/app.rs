@@ -541,6 +541,11 @@ struct RenderEvent {
     /// state that names the session arrives only after the acknowledgement.
     session_id: String,
     svg: String,
+    /// The structured scene (f11): the same drawing as elements. Strictly
+    /// optional and additive — the frontend reads `svg` until T2/B picks the
+    /// scene up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    elements: Option<gx_core::Scene>,
     /// Where the diagram goes in plan units: the center of the view it
     /// arrived in (PRD §7.2, `place`). Absent when the window size is
     /// unknown: the plan then places it at its own center.
@@ -1148,6 +1153,7 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
             diagram_id: payload.diagram_id.clone(),
             session_id,
             svg: payload.svg.clone(),
+            elements: payload.elements.clone(),
             placement: placement.map(|rect| Placement {
                 x: rect.x,
                 y: rect.y,
@@ -1446,6 +1452,7 @@ mod tests {
             diagram_id: "d-0001".to_string(),
             session_id: "pi-1".to_string(),
             svg: "<svg/>".to_string(),
+            elements: None,
             placement: None,
             camera: None,
             focus: None,

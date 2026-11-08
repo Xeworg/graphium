@@ -392,6 +392,13 @@ fn group_boxes(
             label: group.label.clone(),
             bbox,
             depth: depths.get(group.id.as_str()).copied().unwrap_or(0),
+            // The members travel with the box (`f11-elementos.md`, T1):
+            // `dagre` only needed them to place it, the painter needs them to
+            // know what the box contains.
+            members: group.members.clone(),
+            // A container reserves no gutter: only a lane draws its name in
+            // one, and the lanes engine fills this slot.
+            gutter: None,
         });
     }
     groups
@@ -1274,6 +1281,15 @@ impl LayoutEngine for LanesEngine {
                 label: lane.label.clone(),
                 bbox: Rect::new(0.0, index as f64 * lane_height, width, lane_height),
                 depth: 0,
+                // A lane owns its events, and the gutter it reserved for its
+                // name is the same one for every lane (`f11-elementos.md`, T1).
+                members: timeline
+                    .events
+                    .iter()
+                    .filter(|event| event.lane == lane.id)
+                    .map(|event| event.id.clone())
+                    .collect(),
+                gutter: Some(gutter),
             })
             .collect();
         let bbox = Rect::new(0.0, 0.0, width, lane_count as f64 * lane_height);
@@ -1290,12 +1306,33 @@ impl LayoutEngine for LanesEngine {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     use gx_core::geom::{Point, Size};
-    use gx_core::ir::{Direction, IrGraph, IrNode, LayoutHint};
-    use gx_core::layout::NodeBox;
+    use gx_core::ir::{
+        Direction, IrEvent, IrGraph, IrGroup, IrLane, IrNode, IrTimeline, LayoutHint,
+    };
+    use gx_core::layout::{LayoutEngine, LayoutOpts, NodeBox};
+    use gx_core::text::{TextMetrics, TextStyle};
 
-    use super::place_leftovers;
+    use super::{place_leftovers, DagreEngine, LanesEngine};
+
+    /// Media media de cada glifo: alcanza para medir y nunca depende de fuentes.
+    struct StubMetrics;
+
+    impl TextMetrics for StubMetrics {
+        fn measure(&self, text: &str, style: &TextStyle) -> Size {
+            let lines = text.lines().count().max(1) as f64;
+            Size::new(
+                text.chars().count() as f64 * style.size * 0.5,
+                lines * style.size * style.line_height,
+            )
+        }
+    }
+
+    fn metrics() -> Arc<dyn TextMetrics> {
+        Arc::new(StubMetrics)
+    }
 
     fn node(id: &str, w: f64, h: f64) -> IrNode {
         let mut node = IrNode::new(id, id);
@@ -1347,5 +1384,120 @@ mod tests {
             "a single column, left aligned"
         );
         assert_eq!(nodes, place(&graph), "the last resort is deterministic");
+    }
+
+    /// `f11-elementos.md`, T1: a container travels with the members it owns.
+    /// The layout used to place the box and drop the list; the scene needs it
+    /// to know what belongs to what.
+    #[test]
+    fn the_boxes_of_a_graph_keep_their_members() {
+        let graph = IrGraph {
+            direction: Direction::TB,
+            layout_hint: LayoutHint::Layered,
+            nodes: vec![
+                node("web", 100.0, 40.0),
+                node("api", 100.0, 40.0),
+                node("db", 100.0, 40.0),
+            ],
+            edges: Vec::new(),
+            groups: vec![
+                IrGroup {
+                    id: "servicio".to_string(),
+                    label: Some("Servicio".to_string()),
+                    members: vec!["api".to_string(), "db".to_string()],
+                },
+                IrGroup {
+                    id: "plataforma".to_string(),
+                    label: Some("Plataforma".to_string()),
+                    members: vec!["web".to_string(), "servicio".to_string()],
+                },
+            ],
+        };
+        let engine = DagreEngine::new(metrics());
+
+        let layout = engine.layout(&graph, &LayoutOpts::default());
+
+        assert_eq!(layout.groups.len(), 2, "los dos contenedores tienen caja");
+        let inner = layout
+            .groups
+            .iter()
+            .find(|group| group.id == "servicio")
+            .expect("el contenedor interno");
+        assert_eq!(inner.members, vec!["api", "db"]);
+        assert_eq!(inner.depth, 1, "está adentro de plataforma");
+        assert_eq!(inner.gutter, None, "un contenedor no reserva canaleta");
+        let outer = layout
+            .groups
+            .iter()
+            .find(|group| group.id == "plataforma")
+            .expect("el contenedor externo");
+        assert_eq!(outer.members, vec!["web", "servicio"]);
+        assert_eq!(outer.depth, 0);
+    }
+
+    /// `f11-elementos.md`, T1: a lane owns its events and the left gutter the
+    /// lanes engine reserved for the names, so the painter never measures a
+    /// word to place a label (S4).
+    #[test]
+    fn a_lane_travels_with_its_events_and_its_gutter() {
+        let timeline = IrTimeline {
+            lanes: vec![
+                IrLane {
+                    id: "now".to_string(),
+                    label: Some("ahora".to_string()),
+                },
+                IrLane {
+                    id: "next".to_string(),
+                    label: Some("después".to_string()),
+                },
+            ],
+            events: vec![
+                IrEvent {
+                    id: "e1".to_string(),
+                    lane: "now".to_string(),
+                    label: "motor".to_string(),
+                    order: 0,
+                    span: None,
+                    kind_data: Default::default(),
+                },
+                IrEvent {
+                    id: "e2".to_string(),
+                    lane: "next".to_string(),
+                    label: "elementos".to_string(),
+                    order: 1,
+                    span: None,
+                    kind_data: Default::default(),
+                },
+            ],
+        };
+        let engine = LanesEngine::new(metrics());
+
+        let layout = engine.layout_timeline(&timeline, &LayoutOpts::default());
+
+        assert_eq!(layout.groups.len(), 2);
+        let now = layout
+            .groups
+            .iter()
+            .find(|group| group.id == "now")
+            .expect("el carril now");
+        assert_eq!(now.members, vec!["e1"]);
+        let next = layout
+            .groups
+            .iter()
+            .find(|group| group.id == "next")
+            .expect("el carril next");
+        assert_eq!(next.members, vec!["e2"]);
+        let gutter = now.gutter.expect("un carril reserva canaleta");
+        assert!(gutter > 0.0, "la canaleta del nombre: {gutter}");
+        assert_eq!(next.gutter, Some(gutter), "la canaleta es una sola");
+        assert_eq!(
+            now.bbox.x, 0.0,
+            "la banda arranca en el borde, la canaleta es espacio adentro"
+        );
+        let first = layout.nodes.get("e1").expect("el evento está ubicado");
+        assert!(
+            first.center.x - first.size.w / 2.0 >= gutter,
+            "ningún evento se monta sobre la canaleta"
+        );
     }
 }

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::geom::Rect;
 use crate::ir::{Direction, Ir};
 use crate::layout::LayoutGraph;
+use crate::scene::Scene;
 
 /// An RGBA color. The palette never reads the filesystem, the environment or
 /// the clock (PRD §8.5.2).
@@ -414,6 +415,11 @@ pub struct RenderMetrics {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderOutcome {
     pub svg: String,
+    /// The structured drawing the window mounts, beside the SVG string
+    /// (`f11-elementos.md`, T1/S3). Additive and optional on purpose: the
+    /// export is a file and needs no scene (S2), and a renderer that does not
+    /// build one reports `None` instead of failing the render.
+    pub elements: Option<Scene>,
     pub layout: LayoutGraph,
     pub bbox: Rect,
     pub metrics: RenderMetrics,
@@ -422,6 +428,18 @@ pub struct RenderOutcome {
 /// The SVG renderer behind a trait (PRD §8.5).
 pub trait SvgRenderer: Send + Sync {
     fn render(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> String;
+
+    /// The structured drawing, as data, beside the SVG string
+    /// (`f11-elementos.md`, T1/S3).
+    ///
+    /// The default is `None`: a renderer that only knows how to write a string
+    /// keeps working, and the window falls back to the legacy `{@html}` branch
+    /// until task C. The real renderer builds it from the same math as its
+    /// emitter, so the two drawings cannot drift apart.
+    fn scene(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> Option<Scene> {
+        let _ = (ir, layout, palette);
+        None
+    }
 
     /// The drawing as a self-contained document: the canvas painted in the
     /// palette colour (PRD §8.5.2, S7).

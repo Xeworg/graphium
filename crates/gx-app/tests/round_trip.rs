@@ -66,6 +66,9 @@ fn the_render_hook_maps_a_paint_into_a_reason() {
         diagram_id: "d-0001".to_string(),
         kind: "graph".to_string(),
         svg: "<svg/>".to_string(),
+        // The scene beside the string is optional: a renderer that builds none
+        // leaves the field empty and the payload is the one it always was.
+        elements: None,
         width: 100.0,
         height: 50.0,
         focus: None,

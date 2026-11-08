@@ -175,6 +175,13 @@ pub struct RenderHookPayload {
     pub diagram_id: String,
     pub kind: String,
     pub svg: String,
+    /// The structured drawing beside the SVG string (`f11-elementos.md`, T1/S3).
+    ///
+    /// Additive and strictly optional: the window mounts a scene when it is
+    /// there and keeps the legacy `{@html}` branch of `svg` when it is not, and
+    /// the export path never builds one (S2). No key of this payload is
+    /// rejected for being unknown, so the field breaks no consumer.
+    pub elements: Option<gx_core::Scene>,
     /// Width of the diagram in plan units, from the layout bounding box.
     pub width: f64,
     /// Height of the diagram in plan units, from the layout bounding box.
@@ -789,6 +796,7 @@ fn render_inner(request: &RenderRequest, opts: &RenderOptions) -> RenderResponse
             diagram_id: diagram_id.clone(),
             kind: kind.clone(),
             svg: outcome.svg,
+            elements: outcome.elements,
             width,
             height,
             focus,
@@ -2084,6 +2092,37 @@ mod tests {
         assert!(seen[0].2.starts_with("<svg"), "{}", seen[0].2);
         assert!(seen[0].3 > 0.0);
         assert!(seen[0].4 > 0.0);
+
+        set_render_hook(None);
+    }
+
+    #[test]
+    fn a_renderer_without_a_scene_leaves_the_payload_as_it_was() {
+        let _guard = lock_renders_blocking();
+
+        // `f11-elementos.md` T1: the scene beside the SVG string is strictly
+        // optional. A renderer that builds none — this stub, or any third
+        // party one — leaves the field empty and the render works exactly as
+        // it did before the field existed.
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorder = Arc::clone(&seen);
+        let hook: RenderHook = Arc::new(move |payload| {
+            recorder
+                .lock()
+                .expect("the recorder is not poisoned")
+                .push(payload.elements.clone());
+            RenderStatus::Painted
+        });
+        set_render_hook(Some(hook));
+
+        let response = render(MINIMAL);
+
+        assert!(response.ok, "{response:?}");
+        assert!(response.rendered);
+        assert!(response.warnings.is_empty(), "{:?}", response.warnings);
+        let seen = seen.lock().expect("the recorder is not poisoned");
+        assert_eq!(seen.len(), 1, "the hook ran once");
+        assert_eq!(seen[0], None, "the stub renderer ships no scene");
 
         set_render_hook(None);
     }

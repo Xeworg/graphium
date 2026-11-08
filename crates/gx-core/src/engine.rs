@@ -152,11 +152,19 @@ pub fn render_json(src: &str, opts: &RenderOpts) -> Result<RenderOutcome, Vec<Va
     } else {
         engines.renderer.render(&ir, &layout, &palette)
     };
+    // The scene belongs to the paint path, never to the export (S2): an
+    // exported file is bytes on disk and has no window to mount into.
+    let elements = if opts.export {
+        None
+    } else {
+        engines.renderer.scene(&ir, &layout, &palette)
+    };
     let render_ms = render_started.elapsed().as_millis() as u64;
     let svg_bytes = svg.len();
 
     Ok(RenderOutcome {
         svg,
+        elements,
         bbox: layout.bbox,
         layout,
         metrics: RenderMetrics {

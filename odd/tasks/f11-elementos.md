@@ -93,3 +93,67 @@ plus the owner directive of 2026-11-08.
   staging — this feature deliberately does NOT depend on it; both merge
   independently). Four analysis angles persisted in memory topic
   `f11-biblioteca-elementos`.
+- L4 (2026-11-09, worker/T1-A): the scene exists in Rust and the SVG emitter
+  survives as an emitter, not as the model.
+
+  **What changed.** `gx-core/src/scene.rs` owns the schema (`Scene`,
+  `SceneNode`, `SceneEdge`, `SceneBand`, `SceneEvent`, `SceneTokens`,
+  `ScenePalette`) and re-exports it; `RenderOutcome.elements: Option<Scene>`
+  and a defaulted `SvgRenderer::scene` carry it out of the single door
+  (`engine.rs` builds it only when `opts.export` is off, so the export stays
+  bytes on disk, S2). `gx-render-svg/src/renderer.rs` is now one of two
+  emitters of one shared plan: `geometry.rs` holds every decision that is not
+  "how do I spell this in SVG" (box of a node, order of the layers, ids
+  `g-<id>`/`m-<from>-<to>`/`cluster-<id>`/`lane-<id>`, `\n` line rule and
+  baselines, table geometry, crow's-foot points, the frozen constants) and
+  `scene.rs` walks the same `Drawing` to produce the `Scene` instead of a
+  string. `LayoutGroup` gained `members` (filled from `IrGroup.members` in
+  `gx-layout`, dropped until today) and `gutter` (the left lane gutter the
+  lanes engine already computed) — both `serde(default)`, so a stored layout
+  from before this commit still parses. `RenderHookPayload.elements` makes the
+  scene additive beside `svg` (`tools.rs`); nothing rejects an unknown key.
+
+  Two fields go past the draft table of the analysis, both because the
+  painter cannot invent them: `Scene.layout_hint` (without it the JS cannot
+  know a lanes graph draws a lifeline under every actor, S5) and
+  `SceneEvent.center`/`size` (S4: the lanes engine measures an event box, the
+  JS never does). `ScenePalette` ships the CSS custom properties
+  (`var(--node-fill)`, …) and the theme name, never a colour literal.
+
+  **Evidence.** `cargo fmt --check` exit 0; `cargo clippy --workspace` exit 0
+  with no warning; `cargo test --workspace` all green — the 15 documents of
+  `crates/gx-app/tests/golden_svg.rs` compare byte by byte against the
+  **unchanged, un-regenerated** goldens, which is the proof the refactor kept
+  the emitter intact; `node tools/parity.mjs` → `57/57 probes passed`;
+  `DISPLAY=:0 scripts/smoke.sh` → `diagram=d-0001 rendered=true reason=none`.
+  New witnesses: 16 tests in `gx-render-svg` (10 of the scene builder, 6 of
+  the shared geometry and its constants), 2 layout tests for
+  `members`/`gutter`, 1 payload test in `gx-mcp` (a renderer with no scene
+  leaves the payload as it was) and 7 in `gx-app/tests/scene_payload.rs`,
+  including "the export builds no scene" and "the scene carries no path".
+  They bite: emptying the node list of the builder drops the scene suite to
+  7/10 and the payload suite to 3/7, which is how the two suites were checked
+  before landing.
+
+  **Size on the 300-node fixture** (`chain(300)` of RNF10, measured by
+  `the_scene_of_three_hundred_nodes_weighs_less_than_the_svg`): SVG string
+  **126 561 B** vs elements JSON **114 625 B** — the scene is 90.6% of the
+  string it replaces (11 936 B lighter), with all 300 nodes and 299 edges in
+  it. The first cut weighed 143 947 B (113.7% of the SVG) with every optional
+  field written as `null`; empty `rows`/`meta` and `None` fields are now
+  absent, which is the difference.
+
+  **Specs.** Covers S2 (export builds no scene), S3 (schema mirrors
+  `Ir` ∪ `LayoutGraph`, ids of the drawing), S4 (pre-broken labels, size from
+  `NodeBox`) and S5 (tokens and glyph constants, no path). S1 is only half
+  done by construction: the scene exists but `svg` still travels beside it
+  until T3/C.
+
+  **Open piece of A.** The relay into the window's `graphium://render` event
+  (`RenderEvent` in `crates/gx-app/src/app.rs`) is not in this commit: the
+  edit surface of T1/A stops at `crates/gx-app/tests/**`, and the frontend
+  still reads `svg` only. The two lines that close it are `elements:
+  Option<gx_core::Scene>` on `RenderEvent` (`skip_serializing_if` none) and
+  `elements: payload.elements.clone()` in its construction; they land when
+  that surface is authorised, or with T2/B, which is the task that consumes
+  it.
