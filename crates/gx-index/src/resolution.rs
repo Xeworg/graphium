@@ -11,13 +11,25 @@
 //! measurement lives here: [`resolution_by_language`] answers it from the same
 //! tables the tools read, and the test that guards the numbers of `docs/PRD.md`
 //! runs on the fixtures of `tests/languages.rs`.
+//!
+//! **The runtime rule (T6).** A relation whose target is a name the language's
+//! runtime or standard library provides (`str`, `len`, `path` in Python;
+//! `fmt`, `string` in Go; `String`, `List` in Java — the list is the
+//! [`crate::lang::Grammar::builtins`] data of each registry entry) can never
+//! resolve: the book indexes a worktree, and no worktree declares the runtime.
+//! Counting those targets measures what the book cannot be, so the rate leaves
+//! them out — out of the numerator and out of the denominator — **only while no
+//! chapter of the book declares that name**: a book that spells `def len`
+//! measures it like any other declaration, so the rule can never hide a
+//! resolution. The book keeps every edge either way; the rule is the metric's,
+//! never the graph's.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::Connection;
 
 use crate::impact::MAX_NAME_FANOUT;
-use crate::lang::name_norm;
+use crate::lang::{name_norm, GRAMMARS};
 
 /// What one language of the book resolved: its chapters, its declarations, its
 /// relations and how many of those relations reach a declaration.
@@ -51,10 +63,14 @@ impl LanguageResolution {
 /// The definers of a name are counted over the **whole book**: two chapters of
 /// the worktree are the same namespace, whichever language declared them, which
 /// is also how `code_impact` resolves a cross-language call.
+///
+/// A relation that targets a name of its language's runtime — and that no
+/// chapter of the book declares — is not measured at all (T6).
 pub fn resolution_by_language(
     connection: &Connection,
 ) -> rusqlite::Result<Vec<LanguageResolution>> {
     let definers = definers(connection)?;
+    let runtime = runtime_names();
     let mut report = BTreeMap::new();
 
     let mut statement = connection.prepare(
@@ -90,9 +106,15 @@ pub fn resolution_by_language(
         let Some(row) = report.get_mut(&lang) else {
             continue;
         };
+        let norm = name_norm(&dst_name);
+        // The runtime rule (T6): `str` is not coverage the book can win, and a
+        // name a chapter of the book declares is measured as usual.
+        if !definers.contains_key(&norm) && provides_the_runtime(&runtime, &lang, &norm) {
+            continue;
+        }
         row.edges += 1;
         if definers
-            .get(&name_norm(&dst_name))
+            .get(&norm)
             .is_some_and(|count| (1..=MAX_NAME_FANOUT as i64).contains(count))
         {
             row.resolved += 1;
@@ -100,6 +122,30 @@ pub fn resolution_by_language(
     }
 
     Ok(report.into_values().collect())
+}
+
+/// The runtime names of every grammar of the build, one set per language: the
+/// data of [`crate::lang::Grammar::builtins`], ready to be asked once per
+/// relation.
+fn runtime_names() -> BTreeMap<&'static str, BTreeSet<&'static str>> {
+    GRAMMARS
+        .iter()
+        .map(|grammar| {
+            (
+                grammar.lang,
+                grammar.builtins.iter().copied().collect::<BTreeSet<_>>(),
+            )
+        })
+        .collect()
+}
+
+/// Whether the language's runtime provides the folded name of a target.
+fn provides_the_runtime(
+    runtime: &BTreeMap<&'static str, BTreeSet<&'static str>>,
+    lang: &str,
+    norm: &str,
+) -> bool {
+    runtime.get(lang).is_some_and(|names| names.contains(norm))
 }
 
 /// How many declarations of the book carry each folded name.

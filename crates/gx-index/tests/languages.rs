@@ -2074,6 +2074,13 @@ pub fn close(store: &DiagramStore) -> u8 {
 /// to a declaration. The numbers below are the ones published in `docs/PRD.md`
 /// — **measured on these fixtures, not promises** — and the floors keep a
 /// regression from passing silently.
+///
+/// Since T6 the rate of the three weakest languages (Python, Go, Java) leaves
+/// out the targets their runtime and standard library provide: no chapter of a
+/// worktree can ever declare `str`, `len` or `String`, so counting them only
+/// measures what the book cannot be (the rule is [`Grammar::builtins`] and the
+/// guard is the test below). The floors moved UP with the measurement: Python
+/// 14,8 → 40,0 %, Go 17,2 → 50,0 %, Java 29,6 → 66,7 %.
 #[cfg(all(
     feature = "lang-rust",
     feature = "lang-typescript",
@@ -2136,9 +2143,9 @@ fn the_resolution_rate_of_each_language_is_measured_on_the_fixtures() {
 
     for (lang, floor) in [
         ("typescript", 45.0),
-        ("python", 12.0),
-        ("go", 15.0),
-        ("java", 27.0),
+        ("python", 36.0),
+        ("go", 46.0),
+        ("java", 63.0),
     ] {
         let row = by_lang(lang);
         assert!(
@@ -2149,6 +2156,77 @@ fn the_resolution_rate_of_each_language_is_measured_on_the_fixtures() {
             floor
         );
     }
+}
+
+/// The Python of the runtime rule: it declares `len` itself, so the edge to
+/// `len` is measured like any other name — and `int`, which no chapter
+/// declares, is left out of the measure.
+const PYTHON_DECLARES_A_RUNTIME_NAME: &str = r#"
+def length(x: int) -> int:
+    return len(x)
+
+
+def len(x: int) -> int:
+    return x
+"#;
+
+/// The Python of the runtime rule without the declaration: `len` and `int` are
+/// names of the runtime the book does not hold, and `helper` is a name it does.
+const PYTHON_RUNTIME_ONLY: &str = r#"
+def length(x: int) -> int:
+    return helper(x)
+
+
+def helper(x: int) -> int:
+    return len(x)
+"#;
+
+/// D3/T6: the rate counts what a worktree CAN resolve. A target that is a name
+/// of the language's runtime or standard library (`Grammar::builtins`) leaves
+/// the measure — out of the numerator and out of the denominator — **unless the
+/// book declares that name**: a chapter that spells `def len` is a declaration
+/// like any other and its edges count, so the rule can never hide a resolution.
+#[cfg(feature = "lang-python")]
+#[test]
+fn the_rate_leaves_out_the_names_the_runtime_provides_and_only_those() {
+    // `len` declared: 1 call (resolved) + 2 `int` annotations (out of the
+    // measure) = 1 edge of 1 resolved.
+    let declared = Scratch::new("runtime-declared");
+    declared.write("src/lengths.py", PYTHON_DECLARES_A_RUNTIME_NAME);
+    let book = Arc::new(declared.open());
+    declared.indexer(&book).run_full().expect("the index");
+    let report = book.resolution().expect("the honesty report");
+    let row = report
+        .iter()
+        .find(|row| row.lang == "python")
+        .unwrap_or_else(|| panic!("the report has no python row: {report:?}"));
+    assert_eq!((row.resolved, row.edges), (1, 1), "{row:?}");
+    assert_eq!(row.percent(), 100.0);
+
+    // `len` not declared: it leaves the measure with `int`, and the call to the
+    // name the book holds stays.
+    let runtime = Scratch::new("runtime-only");
+    runtime.write("src/lengths.py", PYTHON_RUNTIME_ONLY);
+    let book = Arc::new(runtime.open());
+    runtime.indexer(&book).run_full().expect("the index");
+    let report = book.resolution().expect("the honesty report");
+    let row = report
+        .iter()
+        .find(|row| row.lang == "python")
+        .unwrap_or_else(|| panic!("the report has no python row: {report:?}"));
+    assert_eq!((row.resolved, row.edges), (1, 1), "{row:?}");
+
+    // The graph keeps every edge: the rule is the metric's, never the book's.
+    let parsed = parse(
+        "src/lengths.py",
+        PYTHON_DECLARES_A_RUNTIME_NAME.as_bytes(),
+        0,
+    )
+    .expect("the grammar");
+    for (kind, name) in [("calls", "len"), ("uses", "int")] {
+        assert_edge(&parsed, kind, name);
+    }
+    assert_eq!(parsed.edges.len(), 3, "the chapter keeps its edges");
 }
 
 /// S3/L5: the registry answers the four new extensions with the language the

@@ -54,6 +54,15 @@ pub struct Grammar {
     pub anchor: Anchor,
     /// The declarations the book keeps.
     pub walk: Walk,
+    /// The names this language's **runtime and standard library** provide,
+    /// folded the way [`crate::lang::name_norm`] folds a target (`str`, `len`,
+    /// `path`, `fmt`, `string`). No chapter of a worktree can ever declare
+    /// them, so the measure of D3 leaves a relation whose target is one of
+    /// them out of the rate — and out of it **only while no chapter of the
+    /// book declares that name**, so the rule can never hide a resolution
+    /// (`crate::resolution`). Empty means the language publishes its rate over
+    /// every relation it reads.
+    pub builtins: &'static [&'static str],
     /// The relations of one chapter, as the grammar reads them.
     pub relations: fn(&Node, &[u8]) -> Vec<RawEdge>,
 }

@@ -172,6 +172,7 @@ pub const RUST: Grammar = Grammar {
         // The `impl` is named by the type it implements (rust::impl_body).
         hooks: &[("impl_item", rust::impl_body)],
     }),
+    builtins: &[],
     relations: rust::relations,
 };
 
@@ -218,8 +219,167 @@ pub const TYPESCRIPT: Grammar = Grammar {
             ("variable_declaration", typescript::declarators),
         ],
     }),
+    builtins: &[],
     relations: typescript::relations,
 };
+
+/// The runtime names of Python (T6): the builtins of the language and the
+/// modules and classes of its standard library. No chapter of a worktree
+/// declares them, so D3 leaves a relation whose target is one of them out of
+/// the rate while no chapter of the book declares that name (the rule and its
+/// guard live in `crate::resolution`).
+///
+/// The entries are folded the way `name_norm` folds a target (a lowercase), so
+/// `Path` of `pathlib` is the entry `path` — and `os.path` reads with it. The
+/// list is **knowledge, not a search**: it holds the names that appear as
+/// targets in real code, and adding one is one line of data.
+#[cfg(feature = "lang-python")]
+const PYTHON_BUILTINS: &[&str] = &[
+    // The modules of the standard library, by the segment an `import` binds.
+    "abc",
+    "argparse",
+    "asyncio",
+    "base64",
+    "bisect",
+    "collections",
+    "concurrent",
+    "contextlib",
+    "copy",
+    "csv",
+    "dataclasses",
+    "datetime",
+    "decimal",
+    "enum",
+    "fractions",
+    "functools",
+    "hashlib",
+    "heapq",
+    "hmac",
+    "html",
+    "http",
+    "importlib",
+    "inspect",
+    "io",
+    "itertools",
+    "json",
+    "logging",
+    "math",
+    "multiprocessing",
+    "operator",
+    "os",
+    "path",
+    "pathlib",
+    "pickle",
+    "platform",
+    "pprint",
+    "purepath",
+    "queue",
+    "random",
+    "re",
+    "shutil",
+    "signal",
+    "socket",
+    "sqlite3",
+    "ssl",
+    "string",
+    "struct",
+    "subprocess",
+    "sys",
+    "tempfile",
+    "textwrap",
+    "threading",
+    "time",
+    "traceback",
+    "types",
+    "typing",
+    "unittest",
+    "urllib",
+    "uuid",
+    "warnings",
+    "weakref",
+    "xml",
+    "zipfile",
+    // The builtins of the language: types, functions and constants.
+    "abs",
+    "all",
+    "any",
+    "ascii",
+    "bin",
+    "bool",
+    "bytearray",
+    "bytes",
+    "callable",
+    "chr",
+    "classmethod",
+    "complex",
+    "dict",
+    "dir",
+    "divmod",
+    "enumerate",
+    "eval",
+    "exec",
+    "filter",
+    "float",
+    "format",
+    "frozenset",
+    "getattr",
+    "globals",
+    "hasattr",
+    "hash",
+    "help",
+    "hex",
+    "id",
+    "input",
+    "int",
+    "isinstance",
+    "issubclass",
+    "iter",
+    "len",
+    "list",
+    "locals",
+    "map",
+    "max",
+    "memoryview",
+    "min",
+    "next",
+    "object",
+    "oct",
+    "open",
+    "ord",
+    "pow",
+    "print",
+    "property",
+    "range",
+    "repr",
+    "reversed",
+    "round",
+    "set",
+    "setattr",
+    "slice",
+    "sorted",
+    "staticmethod",
+    "str",
+    "sum",
+    "super",
+    "tuple",
+    "type",
+    "vars",
+    "zip",
+    // The exceptions every program raises without importing anything.
+    "attributeerror",
+    "baseexception",
+    "exception",
+    "indexerror",
+    "keyerror",
+    "nameerror",
+    "notimplementederror",
+    "oserror",
+    "runtimeerror",
+    "stopiteration",
+    "typeerror",
+    "valueerror",
+    "zerodivisionerror",
+];
 
 /// Python: the classes with their methods (a `def` of a class is a `method`)
 /// and the module-level constants, which is the one hook Python needs.
@@ -239,8 +399,130 @@ pub const PYTHON: Grammar = Grammar {
         // (python::module_constant).
         hooks: &[("expression_statement", python::module_constant)],
     }),
+    builtins: PYTHON_BUILTINS,
     relations: python::relations,
 };
+
+/// The runtime names of Go (T6): the predeclared identifiers of the language
+/// and the packages and types of its standard library, folded the way
+/// `name_norm` folds a target. `import "net/http"` binds `http`, so the
+/// package is the last segment of its path; a type of `fmt` or `io`
+/// (`fmt.Stringer`, `io.Reader`) is the name a call or a signature spells.
+#[cfg(feature = "lang-go")]
+const GO_BUILTINS: &[&str] = &[
+    // The packages of the standard library, by the segment an import binds.
+    "archive",
+    "atomic",
+    "bufio",
+    "bytes",
+    "compress",
+    "container",
+    "context",
+    "crypto",
+    "database",
+    "debug",
+    "embed",
+    "encoding",
+    "errors",
+    "expvar",
+    "flag",
+    "fmt",
+    "go",
+    "hash",
+    "html",
+    "http",
+    "image",
+    "index",
+    "io",
+    "json",
+    "log",
+    "maps",
+    "math",
+    "mime",
+    "net",
+    "os",
+    "path",
+    "plugin",
+    "reflect",
+    "regexp",
+    "runtime",
+    "slices",
+    "sort",
+    "sql",
+    "strconv",
+    "strings",
+    "sync",
+    "syscall",
+    "testing",
+    "text",
+    "time",
+    "tls",
+    "unicode",
+    "unsafe",
+    "url",
+    "utf8",
+    "xml",
+    // The types of the standard library a signature names by its last
+    // segment (`fmt.Stringer`, `io.Reader`, `sync.Mutex`).
+    "buffer",
+    "conn",
+    "duration",
+    "handler",
+    "listener",
+    "mutex",
+    "reader",
+    "request",
+    "responsewriter",
+    "rwmutex",
+    "stringer",
+    "waitgroup",
+    "writer",
+    // The predeclared identifiers of the language.
+    "any",
+    "append",
+    "bool",
+    "byte",
+    "cap",
+    "clear",
+    "close",
+    "comparable",
+    "complex",
+    "complex128",
+    "complex64",
+    "copy",
+    "delete",
+    "error",
+    "false",
+    "float32",
+    "float64",
+    "imag",
+    "int",
+    "int16",
+    "int32",
+    "int64",
+    "int8",
+    "iota",
+    "len",
+    "make",
+    "max",
+    "min",
+    "new",
+    "nil",
+    "panic",
+    "print",
+    "println",
+    "real",
+    "recover",
+    "rune",
+    "string",
+    "true",
+    "uint",
+    "uint16",
+    "uint32",
+    "uint64",
+    "uint8",
+    "uintptr",
+];
 
 /// Go: the package scope of a file. The package of a Go file is its directory,
 /// and its methods hang from the type of their receiver whichever order the
@@ -255,8 +537,127 @@ pub const GO: Grammar = Grammar {
     separator: ".",
     anchor: Anchor::LastSegment,
     walk: Walk::Custom(go::walk),
+    builtins: GO_BUILTINS,
     relations: go::relations,
 };
+
+/// The runtime names of Java (T6): `java.lang` (which every file imports
+/// without writing it) and the types and packages of the standard library a
+/// chapter names in a signature or an `extends`, folded the way `name_norm`
+/// folds a target.
+#[cfg(feature = "lang-java")]
+const JAVA_BUILTINS: &[&str] = &[
+    // java.lang: the types no file has to import.
+    "autocloseable",
+    "boolean",
+    "byte",
+    "char",
+    "charsequence",
+    "class",
+    "cloneable",
+    "comparable",
+    "deprecated",
+    "double",
+    "enum",
+    "error",
+    "exception",
+    "float",
+    "functionalinterface",
+    "illegalargumentexception",
+    "illegalstateexception",
+    "int",
+    "integer",
+    "iterable",
+    "long",
+    "math",
+    "number",
+    "object",
+    "override",
+    "record",
+    "runnable",
+    "runtimeexception",
+    "short",
+    "string",
+    "stringbuilder",
+    "suppresswarnings",
+    "system",
+    "thread",
+    "throwable",
+    "unsupportedoperationexception",
+    "void",
+    // The collections, the streams and the rest of the standard library.
+    "arraylist",
+    "arrays",
+    "bigdecimal",
+    "biginteger",
+    "bufferedreader",
+    "bufferedwriter",
+    "calendar",
+    "charset",
+    "collection",
+    "collections",
+    "collector",
+    "collectors",
+    "comparator",
+    "completablefuture",
+    "concurrent",
+    "connection",
+    "consumer",
+    "date",
+    "deque",
+    "drivermanager",
+    "duration",
+    "executor",
+    "executors",
+    "file",
+    "files",
+    "function",
+    "future",
+    "hashmap",
+    "hashset",
+    "inputstream",
+    "instant",
+    "io",
+    "iterator",
+    "level",
+    "linkedhashmap",
+    "linkedlist",
+    "list",
+    "localdate",
+    "localdatetime",
+    "logger",
+    "logmanager",
+    "map",
+    "matcher",
+    "net",
+    "optional",
+    "outputstream",
+    "path",
+    "paths",
+    "pattern",
+    "predicate",
+    "queue",
+    "random",
+    "reader",
+    "regex",
+    "requirenonnull",
+    "resultset",
+    "scanner",
+    "set",
+    "sqlexception",
+    "standardcharsets",
+    "statement",
+    "stream",
+    "supplier",
+    "time",
+    "treemap",
+    "treeset",
+    "uri",
+    "url",
+    "util",
+    "uuid",
+    "writer",
+];
 
 /// Java: the types of a file, with their constructors and methods as children,
 /// nested under the `package` the file declares — which is why the module path
@@ -290,6 +691,7 @@ pub const JAVA: Grammar = Grammar {
         ],
         hooks: &[],
     }),
+    builtins: JAVA_BUILTINS,
     relations: java::relations,
 };
 
@@ -321,6 +723,7 @@ pub const JAVASCRIPT: Grammar = Grammar {
             ("variable_declaration", javascript::declarators),
         ],
     }),
+    builtins: &[],
     relations: javascript::relations,
 };
 
@@ -359,6 +762,7 @@ pub const C: Grammar = Grammar {
             ("declaration", c::declaration),
         ],
     }),
+    builtins: &[],
     relations: c::relations,
 };
 
@@ -401,6 +805,7 @@ pub const CPP: Grammar = Grammar {
             ("enum_specifier", cpp::specifier),
         ],
     }),
+    builtins: &[],
     relations: cpp::relations,
 };
 
@@ -439,6 +844,7 @@ pub const CSHARP: Grammar = Grammar {
         ],
         hooks: &[],
     }),
+    builtins: &[],
     relations: csharp::relations,
 };
 
@@ -478,6 +884,7 @@ pub const PHP: Grammar = Grammar {
         // A `const` group is one `const` per `const_element` (php::constants).
         hooks: &[("const_declaration", php::constants)],
     }),
+    builtins: &[],
     relations: php::relations,
 };
 
@@ -506,6 +913,7 @@ pub const RUBY: Grammar = Grammar {
         // (ruby::constant).
         hooks: &[("assignment", ruby::constant)],
     }),
+    builtins: &[],
     relations: ruby::relations,
 };
 
@@ -537,6 +945,7 @@ pub const SQL: Grammar = Grammar {
             ("create_trigger", sql::declaration),
         ],
     }),
+    builtins: &[],
     relations: sql::relations,
 };
 
@@ -564,6 +973,7 @@ pub const SHELL: Grammar = Grammar {
         ],
         hooks: &[],
     }),
+    builtins: &[],
     relations: shell::relations,
 };
 
@@ -619,6 +1029,7 @@ pub const SWIFT: Grammar = Grammar {
             ("subscript_declaration", swift::member),
         ],
     }),
+    builtins: &[],
     relations: swift::relations,
 };
 
@@ -665,6 +1076,7 @@ pub const KOTLIN: Grammar = Grammar {
             ("type_alias", kotlin::alias),
         ],
     }),
+    builtins: &[],
     relations: kotlin::relations,
 };
 
@@ -721,6 +1133,7 @@ pub const DART: Grammar = Grammar {
             ("top_level_variable_declaration", dart::constants),
         ],
     }),
+    builtins: &[],
     relations: dart::relations,
 };
 
@@ -780,6 +1193,7 @@ pub const SCALA: Grammar = Grammar {
             ("var_definition", scala::value),
         ],
     }),
+    builtins: &[],
     relations: scala::relations,
 };
 
@@ -808,6 +1222,7 @@ pub const R: Grammar = Grammar {
         // of the binding is an operand of the operator (r::assignment).
         hooks: &[("binary_operator", r::assignment)],
     }),
+    builtins: &[],
     relations: r::relations,
 };
 
@@ -837,6 +1252,7 @@ pub const LUA: Grammar = Grammar {
             ("function_declaration", lua::function),
         ],
     }),
+    builtins: &[],
     relations: lua::relations,
 };
 
@@ -870,6 +1286,7 @@ pub const ZIG: Grammar = Grammar {
         leaves: &[leaf_in("function_declaration", "fn", &[("type", "method")])],
         hooks: &[("variable_declaration", zig::declaration)],
     }),
+    builtins: &[],
     relations: zig::relations,
 };
 
@@ -962,5 +1379,34 @@ mod tests {
         (0..language.node_kind_count() as u16)
             .filter_map(|id| language.node_kind_for_id(id))
             .collect()
+    }
+
+    /// T6: the runtime names of a language are folded the way the metric folds
+    /// a target (`name_norm` is a lowercase), so a lookup of an edge can never
+    /// miss a name the list means to exclude; and the list belongs to the
+    /// language whose runtime spells it. The three weak languages of T6 carry
+    /// one; the other seventeen keep publishing their rate over every relation
+    /// they read, so their numbers do not move in this cut.
+    #[test]
+    fn the_runtime_names_of_a_language_are_folded_and_its_own() {
+        use crate::lang::name_norm;
+
+        for grammar in GRAMMARS {
+            for name in grammar.builtins {
+                assert_eq!(
+                    *name,
+                    name_norm(name),
+                    "`{name}` of `{}` is not folded: the lookup would miss it",
+                    grammar.lang
+                );
+            }
+            let expected = matches!(grammar.lang, "python" | "go" | "java");
+            assert_eq!(
+                !grammar.builtins.is_empty(),
+                expected,
+                "the runtime list of `{}` is the one of T6",
+                grammar.lang
+            );
+        }
     }
 }
