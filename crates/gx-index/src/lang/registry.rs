@@ -41,6 +41,9 @@ use super::engine::Grammar;
     feature = "lang-ruby",
     feature = "lang-sql",
     feature = "lang-shell",
+    feature = "lang-swift",
+    feature = "lang-kotlin",
+    feature = "lang-dart",
 ))]
 use super::engine::{Anchor, ModuleSource, Rules, Walk};
 // The constructors are imports of their own: a slim build that compiles none
@@ -54,6 +57,9 @@ use super::engine::{Anchor, ModuleSource, Rules, Walk};
     feature = "lang-csharp",
     feature = "lang-php",
     feature = "lang-ruby",
+    feature = "lang-swift",
+    feature = "lang-kotlin",
+    feature = "lang-dart",
 ))]
 use super::engine::container;
 #[cfg(any(
@@ -66,9 +72,18 @@ use super::engine::container;
     feature = "lang-php",
     feature = "lang-ruby",
     feature = "lang-shell",
+    // Swift keeps leaves of its own; Kotlin and Dart name their declarations
+    // with `leaf_in` and their hooks.
+    feature = "lang-swift",
 ))]
 use super::engine::leaf;
-#[cfg(any(feature = "lang-rust", feature = "lang-python", feature = "lang-ruby"))]
+#[cfg(any(
+    feature = "lang-rust",
+    feature = "lang-python",
+    feature = "lang-ruby",
+    feature = "lang-swift",
+    feature = "lang-kotlin",
+))]
 use super::engine::leaf_in;
 
 #[cfg(feature = "lang-c")]
@@ -77,12 +92,16 @@ use super::c;
 use super::cpp;
 #[cfg(feature = "lang-csharp")]
 use super::csharp;
+#[cfg(feature = "lang-dart")]
+use super::dart;
 #[cfg(feature = "lang-go")]
 use super::go;
 #[cfg(feature = "lang-java")]
 use super::java;
 #[cfg(feature = "lang-javascript")]
 use super::javascript;
+#[cfg(feature = "lang-kotlin")]
+use super::kotlin;
 #[cfg(feature = "lang-php")]
 use super::php;
 #[cfg(feature = "lang-python")]
@@ -95,6 +114,8 @@ use super::rust;
 use super::shell;
 #[cfg(feature = "lang-sql")]
 use super::sql;
+#[cfg(feature = "lang-swift")]
+use super::swift;
 #[cfg(feature = "lang-typescript")]
 use super::typescript;
 
@@ -530,13 +551,171 @@ pub const SHELL: Grammar = Grammar {
     relations: shell::relations,
 };
 
+/// Swift: the declarations of a file with their methods, and the module named
+/// by the path of the file (Swift declares no package in the source).
+///
+/// Swift spells a class, a struct, an actor, an enum and an extension with one
+/// node kind told apart by a keyword, so the kinds of those five are the hook
+/// `swift::type_declaration`; a protocol is a `trait` of the vocabulary. An
+/// extension is an `impl` block of the type it extends (L10), a property at the
+/// root of the file is a `const` and a property inside a type is a field, and a
+/// `deinit`/`subscript` spells its name with no field (the `swift::member`
+/// hook). Every relation kind of the schema exists in Swift (see `swift.rs`).
+#[cfg(feature = "lang-swift")]
+pub const SWIFT: Grammar = Grammar {
+    lang: swift::LANGUAGE,
+    extensions: &["swift"],
+    language: swift::language,
+    module: ModuleSource::Path(swift::module_path),
+    separator: ".",
+    anchor: Anchor::LastSegment,
+    walk: Walk::Table(&Rules {
+        transparent: &["class_body", "protocol_body", "enum_class_body"],
+        containers: &[container("protocol_declaration", "trait")],
+        leaves: &[
+            // A `func` of a type, a protocol or an extension is a method; at the
+            // root of the file it is a `fn`.
+            leaf_in(
+                "function_declaration",
+                "fn",
+                &[
+                    ("class", "method"),
+                    ("type", "method"),
+                    ("trait", "method"),
+                    ("impl", "method"),
+                ],
+            ),
+            leaf("protocol_function_declaration", "method"),
+            // `init` spells its name in the `name` field (an `init` keyword).
+            leaf("init_declaration", "method"),
+            leaf("typealias_declaration", "type"),
+            leaf("associatedtype_declaration", "type"),
+        ],
+        hooks: &[
+            // class, struct, actor, enum and extension are one node kind
+            // (swift::type_declaration).
+            ("class_declaration", swift::type_declaration),
+            // A property is a `const` at the root of the file and a field
+            // everywhere else (swift::property).
+            ("property_declaration", swift::property),
+            // `deinit` and `subscript` name themselves with a keyword.
+            ("deinit_declaration", swift::member),
+            ("subscript_declaration", swift::member),
+        ],
+    }),
+    relations: swift::relations,
+};
+
+/// Kotlin: the types of a file with their functions, nested under the `package`
+/// the file declares — which is why the module path of a chapter comes from the
+/// tree (like Java and C#) and not from the path.
+///
+/// Kotlin spells a class and an interface with one node kind and marks an enum
+/// with a `class_modifier`, so the kind is the hook `kotlin::type_declaration`.
+/// A companion object is a class named `Companion` when it declares no name
+/// (the name the language gives it), a data class is a class (the `data`
+/// modifier synthesises members the source never spells) and a `typealias`
+/// names itself in the field the table would read as a type. Every relation
+/// kind of the schema exists in Kotlin (see `kotlin.rs`).
+#[cfg(feature = "lang-kotlin")]
+pub const KOTLIN: Grammar = Grammar {
+    lang: kotlin::LANGUAGE,
+    extensions: &["kt", "kts"],
+    language: kotlin::language,
+    module: ModuleSource::Tree(kotlin::module_path),
+    separator: ".",
+    anchor: Anchor::LastSegment,
+    walk: Walk::Table(&Rules {
+        transparent: &["class_body", "enum_class_body"],
+        containers: &[container("object_declaration", "class")],
+        leaves: &[
+            // A `fun` of a type is a method and a top-level `fun` is a `fn`.
+            leaf_in(
+                "function_declaration",
+                "fn",
+                &[("class", "method"), ("trait", "method"), ("type", "method")],
+            ),
+        ],
+        hooks: &[
+            // class, interface and enum class are one node kind
+            // (kotlin::type_declaration).
+            ("class_declaration", kotlin::type_declaration),
+            // `companion object` names itself `Companion` when it has no name.
+            ("companion_object", kotlin::companion),
+            // A property is a `const` at the root of the file and a field
+            // everywhere else (kotlin::property).
+            ("property_declaration", kotlin::property),
+            // `typealias Handler = …` keeps its name in the `type` field.
+            ("type_alias", kotlin::alias),
+        ],
+    }),
+    relations: kotlin::relations,
+};
+
+/// Dart: the types of a file with their methods and constructors, and the
+/// module named by the path of the file (a `library` directive names a library,
+/// never a path).
+///
+/// A mixin is a `trait` of the vocabulary, an enum and an extension a `type`.
+/// Dart spells a member one wrapper at a time — `member_declaration`,
+/// `method_declaration`, `method_signature`, `function_signature` — and the
+/// name lives in the innermost of them while the span the book needs is the
+/// outermost, so the declarations of a file and of a type are hooks
+/// (`dart::declaration`): a member is a `fn` at the root of the file and a
+/// `method` inside a type. A `typedef` and a top-level variable name themselves
+/// in a list or with no field (two hooks more). Every relation kind of the
+/// schema exists in Dart, and `with` is `inherits` (see `dart.rs`).
+#[cfg(feature = "lang-dart")]
+pub const DART: Grammar = Grammar {
+    lang: dart::LANGUAGE,
+    extensions: &["dart"],
+    language: dart::language,
+    module: ModuleSource::Path(dart::module_path),
+    separator: ".",
+    anchor: Anchor::LastSegment,
+    walk: Walk::Table(&Rules {
+        transparent: &[
+            "class_body",
+            "extension_body",
+            "enum_body",
+            "member_declaration",
+        ],
+        containers: &[
+            container("class_declaration", "class"),
+            container("mixin_declaration", "trait"),
+            container("enum_declaration", "type"),
+            container("extension_declaration", "type"),
+            container("extension_type_declaration", "type"),
+        ],
+        leaves: &[],
+        hooks: &[
+            // A method, an abstract method and a constructor are one hook: the
+            // name is in the signature and the span is the declaration
+            // (dart::declaration).
+            ("function_declaration", dart::declaration),
+            ("method_declaration", dart::declaration),
+            ("getter_declaration", dart::declaration),
+            ("setter_declaration", dart::declaration),
+            ("declaration", dart::declaration),
+            // `typedef Handler = …` names the alias with no field
+            // (dart::alias).
+            ("type_alias", dart::alias),
+            // A top-level variable is one `const` per declarator
+            // (dart::constants).
+            ("top_level_variable_declaration", dart::constants),
+        ],
+    }),
+    relations: dart::relations,
+};
+
 /// Every grammar this build ships, in the order the book lists them.
 ///
-/// The list is what the features left (T4/C3): the five languages of C2 by
-/// default, fewer in a slim build, and never a grammar that is not compiled.
-/// Batch 1 of T3 (JavaScript/JSX, C, C++, C#) and Batch 2 (PHP, Ruby, SQL,
-/// Shell) come after the five and are OFF by default, so the default binary and
-/// its behaviour do not change.
+/// The list is what the features left (T4/C3): the default build ships every
+/// language of the book (the single-binary decision of L9), fewer in a slim
+/// build, and never a grammar that is not compiled. Batch 1 of T3
+/// (JavaScript/JSX, C, C++, C#), Batch 2 (PHP, Ruby, SQL, Shell) and Batch 3
+/// (Swift, Kotlin, Dart) come after the original five, in the order they
+/// landed.
 pub const GRAMMARS: &[Grammar] = &[
     #[cfg(feature = "lang-rust")]
     RUST,
@@ -564,6 +743,12 @@ pub const GRAMMARS: &[Grammar] = &[
     SQL,
     #[cfg(feature = "lang-shell")]
     SHELL,
+    #[cfg(feature = "lang-swift")]
+    SWIFT,
+    #[cfg(feature = "lang-kotlin")]
+    KOTLIN,
+    #[cfg(feature = "lang-dart")]
+    DART,
 ];
 
 #[cfg(test)]

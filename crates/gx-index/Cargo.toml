@@ -41,6 +41,16 @@ tree-sitter-php = { version = "0.25.1", optional = true }
 tree-sitter-ruby = { version = "0.23.1", optional = true }
 tree-sitter-sequel = { version = "0.3.11", optional = true }
 tree-sitter-bash = { version = "0.25.1", optional = true }
+# T3 Batch 3 (S2/S4): Swift, Kotlin and Dart. The crate called
+# `tree-sitter-kotlin` on crates.io stopped at 0.3.8 and takes tree-sitter
+# `<0.23` as a *normal* dependency, so its `Language` cannot be handed to this
+# engine; Kotlin comes from `tree-sitter-kotlin-ng`, the same
+# tree-sitter-grammars grammar published under a free name at the ABI of the
+# engine (`tree-sitter-language` 0.1). `lang-kotlin` names the language, not the
+# crate (the rule of L8's SQL).
+tree-sitter-swift = { version = "0.7.4", optional = true }
+tree-sitter-kotlin-ng = { version = "1.1.0", optional = true }
+tree-sitter-dart = { version = "0.3.0", optional = true }
 
 [features]
 # Default-on: the book ships the five languages of C2, so existing users see no
@@ -66,6 +76,9 @@ default = [
   "lang-ruby",
   "lang-sql",
   "lang-shell",
+  "lang-swift",
+  "lang-kotlin",
+  "lang-dart",
 ]
 lang-rust = ["dep:tree-sitter-rust"]
 lang-typescript = ["dep:tree-sitter-typescript"]
@@ -85,3 +98,9 @@ lang-ruby = ["dep:tree-sitter-ruby"]
 # The grammar crate is `tree-sitter-sequel`; the language is SQL.
 lang-sql = ["dep:tree-sitter-sequel"]
 lang-shell = ["dep:tree-sitter-bash"]
+# T3 Batch 3: Swift, Kotlin and Dart. On by default like every other language
+# of the book (the single-binary decision of L9): a slim build still asks for
+# the ones it wants. The Kotlin grammar crate is `tree-sitter-kotlin-ng`.
+lang-swift = ["dep:tree-sitter-swift"]
+lang-kotlin = ["dep:tree-sitter-kotlin-ng"]
+lang-dart = ["dep:tree-sitter-dart"]

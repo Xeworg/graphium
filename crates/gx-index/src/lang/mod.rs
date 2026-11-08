@@ -21,10 +21,11 @@
 //!
 //! Each language is also a **cargo feature** of the engine (T4/C3, the lever of
 //! RNF1-quater): `lang-rust`, `lang-typescript`, `lang-python`, `lang-go` and
-//! `lang-java` are **on by default**, so nothing changes for a build that does
-//! not ask, and `lang-javascript`, `lang-c`, `lang-cpp`, `lang-csharp` (T3
-//! Batch 1) and `lang-php`, `lang-ruby`, `lang-sql`, `lang-shell` (T3 Batch 2)
-//! are **off by default**, so the default binary does not grow. A slim build
+//! `lang-java` were the five original ones; since the single-binary decision
+//! (L9) the **default build ships every language of the book**, `lang-javascript`,
+//! `lang-c`, `lang-cpp`, `lang-csharp` (T3 Batch 1), `lang-php`, `lang-ruby`,
+//! `lang-sql`, `lang-shell` (T3 Batch 2) and `lang-swift`, `lang-kotlin`,
+//! `lang-dart` (T3 Batch 3) included. A slim build
 //! drops a grammar together with its dependency —
 //! `--no-default-features --features "lang-rust,lang-typescript"` — and this
 //! directory is the only place that knows: [`GRAMMARS`] simply lists the
@@ -36,6 +37,8 @@ pub mod c;
 pub mod cpp;
 #[cfg(feature = "lang-csharp")]
 pub mod csharp;
+#[cfg(feature = "lang-dart")]
+pub mod dart;
 mod emit;
 pub mod engine;
 #[cfg(feature = "lang-go")]
@@ -44,6 +47,8 @@ pub mod go;
 pub mod java;
 #[cfg(feature = "lang-javascript")]
 pub mod javascript;
+#[cfg(feature = "lang-kotlin")]
+pub mod kotlin;
 pub mod model;
 #[cfg(feature = "lang-php")]
 pub mod php;
@@ -58,6 +63,8 @@ pub mod rust;
 pub mod shell;
 #[cfg(feature = "lang-sql")]
 pub mod sql;
+#[cfg(feature = "lang-swift")]
+pub mod swift;
 #[cfg(feature = "lang-typescript")]
 pub mod typescript;
 
@@ -156,6 +163,15 @@ mod tests {
             expected.push(("src/main.sh", "shell"));
             expected.push(("src/main.bash", "shell"));
         }
+        #[cfg(feature = "lang-swift")]
+        expected.push(("src/main.swift", "swift"));
+        #[cfg(feature = "lang-kotlin")]
+        {
+            expected.push(("src/main.kt", "kotlin"));
+            expected.push(("src/main.kts", "kotlin"));
+        }
+        #[cfg(feature = "lang-dart")]
+        expected.push(("src/main.dart", "dart"));
 
         for (path, lang) in expected {
             assert_eq!(language_for(Path::new(path)), Some(lang), "`{path}`");
@@ -178,6 +194,9 @@ mod tests {
                 cfg!(feature = "lang-ruby"),
                 cfg!(feature = "lang-sql"),
                 cfg!(feature = "lang-shell"),
+                cfg!(feature = "lang-swift"),
+                cfg!(feature = "lang-kotlin"),
+                cfg!(feature = "lang-dart"),
             ]
             .iter()
             .filter(|enabled| **enabled)
@@ -185,7 +204,7 @@ mod tests {
             "one grammar per enabled language"
         );
         assert_eq!(language_for(Path::new("src/notes.txt")), None);
-        assert!(grammar("kotlin").is_none());
+        assert!(grammar("scala").is_none());
         #[cfg(feature = "lang-typescript")]
         {
             assert_eq!(

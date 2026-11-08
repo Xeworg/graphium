@@ -2194,6 +2194,9 @@ fn the_registry_answers_the_four_new_languages() {
             cfg!(feature = "lang-ruby"),
             cfg!(feature = "lang-sql"),
             cfg!(feature = "lang-shell"),
+            cfg!(feature = "lang-swift"),
+            cfg!(feature = "lang-kotlin"),
+            cfg!(feature = "lang-dart"),
         ]
         .iter()
         .filter(|enabled| **enabled)
@@ -2360,6 +2363,508 @@ fn the_resolution_rate_of_the_batch_two_languages_is_measured_on_their_fixtures(
         ("sql", 96.0),
         ("shell", 34.0),
     ] {
+        let row = by_lang(lang);
+        assert!(
+            row.percent() >= floor,
+            "`{lang}` resolves {:.1} % of {} edges, under the published floor of {} %: {row:?}",
+            row.percent(),
+            row.edges,
+            floor
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Swift (T3 Batch 3)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-swift")]
+const SWIFT: &str = r#"
+import Foundation
+import struct Store.DiagramStore
+
+protocol Loader {
+    func load(input: String) -> Int
+}
+
+protocol Printable {
+    func describe() -> Int
+}
+
+struct Limits {
+    let max: Int = 3
+}
+
+enum Mode {
+    case fast
+    case slow
+}
+
+class Base {
+    func load(input: String) -> Int {
+        return 0
+    }
+}
+
+final class DiagramStore: Base, Loader {
+    let limit: Int = 3
+
+    init(limit: Int) {
+        self.limit = limit
+    }
+
+    func load(input: String) -> Int {
+        return openStore(input)
+    }
+
+    func renderWith(other: DiagramStore) -> Int {
+        return other.load(input: "x")
+    }
+
+    deinit {
+        cleanUp()
+    }
+}
+
+extension DiagramStore: Printable {
+    func describe() -> Int {
+        return load(input: "x")
+    }
+}
+
+typealias Handler = (String) -> Int
+
+let LIMIT = 3
+
+func openStore(_ input: String) -> Int {
+    let opened = DiagramStore(limit: 3)
+    return opened.load(input: input)
+}
+
+func quiet() -> String {
+    // A comment that mentions ignoredInComment() must not produce an edge.
+    let text = "alsoIgnoredInAString()"
+    return text
+}
+"#;
+
+/// T3/S2: the Swift chapter keeps the protocol as a `trait`, the struct and the
+/// enum as `type`, the classes as `class` and the `typealias` as `type`, with
+/// their members under them; the root property is a `const`, the type's ones
+/// are fields, and an `extension` is an `impl` block of the type it extends.
+#[cfg(feature = "lang-swift")]
+#[test]
+fn swift_declares_the_symbols_of_a_chapter_with_its_nesting() {
+    let parsed = parse("src/store.swift", SWIFT.as_bytes(), 0).expect("the Swift grammar");
+    assert_eq!(parsed.lang, "swift");
+    assert_symbols(
+        &parsed,
+        &[
+            ("trait", "Loader", "src.store.Loader"),
+            ("method", "load", "src.store.Loader.load"),
+            ("trait", "Printable", "src.store.Printable"),
+            ("method", "describe", "src.store.Printable.describe"),
+            ("type", "Limits", "src.store.Limits"),
+            ("type", "Mode", "src.store.Mode"),
+            ("class", "Base", "src.store.Base"),
+            ("method", "load", "src.store.Base.load"),
+            ("class", "DiagramStore", "src.store.DiagramStore"),
+            ("method", "init", "src.store.DiagramStore.init"),
+            ("method", "load", "src.store.DiagramStore.load"),
+            ("method", "renderWith", "src.store.DiagramStore.renderWith"),
+            ("method", "deinit", "src.store.DiagramStore.deinit"),
+            // The extension of the type is an impl block, like Rust's.
+            ("impl", "DiagramStore", "src.store.DiagramStore"),
+            ("method", "describe", "src.store.DiagramStore.describe"),
+            ("type", "Handler", "src.store.Handler"),
+            ("const", "LIMIT", "src.store.LIMIT"),
+            ("fn", "openStore", "src.store.openStore"),
+            ("fn", "quiet", "src.store.quiet"),
+        ],
+    );
+
+    // A property of a type is a field, an enum case is not a declaration, and
+    // a local binding is not one either.
+    for hidden in ["max", "limit", "fast", "slow", "opened", "text", "input"] {
+        assert!(
+            !parsed.symbols.iter().any(|symbol| symbol.name == hidden),
+            "`{hidden}` is not a declaration: {:?}",
+            rows(&parsed)
+        );
+    }
+    let method = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.qname == "src.store.Base.load")
+        .expect("the method");
+    let parent = method.parent.expect("the method hangs from its class");
+    assert_eq!(parsed.symbols[parent].name, "Base");
+}
+
+/// T3/S2: the four kinds of the schema as Swift spells them — the import by the
+/// last segment of its module, the superclass and the protocols as `inherits`
+/// (the conformance of an extension included), every call by its name, and the
+/// types a declaration names as `uses` — and never an edge out of prose.
+#[cfg(feature = "lang-swift")]
+#[test]
+fn swift_relations_are_syntactic_and_never_prose() {
+    let parsed = parse("src/store.swift", SWIFT.as_bytes(), 0).expect("the grammar");
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+
+    assert_edge(&parsed, "imports", "Foundation");
+    assert_edge(&parsed, "imports", "DiagramStore");
+    assert_edge_owned(&parsed, "inherits", "Base", "src.store.DiagramStore");
+    assert_edge_owned(&parsed, "inherits", "Loader", "src.store.DiagramStore");
+    // The conformance an extension adds is the `inherits` of the extension.
+    assert_edge(&parsed, "inherits", "Printable");
+
+    assert_edge_owned(&parsed, "calls", "openStore", "src.store.DiagramStore.load");
+    assert_edge(&parsed, "calls", "load");
+    assert_edge(&parsed, "calls", "DiagramStore");
+    assert_edge(&parsed, "calls", "cleanUp");
+    assert_edge(&parsed, "uses", "DiagramStore");
+    assert_edge(&parsed, "uses", "String");
+}
+
+// ---------------------------------------------------------------------------
+// Kotlin (T3 Batch 3)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-kotlin")]
+const KOTLIN: &str = r#"
+package graphium.store
+
+import graphium.render.Renderer
+import graphium.render.panels.*
+
+interface Loader {
+    fun load(input: String): Int
+}
+
+data class Limits(val max: Int)
+
+enum class Mode {
+    Fast,
+    Slow,
+}
+
+open class Base {
+    open fun load(input: String): Int = 0
+}
+
+class DiagramStore(private val renderer: Renderer) : Base(), Loader {
+    companion object {
+        fun open(): DiagramStore {
+            return DiagramStore(Renderer())
+        }
+    }
+
+    override fun load(input: String): Int {
+        return parseConfig(input)
+    }
+
+    fun renderWith(other: DiagramStore): Int {
+        return other.load("x")
+    }
+}
+
+typealias Handler = (String) -> Int
+
+val LIMIT = 3
+
+fun parseConfig(input: String): Int {
+    return DiagramStore(Renderer()).load(input)
+}
+
+fun quiet(): String {
+    // A comment that mentions ignoredInComment() must not produce an edge.
+    val text = "alsoIgnoredInAString()"
+    return text
+}
+"#;
+
+/// T3/S2: the Kotlin chapter is nested under the `package` the file declares,
+/// an interface is a `trait`, an enum class a `type`, a data class a `class`
+/// (the `data` modifier synthesises members the source never spells) and a
+/// companion object a `class` named `Companion` when it declares no name.
+#[cfg(feature = "lang-kotlin")]
+#[test]
+fn kotlin_declares_the_symbols_of_a_chapter_with_its_nesting() {
+    let parsed = parse("src/store.kt", KOTLIN.as_bytes(), 0).expect("the Kotlin grammar");
+    assert_eq!(parsed.lang, "kotlin");
+    assert_symbols(
+        &parsed,
+        &[
+            ("trait", "Loader", "graphium.store.Loader"),
+            ("method", "load", "graphium.store.Loader.load"),
+            ("class", "Limits", "graphium.store.Limits"),
+            ("type", "Mode", "graphium.store.Mode"),
+            ("class", "Base", "graphium.store.Base"),
+            ("method", "load", "graphium.store.Base.load"),
+            ("class", "DiagramStore", "graphium.store.DiagramStore"),
+            (
+                "class",
+                "Companion",
+                "graphium.store.DiagramStore.Companion",
+            ),
+            (
+                "method",
+                "open",
+                "graphium.store.DiagramStore.Companion.open",
+            ),
+            ("method", "load", "graphium.store.DiagramStore.load"),
+            (
+                "method",
+                "renderWith",
+                "graphium.store.DiagramStore.renderWith",
+            ),
+            ("type", "Handler", "graphium.store.Handler"),
+            ("const", "LIMIT", "graphium.store.LIMIT"),
+            ("fn", "parseConfig", "graphium.store.parseConfig"),
+            ("fn", "quiet", "graphium.store.quiet"),
+        ],
+    );
+
+    // A constructor `val`, a property of a type and an enum entry are not
+    // declarations of the book, and neither is a local binding.
+    for hidden in ["max", "renderer", "Fast", "Slow", "input", "text"] {
+        assert!(
+            !parsed.symbols.iter().any(|symbol| symbol.name == hidden),
+            "`{hidden}` is not a declaration: {:?}",
+            rows(&parsed)
+        );
+    }
+    let open = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.qname == "graphium.store.DiagramStore.Companion.open")
+        .expect("the companion method");
+    let parent = open.parent.expect("the member hangs from the companion");
+    assert_eq!(parsed.symbols[parent].name, "Companion");
+}
+
+/// T3/S2: the import by the last segment of its path, the supertypes of the `:`
+/// list as `inherits`, every call by its name and every type a declaration
+/// spells as `uses` — never an edge out of prose.
+#[cfg(feature = "lang-kotlin")]
+#[test]
+fn kotlin_relations_are_syntactic_and_never_prose() {
+    let parsed = parse("src/store.kt", KOTLIN.as_bytes(), 0).expect("the grammar");
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+
+    assert_edge(&parsed, "imports", "Renderer");
+    assert_edge(&parsed, "imports", "panels");
+    assert_edge_owned(&parsed, "inherits", "Base", "graphium.store.DiagramStore");
+    assert_edge_owned(&parsed, "inherits", "Loader", "graphium.store.DiagramStore");
+
+    assert_edge_owned(
+        &parsed,
+        "calls",
+        "parseConfig",
+        "graphium.store.DiagramStore.load",
+    );
+    assert_edge(&parsed, "calls", "DiagramStore");
+    assert_edge(&parsed, "calls", "load");
+    assert_edge(&parsed, "calls", "Renderer");
+    assert_edge(&parsed, "uses", "DiagramStore");
+    assert_edge(&parsed, "uses", "Renderer");
+}
+
+// ---------------------------------------------------------------------------
+// Dart (T3 Batch 3)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-dart")]
+const DART: &str = r#"
+import 'package:graphium/render.dart';
+import 'dart:async' as async;
+
+mixin Loggable {
+  void log(String message) {}
+}
+
+abstract class Loader {
+  int load(String input);
+}
+
+enum Mode { fast, slow }
+
+class Base with Loggable {
+  int load(String input) => 0;
+}
+
+class DiagramStore extends Base with Loggable implements Loader {
+  static const int limit = 3;
+
+  final Renderer renderer;
+
+  DiagramStore(this.renderer);
+
+  @override
+  int load(String input) {
+    return parseConfig(input);
+  }
+
+  int renderWith(DiagramStore other) {
+    return other.load('x');
+  }
+}
+
+typedef Handler = int Function(String input);
+
+const int LIMIT = 3;
+
+int parseConfig(String input) {
+  final DiagramStore opened = DiagramStore(Renderer());
+  return opened.load(input);
+}
+
+String quiet() {
+  // A comment that mentions ignoredInComment() must not produce an edge.
+  var text = 'alsoIgnoredInAString()';
+  return text;
+}
+"#;
+
+/// T3/S2: the Dart chapter keeps a class as `class`, a mixin as `trait` and an
+/// enum and a `typedef` as `type`, with the methods and the constructors of a
+/// class under it and the top-level variables as `const`.
+#[cfg(feature = "lang-dart")]
+#[test]
+fn dart_declares_the_symbols_of_a_chapter_with_its_nesting() {
+    let parsed = parse("lib/store.dart", DART.as_bytes(), 0).expect("the Dart grammar");
+    assert_eq!(parsed.lang, "dart");
+    assert_symbols(
+        &parsed,
+        &[
+            ("trait", "Loggable", "lib.store.Loggable"),
+            ("method", "log", "lib.store.Loggable.log"),
+            ("class", "Loader", "lib.store.Loader"),
+            ("method", "load", "lib.store.Loader.load"),
+            ("type", "Mode", "lib.store.Mode"),
+            ("class", "Base", "lib.store.Base"),
+            ("method", "load", "lib.store.Base.load"),
+            ("class", "DiagramStore", "lib.store.DiagramStore"),
+            (
+                "method",
+                "DiagramStore",
+                "lib.store.DiagramStore.DiagramStore",
+            ),
+            ("method", "load", "lib.store.DiagramStore.load"),
+            ("method", "renderWith", "lib.store.DiagramStore.renderWith"),
+            ("type", "Handler", "lib.store.Handler"),
+            ("const", "LIMIT", "lib.store.LIMIT"),
+            ("fn", "parseConfig", "lib.store.parseConfig"),
+            ("fn", "quiet", "lib.store.quiet"),
+        ],
+    );
+
+    // A field of a class, an enum entry and a local binding are not
+    // declarations of the book.
+    for hidden in [
+        "limit", "renderer", "fast", "slow", "opened", "text", "input",
+    ] {
+        assert!(
+            !parsed.symbols.iter().any(|symbol| symbol.name == hidden),
+            "`{hidden}` is not a declaration: {:?}",
+            rows(&parsed)
+        );
+    }
+}
+
+/// T3/S2: an import by the stem of its URI (or its alias), `extends`, `with`
+/// (a mixin is an embedding: PHP's trait and Ruby's `include`) and `implements`
+/// as `inherits`, every call by its name and every type a declaration spells as
+/// `uses` — never an edge out of prose.
+#[cfg(feature = "lang-dart")]
+#[test]
+fn dart_relations_are_syntactic_and_never_prose() {
+    let parsed = parse("lib/store.dart", DART.as_bytes(), 0).expect("the grammar");
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+
+    assert_edge(&parsed, "imports", "render");
+    assert_edge(&parsed, "imports", "async");
+    assert_edge_owned(&parsed, "inherits", "Base", "lib.store.DiagramStore");
+    assert_edge_owned(&parsed, "inherits", "Loggable", "lib.store.DiagramStore");
+    assert_edge_owned(&parsed, "inherits", "Loader", "lib.store.DiagramStore");
+
+    assert_edge_owned(
+        &parsed,
+        "calls",
+        "parseConfig",
+        "lib.store.DiagramStore.load",
+    );
+    assert_edge(&parsed, "calls", "DiagramStore");
+    assert_edge(&parsed, "calls", "load");
+    assert_edge(&parsed, "calls", "Renderer");
+    assert_edge(&parsed, "uses", "DiagramStore");
+    assert_edge(&parsed, "uses", "Renderer");
+}
+
+// ---------------------------------------------------------------------------
+// D3 for T3 Batch 3: the three new languages, measured on their own tree
+// ---------------------------------------------------------------------------
+
+/// D3/S4: the three languages of T3 Batch 3 measure their resolution on a book
+/// that holds only their fixtures, with the same rule and the same report as the
+/// five of C2 and the four of each earlier batch (`Book::resolution()`,
+/// `name_norm`, ≤5 definers). They are a separate tree on purpose: the
+/// published numbers of the other languages are measured on their own fixtures,
+/// and adding chapters with the same common names would move their fanout.
+#[cfg(all(feature = "lang-swift", feature = "lang-kotlin", feature = "lang-dart"))]
+#[test]
+fn the_resolution_rate_of_the_batch_three_languages_is_measured_on_their_fixtures() {
+    let scratch = Scratch::new("batch-three-resolution");
+    scratch.write("src/store.swift", SWIFT);
+    scratch.write("src/store.kt", KOTLIN);
+    scratch.write("lib/store.dart", DART);
+    let book = Arc::new(scratch.open());
+    scratch.indexer(&book).run_full().expect("the index");
+
+    let report = book.resolution().expect("the honesty report");
+    let by_lang = |lang: &str| {
+        report
+            .iter()
+            .find(|row| row.lang == lang)
+            .unwrap_or_else(|| panic!("the report has no `{lang}` row: {report:?}"))
+            .clone()
+    };
+
+    for lang in ["swift", "kotlin", "dart"] {
+        let row = by_lang(lang);
+        assert!(row.files >= 1, "`{lang}` has a chapter: {row:?}");
+        assert!(row.symbols >= 1, "`{lang}` declares something: {row:?}");
+        assert!(row.edges >= 10, "`{lang}` declares relations: {row:?}");
+        assert!(
+            row.resolved <= row.edges,
+            "a rate is never over 100 %: {row:?}"
+        );
+    }
+
+    println!(
+        "D3 resolutions (T3 Batch 3): {}",
+        report
+            .iter()
+            .map(|row| format!(
+                "{} {}/{} = {:.1} % ({} files, {} symbols)",
+                row.lang,
+                row.resolved,
+                row.edges,
+                row.percent(),
+                row.files,
+                row.symbols
+            ))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+
+    // The floors are the published numbers of `docs/PRD.md`, rounded down: a
+    // measurement that falls under them fails the suite. They are **measured
+    // on these fixtures**, never promises.
+    for (lang, floor) in [("swift", 20.0), ("kotlin", 23.0), ("dart", 22.0)] {
         let row = by_lang(lang);
         assert!(
             row.percent() >= floor,

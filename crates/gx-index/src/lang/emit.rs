@@ -156,7 +156,8 @@ pub fn dotted_module(relative: &str, skip: &[&str]) -> String {
     feature = "lang-go",
     feature = "lang-java",
     feature = "lang-csharp",
-    feature = "lang-php"
+    feature = "lang-php",
+    feature = "lang-kotlin"
 ))]
 pub fn dotted_directories(relative: &str) -> String {
     let parts: Vec<&str> = relative
@@ -275,7 +276,8 @@ mod tests {
         feature = "lang-go",
         feature = "lang-java",
         feature = "lang-csharp",
-        feature = "lang-php"
+        feature = "lang-php",
+        feature = "lang-kotlin"
     ))]
     use super::dotted_directories;
 
@@ -304,7 +306,8 @@ mod tests {
             feature = "lang-go",
             feature = "lang-java",
             feature = "lang-csharp",
-            feature = "lang-php"
+            feature = "lang-php",
+            feature = "lang-kotlin"
         ))]
         {
             assert_eq!(
