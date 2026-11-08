@@ -158,3 +158,113 @@ languages ride on it.
   Default build keeps the original five ON and the new ones OFF: the
   default binary must stay ~14.36 MB per batch (RNF1-quater); the
   20-grammar re-measure is T6.
+- L7 (2026-11-07, worker, T3 Batch 1: S2 S4): JavaScript/JSX, C, C++ and
+  C# landed, and the `lang` values of the book became data-driven — the
+  one-time schema evolution that makes batches 2-4 (and any future
+  language) a registry entry.
+  - **Schema decision (chosen): keep `SCHEMA_VERSION = 1` and drop the
+    `lang` CHECK** from `file`; the registry of the build is the only
+    list. Acceptance moved to the one insert path
+    (`Book::commit_batch` refuses a chapter whose `lang` has no grammar:
+    counted as skipped with one stderr line), so the DDL names no
+    language and language N+1 never touches the schema again.
+  - **Stored v1 books**: a book written before this cut carries the
+    check in `sqlite_master`. The open path detects it and rebuilds the
+    `file` table in place (`schema::relax_language_check`, called from
+    the probe; `foreign_keys` is suspended **outside** the transaction —
+    the bundled SQLite enforces FKs by default and `DROP TABLE file`
+    would cascade the chapters away — and restored after it). Every row
+    and every id survive: no file is parsed again and no index is thrown
+    away, so D1 (delete-and-reindex) stays for real doubts. Version
+    stayed 1, so a stored book is not rebuilt on open; the step runs once
+    per book (`OpenReport::migrated` reports it, `service::ensure` logs
+    one line).
+  - **Measured migration cost** (a row copy of `file`; `symbol`, `edge`
+    and the FTS are not touched): 1.000 files / 10.000 symbols in
+    **1,8 ms** (in-memory, printed by the unit test with `--nocapture`);
+    file-backed with the delete journal: **0,8 ms** for 1.000 files,
+    **12,6 ms** for 20.000 files (200.000 symbols) and **72,6 ms** for
+    100.000 files (1M symbols, 23,5 MiB). One-time, only for books that
+    still carry the v1 check.
+  - **Rejected option**: bump to schema 2 with a table-rebuild migration
+    or accepting the D1 delete-and-reindex. It buys nothing the in-place
+    relaxation does not: it either adds the migration ladder the schema
+    explicitly does not have, or forces every user's book through a full
+    reindex (minutes of parsing on a real tree, orders over the 72,6 ms
+    row copy) for a constraint that only restricted `INSERT`s. Also
+    rejected: a `language` table with `file.lang REFERENCES
+    language(name)` — schema state that would need refreshing from the
+    registry on every open plus a migration per stored book, to enforce
+    in SQL what the insert path already enforces with the runtime source
+    of truth.
+  - Removed `LANGUAGE_PACK`/`meta.lang_pack`: it was the last second list
+    of languages. Stored books keep the old row (nothing reads it); new
+    books do not write it. New contract pinned by tests: the DDL carries
+    no language list, every registry grammar is accepted, a language absent
+    from the registry is refused at insert (integration test with a
+    hand-built `ruby` chapter: 1 written, 1 skipped, no row), and a v1
+    book is relaxed in place on open, idempotently.
+  - **The four languages (Batch 1, list of L6)** — new cargo features,
+    all **DEFAULT OFF**:
+    - `lang-javascript` (tree-sitter-javascript 0.25.0): `.js`, `.jsx`,
+      `.mjs`, `.cjs`. One grammar covers JSX — no second language, and
+      TypeScript keeps its own `.ts`/`.tsx` module (no duplication).
+      Classes/methods/functions and module-level `const`s by declarator;
+      relations `calls`/`imports`/`inherits`. No `uses` (JavaScript has no
+      type annotations) and JSX names are markup, not relations.
+    - `lang-c` (tree-sitter-c 0.24.2): `.c`, `.h`. Functions, structs,
+      unions, enums, typedefs and file-scope variables (const/storage).
+      `.h` belongs to C and only to C, so which grammar answers an
+      extension never depends on the enabled features (C++ headers are
+      `.hpp`/`.hh`/`.hxx`/`.h++`). Relations `calls`/`imports`/`uses`
+      (no `inherits`: C has none); a header import is its stem
+      (`store.h` → `store`) because the book stores identifiers.
+    - `lang-cpp` (tree-sitter-cpp 0.23.4): `.cpp`, `.cc`, `.cxx`, `.c++`,
+      `.hpp`, `.hh`, `.hxx`, `.h++`. Classes/structs/enums/aliases, free
+      functions and the methods of a class (in-class definitions and
+      prototypes, both `field_declaration` and `declaration`); a
+      specifier declares only with a body; `namespace` is transparent
+      (the file already names the source). Four relation kinds.
+    - `lang-csharp` (tree-sitter-c-sharp 0.23.5): `.cs`. Module path from
+      the `namespace` the file declares (like Java's `package`), types
+      with their methods/constructors/delegates; fields and properties
+      are not declarations of the book. Four relation kinds; `using`
+      imports carry the last segment (Java's convention). Needs no hook.
+  - **Language N+1 after this cut**: one registry entry + one module +
+    dependency/feature + fixture/floor + PRD row + re-measure. **No
+    schema change** — the L3 checklist minus its schema line.
+  - **D3** (`-- --nocapture`, features on). The five of C2 unchanged —
+    the differential check (`git archive HEAD` vs this tree, same tests,
+    `--nocapture`) gives a **byte-identical** table: TypeScript 48,0 %
+    (12/25), Rust 36,4 % (4/11), Java 29,6 % (8/27), Go 17,2 % (5/29),
+    Python 14,8 % (4/27). Batch 1, on **its own** fixture tree (adding
+    its chapters to the C2 tree would move the fanout of common names
+    and false the published C2 numbers — measured and discarded):
+    **C 81,8 % (9/11), C++ 71,4 % (10/14), C# 66,7 % (10/15),
+    JavaScript 66,7 % (8/12)**. Floors pinned at 79/69/64/64 % (measured
+    minus 2–6 points, never inflated).
+  - **Binary** (release, opt-level=z, lto, strip): default `graphium`
+    **14.358.936 B before → 14.363.032 B after** (+4.096 B, +0,03 %: the
+    migration/insert-guard code of the schema cut; the four grammars
+    compile to nothing in the default build), 91,5 % of RNF1-quater. The
+    same tree with the **nine** features on (`-p gx-app --features
+    "lang-javascript,lang-c,lang-cpp,lang-csharp"`, built from a temp copy
+    because `gx-mcp`/`gx-app` forward the flags and are outside this
+    cut's surfaces): **24.209.176 B** (154,2 % of the ceiling,
+    +9.846.144 B) — exactly why the four new grammars stay off by default.
+  - **Gates (worker-verified, exit codes without pipes)**: `cargo test
+    --workspace` **0** (42 suites ok); `cargo test -p gx-index --features
+    "lang-javascript,lang-c,lang-cpp,lang-csharp"` **0** (6 suites ok, the
+    new per-language fixtures and floors included); `cargo fmt --check`
+    **0**; `cargo clippy --workspace --all-targets` **0** (0 warnings);
+    `cargo clippy -p gx-index --all-targets --features …` **0** (0
+    warnings). Each new feature alone compiles
+    (`--no-default-features --features lang-X`; the C#-only slim build
+    warns about `dotted_module`, the same pre-existing pattern of the
+    other slim builds). The known `--no-default-features` failures of L5
+    are untouched and out of this cut.
+  - **Scope note for the reviewer**: `Cargo.lock` (workspace root)
+    changed — the four grammar crates and `tree-sitter-language` — and it
+    is outside the three surfaces this task listed. The dependencies
+    cannot be added without it; the work unit has to include it (the
+    alternative is dropping the batch).
