@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use crate::contract;
 
 /// Every tool of the server, in the order the index reports them.
-pub const TOOL_NAMES: [&str; 15] = [
+pub const TOOL_NAMES: [&str; 16] = [
     "render_diagram",
     "validate_diagram",
     "get_diagram_schema",
@@ -26,6 +26,7 @@ pub const TOOL_NAMES: [&str; 15] = [
     "code_structure",
     "code_impact",
     "code_diagram",
+    "code_er",
 ];
 
 /// Calls a tool by name with its JSON arguments.
@@ -235,6 +236,13 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
                 max_chars,
             ))
         }
+        "code_er" => {
+            let path = arguments
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "`path` is required".to_string())?;
+            Ok(crate::book::code_er(session_id, path))
+        }
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -439,6 +447,16 @@ pub fn tool_schema(name: &str) -> Value {
                 }
             },
             "required": ["symbol"]
+        }),
+        "code_er" => json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "The `.sql` file of the project, relative to the project root with `/` separators, the way the book stores it (`db/schema.sql`). Absolute paths and `..` are refused."
+                }
+            },
+            "required": ["path"]
         }),
         _ => json!({ "type": "object" }),
     }
@@ -769,6 +787,42 @@ mod tests {
         assert!(
             required.is_none_or(|required| required.is_empty()),
             "`label` is optional: {schema}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // f13 — `code_er`: the door hands the `er` document to the agent
+    // -----------------------------------------------------------------
+
+    /// S1: the tool answers through the dispatcher instead of an unknown-tool
+    /// error. Without a session project the answer is the book's own
+    /// `invalid_value` failure, which is still the tool answering.
+    #[test]
+    fn code_er_is_reachable_through_the_dispatcher() {
+        let answered = call_tool("code_er", &serde_json::json!({ "path": "schema.sql" }), "s")
+            .expect("the tool answers");
+        assert_eq!(answered["ok"], false, "{answered}");
+        assert_eq!(answered["errors"][0]["code"], "invalid_value", "{answered}");
+    }
+
+    /// S4: a call without `path` is refused by the dispatcher, the same way
+    /// `code_diagram` refuses a call without `symbol`.
+    #[test]
+    fn code_er_requires_a_path() {
+        let error = call_tool("code_er", &serde_json::json!({}), "s").expect_err("must fail");
+        assert!(error.contains("`path` is required"), "{error}");
+    }
+
+    /// S2/S4: the published schema names `path` and makes it required, so an
+    /// agent that never saw the tool still calls it right.
+    #[test]
+    fn the_schema_of_code_er_has_a_required_path() {
+        let schema = super::tool_schema("code_er");
+        assert!(schema["properties"]["path"].is_object(), "{schema}");
+        let required = schema.get("required").and_then(serde_json::Value::as_array);
+        assert!(
+            required.is_some_and(|required| required.contains(&serde_json::json!("path"))),
+            "`path` is required: {schema}"
         );
     }
 }

@@ -147,7 +147,11 @@ document in `diagram`, ready to send to `render_diagram` with no repair: that \
 is the cheap diagram, drawn from the book instead of from the code; it takes \
 the same `edges` filter and keeps the 300/600 ceilings, so `truncated.reason` \
 says `density` when the document was trimmed and `nodes`/`edges` when the walk \
-was cut. The book is \
+was cut. `code_er` hands you the `er` document of one `.sql` file of the \
+project (`path`, relative to the project root with `/` separators): its tables \
+as compartments with their columns and the keys between them, in `diagram`, \
+ready for `validate_diagram` and then `render_diagram` — the picture of a \
+database read live from the file instead of from the code. The book is \
 on by default: `book_disabled` only answers when the owner opted out with \
 `GRAPHIUM_BOOK=off`, and a book that cannot be opened answers \
 `book_unavailable`. `progress.state` tells whether the first pass is still \
@@ -381,6 +385,22 @@ Remove diagrams from the plan. Without `scope` it clears only the diagrams of th
 session; with `scope: \"plano\"` it clears the whole plan, including the ones of \
 other sessions. It does not close the window and does not stop the MCP session."
         }
+        "code_er" => {
+            "Build the `er` document of one `.sql` file of the project — its tables as \
+compartments with their columns and the keys between them — without reading the \
+file yourself: the answer carries the document in `diagram` (`version: 1`, \
+`kind: \"er\"`), ready to send to `validate_diagram` and then `render_diagram` as \
+it is, the same contract `code_diagram` keeps. `path` is the file relative to \
+the project root with `/` separators, the way the book stores it \
+(`db/schema.sql`); absolute paths and `..` are refused. The source is read live, \
+so the document is the file as it is now, not the indexed snapshot. A file that \
+produces no document — another language, a DDL with no column list, or a build \
+without the SQL grammar — answers `ok: false` with the three causes named. The \
+ceilings of the `er` kind still apply at the render: a schema bigger than the \
+kind accepts is refused there with `too_large`. The book is on by default \
+(`book_disabled` only with an explicit `GRAPHIUM_BOOK=off`). It never renders \
+and never touches the plan."
+        }
         _ => "A Graphium tool.",
     }
 }
@@ -466,6 +486,7 @@ mod tests {
             "code_structure",
             "code_impact",
             "code_diagram",
+            "code_er",
         ] {
             let text = description(tool);
             assert!(
@@ -573,5 +594,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// f13 S5: `code_er` is a named tool of the door with a description of
+    /// its own, and it follows the book family's contract: the book is on by
+    /// default and the description names the explicit opt-out.
+    #[test]
+    fn the_code_er_description_follows_the_book_family_contract() {
+        assert!(
+            crate::dispatch::TOOL_NAMES.contains(&"code_er"),
+            "the tool is named in TOOL_NAMES: {:?}",
+            crate::dispatch::TOOL_NAMES
+        );
+        let text = description("code_er");
+        assert!(text.len() > 120, "code_er needs a real description");
+        assert_ne!(text, description("nope"), "code_er is a fallback");
+        assert!(text.contains("on by default"), "{text}");
+        assert!(text.contains("GRAPHIUM_BOOK=off"), "{text}");
+        assert!(!text.contains("GRAPHIUM_BOOK=on"), "{text}");
+    }
+
+    /// f13 S6: the instructions teach the tool's place in the book section,
+    /// next to the tools it shares the project with.
+    #[test]
+    fn the_instructions_present_code_er_next_to_the_book() {
+        assert!(
+            INSTRUCTIONS.contains("code_er"),
+            "THE BOOK section has to name the tool"
+        );
     }
 }
