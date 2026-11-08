@@ -1,0 +1,1368 @@
+/* Graphium plan styles — the whole stylesheet of the vanilla page
+ * (`crates/gx-app/frontend/style.css`), carried by the Svelte build with the
+ * same class names and the same declarations (CONTRACT.md §8, C42): the
+ * surface, the grid, the objects and their boxes, the empty states, the error
+ * banner, the render ghost, the three panels (diagrams, sessions, settings),
+ * the switcher rows, the clone tools pill, the seven `[data-theme]` blocks of
+ * RF22 and the `.graphium` token rules the drawings paint with.
+ *
+ * It is a copy, not a re-design: T4 diffs it against the vanilla file. The
+ * only addition is the `#app` rule below, because the Svelte app mounts into
+ * that element instead of writing the page body.
+ *
+ * The grid is chrome of the frontend, never part of the SVG export
+ * (PRD §7.1). It is drawn with two CSS gradients, one per family of
+ * diagonal lines, so the thickness stays 1 screen pixel while the
+ * separation scales with the zoom (PRD §7.2, decision S23).
+ *
+ * Geometry of the cells: the two families deviate the same angle from the
+ * vertical, one to each side, so all the cells are congruent rhombi with
+ * their major (vertical) diagonal measuring the separation the human chose
+ * (59 px in the `plano` preset). The angle is a setting (RF25): the frontend
+ * publishes it as `--grid-angle` with its sine and cosine, and recomputes
+ * the perpendicular step from it. The numbers below are the defaults of the
+ * `plano` preset, which is also what the plan paints before the first
+ * `graphium://settings` arrives.
+ */
+
+:root {
+  --bg: #1b1b1b;
+  --grid-color: rgba(255, 255, 255, 0.14);
+  /* The deviation of the lines from the vertical (RF24: 45 degrees). */
+  --grid-angle: 45deg;
+  /* The diagonal of the rhombus: the measure the human sees. At 45 degrees
+     both diagonals of the cell measure the same, so the cell is a rhombus
+     with equal sides and equal diagonals. */
+  --grid-diagonal: 59px;
+  /* sin and cos of the deviation. The frontend keeps them in sync with
+     --grid-angle, so RF25 can change the angle without touching the CSS. */
+  --grid-sin: 0.7071;
+  --grid-cos: 0.7071;
+  /* The tangent of the angle, published with the angle: the tile of the
+     mesh is `diagonal * tan(angle)` wide and `diagonal` tall, which is what
+     keeps the lattice seamless at every angle (see grid.rs). */
+  --grid-tan: 1;
+  /* The perpendicular step between two lines of the same family:
+     diagonal * sin(angle). */
+  --grid-step: 41.72px;
+  --grid-line: 1px;
+  --grid-opacity: 1;
+  --tx: 0px;
+  --ty: 0px;
+  /* The zoom of the camera: the tile of the grid scales with it, so the
+     tile keeps being a period of the pattern at any zoom. */
+  --zoom: 1;
+  --accent: #6ea8fe;
+  --text: #e9e9ec;
+  /* The colour of each family of agent (S4, D1): the dot of a session in the
+     switcher paints with them, so the human tells whose work is whose (D3). */
+  --family-pi: #6ea8fe;
+  --family-claude: #e0a165;
+  --family-opencode: #7cc9a4;
+  --family-ui: #b9b9c2;
+  --family-other: #a89bd6;
+  /* Chrome of the window: the settings panel, the ghost box and the inline
+     code of the empty state. They follow the theme, like the drawings. */
+  --surface: #232329;
+  --surface-border: #3a3a44;
+  --surface-shadow: rgba(0, 0, 0, 0.45);
+  --hairline: rgba(255, 255, 255, 0.35);
+  --code-bg: rgba(255, 255, 255, 0.08);
+
+  /* Palette of the plan (PRD §8.5.2). The SVG carries the same tokens as
+     CSS classes; in the canvas the colors come from here, not from the
+     inline <style> of the SVG: the CSP of the app forbids inline styles,
+     and the theme is the human's decision (RF22, RF25). */
+  --node-fill: #2a2a30;
+  --node-stroke: #4d4d57;
+  --node-text: #e9e9ec;
+  --edge-stroke: #8a8a96;
+  --edge-text: #b9b9c2;
+}
+
+/* The light theme (RF22, S18): a real theme, not a white background. The
+ * nodes, their labels and the arrows keep their contrast, so the drawing is
+ * still readable. The name is `light`, the name the settings file uses; the
+ * page paints it with `data-theme` on the root element. */
+[data-theme="light"] {
+  --bg: #f7f7f8;
+  --grid-color: rgba(0, 0, 0, 0.09);
+  --node-fill: #ffffff;
+  --node-stroke: #c7c7cf;
+  --node-text: #1b1b1f;
+  --edge-stroke: #6f6f7a;
+  --edge-text: #4a4a54;
+  --accent: #2f6fd0;
+  --text: #1b1b1f;
+  /* The same five families, one step darker so the dot reads on the light
+     plan (RF22, S18). */
+  --family-pi: #2f6fd0;
+  --family-claude: #a25f1b;
+  --family-opencode: #2b7a53;
+  --family-ui: #6f6f7a;
+  --family-other: #6a5aa6;
+  --surface: #ffffff;
+  --surface-border: #d3d3db;
+  --surface-shadow: rgba(20, 20, 30, 0.18);
+  --hairline: rgba(0, 0, 0, 0.3);
+  --code-bg: rgba(0, 0, 0, 0.06);
+}
+
+/* The four themes of F6 (`f6-themes.md`, R5). Each one is the whole palette -
+ * the drawing and the chrome of the panel -, and each name is the name of
+ * `Theme` in `gx-core::render` and of `settings.json`: one name per theme. */
+[data-theme="brasa"] {
+  --bg: #131316;
+  --grid-color: rgba(255, 255, 255, 0.16);
+  --node-fill: #1e1e24;
+  --node-stroke: #3d3d47;
+  --node-text: #f2e9e1;
+  --edge-stroke: #8f867c;
+  --edge-text: #cbbcab;
+  --accent: #f5a623;
+  --text: #f2e9e1;
+  --surface: #1c1c22;
+  --surface-border: #34343e;
+  --surface-shadow: rgba(0, 0, 0, 0.5);
+  --hairline: rgba(255, 255, 255, 0.32);
+  --code-bg: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="arcilla"] {
+  --bg: #faf6f0;
+  --grid-color: rgba(0, 0, 0, 0.09);
+  --node-fill: #fffdf9;
+  --node-stroke: #d9cbb7;
+  --node-text: #3a2f27;
+  --edge-stroke: #8a7a68;
+  --edge-text: #5c4d40;
+  --accent: #c05a3a;
+  --text: #3a2f27;
+  /* The five families, one step darker so the dot reads on the cream plan
+     (the same rule as the light theme). */
+  --family-pi: #2f6fd0;
+  --family-claude: #a25f1b;
+  --family-opencode: #2b7a53;
+  --family-ui: #6f6f7a;
+  --family-other: #6a5aa6;
+  --surface: #fffdf9;
+  --surface-border: #e2d7c6;
+  --surface-shadow: rgba(60, 40, 20, 0.18);
+  --hairline: rgba(0, 0, 0, 0.3);
+  --code-bg: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="aurora"] {
+  --bg: #0e1626;
+  --grid-color: rgba(200, 220, 255, 0.13);
+  --node-fill: #16213a;
+  --node-stroke: #2c3d5e;
+  --node-text: #e6ecf7;
+  --edge-stroke: #7288b0;
+  --edge-text: #a9bcd9;
+  --accent: #9a8cf0;
+  --text: #e6ecf7;
+  --surface: #141d31;
+  --surface-border: #2a3550;
+  --surface-shadow: rgba(0, 0, 0, 0.5);
+  --hairline: rgba(255, 255, 255, 0.3);
+  --code-bg: rgba(255, 255, 255, 0.07);
+}
+
+[data-theme="neblina"] {
+  --bg: #eef1f2;
+  --grid-color: rgba(0, 0, 0, 0.08);
+  --node-fill: #fafbfb;
+  --node-stroke: #cbd3d5;
+  --node-text: #22302f;
+  --edge-stroke: #6f8080;
+  --edge-text: #4c5c5d;
+  --accent: #2f8f86;
+  --text: #22302f;
+  --family-pi: #2f6fd0;
+  --family-claude: #a25f1b;
+  --family-opencode: #2b7a53;
+  --family-ui: #6f6f7a;
+  --family-other: #6a5aa6;
+  --surface: #f7f9f9;
+  --surface-border: #d5dcdd;
+  --surface-shadow: rgba(20, 30, 30, 0.16);
+  --hairline: rgba(0, 0, 0, 0.28);
+  --code-bg: rgba(0, 0, 0, 0.05);
+}
+
+/* `pitaya`: the night of a terminal with a rose accent and soft rose text,
+   the look of the shell this plan lives beside. Dark like the default, so
+   it inherits the family colours of `:root`. */
+[data-theme="pitaya"] {
+  --bg: #100e13;
+  --grid-color: rgba(255, 255, 255, 0.13);
+  --node-fill: #1b161c;
+  --node-stroke: #4d3a45;
+  --node-text: #f0dce4;
+  --edge-stroke: #94707f;
+  --edge-text: #c99fb0;
+  --accent: #e06a8d;
+  --text: #f0dce4;
+  --surface: #1a161d;
+  --surface-border: #352a33;
+  --surface-shadow: rgba(0, 0, 0, 0.55);
+  --hairline: rgba(255, 255, 255, 0.3);
+  --code-bg: rgba(255, 255, 255, 0.07);
+}
+
+/* Las clases que el renderer escribe y que el SVG de pie resuelve con su
+ * `<style>` interno: en el canvas la CSP bloquea ese bloque, así que cada una
+ * necesita su regla acá o el elemento sale con el color del navegador. Es la
+ * misma razón por la que la paleta vive en variables. */
+.graphium .lifeline {
+  stroke: var(--node-stroke);
+  stroke-width: 1px;
+  stroke-dasharray: 4 4;
+  fill: none;
+}
+
+/* El contenedor de un grupo (un *boundary* de un diagrama de componentes): el
+ * recuadro punteado que dice qué piezas forman el mismo sistema, y su nombre
+ * arriba a la izquierda. */
+.graphium .group-box {
+  fill: var(--node-fill);
+  fill-opacity: 0.12;
+  stroke: var(--node-stroke);
+  stroke-width: 1px;
+  stroke-dasharray: 8 5;
+}
+
+.graphium .group-label {
+  fill: var(--edge-text);
+}
+
+/* La banda de un carril de timeline/swimlane: el fondo que dice en qué fila
+ * está cada evento, y el nombre del carril en la canaleta de la izquierda. */
+.graphium .lane-band {
+  fill: var(--node-fill);
+  fill-opacity: 0.35;
+  stroke: var(--node-stroke);
+  stroke-width: 1px;
+}
+
+.graphium .lane-label {
+  fill: var(--edge-text);
+}
+
+.graphium .stroke-dashed {
+  stroke-dasharray: 6 4;
+}
+
+.graphium .emphasis-highlight {
+  stroke: var(--accent);
+}
+
+.graphium .emphasis-highlight-text {
+  fill: var(--accent);
+}
+
+.graphium .emphasis-muted {
+  opacity: 0.55;
+}
+
+.graphium .text {
+  font-family: Inter, sans-serif;
+}
+
+/* La punta de flecha es un `<path>` dentro de un `<marker>`: sin regla se
+ * pinta con el negro del navegador. */
+.graphium .arrow-normal {
+  fill: var(--edge-stroke);
+}
+
+.graphium .arrow-highlight {
+  fill: var(--accent);
+}
+
+.graphium .arrow-muted {
+  fill: var(--edge-stroke);
+  opacity: 0.55;
+}
+
+/* The tokens of the diagram, applied over the classes of the SVG.
+ * These rules win over the inline <style> of the SVG (and they are the
+ * only ones that apply in the app, where the CSP forbids inline styles). */
+.graphium .node-fill {
+  fill: var(--node-fill);
+}
+
+.graphium .node-stroke {
+  stroke: var(--node-stroke);
+  stroke-width: 1px;
+}
+
+.graphium .node-text {
+  fill: var(--node-text);
+}
+
+.graphium .edge-stroke {
+  stroke: var(--edge-stroke);
+  stroke-width: 1px;
+  fill: none;
+}
+
+.graphium .edge-text {
+  fill: var(--edge-text);
+}
+
+.graphium .accent {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+
+/* Rows of a table and the crow's foot of a relation (PRD §6.1). */
+.graphium .row-badge,
+.graphium .row-note {
+  fill: var(--edge-text);
+}
+
+.graphium .row-key {
+  font-weight: 600;
+}
+
+.graphium .row-nullable {
+  opacity: 0.75;
+}
+
+.graphium .cardinality {
+  fill: none;
+  stroke: var(--edge-stroke);
+  stroke-width: 1px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 14px;
+}
+
+/* The Svelte mount point (`index.html` of this build): the vanilla page writes
+ * its chrome straight into `body`, this app into `#app`. */
+#app {
+  height: 100%;
+}
+
+.plan {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background-color: var(--bg);
+  cursor: grab;
+  /* Phase of every family: the pan projected on the normal of that family.
+     A single offset for both families would make them drift apart while
+     the camera moves, and the cells would stop being congruent. */
+  --shift-a: calc(var(--grid-cos) * var(--tx) - var(--grid-sin) * var(--ty));
+  --shift-b: calc(var(--grid-cos) * var(--tx) + var(--grid-sin) * var(--ty));
+}
+
+.plan.dragging {
+  cursor: grabbing;
+}
+
+/* The grid: two repeating gradients, one per family of diagonal lines.
+ * The period (--grid-step) is the perpendicular step in screen pixels and
+ * grows with the zoom; the line thickness (--grid-line) stays 1px. */
+.plan::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--grid-opacity);
+  background-image:
+    repeating-linear-gradient(
+      calc(90deg - var(--grid-angle)),
+      transparent 0 calc(var(--grid-step) - var(--grid-line)),
+      var(--grid-color) 0 var(--grid-step)
+    ),
+    repeating-linear-gradient(
+      calc(90deg + var(--grid-angle)),
+      transparent 0 calc(var(--grid-step) - var(--grid-line)),
+      var(--grid-color) 0 var(--grid-step)
+    );
+  /* The tile is one cell of the mesh (the diagonal of the rhombus) and it
+     scales with the camera. The gradient repeats inside the tile, so the
+     tile has to be a multiple of the period of the pattern: with the tile
+     at the size of the viewport the neighbours do not match and the mesh
+     breaks into strips while the camera moves, and a tile that does not
+     scale breaks the same way when the camera zooms out. */
+  background-size:
+    calc(var(--grid-diagonal) * var(--grid-tan) * var(--zoom))
+      calc(var(--grid-diagonal) * var(--zoom));
+  background-position:
+    calc(var(--grid-cos) * var(--shift-a)) calc(-1 * var(--grid-sin) * var(--shift-a)),
+    calc(var(--grid-cos) * var(--shift-b)) calc(var(--grid-sin) * var(--shift-b));
+}
+
+.diagrams {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+/* One container per diagram. The camera transform lives here: the SVG
+ * inside keeps plan units and is never rescaled on its own (PRD §7.2). */
+.diagram {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.diagram > .content {
+  position: absolute;
+}
+
+/* The object of a plan the human is not looking at (A2 of `f8-planos.md`):
+ * out of the paint, never closed. It keeps its place, its rectangle and its
+ * diagrams in Rust, so coming back to its plan puts it back exactly where it
+ * was. */
+.diagram.plan-hidden {
+  display: none;
+}
+
+.diagram svg {
+  display: block;
+  overflow: visible;
+}
+
+/* The `×` of the object (PRD §7 RF28, S3): it shows up when the pointer walks
+ * over the diagram and never before, so the plan stays clean. It sits in the
+ * padding ring of the object, so it never covers the drawing. */
+/* El contorno del objeto aparece al pasar el puntero: el `×` cuelga de la
+ * esquina de su objeto, y sin el contorno parece flotar en el vacío cuando la
+ * esquina del rectángulo no tiene tinta (un árbol es ancho abajo, no arriba).
+ * El contorno no ocupa lugar: `outline` no entra en el layout. */
+.diagram:hover > .content,
+.diagram:focus-within > .content {
+  outline: 1px dashed var(--hairline);
+  outline-offset: 0;
+  border-radius: 8px;
+}
+
+/* El `×` vive **dentro** del rectángulo de su objeto, contra la esquina. Si
+ * colgara afuera, el puntero tendría que salir del objeto para alcanzarlo y
+ * el botón se escondería justo cuando uno va a apretarlo. El `×` de un clon
+ * (`.clone-close`, L6 de `f8-planos.md`) usa esta misma regla: cierra la
+ * instancia de vista del plano del humano, no un diagrama de la sesión. */
+.diagram-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.diagram:hover .diagram-close,
+.diagram-close:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.diagram-close:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* The box that stands in for a diagram whose SVG left the DOM (PRD RNF1-ter,
+ * §7.2, §7.3): the very rectangle of the object, with a dashed border and its
+ * title and size. It is chrome of the plan, never part of a drawing, so it
+ * paints with the tokens of the theme and reads in both of them (RF22, S18);
+ * and it never takes the pointer, because the wheel and the drag of the
+ * camera belong to the plan. */
+.diagram-box {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px dashed var(--hairline);
+  border-radius: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  pointer-events: none;
+  user-select: none;
+}
+
+.diagram-box-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The object of a clone (B1 of `f8-planos.md`, S4): it reads as something the
+ * hand can grab, because dragging it is how the human places it on their own
+ * plan (B3). The background keeps panning the camera, as it always did. */
+.diagram.clone {
+  cursor: grab;
+}
+
+.plan.dragging .diagram.clone {
+  cursor: grabbing;
+}
+
+/* The content **is** the rectangle the owner keeps: the drawing centers inside
+ * it, so the object moves as one piece and the tools hang from its corner. */
+.diagram.clone > .content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* State 1: empty plan. */
+.empty {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.empty-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+
+.empty-hint {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+.empty code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  background: var(--code-bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* State 3: error banner. */
+.banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  /* The banner reaches the gear in the top-right corner and the toggle of
+     the panel in the top-left one: it stops short of both, so their buttons
+     stay clickable and its own text stays readable. */
+  padding-right: 56px;
+  padding-left: 52px;
+  background: #3a1d1d;
+  border-bottom: 1px solid #7a3434;
+  font-size: 13px;
+}
+
+.banner-body {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.banner-path {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  opacity: 0.8;
+}
+
+.banner-hint {
+  opacity: 0.8;
+}
+
+.banner-extra {
+  opacity: 0.7;
+}
+
+.banner-close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* State 2: render in flight. */
+.ghost {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 320px;
+  height: 180px;
+  border: 1px dashed var(--hairline);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* The panel of the open diagrams (PRD §7 RF26, S1): the toggle in the
+ * top-left corner of the plan and the list it opens. Both are siblings of
+ * `#plan`, never children: the wheel and the drag of the camera listen on the
+ * plan, so the panel can never steal them. The colours come from the tokens
+ * of the theme, so the light theme reaches the panel like it reaches the
+ * drawings (RF22, S18). */
+.panel-toggle {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 30;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.panel-toggle:hover,
+.panel-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.panel {
+  position: fixed;
+  top: 52px;
+  left: 12px;
+  z-index: 30;
+  width: 232px;
+  /* The sessions moved to their own panel in the bottom-left corner, so the
+     list of diagrams stops short of it instead of covering the button. */
+  max-height: calc(100vh - 108px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px var(--surface-shadow);
+  font-size: 13px;
+}
+
+/* The panel of the sessions (S1, S3, D3): the same look as the panel of
+ * diagrams, anchored to the bottom-left corner above its own button. */
+.sessions-toggle {
+  position: fixed;
+  bottom: 12px;
+  left: 12px;
+  z-index: 30;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.sessions-toggle:hover,
+.sessions-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sessions-panel {
+  position: fixed;
+  bottom: 52px;
+  left: 12px;
+  z-index: 30;
+  width: 232px;
+  max-height: 40vh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px var(--surface-shadow);
+  font-size: 13px;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.panel-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* A long list scrolls inside the panel instead of growing past the
+     window: twelve diagrams have to stay reachable. */
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* One entry: the open button of the diagram on the left, its close button on
+ * the right. The chosen one keeps the accent of the panel. */
+.panel-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 2px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.panel-item:hover {
+  border-color: var(--surface-border);
+}
+
+.panel-item.selected {
+  border-color: var(--accent);
+  background: var(--code-bg);
+}
+
+.panel-item-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 8px;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.panel-item.selected .panel-item-title {
+  color: var(--accent);
+}
+
+.panel-item-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.panel-item-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.panel-item-kind {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.panel-item-close {
+  padding: 0 8px;
+  font-size: 15px;
+  line-height: 1;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.panel-item-close:hover {
+  color: var(--accent);
+  opacity: 1;
+}
+
+/* The button that clones a diagram onto the plan of the human (B1 of
+ * `f8-planos.md`, S2): the same grammar as the `×`, one glyph wide. */
+.panel-item-clone {
+  padding: 0 8px;
+  font-size: 14px;
+  line-height: 1;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.panel-item-clone:hover {
+  color: var(--accent);
+  opacity: 1;
+}
+
+/* The history of the diagram (RF14): «◀ v3/7 ▶» under the item, in the
+   row the meta opens. The steps are small like the close button. */
+.panel-item-versions {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 4px 12px;
+  font-size: 12px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel-item-version-label {
+  min-width: 5ch;
+  text-align: center;
+  opacity: 0.65;
+}
+
+.panel-item-version-step {
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.panel-item-version-step:hover {
+  color: var(--accent);
+}
+
+.panel-item-version-step:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+/* The tools of a clone (B2, B3 of `f8-planos.md`, S4): the history of the
+ * original and «Actualizar el clon», against the corner of the object and out of
+ * the way until the pointer arrives, like the `×` of a diagram. They paint with
+ * the tokens of the theme (RF22, S18) and leave the corner to the `×` that
+ * removes the clone, so the two hang from the same place a diagram's `×` does
+ * (L6). */
+.diagram-clone-tools {
+  position: absolute;
+  top: 4px;
+  /* L8, one row: the pill is compact (11px, tight paddings) and never wraps —
+     a wrapped control fell on top of its neighbor. When the object is
+     narrower than the pill, `fitCloneTools` hangs it over the top edge,
+     centered (`.overhang` below). */
+  right: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.diagram.clone:hover .diagram-clone-tools,
+.diagram.clone:focus-within .diagram-clone-tools {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The pill of a narrow object (L8): it is wider than the object itself, so it
+   centers over the top edge and hangs over it symmetrically — the minimal
+   overflow that keeps one row and every control reachable. */
+.diagram-clone-tools.overhang {
+  top: -12px;
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* The history of the clone is the one of the panel, without the padding of a
+ * row of the panel: it lives inside its own border. */
+.diagram-clone-tools .clone-versions {
+  flex: none;
+  padding: 0;
+}
+
+.clone-refresh {
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.clone-refresh:hover {
+  color: var(--accent);
+}
+
+/* The `×` inside the pill: it drops the circle of the object's `×` (the pill
+   is the button's frame now) and shows exactly when the pill shows. It also
+   joins the row: `position: static` overrides the absolute anchor of
+   `.diagram-close`, which otherwise pins it over the refresh button (L10). */
+.diagram-clone-tools .clone-close {
+  position: static;
+  opacity: 1;
+  pointer-events: auto;
+  width: auto;
+  height: auto;
+  padding: 0 6px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+}
+
+.clone-refresh:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.panel-empty {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+/* The switcher of plans (S1, S3, D3, D5; A2): one row per session, above the
+ * list of open diagrams, and the plan on screen marked in it. It is built
+ * from `graphium://state` like the list, so it paints with the tokens of the
+ * theme and reads in both of them (RF22, S18). */
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  /* Eight sessions stay reachable without pushing the notice out of the
+     panel of sessions. */
+  max-height: 34vh;
+  overflow-y: auto;
+}
+
+/* One row: the dot of the family, the label and, under it, the family, the
+ * project, the state and the count of diagrams. */
+.session-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.session-row:hover {
+  border-color: var(--surface-border);
+}
+
+.session-row.selected {
+  border-color: var(--accent);
+  background: var(--code-bg);
+}
+
+.session-row.selected .session-label {
+  color: var(--accent);
+}
+
+/* A session in grace is on its way out (D4): the row still lists it, so the
+ * human knows why its diagrams are about to go, but it reads dimmer. */
+.session-row.in-grace {
+  opacity: 0.72;
+}
+
+/* The plan of the human (B1 of `f8-planos.md`, S4): the first row of the
+ * switcher, always there and separated from the sessions, which are another
+ * kind of plan. It paints with the tokens of the theme like the rest of the
+ * switcher (RF22, S18). */
+.session-row.user-plan {
+  margin-bottom: 4px;
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+
+/* Nobody else draws on the user plan, so its dot is not a family: it is the
+ * accent of the theme. */
+.session-dot.user-plan-dot {
+  background: var(--accent);
+}
+
+.session-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border-radius: 50%;
+}
+
+.family-pi {
+  background: var(--family-pi);
+}
+
+.family-claude {
+  background: var(--family-claude);
+}
+
+.family-opencode {
+  background: var(--family-opencode);
+}
+
+.family-ui {
+  background: var(--family-ui);
+}
+
+.family-other {
+  background: var(--family-other);
+}
+
+.session-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.session-count {
+  flex: none;
+  font-size: 12px;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-meta {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-meta > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* `Pi · graphium · activa`: the separator belongs to the piece that follows
+ * it, so a clipped piece never leaves a dot hanging. */
+.session-meta > span:not(:first-child)::before {
+  content: "· ";
+}
+
+.session-family,
+.session-state {
+  flex: none;
+}
+
+/* Why the plan on screen changed when the session that owned it ended (S2,
+ * D4; A2): a notice in the switcher, never an empty surface with no
+ * explanation. */
+.session-notice {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: var(--code-bg);
+  border-left: 2px solid var(--accent);
+  border-radius: 4px;
+}
+
+/* The settings of the plan (PRD §7.1 RF25, S19): the gear, top-right of the
+ * plan, and the panel it opens. Both are siblings of `#plan`, never children:
+ * the wheel and the drag of the camera listen on the plan, so a control over
+ * it can never steal them. */
+.settings-toggle {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 30;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.settings-toggle:hover,
+.settings-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.settings-panel {
+  position: fixed;
+  top: 52px;
+  right: 12px;
+  z-index: 30;
+  width: 252px;
+  /* The panel of F6 has more controls than fit on a short window: it scrolls
+     instead of hiding the colours of the drawing (RF25, `f6-themes.md` R2). */
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px var(--surface-shadow);
+  font-size: 13px;
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.settings-close {
+  padding: 0 4px;
+  font-size: 16px;
+  line-height: 1;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.settings-close:hover {
+  opacity: 1;
+}
+
+.settings-field {
+  display: grid;
+  /* The column of the labels sizes to its longest label, so `mostrar
+     grilla` fits on one line and its checkbox never reads cut. */
+  grid-template-columns: max-content 1fr 46px;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-field label {
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+.settings-field input[type="color"] {
+  width: 100%;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--surface-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.settings-field input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.settings-field input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+.settings-field input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-field input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-value {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  text-align: right;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-theme {
+  margin: 0;
+  padding: 0;
+  border: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-theme legend {
+  float: left;
+  margin-right: 2px;
+  padding: 0;
+  opacity: 0.85;
+}
+
+/* Every theme is a chip: the name and a small palette beside it, the four
+   colours the theme paints. The chip reads like the preset buttons below,
+   so one selector feels like one selector. */
+.settings-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--text);
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.settings-radio:hover {
+  border-color: var(--accent);
+}
+
+.settings-radio input {
+  accent-color: var(--accent);
+  cursor: pointer;
+  margin: 0;
+}
+
+/* The palette beside the name: background, nodes, their text and accent. */
+.swatches {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 1px;
+}
+
+.swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  /* A hairline so the light dots also read on a light plan. */
+  box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.45);
+}
+
+/* Every control of the panel is reachable and visible with the keyboard. */
+.settings-toggle:focus-visible,
+.settings-close:focus-visible,
+.settings-radio input:focus-visible,
+.settings-field input:focus-visible,
+.panel-toggle:focus-visible,
+.sessions-toggle:focus-visible,
+.panel-item-open:focus-visible,
+.panel-item-close:focus-visible,
+.panel-item-clone:focus-visible,
+.clone-refresh:focus-visible,
+.session-row:focus-visible,
+.diagram-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
