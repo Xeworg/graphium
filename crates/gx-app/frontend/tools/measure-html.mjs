@@ -28,9 +28,13 @@
 // What it prints:
 //
 // - `modes.html` — the string path: `holder.innerHTML = svg` → insert → layout,
-//   which is what `insertDiagram` did before T2/B and what the legacy branch
-//   still does. Its median is the number to compare with the 1.466 ms/mount
-//   baseline the feature doc names.
+//   which is what `insertDiagram` did before T2/B. Historical since the flip
+//   of T3/C: the runtime has no string branch any more, so this mode compares
+//   against nothing that ships — it stays for the record. The 1.466 ms/mount
+//   baseline the mejoras doc names measured the deleted `svgMount` action and
+//   was never reproduced (see `odd/tasks/f11-elementos.md` L5); the honest
+//   comparison today is the `scene` mode against the pre-flip string numbers
+//   of that doc.
 // - `modes.scene` — the element path: the payload's `elements` mounted by
 //   `DiagramScene` (keyed components, one element per node/edge/band/text).
 //

@@ -497,3 +497,36 @@ plus the owner directive of 2026-11-08.
   (per-element interaction, the version-step morph without a Rust round trip,
   gantt bars), the steady-state memory check of item (d), and the two
   documentation/measure leftovers of item (g) named above.
+- L9 (2026-11-09, orchestrator): T3/C verified independently and committed.
+
+  **Verification.** The controller re-ran every gate on the delivered tree:
+  `npm run build` exit 0; `node tools/equivalence.mjs` → `15/15 golden
+  documents` exit 0, **twice**; `node tools/parity.mjs` → `58/58 probes
+  passed` exit 0; `cargo build -p gx-app` exit 0; `DISPLAY=:0 scripts/smoke.sh`
+  → `rendered=true reason=none` exit 0; `cargo fmt --check` exit 0; `cargo
+  clippy --workspace` exit 0; `cargo test --workspace` 38 suites, 0 failed.
+  The flip was read, not trusted: `RenderHookPayload` carries `elements` with
+  no `svg` key, `render_version_view` returns `Result<gx_core::Scene, _>`, the
+  template mounts one branch, and `svg_size` is gone behind a tombstone
+  comment. Commit: `6617751`.
+
+  **One surface deviation, accepted.** `crates/gx-mcp/src/test_support.rs` was
+  outside the dispatch's allowed surfaces; the worker declared it, the
+  controller reviewed it (test-only stub `scene()` on the renderer double,
+  forced by the payload flip, since `gx-mcp` does not depend on the emitter
+  per PRD §9.1) and accepts it into this delivery.
+
+  **Leftovers closed by the parent** (the worker's surfaces forbade both): the
+  frontend README's harness list now names `tools/equivalence.mjs`, and
+  `tools/measure-html.mjs`'s header no longer presents the deleted legacy
+  branch as live — the 1.466 ms/mount baseline is marked historical (it
+  measured the removed `svgMount` action and was never reproduced, L5).
+
+  **State.** S1 and S8 are done; the runtime drawing is the scene alone and
+  the string survives only in the export path (S2, goldens byte-exact).
+  Remaining on this feature: **T4/D** (per-element interaction: hover/focus/
+  selection, the version-step morph without a Rust round trip, gantt bars),
+  the steady-state memory check (item (d) — the `WebKitWebProcess` is still
+  not a child of the owner, so the ±5 MB band stays unmeasurable), and nothing
+  else. The merge of `feature/f11-elementos` into `staging` remains the
+  owner's decision.
