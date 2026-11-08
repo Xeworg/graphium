@@ -1104,3 +1104,17 @@ fn the_export_background_arrives_through_the_trait_object() {
         "el plano sigue saliendo sin fondo: {plan}"
     );
 }
+
+/// The marks of an ER relation (the crow's-foot fork and the zero circle)
+/// carry `class="cardinality"`, and the page styles them (`app.css`:
+/// `fill:none; stroke: var(--edge-stroke); 1px`). A standalone export loads no
+/// stylesheet, so the style block must carry the same rule — without it the
+/// marks fall back to the default black (pre-existing before f11; found while
+/// delivering T4/D).
+#[test]
+fn the_style_block_styles_the_cardinality_marks() {
+    assert!(
+        render_fixture().contains(".cardinality{fill:none;stroke:"),
+        "the export's style block must style the cardinality marks"
+    );
+}
