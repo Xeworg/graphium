@@ -283,3 +283,45 @@ plus the owner directive of 2026-11-08.
   the export never changed. The equivalence gate S8 is T3/C, on all 15 golden
   documents, and the browser probes here are its small preview (the scene DOM
   reproduces the emitter's numbers for the er document, element by element).
+- L6 (2026-11-09, owner + orchestrator): the base changes — the branch rebases
+  onto `feature/mejoras-frontend`. Owner: «pensé que ya esas mejoras estaban
+  implementadas cuando se inició con f11, eran necesarias en f11 ya que eran
+  correcciones de errores también», then «mejor hazlo tú, lleva las mejoras a
+  f11». L3's "deliberately does NOT depend" is superseded: the painter now
+  stands on the improved frontend, which is also the S7 reading — the culling
+  the painter inherits is the pure `cullDecide` behind the one imperative
+  funnel of mejoras T2 (not the `$effect` version of the old base), with
+  `svelte:window`, the camera as a pure CSS transform and `{@html}` string
+  records already in.
+
+  **What the rebase did.** `git rebase feature/mejoras-frontend` over
+  e47db9e/4b95581/06548a9 → 6fc05c3/51a61e2/2f8da86 on 5fbbfb1. Two
+  conflicts. `tools/measure-html.mjs` (add/add): this branch's 410-line
+  version wins — it measures both paths (`--mode=html|scene`), a superset of
+  the 126-line mejoras tool whose T2 decision lives in that feature's Log.
+  `App.svelte` (content): resolved by hand, re-expressing the painter
+  integration on the improved file, where `rec.svg` is the markup **string**
+  (mejoras T2 adopted `{@html}` and deleted `svgMount`). Concretely: the
+  record gains `scene` beside the markup-string `svg` field and
+  `previewScene` beside `previewSvg`; `drawingInView(rec)` returns `{scene}`
+  or `{markup}` in the order of L5 (preview scene, preview string, live
+  scene, live string); the template mounts
+  `{#if drawing.scene}<DiagramScene … />{:else if drawing.markup}{@html}`;
+  the scene wins in `insertDiagram`/`applyVersionPaint`/`applyClonePaint`
+  with no parse on the scene path (the RED probe of L5 — elements without
+  `svg` answered `ack ok:false` — stays green: ack true, no parse, object
+  mounted); `paintPreview` splits into `centerContent` + `paintPreviewScene`;
+  `restoreLive` and the culling mount guard cover the two shapes. One fix
+  beyond the port: the clone-reconcile guard is now `!rec.svg && !rec.scene`
+  — on the old base a scene-carrying clone kept `rec.svg` empty and
+  re-emitted `cloneView` on every `graphium://state`.
+
+  **Gates on the rebased branch, all fresh.** `npm run build` exit 0; `cargo
+  build -p gx-app` exit 0; `DISPLAY=:0 scripts/smoke.sh` → `rendered=true
+  reason=none` exit 0 (the scene paints inside the real shell); `node
+  tools/parity.mjs` → `57/57 probes passed` exit 0; `cargo fmt --check`
+  exit 0; `cargo clippy --workspace` exit 0; `cargo test --workspace` 0
+  failed — the byte-exact golden gate of the emitter included, so the export
+  artifact is untouched. S1–S8 keep their meaning: the string still travels
+  beside the scene until T3/C, and the flip now happens on the improved
+  base.
