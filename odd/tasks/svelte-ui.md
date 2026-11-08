@@ -242,3 +242,75 @@ in hand. Everything stays in this worktree and the `feature/svelte-ui` branch.
   node positions it already computes, Svelte mounts hit-areas) before any
   native re-render. Scope guard: nothing in this branch may drift into
   native rendering or interactive overlays.
+- L10 (2026-11-07, worker, T4: S2 S3; T5: S4): the parity certification, the
+  A/B switch documented end to end, and the comparative bench.
+  - **T4 — what was certified.** `CONTRACT.md` §8 now carries one evidence line
+    for each of C1-C43, all ticked, produced by a harness committed with it:
+    `crates/gx-app/frontend-svelte/tools/parity.mjs` runs the **real built
+    bundle** of each frontend in headless Chromium over HTTP with a faked Tauri
+    bridge injected before the bundle evaluates (the T3 method: `__TAURI__` with
+    the event door, `__TAURI_INTERNALS__` with the IPC door, or no bridge at
+    all), and repeats every probe on the vanilla page in the same browser. 58
+    probes, `58/58` passed, exit 0; the `equal` probes must observe the same
+    value on both sides, which is the parity claim. The four `static:` probes
+    read files (the §6 numbers, the 7 verbatim strings, the stylesheet rules,
+    the absence of inline styles). Two probes are `report` because they are
+    **documented differences**, not failures: the T2 pre-ready
+    `camera-changed` copy (safe: B2 answers nothing, `app.rs:727` only stores)
+    and the clone pill's overhang (Svelte measures the object → `overhang:false`
+    on a 368 px clone; vanilla measured `.diagram`, which has no width → always
+    `overhang:true`). Blind spot, stated in §8: Chromium is not WebKitGTK; the
+    in-shell half is `scripts/svelte-smoke.sh` and T3's two byte-identical
+    screenshots. **No item is NOT COVERED.** Two mark errors fixed on the way:
+    T3's «`src/app.css` is `style.css` byte for byte» meant *the rules* (the
+    header comment differs; C42 now says so and the static probe compares
+    comment-stripped declarations), and C4's `T1 (placeholder mount)` is now
+    certified against the real object.
+  - **T4 — the switch, end to end.** `crates/gx-app/frontend-svelte/README.md`
+    documents: build each side (`scripts/svelte-build.sh` +
+    `TAURI_CONFIG='{"build":{"frontendDist":"frontend-svelte/dist"}}' cargo
+    build -p gx-app` vs `env -u TAURI_CONFIG cargo build -p gx-app`), run each
+    side (the window, `--stdio`, `quit`, the smoke test), how to tell the
+    binaries apart (`strings` for `assets/index-*.js` vs `plan.js`, and the
+    `#app`/`data-id` DOM tells) and the exact `TAURI_CONFIG` mechanics with the
+    line references: `tauri-build-2.7.4/src/lib.rs:655,681` (merge patch +
+    `cargo:rerun-if-env-changed`) and
+    `tauri-codegen-2.7.4/src/lib.rs:56-91`, with paths resolved against
+    `crates/gx-app`.
+  - **T5 — what was measured** (`odd/tasks/svelte-ui-t5-bench.md`, both runs of
+    every scenario; `tools/bench.mjs` + `tools/bench-live.sh` + `tools/diagram.mjs`):
+    - assets: vanilla 133,290 B / 36,333 B gzip (`plan.js` 89,635/24,700,
+      `style.css` 33,304/8,993, `index.html` 10,351/2,640) vs Svelte `dist/`
+      90,193 B / 30,078 B gzip (JS 72,887/26,076, CSS 16,718/3,614, HTML
+      588/388) → **−32.3 % raw, −17.2 % gzip**; CSS −49.8 %, but **JS gzip
+      +5.6 %** (hand-written code compresses better than a minified bundle).
+    - page load → `graphium://ready` (headless, 5 loads per build per run,
+      alternating): Svelte medians 29.0 / 27.1 ms, vanilla 17.3 / 17.7 ms
+      (+~10 ms; part of the gap is semantic — vanilla announces before it paints,
+      Svelte from `onMount` after the component tree exists).
+    - `graphium://render` → `render_ack ok:true` (12 and 300 nodes): headless
+      medians Svelte 29.7/28.1 then 23.9/27.5 ms, vanilla 29.0/28.0 then
+      27.8/27.9 ms → **identical within the two-rAF quantisation**; live through
+      the MCP door (includes Rust layout): small 38-47 ms, large 470-498 ms,
+      both builds in the same range, `rendered=true`.
+    - steady-state memory with the 300-node diagram (summed Pss of the owner +
+      WebKitWebProcess + WebKitNetworkProcess): Svelte 249,299 / 254,142 kB,
+      vanilla 248,198 / 248,506 kB → **+0.4 % / +2.3 %**, smaller than the
+      run-to-run spread; RSS 530 vs 521 MB.
+    - LOC: vanilla 4,059 (`plan.js` 2,449 + `style.css` 1,352 + `index.html`
+      258) vs Svelte `src/` 4,057 (App.svelte 1,398, app.css 1,368, lib 1,281,
+      main.js 10) → the port is **not shorter**; it is the same size, split into
+      twelve documented files. The honest reading (in the bench doc): Svelte wins
+      bytes and structure, vanilla wins gzip-JS and caching, and nothing here
+      pays for the rewrite on its own.
+  - Gates (real exit codes, no pipes): `npx vite build` → 0 (JS 72.88 kB /
+    26.29 kB gzip, CSS 16.71 kB / 3.64 kB); `cargo test -p gx-app` → 0 (22
+    suites, `test result: ok`, 0 failed); `TAURI_CONFIG='{"build":
+    {"frontendDist":"frontend-svelte/dist"}}' cargo build -p gx-app` → 0
+    (binary embeds `assets/index-BCk072b7.js`, zero `plan.js`); `env -u
+    TAURI_CONFIG cargo build -p gx-app` → 0 (the vanilla binary);
+    `DISPLAY=:0 scripts/svelte-smoke.sh` → `rendered=true reason=none` for both
+    binaries; `node tools/parity.mjs` → 0 (`58/58 probes passed`).
+  - Commits (L7; no push, no PR, no merge): `chore(ui): the T4 parity
+    certification and the A/B switch docs` and `docs(odd): svelte-ui T5 — the
+    comparative bench (L10)`.
