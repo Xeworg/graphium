@@ -13,157 +13,46 @@
 //! - `inherits` — the trait of an `impl Trait for Type`;
 //! - `uses` — every type reference the grammar types as a type.
 //!
-//! This module is the whole of Rust in the engine: a language of C2 is another
-//! file next to it that exposes a [`Grammar`] and nothing else.
+//! What is Rust's alone is here; the declarations the book keeps are the tables
+//! of [`crate::lang::registry::RUST`] and the pipeline is
+//! [`crate::lang::engine`] (S3, T2). The one hook the tables cannot cover is
+//! the `impl`: its name is the type it implements, not a `name` field.
 
-use crate::lang::emit::{anchor_symbol, emit, emit_named, file_stem, prefix_of};
-use crate::lang::model::{content_hash, ExtractError, ParsedFile, ParsedSymbol};
-use crate::lang::Grammar;
-use crate::relations::{attach, RawEdge, CALLS, IMPORTS, INHERITS, USES};
-
-/// The Rust grammar of the book.
-pub const GRAMMAR: Grammar = Grammar {
-    lang: LANGUAGE,
-    extensions: &["rs"],
-    parse,
-};
+use crate::lang::emit::emit_named;
+use crate::lang::engine::{Body, Nesting};
+use crate::lang::model::ParsedSymbol;
+use crate::relations::{RawEdge, CALLS, IMPORTS, INHERITS, USES};
 
 /// The language of the chapter, as the table `file` spells it.
 pub const LANGUAGE: &str = "rust";
 
-/// Parses one Rust file into the pruned symbols and the relations of the book.
-pub fn parse(path: &str, bytes: &[u8], mtime_ns: i64) -> Result<ParsedFile, ExtractError> {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter::Language::new(tree_sitter_rust::LANGUAGE))
-        .map_err(|error| ExtractError::Grammar {
-            language: LANGUAGE,
-            detail: error.to_string(),
-        })?;
-    let tree = parser
-        .parse(bytes, None)
-        .ok_or(ExtractError::NoTree { language: LANGUAGE })?;
+/// The tree-sitter grammar of Rust: one grammar answers every Rust path.
+pub fn language(_path: &str) -> tree_sitter::Language {
+    tree_sitter::Language::new(tree_sitter_rust::LANGUAGE)
+}
 
-    let module = module_path(path);
-    let mut symbols = Vec::new();
-    let prefix = prefix_of(&module, "::");
-    walk(&tree.root_node(), &prefix, None, None, bytes, &mut symbols);
-
-    // The relations are attached after the declarations exist: the ownership
-    // of an edge is decided by the spans of the chapter (ideas §10.1).
-    let raw = rust_relations(&tree.root_node(), bytes);
-    let anchor = anchor_symbol(&module, &anchor_name(path, &module));
-    let edges = attach(raw, &mut symbols, anchor);
-
-    Ok(ParsedFile {
-        path: path.to_string(),
-        lang: LANGUAGE,
-        content_hash: content_hash(bytes),
-        size: bytes.len() as i64,
-        mtime_ns,
-        symbols,
-        edges,
+/// The `impl` block: the book names it by the type it implements, which is what
+/// makes two `impl` blocks of one file distinguishable, and nests its body
+/// under `Type::` (T2: this one stays imperative).
+pub(crate) fn impl_body(
+    node: &tree_sitter::Node,
+    nesting: &Nesting,
+    source: &[u8],
+    out: &mut Vec<ParsedSymbol>,
+) -> Option<Body> {
+    let name = node
+        .child_by_field_name("type")
+        .and_then(|node| node.utf8_text(source).ok())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .unwrap_or("impl")
+        .to_string();
+    let index = emit_named(node, "impl", &name, nesting.prefix, nesting.parent, out)?;
+    Some(Body {
+        index,
+        prefix: format!("{}{name}::", nesting.prefix),
+        container: "impl",
     })
-}
-
-/// Walks the named children of a node and emits the declarations it knows.
-///
-/// A container (`mod`, `impl`, `trait`) contributes one symbol and its body is
-/// walked with the container as parent, so `parent_id` is the containment
-/// tree of the file and `impl` methods are `method` children.
-fn walk(
-    node: &tree_sitter::Node,
-    prefix: &str,
-    parent: Option<usize>,
-    container: Option<&'static str>,
-    source: &[u8],
-    out: &mut Vec<ParsedSymbol>,
-) {
-    let mut cursor = node.walk();
-    for child in node.named_children(&mut cursor) {
-        match child.kind() {
-            // The body of a `mod`/`impl`/`trait`: the prefix and the parent
-            // are the ones of the container that owns it.
-            "declaration_list" | "field_declaration_list" => {
-                walk(&child, prefix, parent, container, source, out);
-            }
-            "function_item" => {
-                // A fn of an `impl` or of a `trait` is a method; a fn of a
-                // `mod` is a top-level fn of that module.
-                let kind = match container {
-                    Some("impl") | Some("trait") => "method",
-                    _ => "fn",
-                };
-                emit(&child, kind, prefix, parent, source, out);
-            }
-            "struct_item" | "enum_item" | "union_item" | "type_item" => {
-                emit(&child, "type", prefix, parent, source, out);
-            }
-            "trait_item" => {
-                if let Some(index) = emit(&child, "trait", prefix, parent, source, out) {
-                    let own = format!("{prefix}{}::", out[index].name);
-                    walk_body(&child, &own, Some(index), "trait", source, out);
-                }
-            }
-            "impl_item" => {
-                // The name of an `impl` is the type it implements: it is what
-                // makes two `impl` blocks of the same file distinguishable.
-                let name = child
-                    .child_by_field_name("type")
-                    .and_then(|node| node.utf8_text(source).ok())
-                    .map(str::trim)
-                    .filter(|text| !text.is_empty())
-                    .unwrap_or("impl")
-                    .to_string();
-                if let Some(index) = emit_named(&child, "impl", &name, prefix, parent, out) {
-                    let own = format!("{prefix}{name}::");
-                    walk_body(&child, &own, Some(index), "impl", source, out);
-                }
-            }
-            "mod_item" => {
-                if let Some(index) = emit(&child, "module", prefix, parent, source, out) {
-                    let own = format!("{prefix}{}::", out[index].name);
-                    walk_body(&child, &own, Some(index), "mod", source, out);
-                }
-            }
-            "const_item" => {
-                emit(&child, "const", prefix, parent, source, out);
-            }
-            "static_item" => {
-                emit(&child, "static", prefix, parent, source, out);
-            }
-            // A `use` is not an entry of the book: C1 turns it into an
-            // `imports` edge, and a comment or a string into nothing at all.
-            _ => {}
-        }
-    }
-}
-
-/// Walks the body of a container (`impl`, `trait`, inline `mod`).
-fn walk_body(
-    node: &tree_sitter::Node,
-    prefix: &str,
-    parent: Option<usize>,
-    container: &'static str,
-    source: &[u8],
-    out: &mut Vec<ParsedSymbol>,
-) {
-    let mut cursor = node.walk();
-    for child in node.named_children(&mut cursor) {
-        if child.kind() == "declaration_list" {
-            walk(&child, prefix, parent, Some(container), source, out);
-        }
-    }
-}
-
-/// The name of the anchor of a Rust chapter: a Rust chapter **is** the module,
-/// so its name is the whole module path (the stem of the file at the root).
-fn anchor_name(path: &str, module: &str) -> String {
-    if module.is_empty() {
-        file_stem(path).unwrap_or_else(|| path.to_string())
-    } else {
-        module.to_string()
-    }
 }
 
 /// The module path of a file, used as the prefix of every `qname`.
@@ -220,7 +109,7 @@ fn normalise_identifier(text: &str) -> String {
 }
 
 /// The relations of one Rust chapter, as the grammar sees them.
-fn rust_relations(root: &tree_sitter::Node, source: &[u8]) -> Vec<RawEdge> {
+pub(crate) fn relations(root: &tree_sitter::Node, source: &[u8]) -> Vec<RawEdge> {
     let mut out = Vec::new();
     visit(root, source, &mut out);
     out
@@ -362,7 +251,8 @@ fn type_name(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{module_path, parse};
+    use super::module_path;
+    use crate::lang::registry::RUST;
 
     const SOURCE: &str = r#"
 use std::path::Path;
@@ -407,7 +297,9 @@ pub fn render_with_all(input: &Path) -> usize {
     /// and `impl` methods hang from the `impl` (containment, `parent_id`).
     #[test]
     fn extracts_the_declarations_of_a_rust_file_with_spans() {
-        let parsed = parse("src/demo.rs", SOURCE.as_bytes(), 0).expect("parses");
+        let parsed = RUST
+            .parse("src/demo.rs", SOURCE.as_bytes(), 0)
+            .expect("parses");
         let names: Vec<(&str, &str)> = parsed
             .symbols
             .iter()
@@ -482,8 +374,9 @@ pub fn render_with_all(input: &Path) -> usize {
     /// `x::demo` and not as `demo`.
     #[test]
     fn the_anchor_of_a_nested_chapter_is_its_module_path() {
-        let parsed =
-            parse("crates/gx-index/src/demo.rs", b"use std::path::Path;\n", 0).expect("parses");
+        let parsed = RUST
+            .parse("crates/gx-index/src/demo.rs", b"use std::path::Path;\n", 0)
+            .expect("parses");
         let anchor = parsed
             .symbols
             .iter()
@@ -499,7 +392,9 @@ pub fn render_with_all(input: &Path) -> usize {
     #[test]
     fn a_file_with_a_syntax_error_still_yields_what_the_grammar_recovers() {
         let broken = "pub fn one() {}\nfn two( {\n";
-        let parsed = parse("src/broken.rs", broken.as_bytes(), 0).expect("parses");
+        let parsed = RUST
+            .parse("src/broken.rs", broken.as_bytes(), 0)
+            .expect("parses");
         assert!(
             parsed.symbols.iter().any(|symbol| symbol.name == "one"),
             "{:?}",

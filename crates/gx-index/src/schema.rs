@@ -8,24 +8,30 @@
 //!    (ideas §10.1, «Cold start»): 6–10 minutes on a 10 GB file is not a
 //!    startup. `quick_check` runs only after an unclean shutdown.
 //! 3. **The pragmas are set in code**, not inherited from whatever SQLite the
-//!    build linked: `foreign_keys` is OFF by default and `rusqlite` bundled
-//!    does not change that (ideas §10.1, delta 4).
+//!    build linked: `foreign_keys` has a SQLite default and a different one in
+//!    the bundled build, so the engine sets it where it wants it
+//!    (ideas §10.1, delta 4).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 /// The version of the schema, mirrored in `PRAGMA user_version` and in
 /// `meta.schema_version`. A mismatch is a delete-and-reindex, never a
 /// migration ladder (ideas §10).
+///
+/// T3/S4 removed the `lang` `CHECK` of `file` (the languages are the registry
+/// of the build, not a list in the DDL) **without** a bump: the shape the
+/// engine reads and writes is the same one, the change only stops refusing
+/// `INSERT`s of languages the DDL did not name, and a stored book that still
+/// carries the v1 `CHECK` is relaxed in place at open
+/// ([`relax_language_check`]) — every row and every id survive, nothing is
+/// parsed again. A bump here would have thrown away the book of every user for
+/// a constraint, which D1 reserves for real doubts about the file.
 pub const SCHEMA_VERSION: i64 = 1;
-
-/// The languages the book knows in C0. A `CHECK` instead of a table: the set
-/// changes with a release, not with the data (ideas §10.1).
-pub const LANGUAGE_PACK: &str = "rust";
 
 /// Page size of the file, fixed before any table and before the probe:
 /// the pragma only applies to an empty database (ideas §10.1).
@@ -312,7 +318,11 @@ pub fn owner_uid() -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProbeOutcome {
     /// The file is the book of this root and can be opened.
-    Ready { unclean: bool },
+    Ready {
+        unclean: bool,
+        /// Whether the `lang` check of a v1 book was relaxed in place.
+        migrated: bool,
+    },
     /// The file cannot be trusted: delete and index again (D1).
     Rebuild(RebuildReason),
     /// Another process holds the file: it is **not** deleted, because it is a
@@ -375,6 +385,9 @@ pub struct OpenReport {
     pub quick_checked: bool,
     /// Whether the file was deleted and created again, and why.
     pub rebuilt: Option<RebuildReason>,
+    /// Whether a v1 book relaxed its `lang` check in place (T3): every row and
+    /// every id survived, no chapter was parsed again.
+    pub migrated: bool,
 }
 
 /// The pragmas every writer connection of the book gets.
@@ -422,7 +435,7 @@ CREATE TABLE meta (
 CREATE TABLE file (
   id           INTEGER PRIMARY KEY,
   path         TEXT NOT NULL UNIQUE,
-  lang         TEXT NOT NULL CHECK (lang IN ('rust', 'typescript', 'python', 'go', 'java')),
+  lang         TEXT NOT NULL,
   content_hash TEXT NOT NULL,
   size         INTEGER NOT NULL CHECK (size >= 0),
   mtime_ns     INTEGER NOT NULL,
@@ -515,7 +528,6 @@ pub fn create_database(
         ("created_at", created_at),
         ("nonce", identity.nonce.clone()),
         ("owner_uid", identity.owner_uid.clone()),
-        ("lang_pack", LANGUAGE_PACK.to_string()),
         // The book is open now: if the process dies before `close`, the next
         // start knows the shutdown was not clean (ideas §10.1).
         ("clean_shutdown", "0".to_string()),
@@ -599,7 +611,9 @@ pub fn probe_database(
     }
 
     match probe_meta(&conn, expected_root, expected_nonce) {
-        Ok(ProbeOutcome::Ready { unclean }) => (ProbeOutcome::Ready { unclean }, Some(conn)),
+        Ok(ProbeOutcome::Ready { unclean, migrated }) => {
+            (ProbeOutcome::Ready { unclean, migrated }, Some(conn))
+        }
         Ok(outcome) => (outcome, None),
         Err(error) if is_busy(&error) => (ProbeOutcome::InUse(error.to_string()), None),
         Err(error) => (
@@ -665,7 +679,11 @@ fn probe_meta(
             )));
         }
     }
-    Ok(ProbeOutcome::Ready { unclean })
+    // The one-time step of T3/S4: a book written before the languages became
+    // data carries the v1 `CHECK` in `sqlite_master` and would refuse a chapter
+    // of a new language. It is relaxed here, with every row and id in place.
+    let migrated = relax_language_check(conn)?;
+    Ok(ProbeOutcome::Ready { unclean, migrated })
 }
 
 /// Reads a `meta` value, telling «the row is not there» apart from «the read
@@ -702,6 +720,80 @@ pub fn verify_fts(conn: &Connection, rebuild_on_desync: bool) -> rusqlite::Resul
     }
 }
 
+/// Relaxes the `lang` check of a book written before T3, in place.
+///
+/// The v1 DDL pinned the five languages of C2 in `file`; the languages of the
+/// book are the registry of the build now (T3/S4), so the constraint is gone
+/// from the table and adding language N+1 never changes the schema again. The
+/// rebuild keeps every row and every id: **no chapter is parsed again** and no
+/// index is thrown away, because a constraint that only restricted `INSERT`s is
+/// not a doubt about the file (D1 is for real doubts). A book whose table is
+/// already relaxed is answered `false`; the step runs at most once per book.
+///
+/// It suspends `foreign_keys` around the rebuild and restores what the
+/// connection had: `symbol.file_id` points at `file` with `ON DELETE CASCADE`,
+/// and `DROP TABLE file` is an implicit delete — the bundled SQLite enforces
+/// the constraint by default, so the chapters would go with the table.
+pub fn relax_language_check(conn: &Connection) -> rusqlite::Result<bool> {
+    let Some(ddl) = stored_ddl(conn, "file")? else {
+        return Ok(false);
+    };
+    if !ddl.contains("CHECK (lang IN") {
+        return Ok(false);
+    }
+    // `DROP TABLE file` is an implicit `DELETE FROM file`, and `symbol.file_id`
+    // points at it with `ON DELETE CASCADE`: the rebuild has to run with the
+    // enforcement suspended, then restore what the connection had (the bundled
+    // SQLite enables it by default). The pragma is a no-op inside a
+    // transaction, so it comes before the `BEGIN`.
+    let enforced: i64 = conn.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+    conn.pragma_update(None, "foreign_keys", "OFF")?;
+    let migrated = conn.execute_batch(
+        "BEGIN IMMEDIATE;
+         DROP TABLE IF EXISTS file__relaxed;
+         CREATE TABLE file__relaxed (
+           id           INTEGER PRIMARY KEY,
+           path         TEXT NOT NULL UNIQUE,
+           lang         TEXT NOT NULL,
+           content_hash TEXT NOT NULL,
+           size         INTEGER NOT NULL CHECK (size >= 0),
+           mtime_ns     INTEGER NOT NULL,
+           indexed_at   INTEGER NOT NULL
+         );
+         INSERT INTO file__relaxed (id, path, lang, content_hash, size, mtime_ns, indexed_at)
+           SELECT id, path, lang, content_hash, size, mtime_ns, indexed_at FROM file;
+         DROP TABLE file;
+         ALTER TABLE file__relaxed RENAME TO file;
+         COMMIT;",
+    );
+    conn.pragma_update(
+        None,
+        "foreign_keys",
+        if enforced != 0 { "ON" } else { "OFF" },
+    )?;
+    migrated?;
+    Ok(true)
+}
+
+/// The stored DDL of a table, when the book has it.
+fn stored_ddl(conn: &Connection, table: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [table],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+/// Whether the book accepts a chapter of `lang`.
+///
+/// The list is the registry of the build — the runtime source of truth of the
+/// languages (T3/S4) — and not a second list in the DDL: an extension or a
+/// feature adds a language without touching the schema.
+pub fn accepts_language(lang: &str) -> bool {
+    crate::lang::grammar(lang).is_some()
+}
+
 /// Deletes every file that belongs to the book, so it can be created again
 /// (D1: the recovery is always delete-and-reindex).
 pub fn delete_database_files(path: &Path) -> std::io::Result<()> {
@@ -720,9 +812,171 @@ pub fn delete_database_files(path: &Path) -> std::io::Result<()> {
 mod tests {
     use std::path::Path;
 
+    use rusqlite::Connection;
+
     use super::{
-        is_remote_fstype, probe_journal_mode, synced_folder_reason, JournalMode, RebuildReason,
+        accepts_language, is_remote_fstype, probe_journal_mode, relax_language_check,
+        synced_folder_reason, JournalMode, RebuildReason, SCHEMA_SQL, SCHEMA_VERSION,
     };
+
+    /// The `file` table of a book written before T3: the v1 `CHECK` that pinned
+    /// the five languages of C2. It lives here as a literal because it is the
+    /// **stored** DDL the one-time migration has to recognise, and the schema
+    /// no longer produces it.
+    const V1_FILE_DDL: &str = r#"
+CREATE TABLE file (
+  id           INTEGER PRIMARY KEY,
+  path         TEXT NOT NULL UNIQUE,
+  lang         TEXT NOT NULL CHECK (lang IN ('rust', 'typescript', 'python', 'go', 'java')),
+  content_hash TEXT NOT NULL,
+  size         INTEGER NOT NULL CHECK (size >= 0),
+  mtime_ns     INTEGER NOT NULL,
+  indexed_at   INTEGER NOT NULL
+);
+"#;
+
+    /// Runs the one `file` insert the tests need.
+    fn insert_file(connection: &Connection, path: &str, lang: &str) -> rusqlite::Result<usize> {
+        connection.execute(
+            "INSERT INTO file (path, lang, content_hash, size, mtime_ns, indexed_at)
+             VALUES (?1, ?2, 'hash', 0, 0, 0)",
+            (path, lang),
+        )
+    }
+
+    /// T3/S4: the languages of the book are the registry of the build, and the
+    /// DDL names none of them — adding language N+1 is a registry entry, never
+    /// a schema change. The version stays 1: a stored book of the five is read
+    /// and written by this build without a reindex (D1 is for real doubts, not
+    /// for a constraint that only restricted INSERTs).
+    #[test]
+    fn the_schema_takes_its_languages_from_the_registry() {
+        assert_eq!(SCHEMA_VERSION, 1, "T3 must not force a reindex");
+        assert!(
+            !SCHEMA_SQL.contains("CHECK (lang IN"),
+            "the DDL must not name the languages: the registry is the list"
+        );
+
+        let connection = Connection::open_in_memory().expect("in memory");
+        connection.execute_batch(SCHEMA_SQL).expect("the schema");
+        // The refusal of an unknown language is not the DDL's: the engine asks
+        // the registry in the one insert path of the book (tests/book.rs).
+        for (path, lang) in [
+            ("src/one.rb", "ruby"),
+            ("src/one.rs", "rust"),
+            ("src/one.js", "javascript"),
+        ] {
+            insert_file(&connection, path, lang)
+                .unwrap_or_else(|error| panic!("the DDL has no language list: {error}"));
+        }
+
+        // The list that decides is the registry of this build, one entry per
+        // grammar and nothing else.
+        for grammar in crate::lang::GRAMMARS {
+            assert!(
+                accepts_language(grammar.lang),
+                "`{}` is a grammar of the build",
+                grammar.lang
+            );
+        }
+        // A language no build ever ships must stay refused: the contract is
+        // registry absence, not a name — `ruby` and `php` are grammars of the
+        // build since T3 Batch 2 (L8).
+        assert!(!accepts_language("cobol"));
+        assert!(!accepts_language("fortran"));
+    }
+
+    /// T3: a stored book written before the change carries the v1 `CHECK` in
+    /// `sqlite_master`, so it would refuse a chapter of a new language even
+    /// though the engine now knows it. The open path relaxes the table in
+    /// place: every row and every id survive, nothing is parsed again and the
+    /// index is never thrown away. Measured cost is printed for the feature
+    /// doc (`-- --nocapture`).
+    #[test]
+    fn a_v1_book_relaxes_its_language_check_without_losing_a_row() {
+        let connection = Connection::open_in_memory().expect("in memory");
+        connection
+            .execute_batch(V1_FILE_DDL)
+            .expect("the v1 schema");
+        connection
+            .execute_batch(
+                "CREATE TABLE symbol (
+                   id      INTEGER PRIMARY KEY,
+                   file_id INTEGER NOT NULL REFERENCES file(id) ON DELETE CASCADE
+                 );",
+            )
+            .expect("the symbol table");
+        // The bundled SQLite enables the enforcement by default; the migration
+        // has to suspend it around the rebuild or `DROP TABLE file` would take
+        // the chapters with it (the integration test pins the same path).
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys");
+
+        // A book of two chapters with their declarations, at the size of a real
+        // one: the migration copies rows, it never parses a file.
+        const FILES: i64 = 1_000;
+        const SYMBOLS_PER_FILE: i64 = 10;
+        connection.execute_batch("BEGIN").expect("begin");
+        for file in 0..FILES {
+            insert_file(&connection, &format!("src/one-{file}.rs"), "rust").expect("a v1 chapter");
+            for symbol in 0..SYMBOLS_PER_FILE {
+                connection
+                    .execute(
+                        "INSERT INTO symbol (id, file_id) VALUES (?1, ?2)",
+                        (file * SYMBOLS_PER_FILE + symbol + 1, file + 1),
+                    )
+                    .expect("a v1 symbol");
+            }
+        }
+        connection.execute_batch("COMMIT").expect("commit");
+        // The v1 table refuses a language it does not name.
+        assert!(
+            insert_file(&connection, "src/one.js", "javascript").is_err(),
+            "the stored CHECK is the reason the migration exists"
+        );
+
+        let started = std::time::Instant::now();
+        let migrated = relax_language_check(&connection).expect("the migration");
+        let elapsed = started.elapsed();
+        assert!(migrated, "the v1 book had to be migrated");
+        println!(
+            "T3 migration: {FILES} files / {} symbols in {:?}",
+            FILES * SYMBOLS_PER_FILE,
+            elapsed
+        );
+
+        // Nothing is thrown away: the rows, their ids and their symbols stay.
+        let files: i64 = connection
+            .query_row("SELECT COUNT(*) FROM file", [], |row| row.get(0))
+            .expect("the count");
+        assert_eq!(files, FILES);
+        let symbols: i64 = connection
+            .query_row("SELECT COUNT(*) FROM symbol", [], |row| row.get(0))
+            .expect("the count");
+        assert_eq!(symbols, FILES * SYMBOLS_PER_FILE);
+        let path: String = connection
+            .query_row("SELECT path FROM file WHERE id = 1", [], |row| row.get(0))
+            .expect("the first chapter");
+        assert_eq!(path, "src/one-0.rs", "the ids survive the rebuild");
+
+        // The new language is a chapter of the old book now, and the foreign
+        // key of `symbol` still points at the rebuilt table.
+        insert_file(&connection, "src/one.js", "javascript").expect("a new language");
+        let orphan =
+            connection.execute("INSERT INTO symbol (id, file_id) VALUES (99999, 99999)", []);
+        assert!(orphan.is_err(), "the foreign key of the book is kept");
+
+        // The migration is a one-time step: an open that finds it done does
+        // nothing (and a second open of the same book never copies again).
+        connection
+            .pragma_update(None, "foreign_keys", "OFF")
+            .expect("foreign keys");
+        assert!(
+            !relax_language_check(&connection).expect("the second open"),
+            "the migration must be idempotent"
+        );
+    }
 
     /// Ideas §8, transversal 2 and D4: WAL is invalid on a network filesystem
     /// and replicates badly from a synced folder, so the probe steps down to

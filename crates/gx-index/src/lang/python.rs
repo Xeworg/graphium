@@ -17,112 +17,39 @@
 //! - `uses` — every name a type annotation mentions, generics included.
 //!
 //! A string is never a type: a forward reference in quotes adds no relation.
+//!
+//! What is Python's alone is here; the declarations the book keeps are the
+//! tables of [`crate::lang::registry::PYTHON`] and the pipeline is
+//! [`crate::lang::engine`] (S3, T2). The one hook the tables cannot cover is the
+//! module constant: an assignment at the root of the file is a `const`, and an
+//! attribute of a method is not a declaration (which is why the hook asks the
+//! nesting first).
 
-use crate::lang::emit::{
-    anchor_symbol, chapter_anchor_name, emit, emit_named, last_segment, prefix_of, text,
-};
-use crate::lang::model::{content_hash, ExtractError, ParsedFile, ParsedSymbol};
-use crate::lang::Grammar;
-use crate::relations::{attach, push_edges, RawEdge, CALLS, IMPORTS, INHERITS, USES};
-
-/// The Python grammar of the book.
-pub const GRAMMAR: Grammar = Grammar {
-    lang: LANGUAGE,
-    extensions: &["py"],
-    parse,
-};
+use crate::lang::emit::{emit_named, last_segment, text};
+use crate::lang::engine::{Body, Nesting};
+use crate::lang::model::ParsedSymbol;
+use crate::relations::{push_edges, RawEdge, CALLS, IMPORTS, INHERITS, USES};
 
 /// The language of the chapter, as the table `file` spells it.
 pub const LANGUAGE: &str = "python";
 
-/// Parses one Python file into the chapter of the book.
-pub fn parse(path: &str, bytes: &[u8], mtime_ns: i64) -> Result<ParsedFile, ExtractError> {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter::Language::new(tree_sitter_python::LANGUAGE))
-        .map_err(|error| ExtractError::Grammar {
-            language: LANGUAGE,
-            detail: error.to_string(),
-        })?;
-    let tree = parser
-        .parse(bytes, None)
-        .ok_or(ExtractError::NoTree { language: LANGUAGE })?;
-
-    let module = module_path(path);
-    let prefix = prefix_of(&module, ".");
-    let mut symbols = Vec::new();
-    walk(&tree.root_node(), &prefix, None, None, bytes, &mut symbols);
-
-    let raw = relations(&tree.root_node(), bytes);
-    let anchor = anchor_symbol(&module, &chapter_anchor_name(path, &module));
-    let edges = attach(raw, &mut symbols, anchor);
-
-    Ok(ParsedFile {
-        path: path.to_string(),
-        lang: LANGUAGE,
-        content_hash: content_hash(bytes),
-        size: bytes.len() as i64,
-        mtime_ns,
-        symbols,
-        edges,
-    })
+/// The tree-sitter grammar of Python: one grammar answers every Python path.
+pub fn language(_path: &str) -> tree_sitter::Language {
+    tree_sitter::Language::new(tree_sitter_python::LANGUAGE)
 }
 
-/// The module path of a Python file: its directories and its name without the
-/// extension, dotted, with `__init__` naming its directory (the idiom of the
-/// language).
-pub fn module_path(relative: &str) -> String {
-    crate::lang::emit::dotted_module(relative, &["__init__"])
-}
-
-/// Walks the declarations of a node; `container` says whether the node is the
-/// body of a class, which is what makes a `def` a method.
-fn walk(
+/// A module-level assignment: the constant of the language. `self.x` is an
+/// attribute of a method, never a declaration of the book, so the hook only
+/// answers outside a container (T2: this one stays imperative).
+pub(crate) fn module_constant(
     node: &tree_sitter::Node,
-    prefix: &str,
-    parent: Option<usize>,
-    container: Option<&'static str>,
+    nesting: &Nesting,
     source: &[u8],
     out: &mut Vec<ParsedSymbol>,
-) {
-    let mut cursor = node.walk();
-    for child in node.named_children(&mut cursor) {
-        match child.kind() {
-            // A decorator wraps a `def` or a `class`: the declaration is the
-            // one the book keeps.
-            "decorated_definition" => walk(&child, prefix, parent, container, source, out),
-            "block" => walk(&child, prefix, parent, container, source, out),
-            "class_definition" => {
-                if let Some(index) = emit(&child, "class", prefix, parent, source, out) {
-                    let own = format!("{prefix}{}.", out[index].name);
-                    walk(&child, &own, Some(index), Some("class"), source, out);
-                }
-            }
-            "function_definition" => {
-                let kind = match container {
-                    Some("class") => "method",
-                    _ => "fn",
-                };
-                emit(&child, kind, prefix, parent, source, out);
-            }
-            // A module-level assignment is the constant of the language; the
-            // attribute of a method is not a declaration.
-            "expression_statement" if container.is_none() => {
-                constant(&child, prefix, parent, source, out)
-            }
-            _ => {}
-        }
+) -> Option<Body> {
+    if nesting.container.is_some() {
+        return None;
     }
-}
-
-/// Emits a module-level assignment as the constant it is.
-fn constant(
-    node: &tree_sitter::Node,
-    prefix: &str,
-    parent: Option<usize>,
-    source: &[u8],
-    out: &mut Vec<ParsedSymbol>,
-) {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         if child.kind() != "assignment" {
@@ -132,13 +59,21 @@ fn constant(
             .child_by_field_name("left")
             .and_then(|left| text(&left, source))
         {
-            emit_named(&child, "const", &name, prefix, parent, out);
+            emit_named(&child, "const", &name, nesting.prefix, nesting.parent, out);
         }
     }
+    None
+}
+
+/// The module path of a Python file: its directories and its name without the
+/// extension, dotted, with `__init__` naming its directory (the idiom of the
+/// language).
+pub fn module_path(relative: &str) -> String {
+    crate::lang::emit::dotted_module(relative, &["__init__"])
 }
 
 /// The relations of one Python chapter, as the grammar sees them.
-fn relations(root: &tree_sitter::Node, source: &[u8]) -> Vec<RawEdge> {
+pub(crate) fn relations(root: &tree_sitter::Node, source: &[u8]) -> Vec<RawEdge> {
     let mut out = Vec::new();
     visit(root, source, &mut out);
     out
@@ -327,7 +262,8 @@ fn type_names(node: &tree_sitter::Node, source: &[u8], out: &mut Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{module_path, parse};
+    use super::module_path;
+    use crate::lang::registry::PYTHON;
 
     /// The module path is the import path of the file: its directories and its
     /// name, with `__init__` naming its package.
@@ -344,7 +280,9 @@ mod tests {
     #[test]
     fn a_python_file_with_a_syntax_error_still_yields_what_it_recovers() {
         let broken = "def one():\n    return 1\n\nclass Two(\n";
-        let parsed = parse("src/broken.py", broken.as_bytes(), 0).expect("parses");
+        let parsed = PYTHON
+            .parse("src/broken.py", broken.as_bytes(), 0)
+            .expect("parses");
         assert!(
             parsed.symbols.iter().any(|symbol| symbol.name == "one"),
             "{:?}",

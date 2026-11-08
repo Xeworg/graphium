@@ -17,55 +17,22 @@
 //!
 //! Two overloads of one method are two declarations of the same name: the
 //! chapter keeps both and the book numbers the colliding `qname`.
+//!
+//! What is Java's alone is here; the declarations the book keeps are the tables
+//! of [`crate::lang::registry::JAVA`] and the pipeline is
+//! [`crate::lang::engine`] (S3, T2). Java needs no hook at all: its one
+//! imperative part is the `package` path, which is where the module path of the
+//! chapter comes from, and the pipeline asks for it.
 
-use crate::lang::emit::{
-    anchor_symbol, chapter_anchor_name, dotted_directories, emit, last_segment, prefix_of, text,
-};
-use crate::lang::model::{content_hash, ExtractError, ParsedFile, ParsedSymbol};
-use crate::lang::Grammar;
-use crate::relations::{attach, push_edges, RawEdge, CALLS, IMPORTS, INHERITS, USES};
-
-/// The Java grammar of the book.
-pub const GRAMMAR: Grammar = Grammar {
-    lang: LANGUAGE,
-    extensions: &["java"],
-    parse,
-};
+use crate::lang::emit::{dotted_directories, last_segment, text};
+use crate::relations::{push_edges, RawEdge, CALLS, IMPORTS, INHERITS, USES};
 
 /// The language of the chapter, as the table `file` spells it.
 pub const LANGUAGE: &str = "java";
 
-/// Parses one Java file into the chapter of the book.
-pub fn parse(path: &str, bytes: &[u8], mtime_ns: i64) -> Result<ParsedFile, ExtractError> {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter::Language::new(tree_sitter_java::LANGUAGE))
-        .map_err(|error| ExtractError::Grammar {
-            language: LANGUAGE,
-            detail: error.to_string(),
-        })?;
-    let tree = parser
-        .parse(bytes, None)
-        .ok_or(ExtractError::NoTree { language: LANGUAGE })?;
-
-    let module = module_path(&tree.root_node(), path, bytes);
-    let prefix = prefix_of(&module, ".");
-    let mut symbols = Vec::new();
-    walk(&tree.root_node(), &prefix, None, bytes, &mut symbols);
-
-    let raw = relations(&tree.root_node(), bytes);
-    let anchor = anchor_symbol(&module, &chapter_anchor_name(path, &module));
-    let edges = attach(raw, &mut symbols, anchor);
-
-    Ok(ParsedFile {
-        path: path.to_string(),
-        lang: LANGUAGE,
-        content_hash: content_hash(bytes),
-        size: bytes.len() as i64,
-        mtime_ns,
-        symbols,
-        edges,
-    })
+/// The tree-sitter grammar of Java: one grammar answers every Java path.
+pub fn language(_path: &str) -> tree_sitter::Language {
+    tree_sitter::Language::new(tree_sitter_java::LANGUAGE)
 }
 
 /// The module path of a Java file: the `package` it declares, or its directory
@@ -87,52 +54,8 @@ pub fn module_path(root: &tree_sitter::Node, path: &str, source: &[u8]) -> Strin
     dotted_directories(path)
 }
 
-/// Walks the types of a file; the body of a type is walked with the type as the
-/// parent, so a nested class or a method is a child of its container.
-fn walk(
-    node: &tree_sitter::Node,
-    prefix: &str,
-    parent: Option<usize>,
-    source: &[u8],
-    out: &mut Vec<ParsedSymbol>,
-) {
-    let mut cursor = node.walk();
-    for child in node.named_children(&mut cursor) {
-        match child.kind() {
-            "class_declaration" | "record_declaration" => {
-                if let Some(index) = emit(&child, "class", prefix, parent, source, out) {
-                    let own = format!("{prefix}{}.", out[index].name);
-                    walk(&child, &own, Some(index), source, out);
-                }
-            }
-            "interface_declaration" | "annotation_type_declaration" => {
-                if let Some(index) = emit(&child, "trait", prefix, parent, source, out) {
-                    let own = format!("{prefix}{}.", out[index].name);
-                    walk(&child, &own, Some(index), source, out);
-                }
-            }
-            "enum_declaration" => {
-                if let Some(index) = emit(&child, "type", prefix, parent, source, out) {
-                    let own = format!("{prefix}{}.", out[index].name);
-                    walk(&child, &own, Some(index), source, out);
-                }
-            }
-            // The body of a type: a method, a constructor, a nested type.
-            "class_body"
-            | "interface_body"
-            | "enum_body"
-            | "enum_body_declarations"
-            | "annotation_type_body" => walk(&child, prefix, parent, source, out),
-            "method_declaration" | "constructor_declaration" => {
-                emit(&child, "method", prefix, parent, source, out);
-            }
-            _ => {}
-        }
-    }
-}
-
 /// The relations of one Java chapter, as the grammar sees them.
-fn relations(root: &tree_sitter::Node, source: &[u8]) -> Vec<RawEdge> {
+pub(crate) fn relations(root: &tree_sitter::Node, source: &[u8]) -> Vec<RawEdge> {
     let mut out = Vec::new();
     visit(root, source, &mut out);
     out
@@ -240,14 +163,16 @@ fn type_name(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
+    use crate::lang::registry::JAVA;
 
     /// The prefix of every `qname` is the `package` of the file, and a file
     /// without one keeps its directory.
     #[test]
     fn the_package_of_a_java_file_names_its_chapter() {
         let packed = "package com.graphium.store;\n\nclass One {}\n";
-        let parsed = parse("src/One.java", packed.as_bytes(), 0).expect("parses");
+        let parsed = JAVA
+            .parse("src/One.java", packed.as_bytes(), 0)
+            .expect("parses");
         assert_eq!(parsed.lang, "java");
         assert!(
             parsed
@@ -259,7 +184,9 @@ mod tests {
         );
 
         let loose = "class Two {}\n";
-        let parsed = parse("src/loose/Two.java", loose.as_bytes(), 0).expect("parses");
+        let parsed = JAVA
+            .parse("src/loose/Two.java", loose.as_bytes(), 0)
+            .expect("parses");
         assert_eq!(parsed.symbols[0].qname, "src.loose.Two");
     }
 
@@ -268,7 +195,9 @@ mod tests {
     #[test]
     fn a_java_file_with_a_syntax_error_still_yields_what_it_recovers() {
         let broken = "class One { int value() { return 1; } }\nclass Two {\n";
-        let parsed = parse("src/Broken.java", broken.as_bytes(), 0).expect("parses");
+        let parsed = JAVA
+            .parse("src/Broken.java", broken.as_bytes(), 0)
+            .expect("parses");
         assert!(
             parsed.symbols.iter().any(|symbol| symbol.name == "One"),
             "{:?}",

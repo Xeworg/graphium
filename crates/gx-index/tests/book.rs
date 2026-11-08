@@ -968,3 +968,143 @@ fn the_idle_exit_prunes_the_books_of_gone_worktrees() {
         "the live book still answers"
     );
 }
+
+/// T3/S4: the languages of the book are the registry of the build. A chapter
+/// whose language has no grammar in this build is refused at the one insert
+/// path — the DDL carries no list that could refuse it (see the schema unit
+/// test) — and the rest of the batch is written as usual.
+#[test]
+fn the_book_refuses_a_chapter_of_a_language_the_registry_does_not_know() {
+    use gx_index::lang::GRAMMARS;
+    use gx_index::ParsedFile;
+
+    // `None` of the table: one valid chapter of the build and one of a
+    // language no grammar of the registry answers.
+    let (lang, path, text) = if let Some(grammar) = GRAMMARS.first() {
+        let extension = grammar.extensions.first().copied().unwrap_or("txt");
+        (
+            grammar.lang,
+            format!("src/valid.{extension}"),
+            "fn one() {}\n",
+        )
+    } else {
+        panic!("a build without a grammar cannot open a book");
+    };
+    let valid = gx_index::lang::parse(&path, text.as_bytes(), 0).expect("a chapter of the build");
+    // A language no grammar of this build answers: taken from the alternates of
+    // the approved list that no batch landed, and not hard-coded, so the test
+    // keeps meaning whichever features built the registry (T3 Batch 4 closed
+    // the list of twenty: every one of them is a grammar of the default build).
+    let unknown_lang = ["julia", "elixir", "ocaml", "objectivec"]
+        .into_iter()
+        .find(|lang| gx_index::lang::grammar(lang).is_none())
+        .expect("a language outside the approved list is not in this build");
+    let unknown = ParsedFile {
+        path: "src/one.kt".to_string(),
+        lang: unknown_lang,
+        content_hash: "hash-of-unknown".to_string(),
+        size: 10,
+        mtime_ns: 0,
+        symbols: Vec::new(),
+        edges: Vec::new(),
+    };
+
+    let scratch = Scratch::new("languages");
+    let book = scratch.open();
+    let report = book
+        .commit_batch(&[valid, unknown], &[], 1)
+        .expect("the batch");
+
+    assert_eq!(report.files_written, 1, "the valid chapter is written");
+    assert_eq!(
+        report.files_skipped, 1,
+        "`{unknown_lang}` is refused, not written"
+    );
+    assert_eq!(book.counts().expect("the counts").0, 1);
+    let langs: Vec<String> = book
+        .with_writer(|connection| {
+            let mut statement = connection.prepare("SELECT lang FROM file")?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .expect("the languages");
+    assert_eq!(langs, vec![lang.to_string()]);
+}
+
+/// T3/S4: a book written before the languages became data still carries the v1
+/// `CHECK` in `sqlite_master`. Opening it relaxes the file in place — the same
+/// `SCHEMA_VERSION`, every row and id kept, nothing parsed again — so a chapter
+/// of a language the v1 DDL did not name can be written to it.
+#[test]
+fn a_v1_book_relaxes_its_language_check_when_it_is_opened() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // The `file` table of a book written by the previous binary.
+    const V1_FILE_DDL: &str = "
+PRAGMA foreign_keys=OFF;
+BEGIN;
+CREATE TABLE file__v1 (
+  id           INTEGER PRIMARY KEY,
+  path         TEXT NOT NULL UNIQUE,
+  lang         TEXT NOT NULL CHECK (lang IN ('rust', 'typescript', 'python', 'go', 'java')),
+  content_hash TEXT NOT NULL,
+  size         INTEGER NOT NULL CHECK (size >= 0),
+  mtime_ns     INTEGER NOT NULL,
+  indexed_at   INTEGER NOT NULL
+);
+INSERT INTO file__v1 (id, path, lang, content_hash, size, mtime_ns, indexed_at)
+  SELECT id, path, lang, content_hash, size, mtime_ns, indexed_at FROM file;
+DROP TABLE file;
+ALTER TABLE file__v1 RENAME TO file;
+COMMIT;
+PRAGMA foreign_keys=ON;
+";
+    // The counters make two books of the same test name unique.
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let scratch = Scratch::new(&format!(
+        "v1-migrated-{}",
+        COUNTER.fetch_add(1, Ordering::SeqCst)
+    ));
+    scratch.write("src/one.rs", "pub fn one() {}\n");
+    let book = Arc::new(scratch.open());
+    scratch.indexer(&book).run_full().expect("the index");
+    let before = book.counts().expect("the counts");
+    assert!(before.0 >= 1 && before.1 >= 1, "the book has a chapter");
+
+    // Leave the book as the previous binary would have left it.
+    book.with_writer(|connection| connection.execute_batch(V1_FILE_DDL))
+        .expect("the v1 table");
+    drop(book);
+
+    let migrated = scratch.open();
+    assert!(
+        migrated.report().migrated,
+        "the open relaxed the v1 book in place"
+    );
+    assert!(
+        migrated.report().rebuilt.is_none(),
+        "a check that only restricted INSERTs is not a reason to reindex"
+    );
+    assert_eq!(migrated.counts().expect("the counts"), before);
+    let ddl: String = migrated
+        .with_writer(|connection| {
+            connection.query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'file'",
+                [],
+                |row| row.get(0),
+            )
+        })
+        .expect("the stored DDL");
+    assert!(
+        !ddl.contains("CHECK (lang IN"),
+        "the stored table carries no language list: {ddl}"
+    );
+
+    // The step is once per book: the next open finds it done.
+    drop(migrated);
+    let again = scratch.open();
+    assert!(!again.report().migrated, "the migration is idempotent");
+    assert_eq!(again.counts().expect("the counts"), before);
+}

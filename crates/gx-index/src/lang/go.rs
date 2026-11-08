@@ -18,56 +18,36 @@
 //! A `var` of a package is the storage of the language: the book keeps it with
 //! the `static` kind of the vocabulary, the one it has for storage that is not
 //! a constant.
+//!
+//! What is Go's alone is here; the entry of the language is
+//! [`crate::lang::registry::GO`] and the pipeline is [`crate::lang::engine`]
+//! (S3, T2). Go is the language whose scope is not a tree of containers — a
+//! method hangs from the type of its receiver whichever order the file declares
+//! them in — so its walk is its own and the second pass over the receivers
+//! stays imperative.
 
-use crate::lang::emit::{
-    anchor_symbol, chapter_anchor_name, dotted_directories, emit, prefix_of, text,
-};
-use crate::lang::model::{content_hash, ExtractError, ParsedFile, ParsedSymbol};
-use crate::lang::Grammar;
-use crate::relations::{attach, RawEdge, CALLS, IMPORTS, INHERITS, USES};
-
-/// The Go grammar of the book.
-pub const GRAMMAR: Grammar = Grammar {
-    lang: LANGUAGE,
-    extensions: &["go"],
-    parse,
-};
+use crate::lang::emit::{dotted_directories, emit, text};
+use crate::lang::model::ParsedSymbol;
+use crate::relations::{RawEdge, CALLS, IMPORTS, INHERITS, USES};
 
 /// The language of the chapter, as the table `file` spells it.
 pub const LANGUAGE: &str = "go";
 
-/// Parses one Go file into the chapter of the book.
-pub fn parse(path: &str, bytes: &[u8], mtime_ns: i64) -> Result<ParsedFile, ExtractError> {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter::Language::new(tree_sitter_go::LANGUAGE))
-        .map_err(|error| ExtractError::Grammar {
-            language: LANGUAGE,
-            detail: error.to_string(),
-        })?;
-    let tree = parser
-        .parse(bytes, None)
-        .ok_or(ExtractError::NoTree { language: LANGUAGE })?;
+/// The tree-sitter grammar of Go: one grammar answers every Go path.
+pub fn language(_path: &str) -> tree_sitter::Language {
+    tree_sitter::Language::new(tree_sitter_go::LANGUAGE)
+}
 
-    let module = module_path(path);
-    let prefix = prefix_of(&module, ".");
-    let mut symbols = Vec::new();
-    let methods = walk(&tree.root_node(), &prefix, bytes, &mut symbols);
-    attach_receivers(&mut symbols, &methods);
-
-    let raw = relations(&tree.root_node(), bytes);
-    let anchor = anchor_symbol(&module, &chapter_anchor_name(path, &module));
-    let edges = attach(raw, &mut symbols, anchor);
-
-    Ok(ParsedFile {
-        path: path.to_string(),
-        lang: LANGUAGE,
-        content_hash: content_hash(bytes),
-        size: bytes.len() as i64,
-        mtime_ns,
-        symbols,
-        edges,
-    })
+/// Walks the package scope of one Go file, and re-parents its methods once the
+/// whole file is read (T2: the second pass of the receivers stays imperative).
+pub(crate) fn walk(
+    root: &tree_sitter::Node,
+    prefix: &str,
+    source: &[u8],
+    out: &mut Vec<ParsedSymbol>,
+) {
+    let methods = scope(root, prefix, source, out);
+    attach_receivers(out, &methods);
 }
 
 /// The module path of a Go file: the package path, which in Go is the
@@ -79,7 +59,7 @@ pub fn module_path(relative: &str) -> String {
 /// Walks the package scope of a file and returns the methods with the receiver
 /// type they name, so their parent and their `qname` can wait until every type
 /// of the file is declared.
-fn walk(
+fn scope(
     node: &tree_sitter::Node,
     prefix: &str,
     source: &[u8],
@@ -205,7 +185,7 @@ fn type_identifier(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
 }
 
 /// The relations of one Go chapter, as the grammar sees them.
-fn relations(root: &tree_sitter::Node, source: &[u8]) -> Vec<RawEdge> {
+pub(crate) fn relations(root: &tree_sitter::Node, source: &[u8]) -> Vec<RawEdge> {
     let mut out = Vec::new();
     visit(root, source, &mut out);
     out
@@ -309,7 +289,8 @@ fn package_segment(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{module_path, package_segment, parse};
+    use super::{module_path, package_segment};
+    use crate::lang::registry::GO;
 
     /// The package of a Go file is its directory: that is the module path.
     /// The import path of Go is spelled with `/`: the package is its last
@@ -333,7 +314,9 @@ mod tests {
     #[test]
     fn a_go_file_with_a_syntax_error_still_yields_what_it_recovers() {
         let broken = "package store\n\nfunc One() int { return 1 }\n\nfunc Two( {\n";
-        let parsed = parse("store/broken.go", broken.as_bytes(), 0).expect("parses");
+        let parsed = GO
+            .parse("store/broken.go", broken.as_bytes(), 0)
+            .expect("parses");
         assert!(
             parsed.symbols.iter().any(|symbol| symbol.name == "One"),
             "{:?}",
