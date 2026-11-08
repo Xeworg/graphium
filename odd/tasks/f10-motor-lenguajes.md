@@ -794,3 +794,141 @@ languages ride on it.
     are untouched. `docs/PRD.md` is updated in RNF1, RNF1-quater, the D3
     paragraph and the features paragraph (twenty, measured numbers, the four
     grammar crates).
+- L13 (2026-11-07, worker, T6: S1 S4 — the FINAL task of the cut): the
+  coverage of the weak languages, the metric's honest fix, and the cut
+  closed. **The user's original ask of L1/S1 is this task materialized**:
+  «la cobertura de los lenguajes que tenemos es variable y baja en algunos,
+  hay que hacer modificaciones para mejorar esto».
+  - **The two kinds of weakness of L3, split before deciding.** (a)
+    RESOLUTION targets that cannot exist — Python `str`/`int`/`len`/`dict`,
+    Go `fmt`/`len`/`make`/`string`, Rust `Path`: no declaration of a
+    worktree can ever answer them. (b) SYMBOLS that exist but are not
+    declared — Python `self.x`, Go package paths. Both were measured
+    before deciding anything, and **the decision went to (a) alone**.
+  - **CHOSEN (a): exclusion by knowledge, as data of the registry.**
+    `Grammar` gained `builtins: &'static [&'static str]`
+    (`lang/engine.rs`) and the registry carries three lists —
+    `PYTHON_BUILTINS`, `GO_BUILTINS`, `JAVA_BUILTINS` — of the names the
+    language's **runtime and standard library** provide, folded the way
+    `name_norm` folds a target. `Book::resolution()`
+    (`crates/gx-index/src/resolution.rs`) leaves a relation whose target is
+    one of them **out of the numerator and out of the denominator**: the
+    book indexes a worktree, and no worktree declares `str`, `len` or
+    `String`, so counting them measures what the book cannot be. The rate
+    then answers what **can** resolve, which is what D3 was always meant to
+    publish.
+  - **The guard that makes the rule impossible to abuse** (the reason the
+    metric stays honest): **a name any chapter of the book declares is
+    measured like any other name**. The predicate is
+    `!definers.contains_key(norm) && runtime.get(lang).contains(norm)`, so
+    a worktree that spells `def len` counts the edge to `len` and the rule
+    can only remove what was already unresolvable by design — it can never
+    hide a resolution, and applying it can only move a rate up. Pinned by
+    the new test `the_rate_leaves_out_the_names_the_runtime_provides_and_
+    only_those` (a Python chapter that declares `len`: 1/1 = 100 %; the same
+    chapter without the declaration: `len` and `int` leave the measure and
+    the call to `helper` stays).
+  - **The graph does not change.** The relation is still read, stored and
+    answered by `code_impact`: the rule is the metric's, never the book's
+    (asserted in the same test: the chapter keeps its 3 edges while the
+    report measures 1). No schema, no insert path, no retriever touched.
+  - **Scope of the lists, stated on purpose: only the three weak languages
+    of this cut carry one.** The other seventeen keep publishing their rate
+    over every relation they read, so **their published numbers do not move
+    one digit** — the improvement stays attributable and the differential
+    check of the house (below) stays a byte-diff. The trade-off is on the
+    record: for those seventeen the rate still counts runtime names, so a
+    reader compares Python's 40,0 % with Swift's 24,1 % knowing that the two
+    denominators are defined differently. Filling a list for another
+    language is one line of data + a measured cut, not code; the recommended
+    next one is Swift/Kotlin/Dart/Scala/R, the five that measure 24–50 % for
+    the Python reason.
+  - **REJECTED (b1) Python `self.x` — implemented, measured, reverted.** An
+    attribute assignment `self.x = …` inside a method declaring a
+    `const`-kind symbol anchored to its class was cheap (one hook on
+    `function_definition` replacing the table leaf, ~35 lines). Measured on
+    the C2 tree: Python **40,0 % (4/10) → 60,0 % (9/15)** and the symbol
+    count 11 → 12 — and the whole gain is a lie: the five extra edges are
+    `Path`/`path` (`pathlib.Path`, `os.path`) resolving against the
+    instance attribute `path`, and the new definer **also changes Rust's
+    published number, 36,4 % (4/11) → 54,5 % (6/11)**, by giving another
+    language's `Path` edge a target it does not have. It also breaks the
+    book-wide rule that a field is not a declaration (L7 C#, L12 Go
+    `struct` fields and Zig `container_field`). Not landed.
+  - **REJECTED (b2) Go package paths — measured, already resolved.** A
+    two-file Go package (`internal/store/store.go` + `cmd/main.go` with
+    `store.OpenStore()` and `s.Load("y")`) measures **5/6 = 83,3 %** with the
+    rule of (a): the package-qualified call and the method through the
+    receiver resolve **by name today** (the resolver is book-wide), and the
+    one edge left is exactly L3's weakness — `imports store`, because a
+    chapter only declares its `module` anchor when a file-scope relation
+    needs it (`relations::attach`). Closing it means declaring the anchor in
+    every chapter, which changes the symbol list of all twenty chapters and
+    the fanout of common module names (`store`, `utils`, `types`) — i.e. it
+    moves the published numbers of languages that must not move. Recorded as
+    the follow-up if the owner wants a second pass; **not** part of this cut.
+  - **`MAX_NAME_FANOUT` — evaluated and left at 5.** After (a) the fanout is
+    what the remaining unresolved edges of the three are made of
+    (`load` with 10 definers, `DiagramStore` with 6); raising the cap would
+    convert those into false positives and buy the same number by lying.
+    Untouched, as instructed.
+  - **D3 before/after (the numbers that decide the cut).** Same tree, same
+    report, `-- --nocapture`:
+
+    | language   | before           | after            | floor pinned |
+    |------------|------------------|------------------|--------------|
+    | Python     | 4/27 = 14,8 %    | **4/10 = 40,0 %**| 36 % (was 12)|
+    | Go         | 5/29 = 17,2 %    | **5/10 = 50,0 %**| 46 % (was 15)|
+    | Java       | 8/27 = 29,6 %    | **8/12 = 66,7 %**| 63 % (was 27)|
+    | TypeScript | 12/25 = 48,0 %   | 12/25 = 48,0 %   | 45 % (held)  |
+    | Rust       | 4/11 = 36,4 %    | 4/11 = 36,4 %    | — (held)     |
+
+    The numerator did not move in any of the three: what changed is what
+    counts. What is left unresolved in them after the rule is **only** the
+    fanout ceiling plus, in Python, one relative import of a module the tree
+    does not hold. The other seventeen, byte-identical: JavaScript 66,7 %
+    (8/12), C 81,8 % (9/11), C++ 71,4 % (10/14), C# 66,7 % (10/15), PHP
+    95,0 % (19/20), Ruby 66,7 % (6/9), SQL 100 % (4/4), Shell 37,5 % (3/8),
+    Swift 24,1 % (7/29), Kotlin 26,9 % (7/26), Dart 25,9 % (7/27), Scala
+    48,5 % (16/33), R 50,0 % (4/8), Lua 80,0 % (4/5), Zig 87,5 % (7/8).
+  - **Differential check (the technique of L5/L10/L12)**: the base tree
+    (`git archive HEAD` into a `mktemp -d`, its own target dir, same command
+    and `--nocapture`) printed the same four batch lines; `diff` of the
+    sorted tables has **exactly one differing line** — the C2 line — and
+    inside it Rust and TypeScript are byte-identical: only Python, Go and
+    Java moved. Exit 0 both sides.
+  - **Binary — the final measurement of RNF1-quater with the twenty
+    grammars** (release, opt-level=z, lto, strip, the CI command
+    `cargo build --release --bin graphium`): **45.789.848 B before →
+    45.806.232 B after**, **+16.384 B** — the three runtime name lists are
+    data the linker keeps, and nothing else of T6 costs a byte.
+    **79,5 % of the 57.600.000 B gate**, 43,7 MiB, comfortably under the
+    declared 55 MB. The **slim** reference is byte-identical to
+    L5/L9/L10/L12: `-p gx-app --no-default-features --features
+    "lang-rust,lang-typescript"` = **13.241.496 B**. **Recommendation to the
+    orchestrator/owner: tighten the declared ceiling 55 → 48 MB** (gate
+    50.331.648 B, 9,9 % of air over the measurement — room for one more
+    grammar the size of the biggest of batch 3, not for silent
+    accumulation). The ceiling and `ci.yml` are not this cut's surfaces, so
+    no byte of `ci.yml` moved.
+  - **Gates (exit codes without pipes)**: `cargo test --workspace` **0**
+    (42 suites, 0 failed — the twenty languages in the default run;
+    `-p gx-index`: lib 89, book 22, end_to_end 3, languages 47, relations 7);
+    `cargo fmt --check` **0**; `cargo clippy --workspace` **0** (0
+    warnings); `cargo build --release --bin graphium` **0**; the slim build
+    **0**. The known `--no-default-features` failures of L5 are untouched and
+    out of this cut.
+  - **PRD closed**: RNF1 and RNF1-quater carry the final measurement and the
+    tightening recommendation; the D3 paragraph carries the new numbers of
+    the three (with the before numbers so the change is auditable) and a new
+    bullet for the runtime rule — what it is, why it is honest, the guard,
+    the scope of the lists, and the two options rejected with their
+    measurements; the features paragraph carries the final size.
+  - **Scope note for the reviewer**: no `Cargo.toml`, no `Cargo.lock`, no
+    `schema.rs`, no `.github/workflows/ci.yml`, and nothing under
+    `crates/gx-app`, `gx-mcp`, `gx-core`, `gx-kinds` or `gx-layout` moved.
+    Files touched: `crates/gx-index/src/lang/engine.rs` (the field),
+    `crates/gx-index/src/lang/registry.rs` (the three lists + the field on
+    all twenty entries + one data test), `crates/gx-index/src/resolution.rs`
+    (the rule), `crates/gx-index/tests/languages.rs` (the three floors moved
+    up + the new guard test), `docs/PRD.md` and this doc.
