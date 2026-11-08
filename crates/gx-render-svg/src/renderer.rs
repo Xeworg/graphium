@@ -202,7 +202,7 @@ impl SvgRendererContract for SvgRenderer {
 
 fn write_style(out: &mut String, palette: &Palette) {
     let border = fmt_num(TOKENS.border_width);
-    let rules: [(&str, String); 20] = [
+    let rules: [(&str, String); 21] = [
         (".bg", format!("fill:{}", palette.bg.css())),
         (".node-fill", format!("fill:{}", palette.node_fill.css())),
         (
@@ -277,6 +277,13 @@ fn write_style(out: &mut String, palette: &Palette) {
             ),
         ),
         (".text", String::from("font-family:Inter, sans-serif")),
+        (
+            ".cardinality",
+            format!(
+                "fill:none;stroke:{};stroke-width:{border}",
+                palette.edge_stroke.css()
+            ),
+        ),
         (
             ".arrow-normal",
             format!("fill:{}", palette.edge_stroke.css()),
