@@ -371,6 +371,14 @@ body {
    * the focus, and browsers without `clip` keep the `hidden` of the line above,
    * which is the behaviour of before. */
   overflow: clip;
+  /* The hand's gestures belong to the plan (T4 of
+   * `odd/tasks/mejoras-frontend.md`): with `touch-action: none` the engine
+   * stops claiming the two-finger gesture for itself (page scroll, page zoom)
+   * and the pointer events of a pinch reach the surface, which turns them into
+   * `zoomAtPoint`. The rule wins over the descendants too — `touch-action` is
+   * decided by the chain from the touch target up to the nearest scroller — so
+   * one declaration on the surface covers every object on it. */
+  touch-action: none;
   background-color: var(--bg);
   cursor: grab;
   /* Phase of every family: the pan projected on the normal of that family.

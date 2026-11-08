@@ -261,3 +261,100 @@ orquestador). Persisted in project memory: `analisis-frontend-*` and
   tocó: payloads/throttles de `CONTRACT.md`, los números 59/45°/41.72/24/3/0.4/
   zoom 0.05-4.0, ninguna string C41 (la del notice incluida), y los ítems de T4
   (wheel template test, pinch, `getCoalescedEvents`) siguen fuera.
+- L7 (2026-11-08, worker T4): entrada y experimentos entregados — los cuatro
+  ítems de la línea T4, y la decisión del wheel tomada con una medición hecha
+  en el motor que la app usa, no en Chromium headless.
+  (1) `touch-action: none` en `.plan` (`app.css`): sin esa declaración el motor
+  se queda con el gesto de dos dedos para sí (scroll y zoom de página) y los
+  pointer events del pinch no llegan a la superficie. Va una sola vez, en el
+  plano, y cubre a los objetos: `touch-action` se decide por la cadena del
+  target táctil hasta el scroller más cercano, no por herencia.
+  (2) **Pinch**: un mapa de punteros táctiles (`touchPointers`, sólo touch/pen
+  — el mouse tiene un puntero y su arrastre queda como estaba) y, con dos
+  dedos, `pinchGeometry()` (midpoint y distancia en píxeles de pantalla).
+  `startPinch()` corta lo que hacía un dedo: un clon se queda donde el humano
+  lo dejó (y emite su `graphium://clone-move` si se había movido) y la cámara
+  deja de panear; después cada `applyPinch()` alimenta el `zoomAtPoint` puro de
+  `lib/plane.js` anclado en el midpoint anterior y suma el viaje del midpoint,
+  así el punto del mundo que estaba bajo el midpoint termina bajo el nuevo —
+  zoom anclado, con dos dedos, y el plano sigue a la mano en vez de crecer
+  sólo alrededor. Al levantar un dedo no queda pinch y el dedo que sigue no se
+  convierte en pan (el plano saltaría bajo él); con dos dedos aún en la
+  superficie el par que queda se re-ancla donde está. Todo el pinch es
+  incremental y no toca el estado de arrastre del mouse.
+  (3) **`getCoalescedEvents()` batching**: `onPointerMove` ya no reacciona al
+  evento; apila sus muestras (las coalescidas si el motor las da, el evento
+  mismo si no) en `pointerSamples` y un `requestAnimationFrame` las consume en
+  `flushPointerSamples()`. Ahí el pan y el move del clon son absolutos (gobierna
+  la última muestra: la misma cámara y el mismo `clone-move` que antes por la
+  misma mano) y el pinch es incremental (cada muestra cuenta, su ancla se
+  mueve), con **un** `applyCulling()` y **un** `notifyCamera()` por frame en
+  vez de uno por muestra. `endDrag` vacía la cola antes de cerrar el gesto: el
+  último píxel de un arrastre no se pierde y un click sin movimiento sigue sin
+  escribir nada. El cleanup de `onMount` cancela el frame en vuelo y vacía el
+  mapa, la cola y el pinch (un frame de muestras de una superficie que se va es
+  una escritura a una página que ya no está).
+  (4) **Decisión del wheel: template, y está MEDIDA en WebKitGTK real**
+  (2.54.2, el motor que embebe la app), no en Chromium headless. Cómo se midió
+  (arnés descartable FUERA del worktree, `/tmp`, crate Rust `gtk` 0.18 +
+  `webkit2gtk` 2.0 con `v2_22`): una ventana GTK real con el mismo `WebView`
+  de la app, `window.__TAURI__` falso inyectado en document-start (el truco de
+  `tools/lib/harness.mjs`, pero en el motor real) y **rueda real por XTest**
+  (`libXtst`, `XTestFakeButtonEvent`) — eventos *trusted* del servidor X, que
+  es lo único que ejercita las reglas de verdad del motor; Chromium headless
+  no las puede probar. Tres columnas a viewport completo, una visible por vez:
+  (a) `onwheel` de template + `preventDefault`; (b) `onwheel` de template SIN
+  `preventDefault` (control positivo); (c) `addEventListener("wheel", …,
+  { passive: false })` + `preventDefault` (el camino imperativo de T1).
+  Resultado, con los tres eventos `trusted=true`, `cancelable=true`:
+  (a) `defaultPrevented=true` y `scrollTop` quedó en 0; (b) `defaultPrevented`
+  `=false` y `scrollTop=158` (el control prueba que el observable está vivo:
+  quien no previene deja scrollear la columna); (c) `defaultPrevented=true` y
+  `scrollTop=0`. Es decir: **el template NO falla el `preventDefault` en
+  WebKitGTK** — un handler colgado del elemento (como lo cuelga Svelte) no es
+  pasivo. Y en el bundle real, el mismo arnés con el `dist` construido: rueda
+  real sobre `#plan` → `--zoom` 1 → 0,9090909 (= 1/1.1, un notch exacto de
+  `ZOOM_STEP`) con `defaultPrevented=true` y `trusted=true`; Ctrl+rueda,
+  también `defaultPrevented=true`. El bundle base (HEAD, wheel imperativo) da
+  idéntico: 1 → 0,9090909 con `defaultPrevented=true`; el motor no distingue
+  las dos puertas. **Decisión: el wheel pasa a la plantilla** (`onwheel={onWheel}`
+  en `#plan`) y sale del bloque imperativo y de su `removeEventListener`; el
+  `{ passive: false }` deja de hacer falta porque el listener de un elemento no
+  es pasivo (medido, no citado) y el handler ahora muere con el componente. El
+  pointer sigue imperativo: ese orden (down, move, up, cancel) es el que el
+  gesto necesita y no está en discusión. Nota honesta de la medición: Ctrl+rueda
+  **no** cambia `zoom_level` en WebKitGTK por defecto (1.0 también en el control
+  (b)), así que el zoom de página no sirve de observable; el observable de la
+  decisión es `defaultPrevented` más el scroll de la columna. Un detalle del
+  servidor X de esta máquina, por si alguien repite la prueba: `XTestFakeMotionEvent`
+  se ignora, `XWarpPointer` sí mueve el puntero, y la rueda se entrega en las
+  coordenadas que el motor cree (no las del warp) — por eso las tres columnas
+  son a viewport completo.
+  Evidencia RED/GREEN (arnés descartable en `/tmp`, Chromium headless, bundle
+  real, las mismas 8 comprobaciones contra el bundle base y contra el cambio;
+  `tools/` no está en la superficie de edición de esta tarea, así que la
+  paridad se queda en 57): **base 4/8, cambio 8/8**. Detalle de las rojas del
+  base: `touch-action` `auto` (contra `none`); un `pointermove` que trae tres
+  muestras coalescidas (510/405, 520/410, 530/415) termina en +20/+10 —usa el
+  `clientX` del evento, tira las muestras— contra +30/+15 con el cambio (la
+  última muestra es la mano); un pinch de dos punteros táctiles **reales**
+  (CDP `Input.dispatchTouchEvent`, ids reales para que `setPointerCapture` no
+  explote) con los dedos a 200 px abriéndose a 400 px alrededor del mismo
+  midpoint deja el zoom en ×1 y la cámara en tx=-300 (el segundo dedo reemplaza
+  el `dragging` del primero y panea) contra zoom ×2 exacto y el punto
+  del mundo bajo el midpoint quieto en 500/300 con el cambio. Verdes en los dos
+  (contrato nuevo, no distinguen): la escritura de cámara espera el frame
+  (`--tx` sin tocar antes del frame, aterriza después) y levantar los dedos deja
+  la cámara donde el pinch la dejó. PRESERVE medidas con la misma entrada en los
+  dos bundles, idénticas: arrastre de mouse +25/+15 (cámara exactamente ahí) y
+  un solo dedo +40/+30 con zoom intacto.
+  Gates (códigos reales, todos en primer plano): `npm run build` exit 0 (sin
+  warnings de a11y por el `onwheel` del template), `node tools/parity.mjs`
+  57/57 exit 0, `cargo build -p gx-app` exit 0 (embebe el `dist` nuevo) y
+  `DISPLAY=:0 scripts/smoke.sh` → `rendered=true reason=none` exit 0, `cargo
+  test --workspace` 37 suites / 0 failed, `cargo fmt --check` exit 0, `cargo
+  clippy --workspace` exit 0. Sin commit y sin push: los hace el orquestador
+  (S4). Lo que NO se tocó: `tools/`, los payloads/throttles de `CONTRACT.md`,
+  los números 59/45°/41.72/24/3/0.4/zoom 0.05-4.0, ninguna string C41, y los
+  ≤3 SVG vivos con su culling re-decidido en cada escritura de cámara (el pinch
+  entra por el mismo embudo `applyCulling`).

@@ -3,13 +3,13 @@
   // (S2). `CONTRACT.md` is the parity checklist T4 walks.
   //
   // What this component owns: the camera (wheel zoom anchored at the cursor,
-  // drag pan, the animated pan, the camera intents of the renders), the
-  // objects with their `×`, their box and the culling (≤ 3 live SVGs), the
-  // wholesale reconciliation from `graphium://state`, the clones of the user
-  // plan (their move by drag, their tools pill) and every remaining piece of
-  // chrome of the vanilla page: the panel of open diagrams, the history of
-  // versions, the switcher of plans, the settings panel, the error banner and
-  // the render ghost.
+  // the pinch of two fingers, drag pan, the animated pan, the camera intents of
+  // the renders), the objects with their `×`, their box and the culling (≤ 3
+  // live SVGs), the wholesale reconciliation from `graphium://state`, the
+  // clones of the user plan (their move by drag, their tools pill) and every
+  // remaining piece of chrome of the vanilla page: the panel of open diagrams,
+  // the history of versions, the switcher of plans, the settings panel, the
+  // error banner and the render ghost.
   //
   // The panels themselves are components (`PlanPanel`, `SessionsPanel`,
   // `SettingsPanel`, `CloneTools`); this file keeps the state, the wire and
@@ -103,6 +103,21 @@
   // The clone the pointer is moving (B3 of `f8-planos.md`): dragging an
   // **object** of the user plan moves it; dragging the background pans.
   let moving = null;
+  // The touch pointers the surface follows (T4 of
+  // `odd/tasks/mejoras-frontend.md`): the map keeps where each finger is, and
+  // two of them are a pinch. Only touch and pen pointers come in here — the
+  // mouse has one pointer, and the mouse drags keep the path they always had.
+  const touchPointers = new Map();
+  // The pinch in flight: where the midpoint of the two fingers was and how far
+  // apart they were on the last sample. `null` while fewer than two fingers are
+  // on the surface.
+  let pinch = null;
+  // The pointer samples waiting for the next frame (T4): `getCoalescedEvents()`
+  // hands the physical samples the display produced between two frames in one
+  // event, and the surface consumes the whole batch once per frame instead of
+  // reacting to each event (the culling and `camera-changed` follow the frame).
+  let pointerSamples = [];
+  let pointerFrame = null;
   const planCameras = new Map();
   // The 100 ms throttle and the `settingsId` dedupe of `settings-changed`
   // (C6; plan.js:744-773).
@@ -331,6 +346,14 @@
 
   // --- pointer handlers (plan.js:416-551) -----------------------------------
 
+  /**
+   * One step of the wheel, anchored at the cursor (plan.js:389-396, C10). It
+   * is the template's `onwheel` of the surface (T4 of
+   * `odd/tasks/mejoras-frontend.md`): a handler attached to an element is not
+   * passive in WebKitGTK, so `preventDefault` reaches the engine — measured on
+   * the real window before moving it out of the imperative block, which is
+   * what L7 records.
+   */
   function onWheel(event) {
     event.preventDefault();
     // The human taking the wheel is the new owner of the view: a pan in
@@ -368,6 +391,7 @@
     selectedId = rec.id;
     moving = {
       rec,
+      pointerId: event.pointerId,
       fromX: event.clientX,
       fromY: event.clientY,
       x: rec.rect.x,
@@ -402,6 +426,21 @@
     if (event.target instanceof Element && event.target.closest("button")) {
       return;
     }
+    // Every finger on the surface is followed (T4 of
+    // `odd/tasks/mejoras-frontend.md`): the second one turns the gesture into a
+    // pinch, and the first one keeps the single-finger drag of the camera it
+    // always had.
+    if (event.pointerType !== "mouse") {
+      touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (touchPointers.size >= 2) {
+        // Two or more fingers are a pinch and nothing else: a third one is
+        // followed by the map but starts no gesture of its own.
+        if (pinch === null) {
+          startPinch();
+        }
+        return;
+      }
+    }
     const clone = cloneUnder(event.target);
     if (clone !== null) {
       moveCloneStart(event, clone);
@@ -412,34 +451,147 @@
     planEl.setPointerCapture(event.pointerId);
   }
 
-  function onPointerMove(event) {
-    if (moving !== null) {
-      const zoom = camera.zoom > 0 ? camera.zoom : 1;
-      setClonePlace(
-        moving.rec,
-        moving.x + (event.clientX - moving.fromX) / zoom,
-        moving.y + (event.clientY - moving.fromY) / zoom,
-      );
-      return;
-    }
-    if (!dragging) {
-      return;
-    }
-    camera.tx = dragging.tx + (event.clientX - dragging.x);
-    camera.ty = dragging.ty + (event.clientY - dragging.y);
-    applyCulling();
-    notifyCamera();
+  /**
+   * The midpoint and the spread of the two fingers of the pinch. The values
+   * are screen pixels: the pinch, like the wheel, works in the coordinates the
+   * hand speaks (plan.js:389-396).
+   */
+  function pinchGeometry() {
+    const [first, second] = [...touchPointers.values()];
+    return {
+      x: (first.x + second.x) / 2,
+      y: (first.y + second.y) / 2,
+      distance: Math.hypot(second.x - first.x, second.y - first.y),
+    };
   }
 
-  function endDrag(event) {
+  /**
+   * Makes the pair of fingers a pinch (T4 of `odd/tasks/mejoras-frontend.md`):
+   * whatever one finger was doing stops where it is — a clone keeps the place
+   * the hand gave it and the camera stops panning — and the two start feeding
+   * `zoomAtPoint` (`lib/plane.js`), the same pure arithmetic the wheel uses.
+   */
+  function startPinch() {
+    if (moving !== null) {
+      finishGesture(moving.pointerId);
+    }
+    dragging = null;
+    draggingNow = false;
+    pinch = pinchGeometry();
+  }
+
+  /**
+   * One step of the pinch: the midpoint of the two fingers is the anchor of the
+   * zoom (C10, the same `zoomAtPoint` of the wheel), and the travel of the
+   * midpoint pans, so the plan follows the hand instead of only growing around
+   * it. The world point that was under the last midpoint ends under the new
+   * one, which is what a zoom anchored at the cursor means for two fingers.
+   * The culling and the camera copy follow once per frame, in
+   * `flushPointerSamples`.
+   */
+  function applyPinch() {
+    if (pinch === null) {
+      return;
+    }
+    const now = pinchGeometry();
+    if (!(pinch.distance > 0) || !(now.distance > 0)) {
+      pinch = now;
+      return;
+    }
+    const next = zoomAtPoint(camera, pinch.x, pinch.y, now.distance / pinch.distance);
+    camera.tx = next.tx + (now.x - pinch.x);
+    camera.ty = next.ty + (now.y - pinch.y);
+    camera.zoom = next.zoom;
+    pinch = now;
+  }
+
+  /**
+   * Stacks the samples of a `pointermove` and lets the next frame consume them
+   * (T4 of `odd/tasks/mejoras-frontend.md`). One event may carry the physical
+   * samples of a whole frame through `getCoalescedEvents()` — or none, when the
+   * engine has nothing to add to the event itself.
+   */
+  function onPointerMove(event) {
+    const coalesced =
+      typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [];
+    const source = coalesced.length === 0 ? [event] : coalesced;
+    for (const sample of source) {
+      pointerSamples.push({
+        pointerId: sample.pointerId ?? event.pointerId,
+        x: sample.clientX,
+        y: sample.clientY,
+      });
+    }
+    schedulePointerFrame();
+  }
+
+  function schedulePointerFrame() {
+    if (pointerFrame !== null) {
+      return;
+    }
+    pointerFrame = window.requestAnimationFrame(() => {
+      pointerFrame = null;
+      flushPointerSamples();
+    });
+  }
+
+  /**
+   * Consumes the queued samples in the order the hand made them: the pan and
+   * the move of a clone are absolute (the last sample is the hand's place), the
+   * pinch is incremental (every sample counts, its anchor moves). One culling
+   * and one `camera-changed` per frame follow the camera writes, never per
+   * sample (C4, C5).
+   */
+  function flushPointerSamples() {
+    if (pointerSamples.length === 0) {
+      return;
+    }
+    const batch = pointerSamples;
+    pointerSamples = [];
+    let cameraMoved = false;
+    for (const sample of batch) {
+      if (pinch !== null && touchPointers.has(sample.pointerId)) {
+        touchPointers.set(sample.pointerId, { x: sample.x, y: sample.y });
+        applyPinch();
+        cameraMoved = true;
+        continue;
+      }
+      if (moving !== null) {
+        const zoom = camera.zoom > 0 ? camera.zoom : 1;
+        setClonePlace(
+          moving.rec,
+          moving.x + (sample.x - moving.fromX) / zoom,
+          moving.y + (sample.y - moving.fromY) / zoom,
+        );
+        continue;
+      }
+      if (!dragging) {
+        continue;
+      }
+      camera.tx = dragging.tx + (sample.x - dragging.x);
+      camera.ty = dragging.ty + (sample.y - dragging.y);
+      cameraMoved = true;
+    }
+    if (cameraMoved) {
+      applyCulling();
+      notifyCamera();
+    }
+  }
+
+  /**
+   * Ends the gesture `pointerId` was doing (plan.js:432-470). The place a clone
+   * ended in is the only thing that crosses the wire: a click without movement
+   * asks for nothing (B3).
+   */
+  function finishGesture(pointerId) {
     // The hand let go of a clone: the object stays where it is and the owner
     // keeps that place (B3).
     if (moving !== null) {
       const move = moving;
       moving = null;
       draggingNow = false;
-      if (planEl.hasPointerCapture(event.pointerId)) {
-        planEl.releasePointerCapture(event.pointerId);
+      if (planEl.hasPointerCapture(pointerId)) {
+        planEl.releasePointerCapture(pointerId);
       }
       const rect = move.rec.rect;
       if (rect.x !== move.x || rect.y !== move.y) {
@@ -457,9 +609,34 @@
     }
     dragging = null;
     draggingNow = false;
-    if (planEl.hasPointerCapture(event.pointerId)) {
-      planEl.releasePointerCapture(event.pointerId);
+    if (planEl.hasPointerCapture(pointerId)) {
+      planEl.releasePointerCapture(pointerId);
     }
+  }
+
+  function endDrag(event) {
+    // The samples the frame has not consumed yet are the last place of the
+    // hand: they land before the gesture closes, so the last pixel of a drag is
+    // never lost (and a click that did not move still writes nothing).
+    flushPointerSamples();
+
+    if (touchPointers.delete(event.pointerId) && pinch !== null) {
+      // The pair is the gesture, not one finger: with two fingers still on the
+      // surface the remaining pair re-anchors the pinch where it is; with fewer
+      // there is no pinch left, and the finger that stays does not become a pan
+      // (the plan would jump under it).
+      if (touchPointers.size >= 2) {
+        pinch = pinchGeometry();
+      } else {
+        pinch = null;
+        draggingNow = false;
+      }
+      if (planEl.hasPointerCapture(event.pointerId)) {
+        planEl.releasePointerCapture(event.pointerId);
+      }
+      return;
+    }
+    finishGesture(event.pointerId);
   }
 
   /** A resize keeps the world point under the centre; it never refits. */
@@ -479,11 +656,11 @@
 
   /**
    * The one funnel of the culling (RNF1-ter, C14): every camera write — pan
-   * step, wheel step, camera intent, resize, insertion, plan switch — crosses
-   * here, and nowhere else do the `culled` flags move. The decision itself is
-   * pure (`cullDecide` in `lib/plane.js`); this half applies it to the
-   * records, imperatively — never a `$effect`, which would re-enter
-   * reactivity right after the DOM writes of the frame.
+   * step, wheel step, pinch step, camera intent, resize, insertion, plan switch
+   * — crosses here, and nowhere else do the `culled` flags move. The decision
+   * itself is pure (`cullDecide` in `lib/plane.js`); this half applies it to the
+   * records, imperatively — never a `$effect`, which would re-enter reactivity
+   * right after the DOM writes of the frame.
    *
    * An object the decision keeps alive whose drawing has not arrived yet (a
    * clone waiting for its paint) keeps its box: there is nothing to mount.
@@ -1197,11 +1374,14 @@
   onMount(() => {
     refreshViewport();
 
-    // The listeners of the surface, attached the way the vanilla page does:
-    // the wheel is not passive, because it calls `preventDefault`
-    // (plan.js:398-412). The resize and the keyboard are not here: they belong
-    // to `<svelte:window>` below, which removes them when the page goes.
-    planEl.addEventListener("wheel", onWheel, { passive: false });
+    // The pointer of the surface stays imperative (it needs the order the
+    // vanilla page has: down, move, up, cancel, and nothing else between), and
+    // each one is removed in the cleanup below. The wheel is NOT here anymore
+    // (T4 of `odd/tasks/mejoras-frontend.md`): it lives in the template, on
+    // `#plan`, and the empirical test of the real WebKitGTK decided it — see
+    // the `onwheel` of the surface and L7. The resize and the keyboard are not
+    // here either: they belong to `<svelte:window>` below, which removes them
+    // when the page goes.
     planEl.addEventListener("pointerdown", onPointerDown);
     planEl.addEventListener("pointermove", onPointerMove);
     planEl.addEventListener("pointerup", endDrag);
@@ -1267,13 +1447,21 @@
     emit(EVENTS.ready, {});
 
     return () => {
-      // The wheel and the pointer are still imperative (T1: whether they move
-      // to the template is the empirical test of T4), so they are removed here.
-      planEl.removeEventListener("wheel", onWheel);
+      // The pointer is still imperative, so it is removed by hand; the wheel
+      // left with the component (it is the template's `onwheel`).
       planEl.removeEventListener("pointerdown", onPointerDown);
       planEl.removeEventListener("pointermove", onPointerMove);
       planEl.removeEventListener("pointerup", endDrag);
       planEl.removeEventListener("pointercancel", endDrag);
+      // A frame of pointer samples in flight belongs to the surface that is
+      // leaving: it is cancelled with it, and the next mount starts empty.
+      if (pointerFrame !== null) {
+        window.cancelAnimationFrame(pointerFrame);
+        pointerFrame = null;
+      }
+      pointerSamples = [];
+      touchPointers.clear();
+      pinch = null;
       // A timer that fires after the component is gone writes to a page that
       // is no longer there: the two throttles and the ghost of a render in
       // flight leave with it.
@@ -1293,8 +1481,14 @@
 <svelte:window onresize={onResize} onkeydown={onKeyDown} />
 
 <!-- The plan: an infinite surface with a grid. The camera lives here
-     (PRD §7.1, `index.html:11-13`). -->
-<div id="plan" class="plan" class:dragging={draggingNow} bind:this={planEl}>
+     (PRD §7.1, `index.html:11-13`).
+
+     The wheel is the template's (T4 of `odd/tasks/mejoras-frontend.md`): Svelte
+     attaches the handler to the element itself, where a listener is not passive
+     — proven on the real WebKitGTK window (L7) — so `preventDefault` reaches
+     the engine exactly like the imperative `{ passive: false }` of before, and
+     the handler leaves with the component. -->
+<div id="plan" class="plan" class:dragging={draggingNow} bind:this={planEl} onwheel={onWheel}>
   <!-- The camera layer: its transform is the stylesheet rule on `.diagrams`
        reading `--tx`/`--ty`/`--zoom` (T2). -->
   <div class="diagrams">
