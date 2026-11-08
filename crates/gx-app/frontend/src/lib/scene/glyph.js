@@ -453,6 +453,9 @@ export function nodePaint(node, tokens) {
     id: node.id,
     shape: node.shape,
     classes: shapeClasses(node),
+    // How a probe and a screen reader name the element: the label of the
+    // drawing, with its line breaks turned into the spaces they stand for.
+    name: lines.join(" "),
     rect: {
       x: num(rect.x),
       y: num(rect.y),
@@ -465,6 +468,8 @@ export function nodePaint(node, tokens) {
       node.shape === "cylinder" ? cylinderGeometry(rect, tokens) : null,
     note: node.shape === "note" ? noteGeometry(rect, tokens) : null,
     diamond: node.shape === "diamond" ? diamondPoints(rect) : null,
+    // A node has no bar: only an event that lasts does (`eventPaint`).
+    bar: null,
     isTable,
     // The header of a table is one text with the label as it arrived; a plain
     // node breaks its label on the `\n` and centers the lines (S4).
@@ -544,6 +549,9 @@ export function edgePaint(edge, tokens) {
   return {
     id: edge.id,
     classes: edgeClasses(edge),
+    // The name of the line for a screen reader: the two ends, as the drawing
+    // names them (`m-<from>-<to>` is built from the very same ids).
+    name: `${edge.from} → ${edge.to}`,
     points: pointsText(edge.points),
     marker: edge.arrow ? `url(#${markerId(edge.emphasis)})` : null,
     feet: cardinalityMarks(edge).map((mark) => {
@@ -624,22 +632,42 @@ export function bandPaint(band, tokens) {
   };
 }
 
-/** An event of a timeline is, for the painter, a rounded box with its label. */
+/**
+ * The bar of an event that lasts, from the numbers the scene carries
+ * (`f11-elementos.md`, T4/D).
+ *
+ * The geometry is **not** computed here: the layout sized the box from the
+ * span and `gx-render-svg/src/geometry.rs` decided the rectangle, so the
+ * painter only rounds the four numbers it was given (S5: the payload carries
+ * numbers, not paths). Absent when the event is a point in time.
+ */
+export function eventBar(event) {
+  const bar = event.bar;
+  if (bar === null || bar === undefined) {
+    return null;
+  }
+  return { x: num(bar.x), y: num(bar.y), w: num(bar.w), h: num(bar.h) };
+}
+
+/** An event of a timeline is a rounded box with its label, and its bar. */
 export function eventPaint(event, tokens) {
-  return nodePaint(
-    {
-      id: event.id,
-      label: event.label,
-      shape: "rounded",
-      emphasis: "normal",
-      style: "solid",
-      center: event.center,
-      size: event.size,
-      rows: [],
-      meta: {},
-    },
-    tokens,
-  );
+  return {
+    ...nodePaint(
+      {
+        id: event.id,
+        label: event.label,
+        shape: "rounded",
+        emphasis: "normal",
+        style: "solid",
+        center: event.center,
+        size: event.size,
+        rows: [],
+        meta: {},
+      },
+      tokens,
+    ),
+    bar: eventBar(event),
+  };
 }
 
 /**

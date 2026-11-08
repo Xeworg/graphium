@@ -34,7 +34,7 @@
 // and children in paint order. Anything outside those rules is a difference
 // and fails the probe.
 //
-// Three differences are **decisions**, not formatting, and the probe names
+// Four differences are **decisions**, not formatting, and the probe names
 // them so a reader knows why they are allowed (Judgment Day L7 item (f),
 // B-006). Each one is recorded in the report as an axis trigger:
 //
@@ -63,6 +63,15 @@
 //      golden documents do not have one — the report shows `0` — and the rule
 //      exists so the decision is written down instead of surprising the next
 //      reader with a red probe.
+//   4. The interaction of an element (`f11-elementos.md` T4/D). An element of
+//      the mounted scene is one hit target — `role`, `tabindex`, `aria-label`,
+//      `aria-pressed` and the `data-element` hook — and an exported file has
+//      no pointer and no keyboard: the attributes are painter-only. Both
+//      sides' interaction attributes are dropped before the comparison and
+//      counted, so the report shows how many the mounted scene carries. The
+//      drawing under them is untouched: same ids, same classes, same numbers.
+//      A class (the highlight) is not an interaction attribute — a probe that
+//      mounted a *selected* scene would still fail here, on purpose.
 //
 // Everything else is not negotiable: same ids (`g-`/`m-`/`cluster-`/`lane-`),
 // same boxes, same classes, same glyph geometry.
@@ -117,8 +126,14 @@ const CANON_SOURCE = `(() => {
       return Number.isFinite(value) && token.trim() !== '' ? round(value) : token;
     });
   };
-  const attribute = (name, value) => {
+  const attribute = (name, value, side) => {
     if (name === 'xmlns' || name.startsWith('xmlns:')) return null;
+    // Axis 4: the interaction of an element is painter-only (T4/D).
+    if (name === 'role' || name === 'tabindex' || name === 'focusable' ||
+        name.startsWith('aria-') || name.startsWith('data-')) {
+      axes.interaction[side] += 1;
+      return null;
+    }
     if (name === 'class') {
       return value.trim().split(/\\s+/).filter(Boolean).sort().join(' ');
     }
@@ -153,7 +168,7 @@ const CANON_SOURCE = `(() => {
     const layer = classes.find((name) => name.startsWith('layer-'));
     return layer === undefined ? null : layer;
   };
-  const axes = { emptyLayers: { expected: 0, actual: 0 }, markers: { expected: [], actual: [] }, onePointEdges: { expected: 0, actual: 0 } };
+  const axes = { emptyLayers: { expected: 0, actual: 0 }, markers: { expected: [], actual: [] }, onePointEdges: { expected: 0, actual: 0 }, interaction: { expected: 0, actual: 0 } };
   // The canonical tree. 'side' is 'expected' (the golden SVG) or 'actual'
   // (the mounted scene); it only decides where an axis trigger is recorded.
   const canon = (node, side, referenced) => {
@@ -161,7 +176,7 @@ const CANON_SOURCE = `(() => {
     if (tag === 'style') return null;
     const attrs = {};
     for (const name of node.getAttributeNames()) {
-      const value = attribute(name, node.getAttribute(name));
+      const value = attribute(name, node.getAttribute(name), side);
       if (value !== null) attrs[name] = value;
     }
     // Axis 3: a one-point route is a degenerate edge the painter drops.
@@ -346,6 +361,7 @@ async function mountAndCompare(browser, url, document, index) {
         emptyLayers: value.actual.axes.emptyLayers,
         markers: value.actual.axes.markers,
         onePointEdges: value.actual.axes.onePointEdges,
+        interaction: value.actual.axes.interaction,
       },
     };
   } finally {
@@ -374,7 +390,8 @@ async function main() {
     const axes = result.axes
       ? ` [empty layers ${result.axes.emptyLayers.expected}/${result.axes.emptyLayers.actual}, ` +
         `unreferenced markers ${result.axes.markers.expected.length}/${result.axes.markers.actual.length}, ` +
-        `one-point edges ${result.axes.onePointEdges.expected}/${result.axes.onePointEdges.actual}]`
+        `one-point edges ${result.axes.onePointEdges.expected}/${result.axes.onePointEdges.actual}, ` +
+        `interaction attributes ${result.axes.interaction.expected}/${result.axes.interaction.actual}]`
       : "";
     if (result.ok) {
       console.log(
@@ -396,8 +413,9 @@ async function main() {
   console.log(`equivalence: ${passed}/${results.length} golden documents`);
   console.log(
     "modulo formatting: attribute order, whitespace, number spelling, class order, the <style> " +
-      "block of the export and xmlns; the three decisions of S8 are the empty layer containers, " +
-      "the filtered <defs> marker set and the one-point edges (see the header).",
+      "block of the export and xmlns; the four decisions of S8 are the empty layer containers, " +
+      "the filtered <defs> marker set, the one-point edges and the painter-only interaction " +
+      "attributes (see the header).",
   );
 
   if (JSON_OUT !== null) {

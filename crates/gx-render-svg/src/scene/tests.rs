@@ -358,6 +358,84 @@ fn the_scene_carries_the_lanes_and_events_of_a_timeline() {
     );
 }
 
+/// T4/D, S5: un evento con tramo lleva los números de su barra, y un punto en
+/// el tiempo no lleva barra.
+///
+/// La geometría la decide `geometry.rs` (`event_bar`), la misma que escribe el
+/// SVG del export: el payload lleva el rectángulo, nunca un path, y el painter
+/// lo dibuja tal cual.
+#[test]
+fn a_spanned_event_carries_the_numbers_of_its_bar() {
+    let ir = Ir::Timeline(IrTimeline {
+        lanes: vec![IrLane {
+            id: "q1".to_string(),
+            label: Some("Q1".to_string()),
+        }],
+        events: vec![
+            IrEvent {
+                id: "point".to_string(),
+                lane: "q1".to_string(),
+                label: "punto".to_string(),
+                order: 0,
+                span: None,
+                kind_data: Default::default(),
+            },
+            IrEvent {
+                id: "bar".to_string(),
+                lane: "q1".to_string(),
+                label: "dura".to_string(),
+                order: 1,
+                span: Some(Span {
+                    start: 1.0,
+                    end: 4.0,
+                }),
+                kind_data: Default::default(),
+            },
+        ],
+    });
+    let layout = fixture::layout(
+        &[
+            ("point", Point::new(100.0, 70.0), Size::new(120.0, 44.0)),
+            ("bar", Point::new(300.0, 70.0), Size::new(250.0, 44.0)),
+        ],
+        Vec::new(),
+        Rect::new(0.0, 0.0, 500.0, 150.0),
+    );
+
+    let scene = build_scene(&ir, &layout, &palette());
+
+    let spanned = scene
+        .events
+        .iter()
+        .find(|event| event.id == "g-bar")
+        .expect("el evento con tramo");
+    let spanned = serde_json::to_value(spanned).expect("el evento serializa");
+    let bar = spanned
+        .get("bar")
+        .expect("la barra de un evento con tramo viaja como números (S5)");
+    // La caja medida: centro (300, 70), tamaño 250 × 44 → rect (175, 48, 250,
+    // 44). La barra se mete el borde por cada lado.
+    assert_eq!(bar["x"], serde_json::json!(176.0));
+    assert_eq!(bar["y"], serde_json::json!(86.0));
+    assert_eq!(bar["w"], serde_json::json!(248.0));
+    assert_eq!(
+        bar["h"],
+        serde_json::json!(5.0),
+        "la altura es la constante congelada de la geometría compartida"
+    );
+
+    let point = scene
+        .events
+        .iter()
+        .find(|event| event.id == "g-point")
+        .expect("el punto en el tiempo");
+    let point = serde_json::to_value(point).expect("el evento serializa");
+    assert!(
+        point.get("bar").is_none(),
+        "un punto en el tiempo no lleva barra: {point}"
+    );
+}
+
 /// S5: the scene carries numbers, never a path. There is no `d` of a glyph and
 /// no markup in the payload: the painter draws the glyphs from the tokens.
 #[test]

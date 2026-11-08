@@ -191,6 +191,10 @@ impl<'a> Drawing<'a> {
                     span: event.span,
                     center: placed.center,
                     size: placed.size,
+                    // The bar of an event that lasts, as numbers: the rectangle
+                    // `event_bar` decides is the one the exported markup draws
+                    // (S5, T4/D).
+                    bar: geometry::event_bar(&geometry::node_rect(placed), event.span),
                 })
                 .collect(),
         }

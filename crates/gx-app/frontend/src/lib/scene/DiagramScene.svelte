@@ -19,14 +19,36 @@
   // handed to the components as plain data: one reactive read for ~900
   // components, instead of one signal set per component (see L5 of the feature
   // doc for the measurement that decided this).
+  //
+  // Interaction (T4/D) is three ids and three callback props — no dispatcher,
+  // no slots: the elements of the drawing surface their hover, their focus and
+  // their click, and `App.svelte` holds the state. `selected` is the element
+  // the human chose, `hovered`/`focused` are the transient ones, and the
+  // highlight is the `emphasis-highlight` class the drawing already carries.
+  // The callbacks take the id of the drawing (`owner`) first and the id of the
+  // element second, and they are handed down unchanged: a stable function is a
+  // prop that never changes, so a pointer moving over a drawing never
+  // re-creates the props of its elements.
   import SceneBand from "./SceneBand.svelte";
   import SceneEdge from "./SceneEdge.svelte";
   import SceneNode from "./SceneNode.svelte";
   import { diagramPaint } from "./glyph.js";
 
-  let { scene } = $props();
+  let {
+    scene,
+    owner = "",
+    selected = null,
+    hovered = null,
+    focused = null,
+    onhover = () => {},
+    onfocus = () => {},
+    onselect = () => {},
+  } = $props();
 
   const paint = $derived(diagramPaint(scene));
+
+  /** Whether an element of this drawing wears the highlight. */
+  const isHot = (id) => id === selected || id === hovered || id === focused;
 </script>
 
 <svg
@@ -83,13 +105,29 @@
 
   <g class="layer-edges">
     {#each paint.edges as edge (edge.id)}
-      <SceneEdge paint={edge} />
+      <SceneEdge
+        paint={edge}
+        {owner}
+        hot={isHot(edge.id)}
+        pressed={edge.id === selected}
+        {onhover}
+        {onfocus}
+        {onselect}
+      />
     {/each}
   </g>
 
   <g class="layer-nodes">
     {#each paint.nodes as node (node.id)}
-      <SceneNode paint={node} />
+      <SceneNode
+        paint={node}
+        {owner}
+        hot={isHot(node.id)}
+        pressed={node.id === selected}
+        {onhover}
+        {onfocus}
+        {onselect}
+      />
     {/each}
   </g>
 </svg>

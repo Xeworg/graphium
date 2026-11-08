@@ -288,12 +288,36 @@ function bandOf(raw) {
   };
 }
 
-/** The time span of a bar, kept for the gantt of T4/D. */
+/** The time span of a bar: the stretch of time an event covers. */
 function spanOf(raw) {
   if (!isRecord(raw) || !isNumber(raw.start) || !isNumber(raw.end)) {
     return null;
   }
   return { start: raw.start, end: raw.end };
+}
+
+/**
+ * The bar of an event that lasts, when the payload carries one.
+ *
+ * The four numbers are the geometry `gx-render-svg/src/geometry.rs` decided, so
+ * the painter draws them instead of recomputing the length of the box (S5).
+ * A bar that is not a rectangle is a value this frontend does not know yet:
+ * the event keeps its box and loses the mark, never the whole drawing.
+ */
+function barOf(raw) {
+  if (raw === undefined || raw === null) {
+    return null;
+  }
+  if (
+    !isRecord(raw) ||
+    !isNumber(raw.x) ||
+    !isNumber(raw.y) ||
+    !isNumber(raw.w) ||
+    !isNumber(raw.h)
+  ) {
+    return null;
+  }
+  return { x: raw.x, y: raw.y, w: raw.w, h: raw.h };
 }
 
 /** One event of a timeline: `IrEvent` plus its measured box (S3, S4). */
@@ -314,6 +338,7 @@ function eventOf(raw) {
     span: spanOf(raw.span),
     center,
     size: measured,
+    bar: barOf(raw.bar),
   };
 }
 

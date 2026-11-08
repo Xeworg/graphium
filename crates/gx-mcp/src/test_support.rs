@@ -266,6 +266,20 @@ impl SvgRenderer for StubRenderer {
                             span: event.span,
                             center: placed.center,
                             size: placed.size,
+                            // The bar of an event that lasts, mirrored from
+                            // `geometry::event_bar` for the same reason as the
+                            // tokens above: `gx-mcp` does not depend on
+                            // `gx-render-svg` (PRD §9.1).
+                            bar: event.span.filter(|span| span.end > span.start).map(|_| {
+                                let inset = TOKENS.border_width;
+                                let height = 5.0;
+                                Rect::new(
+                                    placed.center.x - placed.size.w / 2.0 + inset,
+                                    placed.center.y + placed.size.h / 2.0 - inset - height,
+                                    placed.size.w - 2.0 * inset,
+                                    height,
+                                )
+                            }),
                         })
                     })
                     .collect()

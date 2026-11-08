@@ -566,6 +566,37 @@ document.
       either served HTML; the grid/palette variables are observed in the page as
       `style.setProperty` values (C7/C39).
 
+**The closing task of `f11-elementos.md`**
+
+- [x] C44 The history of versions morphs the mounted scene instead of asking
+      Rust for it again: a version the page already drew is kept on the object
+      in a bounded cache (`VERSION_CACHE_LIMIT`), the step back paints it with
+      no `graphium://version-view`, the components stay mounted (the scene root
+      and the elements whose ids did not change are the same DOM nodes), and
+      the cache is emptied when the live drawing comes back and dies with the
+      object. — **T4/D ✓** `parity: morph`: v6 and v5 asked once each (2
+      events), the revisit to v6 with the count still 2, the same
+      `svg.graphium` and the same `g-estable` node held across the step, the
+      live restore and a re-render each making the next step ask again.
+- [x] C45 Every element of a drawing is an element of the page: `role="button"`
+      in the tab order with a name, the pointer over it and the focus on it
+      highlight it with the classes of the drawing (`emphasis-highlight` /
+      `emphasis-highlight-text`), a click or Enter/Space selects exactly one
+      element per drawing and `aria-pressed` says which, and the state lives in
+      `App.svelte` behind callback props — no dispatcher, no slots. — **T4/D ✓**
+      `parity: elements`: `role`/`tabindex`/`aria-label` on the shape, the
+      highlight of the hover (and of its label) cleared on the way out, one
+      selection across a node and an edge, the focus highlighting and Enter
+      selecting.
+- [x] C46 An event that lasts is a bar (`IrEvent.span`): the layout already
+      sizes the box from the span and `geometry::event_bar` decides the
+      rectangle, which is the same number in the exported markup and in the
+      scene, drawn by the painter from the payload. A point in time has no bar.
+      — **T4/D ✓** `parity: bar`: one `rect.accent` at 301/73.75/116×5 for the
+      spanned event of the timeline fixture and none for the point, plus the
+      S8 equivalence on `timeline-roadmap`, whose regenerated golden carries
+      the two bars of the roadmap.
+
 ## 9. What the tasks delivered
 
 `crates/gx-app/frontend/`:
@@ -678,12 +709,36 @@ untouched (S2): `gx-render-svg` keeps emitting the bytes that
 S8 gate is committed: `tools/equivalence.mjs` mounts the scene of each of the
 15 golden documents through the real bundle (payload with `elements` only) and
 compares the serialized DOM with `crates/gx-app/tests/golden/<name>.svg` modulo
-formatting, with the three documented decisions (empty layer containers, the
-filtered `<defs>` marker set, one-point edges) written in its header. The
+formatting, with the four documented decisions (empty layer containers, the
+filtered `<defs>` marker set, one-point edges, the painter-only interaction
+attributes) written in its header. The
 scenes are committed at `crates/gx-app/tests/golden-scenes/` and the golden
 suite keeps them fresh (`UPDATE_SCENES=1`). `tools/parity.mjs` speaks the same
 contract: every probe dispatches `elements`, and the `{@html}` branch is
 guarded by a payload that carries both keys.
+
+**What `f11-elementos.md` T4/D delivered (the closing task):** the drawing on
+the plan is not a picture any more, it is a set of elements. (1) **Interaction
+per element**: every node, event and edge is `role="button"` with a name, in the
+tab order, and surfaces its pointer hover, its focus and its click/tap through
+callback props; `src/App.svelte` holds the hover, the focus and a selection per
+drawing, and the visual answer is the `emphasis-highlight` class the drawing
+already has (`src/app.css` adds only `cursor`, the `:focus-visible` ring and the
+`pointer-events: none` of the labels and the two decoration paths). No wire
+message, no panel, no slot: the elements talk to the page, the page keeps the
+state. (2) **The version step morphs**: `←`/`→` paint a visited version from a
+bounded per-object cache with no `graphium://version-view`, and the keyed
+components move the drawing that changed instead of rebuilding it; the cache is
+emptied when the live drawing comes back and it dies with the object (C44).
+(3) **Gantt bars**: `IrEvent.span` reaches the paint as a bar — the rectangle
+is decided once in `gx-render-svg/src/geometry.rs`, written by the SVG emitter,
+carried as numbers in `SceneEvent.bar` and drawn by the painter (C46). The
+goldens of `timeline-roadmap` were regenerated on purpose for it (the only
+document of the 15 with a span: two 116 × 5 bars), and so was its committed
+scene. `tools/equivalence.mjs` gained the fourth decision of the header — the
+painter-only interaction attributes — and still ends 15/15; `tools/parity.mjs`
+grew from 58 to 64 probes (morph and elements scenarios) with the 58 existing
+ones untouched and green.
 
 ## 10. The A/B switch, RETIRED — and where the retired guards live
 

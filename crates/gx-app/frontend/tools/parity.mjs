@@ -189,6 +189,95 @@ const RENDER = {
   camera: { tx: 0, ty: 0, zoom: 1 },
 };
 
+/**
+ * A scene with two nodes, keyed `g-<first>` and `g-<second>`.
+ *
+ * Two nodes so a probe can tell the element that never changes between two
+ * versions from the one that does: the first keeps its DOM node across a step
+ * of the history (`f11-elementos.md`, T4/D), which is what "the components are
+ * keyed by the id of the drawing" means to the human.
+ */
+function twoNodeScene(first, second, width = 320, height = 180) {
+  const scene = sceneFixture(first, width, height);
+  scene.nodes.push({
+    id: `g-${second}`,
+    label: second,
+    shape: "box",
+    emphasis: "normal",
+    style: "solid",
+    center: { x: 80, y: 140 },
+    size: { w: 120, h: 40 },
+    rows: [],
+    meta: {},
+  });
+  return scene;
+}
+
+/** The two nodes of `twoNodeScene` joined by one routed edge. */
+function edgeScene() {
+  const scene = twoNodeScene("a", "b");
+  scene.edges.push({
+    id: "m-a-b",
+    from: "a",
+    to: "b",
+    emphasis: "normal",
+    style: "solid",
+    arrow: false,
+    cardinality: null,
+    points: [
+      { x: 100, y: 40 },
+      { x: 220, y: 130 },
+    ],
+    label_at: null,
+  });
+  return scene;
+}
+
+/**
+ * A timeline with one point in time and one event that lasts.
+ *
+ * The numbers are the ones of the golden document `timeline-roadmap` (a 118 ×
+ * 49.5 box at 300/30.25 and the bar `geometry::event_bar` decides for it), so
+ * the probe reads the very geometry the export writes (`f11-elementos.md`,
+ * T4/D).
+ */
+function timelineScene() {
+  const scene = sceneFixture("timeline", 500, 160);
+  scene.layout_hint = null;
+  scene.nodes = [];
+  scene.bands = [
+    {
+      id: "lane-q1",
+      label: "Q1",
+      bbox: { x: 0, y: 0, w: 500, h: 160 },
+      depth: 0,
+      members: ["event-0", "event-1"],
+      gutter: 150,
+    },
+  ];
+  scene.events = [
+    {
+      id: "g-event-0",
+      lane: "q1",
+      label: "spike",
+      order: 0,
+      center: { x: 209, y: 55 },
+      size: { w: 118, h: 49.5 },
+    },
+    {
+      id: "g-event-1",
+      lane: "q1",
+      label: "MVP",
+      order: 1,
+      span: { start: 1, end: 2 },
+      center: { x: 359, y: 55 },
+      size: { w: 118, h: 49.5 },
+      bar: { x: 301, y: 73.75, w: 116, h: 5 },
+    },
+  ];
+  return scene;
+}
+
 // --- scenarios -------------------------------------------------------------
 //
 // A step is `{ id, name, cdp?, js, compare? }`:
@@ -775,6 +864,233 @@ const scenarios = [
           __t.expect(__t.all('#panel-list .panel-item').length === 1, 'the panel still lists the dropped diagram');
           __t.expect(__t.all('#panel-list .panel-item.selected').length === 0, 'the selection survived the drop');
           return { titles, remaining: __t.all('.diagram').length };
+        })()`,
+      },
+    ],
+  },
+  {
+    // The history of versions walks the drawing already on the plan
+    // (`f11-elementos.md`, T4/D): a version the page already drew is kept and
+    // paints from the cache, so `←`/`→` morph the mounted scene instead of
+    // asking Rust again. The record holds the cache; it dies with the object
+    // and it is emptied when the live drawing comes back.
+    name: "morph",
+    bridge: "global",
+    setup: `(async () => {
+      __t.rust('graphium://settings', ${JSON.stringify(SETTINGS)});
+      __t.rust('graphium://state', ${JSON.stringify({
+        diagrams: [diagram("d-1")],
+        sessions: SESSIONS,
+        clones: [],
+      })});
+      await __t.settle();
+      __t.rust('graphium://render', ${JSON.stringify({
+        ...RENDER,
+        elements: twoNodeScene("live", "estable"),
+      })});
+      await __t.wait(220);
+    })()`,
+    steps: [
+      {
+        id: ["C44"],
+        name: "a version already visited paints from the cache and is not asked again",
+        js: `(async () => {
+          const steps = () => {
+            const row = __t.all('#panel-list .panel-item')
+              .find((item) => item.querySelector('.panel-item-title').textContent.trim() === 'schema d-1');
+            return row.querySelectorAll('.panel-item-version-step');
+          };
+          const content = () => __t.byId('d-1').querySelector('.content');
+          // The element of the node that no version changes: the id of the
+          // drawing is the key, so a step must keep its DOM node.
+          const rootBefore = content().querySelector('svg.graphium');
+          const stableBefore = content().querySelector('[id="g-estable"]');
+          // v6, then v5: the page asks Rust for each one once.
+          __t.click(steps()[0]);
+          await __t.settle();
+          __t.rust('graphium://version-paint', { diagram_id: 'd-1', version: 6, elements: ${JSON.stringify(
+            twoNodeScene("v6", "estable"),
+          )} });
+          await __t.settle();
+          const markerAt6 = __t.markerOf(content());
+          __t.click(steps()[0]);
+          await __t.settle();
+          __t.rust('graphium://version-paint', { diagram_id: 'd-1', version: 5, elements: ${JSON.stringify(
+            twoNodeScene("v5", "estable"),
+          )} });
+          await __t.settle();
+          const markerAt5 = __t.markerOf(content());
+          const asked = __t.count('graphium://version-view');
+          // ▶ back to v6: the page already has it.
+          __t.click(steps()[1]);
+          await __t.settle();
+          const after = __t.count('graphium://version-view');
+          const markerBack = __t.markerOf(content());
+          const rootAfter = content().querySelector('svg.graphium');
+          const stableAfter = content().querySelector('[id="g-estable"]');
+          __t.expect(asked === 2, 'the history did not ask twice: ' + asked);
+          __t.expect(after === 2, 'a version already visited asked Rust again: ' + after);
+          __t.expect(markerAt6 === 'v6' && markerAt5 === 'v5', 'the previews did not mount: ' + markerAt6 + '/' + markerAt5);
+          __t.expect(markerBack === 'v6', 'the cached version did not paint: ' + markerBack);
+          __t.expect(rootAfter === rootBefore, 'the scene was torn down and rebuilt');
+          __t.expect(stableAfter === stableBefore, 'the node that no version changes was rebuilt');
+          return { asked, after, markerAt6, markerAt5, markerBack, sameRoot: true, sameNode: true };
+        })()`,
+      },
+      {
+        id: ["C44", "C26"],
+        name: "walking to the live drawing empties the cache: the step back asks again",
+        js: `(async () => {
+          const steps = () => {
+            const row = __t.all('#panel-list .panel-item')
+              .find((item) => item.querySelector('.panel-item-title').textContent.trim() === 'schema d-1');
+            return row.querySelectorAll('.panel-item-version-step');
+          };
+          const content = () => __t.byId('d-1').querySelector('.content');
+          // ▶ at the newest: the live drawing, with no event at all (C26).
+          __t.click(steps()[1]);
+          await __t.settle();
+          const afterLive = __t.count('graphium://version-view');
+          const live = __t.markerOf(content());
+          // ◀ to v6 again: the cache left with the preview.
+          __t.click(steps()[0]);
+          await __t.settle();
+          const afterBack = __t.count('graphium://version-view');
+          __t.expect(afterLive === 2, 'walking to the live drawing emitted: ' + afterLive);
+          __t.expect(live === 'live', 'the live drawing did not come back: ' + live);
+          __t.expect(afterBack === 3, 'the cache survived the live drawing: ' + afterBack);
+          return { afterLive, live, afterBack };
+        })()`,
+      },
+      {
+        id: ["C44", "C19"],
+        name: "a re-render replaces the object and its cache with it",
+        js: `(async () => {
+          const steps = () => {
+            const row = __t.all('#panel-list .panel-item')
+              .find((item) => item.querySelector('.panel-item-title').textContent.trim() === 'schema d-1');
+            return row.querySelectorAll('.panel-item-version-step');
+          };
+          const content = () => __t.byId('d-1').querySelector('.content');
+          __t.rust('graphium://render', ${JSON.stringify({
+            ...RENDER,
+            req_id: "r-morph",
+            elements: twoNodeScene("nuevo", "estable"),
+          })});
+          await __t.wait(220);
+          const marker = __t.markerOf(content());
+          const before = __t.count('graphium://version-view');
+          __t.click(steps()[0]);
+          await __t.settle();
+          const after = __t.count('graphium://version-view');
+          __t.expect(marker === 'nuevo', 'the second drawing did not replace the first: ' + marker);
+          __t.expect(after === before + 1, 'the new object kept the versions of the old one: ' + before + '->' + after);
+          return { marker, before, after };
+        })()`,
+      },
+    ],
+  },
+  {
+    // The elements of the drawing are their own elements of the DOM
+    // (`f11-elementos.md`, T4/D): hover, focus and click per element, with
+    // callback props up to `App.svelte`, and the bar of an event that lasts.
+    name: "elements",
+    bridge: "global",
+    setup: `(async () => {
+      __t.rust('graphium://settings', ${JSON.stringify(SETTINGS)});
+      __t.rust('graphium://state', ${JSON.stringify({
+        diagrams: [diagram("d-1")],
+        sessions: SESSIONS,
+        clones: [],
+      })});
+      await __t.settle();
+      __t.rust('graphium://render', ${JSON.stringify({
+        req_id: "r-elem",
+        diagram_id: "d-1",
+        session_id: "s1",
+        elements: edgeScene(),
+        placement: { x: 100, y: 100 },
+        camera: { tx: 0, ty: 0, zoom: 1 },
+      })});
+      await __t.wait(220);
+    })()`,
+    steps: [
+      {
+        id: ["C45"],
+        name: "the pointer over a node highlights it with the class of the drawing",
+        js: `(async () => {
+          const content = __t.byId('d-1').querySelector('.content');
+          const node = content.querySelector('[data-element="g-a"]');
+          __t.expect(node !== null, 'the node is not an element of its own');
+          __t.expect(node.getAttribute('role') === 'button', 'the element is not a button: ' + node.getAttribute('role'));
+          __t.expect(node.getAttribute('tabindex') === '0', 'the element is not reachable with the keyboard');
+          __t.expect(node.getAttribute('aria-label') === 'a', 'the element has no name: ' + node.getAttribute('aria-label'));
+          const plain = node.getAttribute('class');
+          __t.expect(plain.indexOf('emphasis-highlight') === -1, 'the element was hot before the pointer: ' + plain);
+          node.dispatchEvent(new PointerEvent('pointerenter'));
+          await __t.settle();
+          const hot = node.getAttribute('class');
+          const label = content.querySelector('text').getAttribute('class');
+          __t.expect(hot.indexOf('emphasis-highlight') !== -1, 'no highlight under the pointer: ' + hot);
+          __t.expect(label.indexOf('emphasis-highlight-text') !== -1, 'the label did not follow the highlight: ' + label);
+          node.dispatchEvent(new PointerEvent('pointerleave'));
+          await __t.settle();
+          const after = node.getAttribute('class');
+          __t.expect(after === plain, 'the highlight survived the pointer: ' + after);
+          return { role: node.getAttribute('role'), tabindex: node.getAttribute('tabindex'), plain, hot };
+        })()`,
+      },
+      {
+        id: ["C45"],
+        name: "a click selects one element at a time; the focus highlights and Enter selects",
+        js: `(async () => {
+          const content = () => __t.byId('d-1').querySelector('.content');
+          const node = () => content().querySelector('[data-element="g-a"]');
+          const edge = () => content().querySelector('[data-element="m-a-b"]');
+          const other = () => content().querySelector('[data-element="g-b"]');
+          const classes = (element) => element.getAttribute('class');
+          __t.click(node());
+          await __t.settle();
+          __t.expect(node().getAttribute('aria-pressed') === 'true', 'the click did not select the node');
+          __t.expect(classes(node()).indexOf('emphasis-highlight') !== -1, 'the selection is not painted');
+          __t.click(edge());
+          await __t.settle();
+          __t.expect(edge().getAttribute('aria-pressed') === 'true', 'the edge of the drawing was not selected');
+          __t.expect(node().getAttribute('aria-pressed') === 'false', 'two elements are selected at once');
+          other().focus();
+          await __t.settle();
+          __t.expect(classes(other()).indexOf('emphasis-highlight') !== -1, 'the focus does not highlight: ' + classes(other()));
+          const consumed = __t.key('Enter', other());
+          await __t.settle();
+          __t.expect(other().getAttribute('aria-pressed') === 'true', 'Enter did not select the element');
+          __t.expect(edge().getAttribute('aria-pressed') === 'false', 'the previous selection survived the keyboard');
+          return { node: node().getAttribute('aria-pressed'), edge: edge().getAttribute('aria-pressed'), other: other().getAttribute('aria-pressed'), consumed };
+        })()`,
+      },
+      {
+        id: ["C46"],
+        name: "a spanned event yields a bar with the numbers of the scene",
+        js: `(async () => {
+          __t.rust('graphium://render', ${JSON.stringify({
+            req_id: "r-bar",
+            diagram_id: "d-bar",
+            session_id: "s1",
+            elements: timelineScene(),
+            placement: { x: 100, y: 100 },
+            camera: { tx: 0, ty: 0, zoom: 1 },
+          })});
+          await __t.wait(220);
+          const object = __t.byId('d-bar');
+          __t.expect(object !== null, 'the timeline did not mount');
+          const content = object.querySelector('.content');
+          const bars = content.querySelectorAll('rect.accent');
+          __t.expect(bars.length === 1, 'bars mounted: ' + bars.length);
+          const numbers = ['x', 'y', 'width', 'height'].map((name) => Number(bars[0].getAttribute(name)));
+          __t.expect(numbers.join(',') === '301,73.75,116,5', 'the bar is not the geometry of the scene: ' + numbers.join(','));
+          const point = content.querySelector('[data-element="g-event-0"]');
+          __t.expect(point !== null, 'the point in time did not mount');
+          __t.expect(point.nextElementSibling === null || point.nextElementSibling.getAttribute('class') !== 'accent', 'a point in time carries a bar');
+          return { bars: bars.length, numbers };
         })()`,
       },
     ],

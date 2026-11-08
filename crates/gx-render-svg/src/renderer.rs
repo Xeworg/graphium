@@ -739,6 +739,11 @@ fn write_lane_band(out: &mut String, group: &LayoutGroup) {
 }
 
 /// Draws one event of a timeline: a box with its label, inside its lane.
+///
+/// An event that lasts is also a bar (`f11-elementos.md`, T4/D): the lanes
+/// engine already sizes its box from `IrEvent.span`, so the box is the length
+/// of the bar and the drawing only had to say it. The numbers come from
+/// [`geometry::event_bar`], the same rectangle the scene carries (S5).
 fn write_event(out: &mut String, event: &IrEvent, placed: &NodeBox) {
     let rect = node_rect(placed);
     let id = escape_text(&node_id(&event.id));
@@ -749,6 +754,15 @@ fn write_event(out: &mut String, event: &IrEvent, placed: &NodeBox) {
         &rect,
         Some(TOKENS.corner_radius),
     );
+    if let Some(bar) = geometry::event_bar(&rect, event.span) {
+        out.push_str(&format!(
+            "<rect class=\"accent\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>\n",
+            fmt_num(bar.x),
+            fmt_num(bar.y),
+            fmt_num(bar.w),
+            fmt_num(bar.h),
+        ));
+    }
     write_centered_text(out, "node-text text", &event.label, placed);
 }
 

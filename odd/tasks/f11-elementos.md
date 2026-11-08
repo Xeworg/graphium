@@ -530,3 +530,192 @@ plus the owner directive of 2026-11-08.
   not a child of the owner, so the ±5 MB band stays unmeasurable), and nothing
   else. The merge of `feature/f11-elementos` into `staging` remains the
   owner's decision.
+- L10 (2026-11-09, worker/T4-D): the drawing is a set of elements — you can
+  touch them, step through their history and read a duration. The closing task
+  of the feature, in the three pieces the task line names.
+
+  **1. Interaction per element, callback props, no dispatcher.** Every node,
+  event and edge of the mounted scene is its own element of the page: `role`
+  `button`, one tab stop, `aria-label` from the drawing's own label (an edge
+  says `<from> → <to>`), `aria-pressed` for the selection, and the pointer
+  hover, the focus and the click/tap surface through **three callback props**
+  (`onhover`/`onfocus`/`onselect`, `(owner, id)`) that `App.svelte` hands down
+  unchanged. The page holds the state: `hoveredElement` and `focusedElement`
+  (one for the whole plan — a pointer is one and a focus is one, `{recId,id}`)
+  and `rec.selectedElement` (per drawing, so a drawing that leaves the plan
+  takes its selection with it). The visual answer is the **existing** class of
+  the drawing: `emphasis-highlight` on the shape and `emphasis-highlight-text`
+  on its labels, never a colour and never a second class — `src/app.css` gains
+  only `cursor`, the `:focus-visible` ring in `var(--accent)`, and
+  `pointer-events: none` for the labels and the two decoration paths (rim and
+  fold), which is what makes the whole box one hit target instead of a ring
+  around its own text. The owners come first in the callbacks because a clone
+  and its original draw the same element ids. The three functions are declared
+  once and passed unchanged: a stable function is a prop that never changes, so
+  a pointer crossing a 900-element drawing updates two class attributes and
+  nothing else (the first cut passed per-record arrow functions — a new
+  identity per hover change, which re-created the props of every element).
+  Bands are deliberately **not** interactive: a container is the background its
+  nodes are read on, and selecting one is a different feature. An edge is hit
+  on its stroke, so a 1 px line asks for a steady hand — the honest limit of
+  "the line is the element" (see the proposals).
+
+  **2. The version step morphs.** `←`/`→` (and the `◀`/`▶` of the panel) paint
+  a version the page already drew **from a cache on the object** (`rec.versions`,
+  a plain `Map` outside reactivity) instead of asking Rust: no
+  `graphium://version-view`, no render. The cache keeps the last
+  `VERSION_CACHE_LIMIT = 8` versions of the object (re-inserting on use, so the
+  oldest visit is the one that leaves), it is **emptied when the live drawing
+  comes back** (`viewVersion` at `current_version`, the only place the restore
+  happens) and it **dies with the object**: a re-render replaces the record
+  (C19) and a state drop removes it (C18), so a version of a closed diagram is
+  not kept anywhere. The morph itself is the shape the painter already had:
+  `DiagramScene` and its children are keyed by the id of the drawing, so a new
+  version payload moves the elements that changed and leaves the rest mounted —
+  the probe holds the `<svg class="graphium">` **and** the DOM node of a node no
+  version touches across a step and finds them identical. `applyVersionPaint`
+  now caches **before** deciding whether the answer is still the one the human
+  asked for: a version stepped through fast is exactly the one he may step back
+  to.
+
+  **3. Gantt bars, through the shared plan.** `IrEvent.span` reached the paint
+  as nothing: the lanes engine sized the event box from the span (`gx-layout`,
+  `event_size`, `span.end > span.start` summed into columns) and the renderer
+  drew that box exactly like a point in time. The geometry is now decided
+  **once** in `gx-render-svg/src/geometry.rs` — `event_bar(rect, span)` is a
+  band along the bottom of the measured box, inset by the border,
+  `EVENT_BAR_HEIGHT = 5.0` high, and `None` for a point in time under the very
+  predicate the layout uses — the SVG emitter writes it, the scene builder
+  carries the four numbers in the new `SceneEvent.bar`, and the painter draws
+  the rectangle it was given (`glyph.js` only rounds it; S5: numbers, not
+  paths). The class is `accent`, which the export's `<style>` block and
+  `src/app.css` already resolve, so **no style rule was added and no golden of
+  a document without a span changed**.
+
+  **The goldens were regenerated on purpose — the only time in this feature.**
+  `UPDATE_GOLDEN=1` (and `UPDATE_SCENES=1` for the committed scene) touched
+  exactly one of the 15 documents: `timeline-roadmap` **2931 → 3078 bytes**
+  (+147), two `<rect class="accent" x="301.00" y="73.75" width="116.00"
+  height="5.00"/>` and the same pair at 601/183.75, one under each event that
+  declares an `end`, plus the `bar` numbers of those two events in
+  `crates/gx-app/tests/golden-scenes/timeline-roadmap.json`. `git status` shows
+  those two files and nothing else under `crates/gx-app/tests/`. The export
+  path itself (S2) did not change: same emitter, same plan, one more rectangle
+  for a kind that has a duration.
+
+  **RED, then GREEN, observed.**
+
+  - *Bars, Rust.* Three behaviour tests written first: the emitter writes a bar
+    for the spanned event and none for the point, the scene carries the same
+    four numbers as the JSON of the event, and `event_bar` is the frozen
+    constant and the layout's own predicate. `cargo test -p gx-render-svg`:
+    **52 passed, 3 failed** — "one bar: the event with a span / left: 0, right:
+    1", "la barra de un evento con tramo viaja como números (S5)" and "la barra
+    del SVG". After the implementation: **0 failed**, and the golden gate then
+    named the intended change by itself ("timeline-roadmap: the drawing changed
+    (3078 bytes now, 2931 in the golden)", hash `2acb59d6…` vs `d34626e0…`)
+    before the regeneration.
+  - *Interaction and morph, in the browser harness.* Six probes written before
+    the painter half and run against **the base bundle** (a copy of
+    `1a9bdb2`'s frontend built in `/tmp`: same Chromium, same fake bridge, the
+    **new** `tools/parity.mjs`): **59/64, exit 1**, with the five red ones the
+    task exists for — "a version already visited asked Rust again: 3",
+    "walking to the live drawing emitted: 3", "the node is not an element of
+    its own", "click: no element null", "bars mounted: 0". (The sixth, "a
+    re-render replaces the object and its cache with it", holds on the base by
+    construction — with no cache every step asks — and is the PRESERVE guard of
+    the eviction rule, not a RED case.) Against the delivered bundle:
+    **64/64, exit 0**, twice (before and after the stable-callback refactor).
+  - *Bars, painter side, same differential.* The new `tools/equivalence.mjs`
+    (with the fourth decision of its header) and the regenerated golden pair
+    against the **base** painter: **14/15, exit 1**, the only failure
+    `timeline-roadmap` with `children.length: 10 (golden) vs 8 (scene)` — the
+    two bars, and nothing else, which is also the proof that the interaction
+    attributes the probe now drops do not hide any other difference. Against
+    the delivered bundle: **15/15, exit 0**.
+
+  **The S8 gate grew a fourth decision, written in its header.** An exported
+  file has no pointer and no keyboard: `role`, `tabindex`, `aria-*` and the
+  `data-element` hook are painter-only. The canonicalizer drops them on both
+  sides and counts them (the report now reads `interaction attributes 0/15` for
+  `er-posts`, `0/20` for `timeline-roadmap`), exactly like the `<style>` block
+  of the export. A **class** is not one of them: a probe that mounted a
+  selected scene would still fail, on purpose. CONTRACT.md §8 keeps the parity
+  checklist and gained the three rows of this task (C44 the morph, C45 the
+  interaction, C46 the bar), §9's T3/C paragraph now says *four* decisions, and
+  a "what T4/D delivered" paragraph closes the section. No wire message, no
+  payload field outside the scene, no new panel.
+
+  **Gates, all fresh, real exit codes.** `npm run build` **0** (102.25 kB JS,
+  +8.4 kB: ~3.3 kB of it is Svelte's generic attribute-spread runtime, measured
+  by building the same components with the eleven attributes repeated on each
+  of the five shape branches — 98.98 kB — and kept the single definition on
+  purpose: one place to audit the a11y contract, no wrapper `<g>` the export
+  does not have); `node tools/equivalence.mjs` → `15/15 golden documents`,
+  **0**; `node tools/parity.mjs` → `64/64 probes passed`, **0** (the 58 of
+  L8/9 untouched and green, six new); `touch crates/gx-app/build.rs && cargo
+  build -p gx-app` **0**; `DISPLAY=:0 scripts/smoke.sh` →
+  `diagram=d-0001 rendered=true reason=none`, **0**; `cargo test --workspace`
+  → 38 suites, **733 passed, 0 failed**, **0** (the byte-exact goldens and the
+  `the_committed_scenes_match_the_drawing` freshness gate among them);
+  `cargo fmt --check` **0**; `cargo clippy --workspace` **0**, no warning.
+
+  **Specs.** Covers S5 (the bar is numbers in the payload — the painter draws
+  the rectangle it is given, and the geometry lives once, in `geometry.rs`), S3
+  (same ids, same classes; the interaction adds attributes and no vocabulary)
+  and S7 (the culling is untouched: still ≤3 live scenes, same funnel). S1/S2
+  keep their meaning: the runtime is the scene alone, the export is bytes on
+  disk, and the only byte change is the bar of a kind that has a duration. S4
+  is untouched — the bar comes from the box the layout measured, the JS neither
+  measures nor recomputes it. S8 is the gate that says all of it: 15/15 on the
+  regenerated pair.
+
+  **One surface deviation, for the same reason as L9.**
+  `crates/gx-mcp/src/test_support.rs` (outside this task's list) builds a
+  `SceneEvent` by hand, so the new `bar` field broke it; the stub now mirrors
+  `event_bar` the way it already mirrors `scene_tokens`, with the same comment:
+  `gx-mcp` cannot depend on `gx-render-svg` (PRD §9.1) and the double is
+  test-only. Four lines, declared for the controller.
+
+  **Proposed, not built.**
+  (a) *Ship the version scenes upfront*: the page could hold the whole history
+  of a diagram (or ask Rust for a batch of `k` scenes) and never ask again.
+  Cost: a scene is the size of the live one — 114 625 B for the `chain(300)`
+  fixture of L4 — so a 7-version history is ~800 kB of JSON per diagram on
+  every render/state event, and even `timeline-roadmap` would carry ~21 kB.
+  It needs a new wire field (CONTRACT §5) and a "which versions" policy in
+  Rust; ~1 line in `app.rs` per version, ~40 in the painter, and the cache of
+  this task becomes the fallback. Not worth it for the revisit case, which is
+  what `←`/`→` does in practice.
+  (b) *A composite keyboard widget*: today every element is a tab stop, so a
+  300-node drawing is 900 of them. The standard shape is a roving `tabindex`
+  (one stop per drawing) plus a navigation key inside it — but `←`/`→` are the
+  history and `↑`/`↓` would have to be claimed, so it is a UX decision, not a
+  refactor: ~1 constant + ~30 lines in `DiagramScene`, and it changes what the
+  page's keyboard does.
+  (c) *A wider edge hit area*: `pointer-events: bounding-box` on the polyline
+  (one CSS line) or an invisible `stroke-width: 8` twin; the first makes a long
+  diagonal hover over empty space, the second adds a node the export does not
+  draw. Not obviously better than "the line is the element".
+  (d) *The same cache for the history inside a clone*: the mechanism is the
+  record's, so it is small (~15 lines), but `snapshot_version` moves the
+  clone's own rectangle and the rule of what a photo means has to be re-read
+  (`view_clone`), so it is a task, not a patch.
+  (e) *Interactive bands*: containers and lanes as elements of their own (the
+  members are already in the scene and the id is already `cluster-`/`lane-`).
+  (f) *A discovered defect, not touched*: the export's `<style>` block has no
+  `.cardinality` rule (`write_style` lists 20 selectors and the crow's foot is
+  not one of them), so a standalone ER export paints its crow's feet with the
+  browser default — black — while the window paints them with `.cardinality`
+  from `src/app.css`. One line in `write_style` plus the `er-posts` golden
+  regenerated; it is a pre-existing export bug and belongs to its own task, not
+  to the bars.
+
+  **Risks.** The tab order of a big drawing is long (proposal b); the hover of
+  a 900-element scene was not measured after the stable-callback fix (the
+  probe proves the behaviour, not the cost); and the base bundle and logs of
+  the RED runs live in `/tmp` (`f11-t4d-base-JjWd`, `f11-t4d-base-path.txt`,
+  `parity-red.txt`, `equiv-red.txt`, `g*.txt`), left for the parent to remove —
+  `rm` is blocked in the worker. Nothing of that is inside the worktree:
+  `git status --short` lists the source files of this delivery and this log
+  entry, and no cache or scratch path of any tool.

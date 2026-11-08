@@ -90,6 +90,19 @@
   // they are hidden (C35, C36).
   let banner = $state(null);
   let ghost = $state(null);
+  // The element of a drawing the pointer is over and the one that holds the
+  // keyboard focus (`f11-elementos.md`, T4/D): `{ recId, id }` or `null`, one
+  // for the whole plan — a pointer is one and the focus is one. The selection
+  // is per drawing and lives on the record (`rec.selectedElement`), because a
+  // drawing that leaves the plan takes its selection with it.
+  let hoveredElement = $state(null);
+  let focusedElement = $state(null);
+
+  // How many versions of the history the page keeps for one object (T4/D).
+  // The cache is what makes a step of `←`/`→` a morph instead of a round trip:
+  // a version already seen paints from here, and the bound keeps a plan that
+  // walks a long history from growing without end.
+  const VERSION_CACHE_LIMIT = 8;
 
   // --- machinery outside reactivity ----------------------------------------
 
@@ -228,6 +241,16 @@
       // The scene of the version the human is browsing, while it lasts
       // (C27): the painter mounts this one, not the live drawing under it.
       previewScene: null,
+      // The element of the drawing the human chose (`f11-elementos.md`, T4/D):
+      // `g-<id>` / `m-<from>-<to>`, or `null`. It is what the highlight paints
+      // and what dies with the object.
+      selectedElement: null,
+      // The versions of the history this object already drew, by version
+      // number (T4/D). A plain `Map` on purpose: it is written and read from
+      // the handlers of the history, never from the template, so it needs no
+      // reactivity; it is cleared when the live drawing comes back and it is
+      // dropped with the record when the object leaves the plan.
+      versions: new Map(),
       // The entry of the clone this object is, as the owner states it (B1;
       // plan.js:1690): the tools pill reads its counts from here.
       cloneState: null,
@@ -242,6 +265,14 @@
     const index = plane.findIndex((rec) => rec.id === id);
     if (index !== -1) {
       plane.splice(index, 1);
+    }
+    // The pointer and the focus of a drawing that left are gone with it
+    // (`f11-elementos.md`, T4/D): nothing remembers an element nobody paints.
+    if (hoveredElement !== null && hoveredElement.recId === id) {
+      hoveredElement = null;
+    }
+    if (focusedElement !== null && focusedElement.recId === id) {
+      focusedElement = null;
     }
   }
 
@@ -961,26 +992,71 @@
   // --- history of versions (plan.js:1008-1150) --------------------------------
 
   /**
+   * The element of a drawing the pointer walked into, or `null` when it left
+   * one (`f11-elementos.md`, T4/D).
+   *
+   * One function for the whole page on purpose: the scene components receive
+   * it as a prop and a stable function is a prop that never changes, so a
+   * pointer moving over a drawing updates the two elements that lost and won
+   * the highlight and nothing else. The owner id comes first because a clone
+   * and its original draw the same element ids.
+   */
+  function elementHovered(ownerId, id) {
+    hoveredElement = id === null ? null : { recId: ownerId, id };
+  }
+
+  /** The element of a drawing that took the keyboard focus (`f11-elementos.md`, T4/D). */
+  function elementFocused(ownerId, id) {
+    focusedElement = id === null ? null : { recId: ownerId, id };
+  }
+
+  /** The element of a drawing the human clicked or chose with Enter (`f11-elementos.md`, T4/D). */
+  function elementSelected(ownerId, id) {
+    const rec = findRecord(ownerId);
+    if (rec !== null) {
+      rec.selectedElement = id;
+    }
+  }
+
+  /**
    * Asks Rust to draw one version of the history on the plan (RF14, L5).
    * Read-only on purpose: the object never moves, and walking back to the
    * newest version restores the live drawing the page already holds — without
    * a render at all (C26).
+   *
+   * A version the page already drew does not ask Rust again (`f11-elementos.md`,
+   * T4/D): the scene is in the cache of the object and the painter mounts it,
+   * so a step back to a visited version is a morph of the drawing already on
+   * screen — the components are keyed by the id of the drawing and only what
+   * changed changes. Walking to the live version empties the cache: the live
+   * drawing is the truth again, and the versions are asked for again if the
+   * human goes back.
    */
   function viewVersion(diagram, version) {
     const target = Math.min(
       diagram.current_version,
       Math.max(diagram.oldest_version, version),
     );
+    const rec = findRecord(diagram.diagram_id);
     if (target === diagram.current_version) {
       delete viewedVersion[diagram.diagram_id];
-      restoreLive(findRecord(diagram.diagram_id));
-    } else {
-      viewedVersion[diagram.diagram_id] = target;
-      emit(EVENTS.versionView, {
-        diagram_id: diagram.diagram_id,
-        version: target,
-      });
+      if (rec) {
+        rec.versions.clear();
+      }
+      restoreLive(rec);
+      return;
     }
+    viewedVersion[diagram.diagram_id] = target;
+    const cached = rec === null ? undefined : rec.versions.get(target);
+    if (cached !== undefined) {
+      // A version already visited: no `versionView`, no render in Rust.
+      paintPreview(rec, cached);
+      return;
+    }
+    emit(EVENTS.versionView, {
+      diagram_id: diagram.diagram_id,
+      version: target,
+    });
   }
 
   /** One step of the history, from the version in view (plan.js:1024-1028). */
@@ -1038,12 +1114,6 @@
       // The diagram closed while the render of the preview ran.
       return;
     }
-    // Only the version the human still asked for paints: walking fast through
-    // the history must not leave an older answer under a newer one.
-    const viewed = viewedVersion[payload.diagram_id];
-    if (viewed === undefined || viewed !== Number(payload.version)) {
-      return;
-    }
     // The version of the history arrives as the drawing of its day: the same
     // scene the live render carries (`f11-elementos.md` T3/C relays it), and a
     // payload the painter cannot mount leaves the object as it is.
@@ -1051,7 +1121,38 @@
     if (scene === null) {
       return;
     }
+    // The answer is kept even when the human has already walked past it: the
+    // version he stepped through is exactly the one he may step back to, and
+    // the cache is what makes that step free (T4/D).
+    rememberVersion(rec, Number(payload.version), scene);
+    // Only the version the human still asked for paints: walking fast through
+    // the history must not leave an older answer under a newer one.
+    const viewed = viewedVersion[payload.diagram_id];
+    if (viewed === undefined || viewed !== Number(payload.version)) {
+      return;
+    }
     paintPreview(rec, scene);
+  }
+
+  /**
+   * Keeps the scene of a version of the history, newest last and bounded
+   * (`f11-elementos.md`, T4/D): a plan that walks a long history keeps the
+   * `VERSION_CACHE_LIMIT` versions it visited most recently and asks Rust for
+   * the rest, so the cache can never grow with the history of a document.
+   */
+  function rememberVersion(rec, version, scene) {
+    if (!Number.isFinite(version) || version <= 0) {
+      return;
+    }
+    const cache = rec.versions;
+    // Re-inserted, so the map is ordered by how recently a version was asked
+    // for: the first key is the one that leaves when the bound is crossed.
+    cache.delete(version);
+    cache.set(version, scene);
+    while (cache.size > VERSION_CACHE_LIMIT) {
+      const oldest = cache.keys().next().value;
+      cache.delete(oldest);
+    }
   }
 
   // --- clones of the user plan (plan.js:1510-1877) ----------------------------
@@ -1564,9 +1665,26 @@
                of the drawing (`f11-elementos.md` T2) mounts as keyed elements,
                and it is the only shape: the `{@html}` branch of the string era
                died with the flip of T3/C. It lives on the culling flag of
-               `drawingInView`. -->
+               `drawingInView`. The interaction of T4/D rides on the same
+               block: the selection is the record's (a drawing takes its
+               element with it when it leaves), the hover and the focus are the
+               page's — a pointer is one and the focus is one —, and the three
+               callbacks are the same functions for every drawing. -->
           {#if drawing !== null}
-            <DiagramScene scene={drawing} />
+            <DiagramScene
+              scene={drawing}
+              owner={rec.id}
+              selected={rec.selectedElement}
+              hovered={hoveredElement !== null && hoveredElement.recId === rec.id
+                ? hoveredElement.id
+                : null}
+              focused={focusedElement !== null && focusedElement.recId === rec.id
+                ? focusedElement.id
+                : null}
+              onhover={elementHovered}
+              onfocus={elementFocused}
+              onselect={elementSelected}
+            />
           {/if}
           {#if rec.kind === "diagram"}
             <!-- The `×` of the object (PRD §7 RF28): it shows up when the

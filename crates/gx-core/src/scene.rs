@@ -257,6 +257,15 @@ pub struct SceneEvent {
     /// Size of the measured box: the lanes engine measures it, the JS never
     /// does (S4).
     pub size: Size,
+    /// The bar of an event that lasts, as numbers (`f11-elementos.md`, T4/D).
+    ///
+    /// It is a band along the bottom of [`size`](Self::size): the layout
+    /// already sized the box from the span, so the box is the length of the bar
+    /// and the painter only has to draw the rectangle it is given. Absent for a
+    /// point in time — a span with equal or reversed ends is one, the rule the
+    /// layout applies.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bar: Option<Rect>,
 }
 
 #[cfg(test)]

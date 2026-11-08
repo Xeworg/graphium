@@ -13,6 +13,7 @@
 //! foot with the same size the exporter uses and the payload never carries a
 //! path.
 
+use gx_core::ir::Span;
 use gx_core::{
     fmt_num, Emphasis, IrEdge, IrEvent, IrGraph, IrNode, IrRow, LayoutEdge, LayoutGraph,
     LayoutGroup, LayoutHint, NodeBox, Point, Rect, RowKey, Shape, TOKENS,
@@ -39,6 +40,42 @@ pub(crate) const CROW_FOOT: f64 = 22.0;
 pub(crate) const CROW_FOOT_SPREAD: f64 = 0.85;
 /// Horizontal space reserved for the `PK` / `FK` badge of a row.
 pub(crate) const BADGE_WIDTH: f64 = 26.0;
+/// Height of the bar of an event that lasts, in plan units (`f11-elementos.md`,
+/// T4/D). It is a band, not a second box: it says "this event covers a stretch
+/// of time" without competing with the label inside the box.
+pub(crate) const EVENT_BAR_HEIGHT: f64 = 5.0;
+
+/// The bar of an event that lasts, when it lasts (`f11-elementos.md`, T4/D).
+///
+/// The lanes engine already reads [`IrEvent::span`] when it measures the event
+/// (`gx-layout`, `event_size`): a stretch of `n` columns asks for a box `n`
+/// columns wide, so **the measured box is the length of the bar**. What the
+/// drawing was missing was the mark — a point in time and a stretch of time
+/// were drawn exactly the same — and it is a band along the bottom of that box,
+/// inset by the border so it reads inside the shape.
+///
+/// The numbers are the numbers: the exported markup writes this rectangle and
+/// the scene carries it (S5), so the payload never ships a path and the painter
+/// never recomputes one.
+///
+/// A span whose ends are equal, or reversed, is a point in time: that is the
+/// rule the layout applies when it sizes the event (`span.end > span.start`),
+/// and the drawing repeats it instead of inventing a second one.
+pub(crate) fn event_bar(rect: &Rect, span: Option<Span>) -> Option<Rect> {
+    let span = span?;
+    // The rule of the layout, repeated: `end > start` and nothing else.
+    let lasts = span.end > span.start;
+    if !lasts {
+        return None;
+    }
+    let inset = TOKENS.border_width;
+    Some(Rect::new(
+        rect.x + inset,
+        rect.max_y() - inset - EVENT_BAR_HEIGHT,
+        (rect.w - 2.0 * inset).max(0.0),
+        EVENT_BAR_HEIGHT,
+    ))
+}
 
 /// The plan rectangle the root element covers.
 pub(crate) fn canvas_rect(layout: &LayoutGraph) -> Rect {
@@ -407,9 +444,10 @@ pub(crate) fn points_text(points: &[Point]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        centered_baselines, crow_foot_mark, direction_at, label_lines, node_rect, CrowFoot,
-        CROW_FOOT, CROW_FOOT_SPREAD,
+        centered_baselines, crow_foot_mark, direction_at, event_bar, label_lines, node_rect,
+        CrowFoot, CROW_FOOT, CROW_FOOT_SPREAD, EVENT_BAR_HEIGHT,
     };
+    use gx_core::ir::Span;
     use gx_core::{LayoutEdge, NodeBox, Point, Rect, Size, TOKENS};
 
     /// S4: the lines of a label are the ones the `\n` already marks; the JS
@@ -447,6 +485,56 @@ mod tests {
             size: Size::new(100.0, 40.0),
         };
         assert_eq!(node_rect(&placed), Rect::new(0.0, 10.0, 100.0, 40.0));
+    }
+
+    /// T4/D: the bar of an event that lasts. The measured box is the length of
+    /// the bar (the layout sized it from the span), the band sits at the bottom
+    /// inside the border, and a point in time has no bar at all.
+    #[test]
+    fn the_bar_of_an_event_is_a_band_on_the_bottom_of_its_measured_box() {
+        let rect = Rect::new(175.0, 48.0, 250.0, 44.0);
+        let bar = event_bar(
+            &rect,
+            Some(Span {
+                start: 1.0,
+                end: 4.0,
+            }),
+        )
+        .expect("a stretch of time is a bar");
+        let inset = TOKENS.border_width;
+        assert_eq!(bar.x, rect.x + inset, "inset by the border, left");
+        assert_eq!(
+            bar.max_y(),
+            rect.max_y() - inset,
+            "inset by the border, bottom"
+        );
+        assert_eq!(bar.h, EVENT_BAR_HEIGHT, "the frozen height of the band");
+        assert_eq!(bar.w, rect.w - 2.0 * inset, "the length of the box");
+
+        // A point in time: no span, the same ends, or ends in the wrong order.
+        assert_eq!(event_bar(&rect, None), None);
+        assert_eq!(
+            event_bar(
+                &rect,
+                Some(Span {
+                    start: 3.0,
+                    end: 3.0
+                })
+            ),
+            None,
+            "a span of zero columns is a point"
+        );
+        assert_eq!(
+            event_bar(
+                &rect,
+                Some(Span {
+                    start: 4.0,
+                    end: 1.0
+                })
+            ),
+            None,
+            "the layout reads a reversed span as a point too"
+        );
     }
 
     /// S5: the crow's foot opens towards the table — the ankle away from it, the
