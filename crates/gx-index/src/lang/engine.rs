@@ -31,7 +31,7 @@
 use tree_sitter::{Language, Node};
 
 use super::emit::{anchor_symbol, chapter_anchor_name, emit, file_stem, prefix_of};
-use super::model::{content_hash, ExtractError, ParsedFile, ParsedSymbol};
+use super::model::{content_hash, ExtractError, ParsedFile, ParsedSymbol, ParsedTable};
 use crate::relations::{attach, RawEdge};
 
 /// One grammar of the book: the data the shared core needs to turn a file of
@@ -65,7 +65,17 @@ pub struct Grammar {
     pub builtins: &'static [&'static str],
     /// The relations of one chapter, as the grammar reads them.
     pub relations: fn(&Node, &[u8]) -> Vec<RawEdge>,
+    /// The detail the grammar reads **beside** its declarations (S3, S4 of
+    /// f12): SQL's columns, which are not symbols and never reach the schema.
+    /// `None` for every language whose book is its declarations and relations
+    /// only, so a chapter of those languages is exactly what it always was.
+    pub detail: Option<Detail>,
 }
+
+/// What a grammar reads beside its declarations: the tables of a SQL chapter
+/// with their columns and keys ([`ParsedTable`]). It is data of the language,
+/// so the pipeline calls it without knowing which language asked.
+pub type Detail = fn(&Node, &[u8]) -> Vec<ParsedTable>;
 
 impl Grammar {
     /// Parses one file into the pruned chapter of the book.
@@ -294,6 +304,11 @@ fn extract(
     let anchor = anchor_symbol(&module, &grammar.anchor.name(path, &module));
     let edges = attach(raw, &mut symbols, anchor);
 
+    // The detail a grammar reads beside its symbols (S3, S4 of f12): SQL's
+    // columns. It is carried on the chapter and nowhere else — the schema has
+    // no table for it, so a column never becomes a `symbol` or an `edge` row.
+    let tables = grammar.detail.map(|detail| detail(&root, bytes));
+
     Ok(ParsedFile {
         path: path.to_string(),
         lang: grammar.lang,
@@ -302,6 +317,7 @@ fn extract(
         mtime_ns,
         symbols,
         edges,
+        tables,
     })
 }
 

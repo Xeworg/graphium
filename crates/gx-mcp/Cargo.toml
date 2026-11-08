@@ -20,9 +20,45 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 
 [features]
-default = ["lang-rust", "lang-typescript", "lang-python", "lang-go", "lang-java"]
+default = [
+  "lang-rust",
+  "lang-typescript",
+  "lang-python",
+  "lang-go",
+  "lang-java",
+  "lang-javascript",
+  "lang-c",
+  "lang-cpp",
+  "lang-csharp",
+  "lang-php",
+  "lang-ruby",
+  "lang-sql",
+  "lang-shell",
+  "lang-swift",
+  "lang-kotlin",
+  "lang-dart",
+  "lang-scala",
+  "lang-r",
+  "lang-lua",
+  "lang-zig",
+]
 lang-rust = ["gx-index/lang-rust"]
 lang-typescript = ["gx-index/lang-typescript"]
 lang-python = ["gx-index/lang-python"]
 lang-go = ["gx-index/lang-go"]
 lang-java = ["gx-index/lang-java"]
+lang-javascript = ["gx-index/lang-javascript"]
+lang-c = ["gx-index/lang-c"]
+lang-cpp = ["gx-index/lang-cpp"]
+lang-csharp = ["gx-index/lang-csharp"]
+lang-php = ["gx-index/lang-php"]
+lang-ruby = ["gx-index/lang-ruby"]
+lang-sql = ["gx-index/lang-sql"]
+lang-shell = ["gx-index/lang-shell"]
+lang-swift = ["gx-index/lang-swift"]
+lang-kotlin = ["gx-index/lang-kotlin"]
+lang-dart = ["gx-index/lang-dart"]
+lang-scala = ["gx-index/lang-scala"]
+lang-r = ["gx-index/lang-r"]
+lang-lua = ["gx-index/lang-lua"]
+lang-zig = ["gx-index/lang-zig"]
