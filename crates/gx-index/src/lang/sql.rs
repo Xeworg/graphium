@@ -63,7 +63,9 @@
 //! - a table-level `PRIMARY KEY (a, b)` arrives whole, so every column it names
 //!   is marked as a key and a composite key is carried as what it is. Mapping a
 //!   composite key onto a single-key document is a decision of the side that
-//!   builds the diagram (T2), not of this chapter;
+//!   builds the diagram (T2), not of this chapter: [`er_bridge`] draws both of
+//!   its columns as key rows and draws no relation that would point at the key
+//!   alone, because the `er` contract keys a relation on one column;
 //! - a *named* foreign key (`CONSTRAINT fk FOREIGN KEY …`) is not in the
 //!   grammar's rules at this version (its `_constraint_literal` admits only
 //!   `PRIMARY KEY` and `CHECK`), so it parses as an error node and the chapter
@@ -78,6 +80,15 @@
 //! - a `CREATE TABLE … AS SELECT` writes no column list, so it stays a `type`
 //!   of the chapter and is not an entry of the detail: the detail is what the
 //!   DDL writes between the parentheses.
+//!
+//! **The diagram side (S5, S6 of f12).** [`er_bridge`] turns this detail into
+//! the `er` document the engine door already renders — the first index→diagram
+//! path — with the inline and the table-level foreign keys as its relations.
+//! It is a producer over the detail, not a change of this chapter: the symbols
+//! and the relations of a SQL file are the same ones with the bridge or without
+//! it. That module documents the mapping and what it deliberately leaves
+//! undrawn (a target that is not a primary key, a composite key, a named
+//! `CONSTRAINT … FOREIGN KEY`).
 
 use tree_sitter::Node;
 
@@ -87,6 +98,15 @@ use crate::lang::model::{
     ParsedColumn, ParsedForeignKey, ParsedReference, ParsedSymbol, ParsedTable,
 };
 use crate::relations::{push_edges, RawEdge, USES};
+
+/// The bridge from this chapter's detail to an `er` document (S5, S6 of f12).
+///
+/// The file lives beside this chapter (`er_bridge.rs`) because it maps **the
+/// detail this module reads** and nothing else: the bridge is not a grammar,
+/// so it is not an entry of the list of [`crate::lang::registry`] — it is
+/// declared here, by the chapter that owns the shape it reads.
+#[path = "er_bridge.rs"]
+pub mod er_bridge;
 
 /// The language of the chapter, as the table `file` spells it.
 pub const LANGUAGE: &str = "sql";

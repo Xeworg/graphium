@@ -161,3 +161,100 @@ owner's opening of the feature on 2026-11-09.
   `gx_kinds::er::ErInput`, no renderer or frontend change, no `gx-kinds`
   change, no new wire message, no schema or schema-version change, no new edge
   kind, no serde derive.
+- L3 (2026-11-09, worker): T2 landed — the SQL detail now has a producer that
+  turns it into the `er` document the door already renders. **Placement
+  decision (the dependency direction).** `gx-index` is a leaf: `Cargo.toml`
+  lists `ignore`, `notify`, `rusqlite`, `serde`, `serde_json`, `sha2`,
+  `thiserror`, `tree-sitter` and the grammars, and **no crate of Graphium**,
+  while `gx-kinds` depends on `gx-core` and is consumed today only by `gx-mcp`
+  and `gx-app`. Making the book depend on the kinds would put the book above
+  the diagram kinds and drag the whole registry into every book user, so the
+  bridge does not build `gx_kinds::er::ErInput`: it writes **the JSON that
+  `ErInput` deserializes** (`er.rs:40-90`, `deny_unknown_fields` included) with
+  the `serde_json` the book already has, and the door's own kind parses,
+  validates and translates it exactly as it does an author's document. The SQL
+  chapter knows the DDL, `er.rs` knows rows and edges, and neither learns about
+  the other (S6: no new wire message, no CONTRACT payload change, no
+  `er.rs`-shaped type of our own to drift). The producer is
+  `crates/gx-index/src/lang/er_bridge.rs` (`document(&[ParsedTable]) ->
+  Option<Value>`, `document_json` for the text `render_json` takes); it is
+  declared from `sql.rs` with `#[path = "er_bridge.rs"] pub mod er_bridge;`
+  because `lang/mod.rs` was not among the delegated surfaces and the bridge is
+  not a grammar — it maps **the detail this chapter reads** and nothing else.
+  When `lang/mod.rs` is in somebody's surface, the declaration moves there one
+  line and the `#[path]` goes. **The mapping (the er contract is law,
+  `er.rs:245-260`).** A table with columns is a `tables[]` entry; its columns
+  are its rows. `key` is `pk` for a column the DDL marks as a key (inline or
+  table level), `fk` for a column the DDL declares as a foreign key (inline
+  `REFERENCES` or a member of a table-level `FOREIGN KEY`), `pk_fk` for both —
+  the vocabulary `key_of` maps to `RowKey` (`er.rs:100-110`). `nullable` is
+  `!not_null && !primary_key`: SQL's own rule is that a `PRIMARY KEY` implies
+  `NOT NULL`, so the detail keeps the declaration the DDL writes (S4) and the
+  diagram shows the fact of the schema; `er.rs:296-305` turns it into
+  `IrRow.nullable` and `er.rs:319-330` derives the optional end of the crow's
+  foot from it. `type` is the DDL's type when it writes one, which becomes
+  `IrRow.note` (`er.rs:296-305`). A relation is `from` the **referenced table's
+  single primary-key column** to `to` the **referencing column** — where
+  `er.rs` anchors the edge (`from_row`/`to_row`, `er.rs:311-318`) — and the
+  inline form and the table-level `FOREIGN KEY … REFERENCES` produce the same
+  relation; `cardinality` is left out on purpose, because `er.rs` derives it
+  and writing it would repeat what the document says. **What it refuses to
+  draw, and why** (the contract has no way to say it, and a document that says
+  it is rejected): a target that is not a primary key (`REFERENCES store
+  (name)`, the fixture's table-level key), a target table the detail does not
+  carry, a **composite** key (the contract keys a relation on one column, so
+  the key columns are `pk` rows and the relation that would point at them is
+  not drawn), and a composite foreign key (the contract is column to column).
+  The column keeps its `fk` row regardless, because that is what the DDL
+  declares. A table with no columns (`CREATE TABLE … AS SELECT`) is not drawn
+  as an empty compartment, and a detail with nothing to draw produces no
+  document at all. A named `CONSTRAINT fk FOREIGN KEY …` never reaches the
+  bridge — the pinned grammar makes it an error node (S3) and the detail
+  carries nothing for it. **RED→GREEN.** RED (1), the tests written first:
+  `cargo test -p gx-index --test sql_er_bridge` → exit 101, `error[E0432]:
+  unresolved import gx_index::lang::sql::er_bridge`. RED (2), with the module,
+  its `#[path]` declaration and a `document` that answers `None`: same command
+  → exit 101, 5 failed / 0 passed (panics at «the bridge builds an `er`
+  document», «the document of the chapter», «the tables with rows still
+  draw»). One correction on the way: the first version of the contract-refusal
+  fixture pointed at `country.code`, which **is** a primary key, so the
+  relation was legal and the fixture — not the bridge — was wrong; it now
+  carries the three real refusals (unknown table, non-key target, composite
+  key) and asserts no relation is drawn. RED (3), the last guard, test first:
+  same command → exit 101, «`shipment.ghost` is not a row of the table, so no
+  edge can anchor there: [("shipment", "id", "shipment", "ghost")]» — a
+  table-level key naming a column its own table does not have would have made
+  the door reject the document (`unknown_ref`), so the bridge now skips it.
+  GREEN: same command → exit 0, 6 passed. **Door evidence** (outside the crate, because `gx-index` may not
+  depend on `gx-kinds`/`gx-core`): a scratch package in
+  `/tmp/f12-t2-door-Hm1EUu` with path dependencies on `gx-core`, `gx-kinds`,
+  `gx-index`, `gx-layout` and `gx-render-svg` — `serde_json::from_str::<
+  ErInput>` accepted the document, `ErKind::validate` returned ok, `to_ir`
+  produced `store{id pk BIGINT/*not nullable*/, name VARCHAR(255), region
+  nullable}` and `shipment{id pk, store_id fk not nullable, code fk nullable,
+  label pk}`, and one `IrEdge` `store → shipment` with
+  `from_row=Some(0)`, `to_row=Some(1)`, `arrow=false`, cardinality
+  required-one / required-many (NOT NULL foreign key). The same text through
+  `gx_core::engine::render_json` rendered (`2 nodes, 1 edges, 4946 bytes`) and
+  the SVG names every table and every row — S6 with the door that already
+  exists. **Gates** (real exit codes): `cargo test -p gx-index` exit 0 (6 new
+  bridge tests; the four `sql_detail.rs` tests and the two `languages.rs` SQL
+  tests pass unchanged); `cargo test -p gx-kinds` exit 0 (97 passed);
+  `cargo test --workspace` exit 0, 0 failed (`frontend/dist` is built in this
+  worktree, so `gx-app` and its `golden_svg` ran — the `er-posts` golden is
+  byte-identical and `er.rs`'s author path is untouched); `cargo fmt --check`
+  exit 0; `cargo clippy --workspace` exit 0, no warning. Differential: the base
+  commit 6361f58 extracted with `git archive` into `/tmp/f12-t2-base-sE173T`
+  (no git state touched) and the change both run `cargo test -p gx-index --test
+  sql_detail --test languages` → 47 + 4 passed, 0 failed, exit 0, identical.
+  **Covered**: S5 (the bridge and the contract-safe skips), S6 (the document is
+  the existing `er` version-1 wire shape and it renders through the existing
+  door; no new message, no CONTRACT change), S7 (the two-table FK fixture test;
+  `er-posts` byte-identical; the two `languages.rs` SQL tests green, so columns
+  are still not declarations). **Deliberately not built**: no dependency from
+  `gx-index` on `gx-kinds`/`gx-core` and no `Cargo.toml` change, no engine,
+  model or registry change (the bridge is a producer over `ParsedFile::tables`,
+  it does not touch the pipeline), no MCP tool, CLI seam or frontend change
+  (T3's surface: where the owner meets the bridged document), no mapping of a
+  composite key or of a named `CONSTRAINT … FOREIGN KEY`, no `er.rs` change, no
+  schema or schema-version change, no serde derive.
