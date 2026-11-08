@@ -719,3 +719,33 @@ plus the owner directive of 2026-11-08.
   `rm` is blocked in the worker. Nothing of that is inside the worktree:
   `git status --short` lists the source files of this delivery and this log
   entry, and no cache or scratch path of any tool.
+- L11 (2026-11-09, orchestrator): T4/D verified independently and committed —
+  the feature's tasks (T1-T4) are complete.
+
+  **Verification.** The controller re-ran every gate on the delivered tree:
+  `npm run build` exit 0; `node tools/equivalence.mjs` → `15/15 golden
+  documents` exit 0 (four S8 axes in the header, the fourth being the new
+  painter-only interaction attributes); `node tools/parity.mjs` → `64/64
+  probes passed` exit 0; `cargo build -p gx-app` exit 0; `DISPLAY=:0
+  scripts/smoke.sh` → `rendered=true reason=none` exit 0; `cargo fmt --check`
+  exit 0; `cargo clippy --workspace` exit 0; `cargo test --workspace` 38
+  suites, 0 failed. The hunks were read: `SceneEvent.bar` is numbers-only
+  (`Option<Rect>`), emitter and scene read the same `geometry::event_bar`,
+  callbacks are stable module-scope `(owner, id)` props, the cache is a
+  per-record bounded `Map`, and the golden regeneration touched exactly the
+  one document the bars changed (timeline-roadmap svg + scene pair).
+  Commit: `639cc17`. Accepted surface deviation, same pattern as L9:
+  `crates/gx-mcp/src/test_support.rs` (test-only stub bar). The worker's
+  `/tmp` scratch was removed by the parent.
+
+  **Feature state.** S1-S8 done (S6 out by owner decision, L2). The runtime
+  drawing is the scene alone, it morphs in place under the history, its
+  elements answer hover/focus/selection, and events that last draw their
+  bars; the SVG string survives only as the export artifact, byte-pinned.
+  Remaining, none of it in-scope code: the steady-state memory check of L7
+  item (d) stays unmeasurable in this environment (the `WebKitWebProcess` is
+  not a child of the owner); the pre-existing export bug the worker found
+  (no `.cardinality` rule in `write_style`: standalone ER exports paint black
+  crow's feet) is its own future task, untouched here; and the merge of
+  `feature/f11-elementos` into `staging` — together with
+  `feature/mejoras-frontend` — is the owner's decision.
