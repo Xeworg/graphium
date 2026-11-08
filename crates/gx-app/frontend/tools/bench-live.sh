@@ -8,16 +8,35 @@
 #      each, after a warm-up call (so the numbers are the frontend's paint, not
 #      the webview's cold boot);
 #   3. steady-state memory while the large diagram is on screen: the summed
-#      `Pss` (proportional set size) of the owner and every process of its tree
-#      (`smaps_rollup`), twice.
+#      `Pss` (proportional set size) of the owner, every process of its tree and
+#      every WebKit process this launch brought up (`smaps_rollup`), twice.
 #
 # Why Pss and not RSS: WebKitGTK splits the window into several processes
 # (WebKitWebProcess, WebKitNetworkProcess, the GPU helper) and they share most
 # of the mapped libraries; summing RSS would count every shared page once per
 # process. Pss divides each shared mapping between its users, so the sum is the
-# physical footprint of the tree. Blind spots: pages shared with processes
-# outside the tree (another browser, the shell) are still divided as if only the
-# tree used them; and a helper that got reparented would be missed.
+# physical footprint of the launch. Blind spot: pages shared with processes
+# outside the set (another browser, the shell) are still divided as if only this
+# launch used them.
+#
+# Which processes are "the launch" — and why parenthood is not enough. The
+# helper that hosts the page is a child of the owner on most desktops, but not
+# on all of them: WebKitGTK may spawn it from a launcher that exits, and a
+# sandbox wrapper puts it out of reach of `pgrep -P`, so a walk of the owner's
+# descendant tree can miss the process that holds most of the drawing. The
+# helpers are therefore attributed by *time*: the WebKit-family PIDs on the
+# machine are snapshotted before the owner starts, and every one that appears
+# afterwards belongs to this launch. A helper whose environment names a
+# different `XDG_RUNTIME_DIR` is vetoed — that is another owner's window on this
+# machine — while a scrubbed environment (the sandbox case) is accepted, the
+# time window being then the only evidence available. The owner's descendant
+# tree stays in the set and the union is deduplicated, so where the helper *is*
+# a child this measures exactly what it measured before, plus nothing. The
+# snapshot-diff is the portable half; the parenthood half is the fallback.
+#
+# The output names what it sums: `pssKb` is the attributed total, `pssOwnerKb`
+# the owners, `pssWebKb` the WebKit helpers, `processes` the size of the
+# attributed set (`webProcesses` of them helpers).
 #
 # Usage:
 #   tools/bench-live.sh --binary target/debug/graphium --label svelte --run 1 \
@@ -66,27 +85,125 @@ err="$runtime/stderr"
 fifo="$runtime/in.fifo"
 mkfifo "$fifo"
 stdio_pid=""
+webkit_before=""
 
 owner_pids() {
   local pid
   for pid in $(pgrep -f -- '--owner' 2>/dev/null || true); do
+    # `cat` opens the file, so an owner that exits between the listing and the
+    # read costs an empty environment and not a shell error on stderr.
     if [ -r "/proc/$pid/environ" ] &&
-      tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | grep -qx "XDG_RUNTIME_DIR=$runtime"; then
+      cat "/proc/$pid/environ" 2>/dev/null | tr '\0' '\n' | grep -qx "XDG_RUNTIME_DIR=$runtime"; then
       printf '%s\n' "$pid"
     fi
   done
 }
 
+# Every process that hosts part of the window's web content: the page itself
+# (WebKitWebProcess), its network process and the GPU helper.
+webkit_family_pids() {
+  pgrep -f -- 'WebKit(Web|Network|GPU)Process' 2>/dev/null || true
+}
+
+# A helper whose environment names another runtime dir belongs to another
+# owner's window on this machine and is not attributed to this launch. An
+# unreadable or scrubbed environment (the WebKit sandbox) is accepted: the time
+# window is then the only evidence available.
+belongs_to_us() {
+  local pid="$1" dir
+  [ -r "/proc/$pid/environ" ] || return 1
+  # `cat` opens the file, so a process that vanished between the test and the
+  # read costs an empty environment and not a shell error on stderr.
+  dir=$(cat "/proc/$pid/environ" 2>/dev/null | tr '\0' '\n' | sed -n 's/^XDG_RUNTIME_DIR=//p' | head -1)
+  [ -z "$dir" ] && return 0
+  [ "$dir" = "$runtime" ]
+}
+
+# One PID per line: the owner(s) and their whole descendant tree, then every
+# WebKit-family process that did not exist before the owner was launched (see
+# the attribution note in the header). Deduplicated, so a helper that is both a
+# child and new is summed once.
+attributed_pids() {
+  local -a queue
+  local pid child seen=" "
+  queue=($(owner_pids))
+  while [ "${#queue[@]}" -gt 0 ]; do
+    pid="${queue[0]}"
+    queue=("${queue[@]:1}")
+    [ -n "$pid" ] || continue
+    case "$seen" in *" $pid "*) continue ;; esac
+    seen="$seen$pid "
+    printf '%s\n' "$pid"
+    for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+      queue+=("$child")
+    done
+  done
+  for pid in $(webkit_family_pids); do
+    [ -d "/proc/$pid" ] || continue
+    case " $webkit_before " in *" $pid "*) continue ;; esac
+    case "$seen" in *" $pid "*) continue ;; esac
+    belongs_to_us "$pid" || continue
+    seen="$seen$pid "
+    printf '%s\n' "$pid"
+  done
+}
+
+pss_kb() {
+  local v
+  v=$(awk '/^Pss:/ {sum += $2} END {print sum + 0}' "/proc/$1/smaps_rollup" 2>/dev/null) || v=""
+  printf '%s' "${v:-0}"
+}
+
+rss_kb() {
+  local v
+  v=$(awk '/^VmRSS:/ {print $2 + 0}' "/proc/$1/status" 2>/dev/null) || v=""
+  printf '%s' "${v:-0}"
+}
+
+# One reading of the attributed set, as one line: totalPss ownerPss webPss
+# totalRss pids webPids.
+sample_memory() {
+  local owners pid pss total=0 owner=0 web=0 rss=0 count=0 web_count=0
+  owners=$(owner_pids)
+  for pid in $(attributed_pids); do
+    pss=$(pss_kb "$pid")
+    total=$((total + pss))
+    rss=$((rss + $(rss_kb "$pid")))
+    count=$((count + 1))
+    if printf '%s\n' "$owners" | grep -qx -- "$pid"; then
+      owner=$((owner + pss))
+    else
+      web=$((web + pss))
+      web_count=$((web_count + 1))
+    fi
+  done
+  printf '%s %s %s %s %s %s' "$total" "$owner" "$web" "$rss" "$count" "$web_count"
+}
+
 cleanup() {
-  # The MCP session ends when the write end of the fifo closes.
-  exec 3>&- 2>/dev/null || true
+  local pid state
+  # The MCP session ends when the write end of the fifo closes: the owner's
+  # `--stdio` process holds only the read end (the launch closes fd 3 in it), so
+  # this is EOF for it and it leaves. The reap below is bounded anyway — an
+  # owner that does not leave must not turn the teardown into a hang, which is
+  # what a copy of the read-write end inside the owner used to cause.
+  exec 3>&- || true
   XDG_RUNTIME_DIR="$runtime" HOME="$home" "$binary" quit >/dev/null 2>&1 || true
   for _ in $(seq 1 50); do
     [ -z "$(owner_pids)" ] && break
     sleep 0.1
   done
   for pid in $(owner_pids); do kill "$pid" 2>/dev/null || true; done
-  [ -n "$stdio_pid" ] && wait "$stdio_pid" 2>/dev/null || true
+  if [ -n "$stdio_pid" ]; then
+    for _ in $(seq 1 50); do
+      state=$(awk '/^State:/ {print $2}' "/proc/$stdio_pid/status" 2>/dev/null || true)
+      [ -z "$state" ] && break    # gone, nothing left to reap
+      [ "$state" = "Z" ] && break # exited, only the reap is missing
+      sleep 0.1
+    done
+    kill -KILL "$stdio_pid" 2>/dev/null || true
+    wait "$stdio_pid" 2>/dev/null || true
+  fi
   case "$runtime" in /tmp/gx-bench-run-*) rm -rf "$runtime" ;; esac
   case "$home" in /tmp/gx-bench-home-*) rm -rf "$home" ;; esac
 }
@@ -94,9 +211,14 @@ trap cleanup EXIT
 
 # The fifo is opened read-write by the script (a write-only open would block
 # until the owner opened its end), and it stays open for the whole measurement:
-# the owner reads MCP from it and would leave on EOF.
+# the owner reads MCP from it and would leave on EOF. The owner must not inherit
+# fd 3 (`3>&-` below): a copy of the read-write end inside the owner keeps the
+# fifo open forever, so closing fd 3 here would never be EOF for the owner and
+# the teardown would wait on a process that cannot leave.
 exec 3<>"$fifo"
-XDG_RUNTIME_DIR="$runtime" HOME="$home" "$binary" --stdio <"$fifo" >"$out" 2>"$err" &
+# The attribution snapshot, taken while no owner of this bench exists yet.
+webkit_before="$(webkit_family_pids | tr '\n' ' ')"
+XDG_RUNTIME_DIR="$runtime" HOME="$home" "$binary" --stdio <"$fifo" 3>&- >"$out" 2>"$err" &
 stdio_pid=$!
 
 now_ms() { date +%s%N | cut -b1-13; }
@@ -133,45 +255,6 @@ call() {
   printf '%s' "$((finished - started))"
 }
 
-sum_pss() {
-  local total=0 pids pid
-  pids=$(owner_pids)
-  # Children of the owner, recursively (the WebKit helpers).
-  local queue="$pids" seen=""
-  while [ -n "$queue" ]; do
-    pid=$(printf '%s\n' "$queue" | head -1)
-    queue=$(printf '%s\n' "$queue" | grep -v "^$pid$" || true)
-    case " $seen " in *" $pid "*) continue ;; esac
-    seen="$seen $pid"
-    if [ -r "/proc/$pid/smaps_rollup" ]; then
-      total=$((total + $(awk '/^Pss:/ {sum += $2} END {print sum + 0}' "/proc/$pid/smaps_rollup")))
-    fi
-    for child in $(pgrep -P "$pid" 2>/dev/null || true); do
-      queue=$(printf '%s\n%s' "$queue" "$child")
-    done
-  done
-  printf '%s' "$total"
-}
-
-sum_rss() {
-  local total=0 pids pid
-  pids=$(owner_pids)
-  local queue="$pids" seen=""
-  while [ -n "$queue" ]; do
-    pid=$(printf '%s\n' "$queue" | head -1)
-    queue=$(printf '%s\n' "$queue" | grep -v "^$pid$" || true)
-    case " $seen " in *" $pid "*) continue ;; esac
-    seen="$seen $pid"
-    if [ -r "/proc/$pid/status" ]; then
-      total=$((total + $(awk '/^VmRSS:/ {print $2}' "/proc/$pid/status")))
-    fi
-    for child in $(pgrep -P "$pid" 2>/dev/null || true); do
-      queue=$(printf '%s\n%s' "$queue" "$child")
-    done
-  done
-  printf '%s' "$total"
-}
-
 small="$runtime/small.json"
 large="$runtime/large.json"
 node "$root/crates/gx-app/frontend/tools/diagram.mjs" 12 >"$small"
@@ -194,20 +277,19 @@ reason_small=$(answer_field 3 reason)
 rendered_large=$(answer_field 5 rendered)
 reason_large=$(answer_field 5 reason)
 
-# Steady state: the last render is the large diagram. Give the owner a moment
-# to settle (the paint, the GC of the previous drawing) and read the tree twice.
+# Steady state: the last render is the large diagram. Give the launch a moment
+# to settle (the paint, the GC of the previous drawing) and read the attributed
+# set twice, a second apart. The two counts are read with the first sample.
 sleep 3
-pss1=$(sum_pss)
-rss1=$(sum_rss)
+read -r pss1 owner1 web1 rss1 processes web_processes <<<"$(sample_memory)"
 sleep 1
-pss2=$(sum_pss)
-rss2=$(sum_rss)
-processes=$(owner_pids | wc -l | tr -d ' ')
+read -r pss2 owner2 web2 rss2 _processes2 _web_processes2 <<<"$(sample_memory)"
 
 printf 'bench-live label=%s run=%s binary=%s\n' "$label" "$run" "$binary"
 printf 'bench-live cold-start(ms)=%s small(ms)=%s/%s large(ms)=%s/%s rendered=%s/%s reason=%s\n' \
   "$cold_start_ms" "$small1" "$small2" "$large1" "$large2" "$rendered_small" "$rendered_large" "${reason_small:-none}"
-printf 'bench-live memory pss(kB)=%s/%s rss(kB)=%s/%s processes=%s\n' "$pss1" "$pss2" "$rss1" "$rss2" "$processes"
+printf 'bench-live memory pss(kB)=%s/%s owner(kB)=%s/%s web(kB)=%s/%s rss(kB)=%s/%s processes=%s webProcesses=%s\n' \
+  "$pss1" "$pss2" "$owner1" "$owner2" "$web1" "$web2" "$rss1" "$rss2" "$processes" "$web_processes"
 
 if [ -n "$json" ]; then
   cat >"$json" <<JSON
@@ -223,8 +305,11 @@ if [ -n "$json" ]; then
   "reason": "${reason_small:-none}",
   "reasonLarge": "${reason_large:-none}",
   "pssKb": [$pss1, $pss2],
+  "pssOwnerKb": [$owner1, $owner2],
+  "pssWebKb": [$web1, $web2],
   "rssKb": [$rss1, $rss2],
-  "processes": $processes
+  "processes": $processes,
+  "webProcesses": $web_processes
 }
 JSON
 fi

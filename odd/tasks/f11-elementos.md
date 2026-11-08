@@ -749,3 +749,142 @@ plus the owner directive of 2026-11-08.
   crow's feet) is its own future task, untouched here; and the merge of
   `feature/f11-elementos` into `staging` — together with
   `feature/mejoras-frontend` — is the owner's decision.
+- L12 (2026-11-09, worker): the steady-state memory check of L7 item (d) is
+  measured — and the band does not hold. The premise that blocked it was wrong.
+
+  **Diagnosis: the web process *is* a child here.** The bench was run with its
+  own `XDG_RUNTIME_DIR`/`HOME` on `DISPLAY=:0` and the machine's process table
+  read while the 300-node diagram was up:
+
+  ```
+  PID    PPID   COMMAND
+  392610 392599 graphium --stdio          (the MCP door the script opened)
+  392618 392610 graphium --owner          (the window)
+  392677 392618 WebKitNetworkProcess 1 22
+  392713 392618 WebKitWebProcess 4 47
+  ```
+
+  `/proc/392713/status` → `PPid: 392618`; ancestry `1 <- 392713(WebKit) <-
+  392618(graphium) <- 392610(graphium) <- 392599(bash) <- …`; both helpers
+  inherit `XDG_RUNTIME_DIR=/tmp/gx-bench-run-…`, the bench's own runtime dir.
+  WebKitGTK 2.54.2 (Fedora 44) attaches the helper exactly where the walk looks;
+  no `bwrap` process appears anywhere in the tree (`/usr/bin/bwrap` is
+  installed, the sandbox is simply not engaged here: the helpers' parent is the
+  owner itself). The other two helpers on the machine
+  (92351/92414) hang off another owner (ppid 8026, `XDG_RUNTIME_DIR=
+  /run/user/1000`) and stay outside the walk.
+
+  **What `processes: 1` really said.** L8's counter is `owner_pids | wc -l` —
+  the number of *owners*, never the size of the summed set; the walk did not use
+  it. The old script already summed owner + network + web on this tree
+  (`pssKb 276408`; a diagnostic walk over the same three processes reproduced
+  its own per-process sum exactly: 114,532 + 16,657 + 166,684 = 297,873 kB). So
+  the band was measurable all along: L8's `282 248` can only be a full-tree total
+  (an owner-only sum is ~118 MB on this build), so "unmeasurable" (L8, L9, L11)
+  was a counter artifact, not a missing process. The absolute level moves with
+  concurrency because Pss divides shared pages between all users, so the
+  diagnosis numbers above are evidence about
+  *ancestry*, and the nine steady readings below are the measurement.
+
+  **The attribution fix (`bench-live.sh`, script-only).** Attribution is now
+  *time-based*, so the check survives the desktops where the helper is detached
+  (a launcher that exits, a sandbox wrapper out of `pgrep -P`'s reach): the
+  WebKit-family PIDs (`WebKitWebProcess|WebKitNetworkProcess|WebKitGPUProcess`)
+  on the machine are snapshotted before the owner is launched, and every one
+  that appears afterwards is attributed to this launch. Two guards: a new helper
+  whose readable environment names a *different* `XDG_RUNTIME_DIR` is vetoed (it
+  is another owner's window; a scrubbed sandbox environment is accepted), and
+  the union with the owner's descendant tree is deduplicated — where the helper
+  *is* a child, this measures exactly what it measured before, plus nothing. The
+  output names what it sums: `pssKb` (total) plus `pssOwnerKb`, `pssWebKb`,
+  `processes` (now the size of the attributed set) and `webProcesses`. Both
+  directions of the guard were exercised live against a detached decoy named
+  `WebKitWebProcess`: carrying the bench's runtime dir → counted (`processes: 4`,
+  `webProcesses: 3`); carrying `/run/user/1000` → vetoed (`processes: 3`,
+  `webProcesses: 2`).
+
+  **A second defect stood in the way: the teardown hung** (the hang L8 cut its
+  command on). The owner's `--stdio` process inherited the script's fd 3 — the
+  read-write end of the fifo — so `exec 3>&-` in `cleanup()` was never EOF for
+  it: `/proc/408394/fd` showed `0 -> …/in.fifo` and `3 -> …/in.fifo`, and the
+  script sat in `do_wait` with a defunct owner behind it. The launch now closes
+  fd 3 in the child (`3>&-`), and the reap is bounded (state poll, then
+  `kill -KILL`, then `wait`), so a full run ends in ~7 s instead of hanging. Both
+  defects are in the one allowed file; nothing of Rust or the frontend was
+  touched.
+
+  **The steady state, §4's discipline** (300-node diagram on screen, warm-up,
+  four `render_diagram` calls, 3 s idle, Pss read twice 1 s apart), nine readings
+  of the new script: total **325,475–330,445 kB**, split **owner 117,414–119,609
+  kB** and **web 207,741–211,843 kB**; RSS 600,552–606,248 kB; `processes` 3
+  (owner + `WebKitWebProcess` + `WebKitNetworkProcess`), `rendered true reason
+  none` in every one; spread 5.0 MB, the edge of the 1–5 MB run-to-run noise §6
+  documents. Gate runs, last two, exact:
+
+  ```
+  bash -n crates/gx-app/frontend/tools/bench-live.sh                         exit 0
+  bench-live.sh (full run A) pss(kB)=325475/325187 owner(kB)=117414/117446
+                             web(kB)=208061/207741 rss(kB)=600776/600552
+                             processes=3 webProcesses=2                    exit 0
+  bench-live.sh (full run B) pss(kB)=327847/327847 owner(kB)=118426/118458
+                             web(kB)=209421/209389 rss(kB)=602628/602692
+                             processes=3 webProcesses=2                    exit 0
+  ```
+
+  **Differential against the previous code** (same binary, same diagram, HEAD's
+  script from a copy in `/tmp` and the new one, seconds apart, both painting):
+  HEAD summed `328810` kB with `processes: 1`; the new script reads
+  `325475`/`327847` kB with `processes: 3`. Same process set, totals inside
+  3.3 MB of each other, so the change attributes the helpers without double
+  counting them: what moved is the honesty of the number, not its value. The
+  same run also reproduced the old teardown hang on HEAD's bytes (still alive
+  after writing its JSON; killed by session), and the new bytes exit in ~7 s.
+
+  `shellcheck` is not installed on this machine (`command -v shellcheck` exit 1)
+  and was not installed: the script's static evidence is `bash -n` plus the nine
+  live runs, not a linter.
+
+  **Verdict: the scene-based runtime does not hold the §4 band.** §4 read 249,299
+  kB (Svelte run 1) and 254,142 kB (run 2); ±5 MB puts the band at 244,299–
+  259,142 kB, and this branch's two gate readings are **325,475 kB (owner
+  117,414 + web 208,061)** and **327,847 kB (owner 118,426 + web 209,421)** —
+  **+66 MB and +69 MB above the band's upper edge**, ~+31 % of the §4 run-1
+  footprint. Nothing was fixed in response, as instructed. The delta lands on
+  the web side by construction — same Rust window process, owner Pss flat within
+  2.2 MB across all nine readings, the helpers carrying the whole difference —
+  which is exactly the cost L7 item (d) suspected in the deep-`$state` `plane`.
+  §4 never recorded its per-process split, so the §4 share of the web side is an
+  inference (249,299 − owner), not a measurement.
+
+  **Caveats, stated.** (1) One environment: Fedora 44, WebKitGTK 2.54.2, no
+  `bwrap` in the process tree; another desktop may detach or sandbox the helper
+  differently. The portable part is the snapshot-diff (appearance in time); the
+  parenthood walk is kept as the fallback, and the environment veto is what
+  stops the diff from stealing another window's helper — exercised here against
+  a decoy with a foreign runtime dir, not against a real second WebKitGTK window
+  started mid-run. (2) Pss divides shared pages between all users, so the other
+  Graphium instance live on this machine (and the shell) influence the absolute
+  level; §4 had three other owners, so the confound is not new, and the 66–69 MB
+  gap is far outside it. (3) Both §4 and this entry measure the debug build
+  (`cargo build -p gx-app` after `npm run build` in
+  `crates/gx-app/frontend`): the numbers are comparable to §4, not shipping
+  numbers. (4) The window stopped painting for a few minutes in the middle of
+  this task — `rendered=false reason=ui_timeout` from **both** the new script and
+  the untouched `scripts/smoke.sh` (exit 1) — then recovered and painted in every
+  later run, the HEAD differential and both gate runs included. It is an
+  environment flake of this session (after nine window launches in a row), not a
+  regression of this change, and the runs that did not paint are excluded from
+  the nine above. (5) This entry does not rewrite
+  L8's, L9's and L11's "unmeasurable" sentences — the log is append-only; this
+  is the correction, and the check is now answered. Scratch left in `/tmp` for
+  the parent to remove (`rm` is blocked in the worker): `/tmp/gx-green-*.json`,
+  `/tmp/gx-final-*.json`, `/tmp/gx-recheck.json`, `/tmp/gx-head.json`,
+  `/tmp/gx-head2.json`, `/tmp/gx-head*.log`, `/tmp/gx-diff.sh`, `/tmp/gx-head/`
+  (the HEAD script copy), `/tmp/gx-red-1.json`, `/tmp/gx-trace.json`,
+  `/tmp/gx-trace-1.log`, `/tmp/gx-hang.log`, `/tmp/gx-.json`, `/tmp/gx-*.log`
+  of the decoy run, `/tmp/gx-decoy-driver.sh`, `/tmp/gx-decoy-spawn.sh`,
+  `/tmp/gx-diag-f11.sh`, `/tmp/gx-probe2.sh`, `/tmp/gx-probe2-run-*`,
+  `/tmp/gx-probe2-home-*`, `/tmp/gx-smoke-retry.log`, `/tmp/gx-diag-run-*`,
+  `/tmp/gx-diag-home-*`, `/tmp/gx-bench-run-*`, `/tmp/gx-bench-home-*`,
+  `/tmp/gx-probe-write.txt`. Nothing of that is inside the worktree:
+  `git status --short` lists exactly this entry and the bench script.
