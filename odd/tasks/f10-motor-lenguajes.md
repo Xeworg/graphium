@@ -431,3 +431,163 @@ languages ride on it.
     the default run), slim build 0 + slim tests 0.
   - Note: batch-2 worker had already measured all-13 at 31,217,432 B via
     explicit features — both paths agree to the byte.
+- L10 (2026-11-07, worker, T3 Batch 3: S2 S4): Swift, Kotlin and Dart
+  landed — **and, unlike batches 1-2, inside `default`**: this batch rides
+  the single-binary contract of L9, so the three features are listed in
+  `default` from the start and the default `graphium` grows. **The schema
+  needed nothing again**: no `SCHEMA_VERSION` bump, no `CHECK`, no migration
+  (L7's contract held for three more languages).
+  - **Grammar provider — one loud deviation (Kotlin).** The crate called
+    `tree-sitter-kotlin` on crates.io is **unviable** for this engine: the
+    last release is 0.3.8 and it declares `tree-sitter >=0.21, <0.23` as a
+    **normal** dependency (not a dev one), so the `Language` it hands out
+    belongs to another tree-sitter ABI and cannot be loaded here. Kotlin
+    landed on **`tree-sitter-kotlin-ng` 1.1.0** — the
+    `tree-sitter-grammars/tree-sitter-kotlin` grammar (the same repository
+    the other batch crates come from) published under a free name at the
+    engine's ABI (`tree-sitter-language` 0.1, parser ABI 14). The feature is
+    `lang-kotlin` — it names the language, not the crate (L8's SQL rule).
+    Swift is `tree-sitter-swift` 0.7.4 (ABI 15) and Dart
+    `tree-sitter-dart` 0.3.0 (ABI 15); all three were verified by the
+    registry test that types every node kind of their tables against the
+    grammar (`node_kind_for_id`) before a single fixture ran.
+  - **The three languages (Batch 3)** — the registry entry of each is the
+    whole of what the engine knows:
+    - `lang-swift` (`.swift`): the module is the path of the file
+      (`src.store`), because Swift declares no package in the source. Swift
+      spells class, struct, actor, enum **and extension** with one node kind
+      (`class_declaration`, told apart by its `declaration_kind` keyword), so
+      those five kinds are the one hook (`swift::type_declaration`): a class
+      and an actor are `class`, a struct and an enum a `type`, a protocol a
+      `trait` (the vocabulary's interface), a `typealias` a `type` and an
+      `associatedtype` a `type`. **The extension decision:** `extension
+      DiagramStore: Printable { … }` adds members and a conformance to a type
+      another declaration owns — exactly what a Rust `impl Trait for Type`
+      block is — so it is a symbol of kind **`impl`** named after the type it
+      extends (the type and its extensions share a `qname` and the book
+      numbers the collision the way it numbers two `impl` blocks of one type),
+      and the conformance it lists is **`inherits`**: the same relation the
+      declaration itself would spell for that protocol, hung from the
+      declaration that spells it. A `where T: Loader` clause is a constraint
+      on a generic parameter, not a declaration inheriting, so it is not read
+      as `inherits`. A property at the root of the file is a `const` and a
+      property inside a type is a field — not a declaration of the book — and
+      `deinit`/`subscript` spell their name with a keyword and no field (the
+      `swift::member` hook). Relations: `calls` (`openStore(input)`,
+      `other.load(input:)`, `DiagramStore(…)`), `imports` (the last segment of
+      an `import`, so `import struct Store.DiagramStore` → `DiagramStore`),
+      `inherits` (every `inheritance_specifier`) and `uses` (parameter,
+      return and property types, and the type of a `typealias`).
+    - `lang-kotlin` (`.kt`, `.kts`): **Module from the `package` the file
+      declares** (like Java's `package` and C#'s `namespace`), with the
+      directory as the fallback. Kotlin spells a class and an interface with
+      one node kind and marks an enum with a `class_modifier`, so the kind is
+      the hook `kotlin::type_declaration`: interface → `trait`, `enum class` →
+      `type`, everything else → `class`. **The companion decision:** a
+      companion object is a declaration — it has a name, the one it declares
+      or **`Companion`**, which is the name the language gives the unnamed one
+      and the one the source uses to reach its members — so it is a `class`
+      with its members nested under it; its `const val` is a property of that
+      class and not a declaration, like every other field. **A data class is a
+      class**: the `data` modifier synthesises `copy`/`componentN` and changes
+      no declaration, so the book keeps the class the source spells and never
+      a synthesised member (Ruby's metaprogramming rule of L8); its
+      primary-constructor `val`s are properties, not declarations. A secondary
+      constructor and an `init` block declare no name of their own and are not
+      symbols; `val LIMIT = 3` at the root of the file is a `const`.
+      Relations: `calls`, `imports` (last segment of the path, or the alias),
+      `inherits` (every supertype of the `:` list: `Base()`, `Loader`,
+      `Loader by delegate`) and `uses` (parameters — `class_parameter`
+      included —, return types, property types, the underlying type of a
+      `typealias`).
+    - `lang-dart` (`.dart`): the module is the path of the file (`lib.store`)
+      — a `library` directive names a library, never a path — and a class is a
+      `class`, a mixin a `trait`, an enum, an `extension` and an `extension
+      type` a `type`, a `typedef` a `type` and a top-level variable a `const`.
+      Dart spells a member one wrapper at a time (`member_declaration` →
+      `method_declaration` → `method_signature` → `function_signature`): the
+      name lives in the innermost node and the span the book needs is the
+      outermost (the calls of a body hang from the method that owns them), so
+      the declarations are the batch's hook (`dart::declaration`) — a `fn` at
+      the root of the file and a `method` inside a type. A constructor is a
+      `method` named as the source spells it (the class name for the unnamed
+      one, its own name otherwise); a field is not a declaration. **The mixin
+      decision:** `class C extends Base with Loggable implements Loader` reads
+      `extends`, every `with` and every `implements` as **`inherits`** — a
+      Dart mixin is an embedding, the relation PHP gives `use TraitName` and
+      Ruby gives `include` — while `mixin Loggable on Base`'s `on` clause is a
+      **use-site constraint**, not a supertype, and is read as `uses`. A
+      `mixin C = Base with M;` (`mixin_application_class`) is not read as a
+      declaration: that form is rare and stays out until a fixture needs it,
+      and the module says so. Relations: `calls` (`call_expression`,
+      `new_expression`, a named constructor), `imports` (the alias of an
+      `import`, else the stem of the URI: `package:graphium/render.dart` →
+      `render`; an `export` reads the same), `inherits` and `uses` (parameter,
+      return, field and top-level-variable types, and the type an `extension`
+      extends).
+  - **Language N+1 after this cut**: still one module + one registry entry +
+    dependency/feature + fixture/floor + PRD row + re-measure, and still no
+    schema change. Batch 3 needed no new kind of engine work either: three
+    table walks, four kinds of hook (a node kind that is several declarations
+    in Swift and Kotlin, a declaration whose name lives in a child signature
+    in Dart, and the properties/constants of the three), and 0 lines of
+    `schema.rs`.
+  - **D3** (`-- --nocapture`, batch features on). Batch 3, on **its own**
+    fixture tree (the rule of L7/L8): **Swift 24,1 % (7/29), Kotlin 26,9 %
+    (7/26), Dart 25,9 % (7/27)**. Floors pinned at **20 / 23 / 22 %**
+    (measured minus 2,9–4,1 points, never inflated). The three are the
+    Python case of the book: their declarations name `Int`, `String`, `int`,
+    `Renderer` and other stdlib/external types the book does not hold, and
+    the published number says so instead of hiding it. The **thirteen**
+    existing languages, same tests, same `--nocapture`: **byte-identical**
+    table — TypeScript 48,0 % (12/25), Rust 36,4 % (4/11), Java 29,6 %
+    (8/27), Go 17,2 % (5/29), Python 14,8 % (4/27), JavaScript 66,7 %
+    (8/12), C 81,8 % (9/11), C++ 71,4 % (10/14), C# 66,7 % (10/15), PHP
+    95,0 % (19/20), Ruby 66,7 % (6/9), SQL 100 % (4/4), Shell 37,5 % (3/8).
+    Differential check of the reusable technique of L5: the base tree
+    (`git archive HEAD` into a `mktemp -d`, its own target dir, same command
+    and `--nocapture`) prints the **same four lines byte for byte** for the
+    thirteen (the base tree has no batch-3 line), exit **0** — the change
+    moved nothing of the languages that already existed.
+  - **Binary — MEASURED AND REPORTED LOUDLY.** Default `graphium`
+    (release, opt-level=z, lto, strip, the CI command
+    `cargo build --release --bin graphium`): **40.318.232 B**, from
+    31.217.432 B with thirteen grammars — **+9.100.800 B** for the three
+    new grammars (~3,03 MB each). That is **96,5 % of the 41.800.000 B CI
+    gate** and — the number that matters for the next decision — **0,8 %
+    over the declared 40 MB ceiling** of L9, which T6 re-measures with the
+    twenty grammars. The gate itself is **not** breached, so nothing in
+    `ci.yml` was touched (the ceiling is not this cut's), but batch 4
+    (Scala, R, Lua, Zig) cannot add four grammars of this size under
+    41.800.000 B: the orchestrator and the owner decide the ceiling before
+    that batch, not after. Verified `-v`: the release unit of `gx-index`
+    carries all **sixteen** `lang-*` features, so the number is the default
+    build's and not a slim one's. The **slim** reference is byte-identical to
+    L9: `-p gx-app --no-default-features --features "lang-rust,lang-typescript"`
+    = **13.241.496 B** (the engine refactor and the three grammars cost the
+    slim build nothing).
+  - **Gates (exit codes without pipes)**: `cargo test --workspace` **0** (42
+    suites ok, 0 failed — every language of the sixteen in the default run);
+    `cargo test -p gx-index` **0** (lib 78, book 22, end_to_end 3, languages
+    37, relations 7); `cargo fmt --check` **0**;
+    `cargo clippy --workspace --all-targets` **0** (0 warnings); each new
+    feature alone compiles (`-p gx-index --no-default-features --features
+    lang-X` **0** for the three; the Kotlin-only slim build warns about
+    `dotted_module`, the same pre-existing pattern of L7's C#-only build).
+    The known `--no-default-features` failures of L5 are untouched and out of
+    this cut.
+  - **One stale unit test fixed in passing (inside this cut's surfaces)**:
+    `crates/gx-index/src/lang/mod.rs` asserted `grammar("kotlin").is_none()`
+    as the archetype of a language the build does not know; Kotlin is now one
+    of the sixteen, so the assertion moved to `scala` (Batch 4). The book's
+    refusal test derives its unknown language from the registry and still
+    finds `scala`/`zig`.
+  - **Scope note for the reviewer**: `Cargo.lock` (workspace root) changed —
+    three packages added (`tree-sitter-swift` 0.7.4, `tree-sitter-kotlin-ng`
+    1.1.0, `tree-sitter-dart` 0.3.0) and **nothing moved**: no version of an
+    existing crate changed this time (`cc` stays 1.2.67, `tree-sitter-language`
+    stays 0.1.9), unlike L8's `cc` downgrade. The lock is outside the listed
+    surfaces and the dependencies cannot land without it (L7's note verbatim).
+    No other surface was touched: `crates/gx-app`, `gx-mcp`, `gx-core`,
+    `gx-kinds`, `gx-layout`, `schema.rs` and `.github/workflows/ci.yml` are
+    untouched.
