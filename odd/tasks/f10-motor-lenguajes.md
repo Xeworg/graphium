@@ -591,3 +591,12 @@ languages ride on it.
     No other surface was touched: `crates/gx-app`, `gx-mcp`, `gx-core`,
     `gx-kinds`, `gx-layout`, `schema.rs` and `.github/workflows/ci.yml` are
     untouched.
+- L11 (2026-11-07, orchestrator): the declared ceiling grows 40 → 55 MB
+  (CI gate 41,800,000 → 57,600,000 B). Batch 3 measured the default at
+  40,318,232 B — under the gate but 0.8% over the interim 40 MB — and
+  batch 4 (Scala, R, Lua, Zig at batch-3's ~2.3 MB average) cannot fit
+  under the old gate. 55 MB covers the twenty-grammar estimate (~52 MB);
+  T6 closes the number with the real measurement and may tighten it.
+  PRD updated in RNF1, RNF1-quater and the features paragraph; ci.yml
+  gate moved. This is arithmetic under the owner's single-binary policy
+  (2026-11-07), not a new decision.
