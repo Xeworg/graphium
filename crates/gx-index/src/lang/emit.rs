@@ -89,9 +89,12 @@ pub fn anchor_symbol(module: &str, name: &str) -> ParsedSymbol {
 
 /// The name a language gives to the anchor of a chapter when it names a module
 /// by its last segment: `src.tools` → `tools`, `internal.store` → `store`.
+/// PHP names a namespace with `\` (`Graphium\Store`), so its anchor is the last
+/// segment of that path too; no other language of the book spells a module path
+/// with a backslash, so the split cannot change theirs.
 pub fn chapter_anchor_name(path: &str, module: &str) -> String {
     module
-        .rsplit(['.', ':'])
+        .rsplit(['.', ':', '\\'])
         .next()
         .filter(|segment| !segment.is_empty())
         .map(str::to_string)
@@ -148,8 +151,13 @@ pub fn dotted_module(relative: &str, skip: &[&str]) -> String {
 }
 
 /// The dotted module path of a file whose unit is the directory (Go packages,
-/// the fallback of a Java or C# file with no declaration that names it).
-#[cfg(any(feature = "lang-go", feature = "lang-java", feature = "lang-csharp"))]
+/// the fallback of a Java, C# or PHP file with no declaration that names it).
+#[cfg(any(
+    feature = "lang-go",
+    feature = "lang-java",
+    feature = "lang-csharp",
+    feature = "lang-php"
+))]
 pub fn dotted_directories(relative: &str) -> String {
     let parts: Vec<&str> = relative
         .split('/')
@@ -258,10 +266,17 @@ mod tests {
         feature = "lang-csharp"
     ))]
     use super::last_segment;
+    use super::{chapter_anchor_name, file_stem};
     use super::{dotted_module, prefix_of};
     // `dotted_directories` only exists for the grammars whose unit is the
-    // directory (Go, Java, C#): the slim build of T4/C3 does not compile it.
-    #[cfg(any(feature = "lang-go", feature = "lang-java", feature = "lang-csharp"))]
+    // directory (Go, Java, C#, and the fallback of a PHP file with no
+    // `namespace`): the slim build of T4/C3 does not compile it.
+    #[cfg(any(
+        feature = "lang-go",
+        feature = "lang-java",
+        feature = "lang-csharp",
+        feature = "lang-php"
+    ))]
     use super::dotted_directories;
 
     /// The nesting of a `qname` is the language's: the helpers keep the
@@ -276,7 +291,21 @@ mod tests {
             dotted_module("src/pkg/__init__.py", &["__init__"]),
             "src.pkg"
         );
-        #[cfg(any(feature = "lang-go", feature = "lang-java", feature = "lang-csharp"))]
+        // The anchor of a chapter is the last segment of its module path, split
+        // with the separator of the language: PHP names a namespace with `\`.
+        assert_eq!(chapter_anchor_name("src/tools.ts", "src.tools"), "tools");
+        assert_eq!(chapter_anchor_name("x.rs", "gx_mcp::tools"), "tools");
+        assert_eq!(
+            chapter_anchor_name("src/store.php", "Graphium\\Store"),
+            "Store"
+        );
+        assert_eq!(file_stem("scripts/build.sh"), Some("build".into()));
+        #[cfg(any(
+            feature = "lang-go",
+            feature = "lang-java",
+            feature = "lang-csharp",
+            feature = "lang-php"
+        ))]
         {
             assert_eq!(
                 dotted_directories("internal/store/store.go"),

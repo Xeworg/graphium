@@ -879,8 +879,11 @@ CREATE TABLE file (
                 grammar.lang
             );
         }
-        assert!(!accepts_language("ruby"));
-        assert!(!accepts_language("php"));
+        // A language no build ever ships must stay refused: the contract is
+        // registry absence, not a name — `ruby` and `php` are grammars of the
+        // build since T3 Batch 2 (L8).
+        assert!(!accepts_language("cobol"));
+        assert!(!accepts_language("fortran"));
     }
 
     /// T3: a stored book written before the change carries the v1 `CHECK` in

@@ -1365,6 +1365,548 @@ fn csharp_relations_are_the_four_kinds_and_never_prose() {
 }
 
 // ---------------------------------------------------------------------------
+// PHP (T3 Batch 2)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-php")]
+const PHP: &str = r#"
+<?php
+
+namespace Graphium\Store;
+
+use Graphium\Store\DiagramStore;
+use Graphium\Toolkit\{Renderer, Panel};
+
+interface Loader
+{
+    public function load(string $input): int;
+}
+
+interface Panel
+{
+    public function draw(): void;
+}
+
+abstract class Base
+{
+    protected string $name;
+}
+
+trait Loggable
+{
+    public function log(string $message): void
+    {
+        open_store();
+    }
+}
+
+class Renderer implements Panel
+{
+    public function draw(): void
+    {
+        render_panel($this);
+    }
+}
+
+class DiagramStore extends Base implements Loader
+{
+    use Loggable;
+
+    public const LIMIT = 3;
+
+    private Renderer $renderer;
+
+    public function __construct(Renderer $renderer)
+    {
+        $this->renderer = $renderer;
+    }
+
+    public function load(string $input): int
+    {
+        return parse_config($input);
+    }
+
+    public function render_with(DiagramStore $other): DiagramStore
+    {
+        return new DiagramStore($other->renderer);
+    }
+}
+
+function open_store(): DiagramStore
+{
+    return new DiagramStore(new Renderer());
+}
+
+function render_panel(Panel $panel): void
+{
+    $panel->draw();
+}
+
+function parse_config(string $input): int
+{
+    return strlen($input);
+}
+
+// A comment that mentions ignoredInComment() must not produce an edge.
+function quiet(): string
+{
+    $text = "alsoIgnoredInAString()";
+    return $text;
+}
+"#;
+
+/// T3/S2: the PHP chapter keeps the types of the file — a trait and an
+/// interface are a trait, an enum is a type — with their methods under the
+/// `namespace` the file declares, and a `const` per element of a `const` group.
+#[cfg(feature = "lang-php")]
+#[test]
+fn php_declares_the_symbols_of_a_chapter_with_its_nesting() {
+    let parsed = parse("src/store.php", PHP.as_bytes(), 0).expect("the PHP grammar");
+    assert_eq!(parsed.lang, "php");
+    assert_symbols(
+        &parsed,
+        &[
+            ("trait", "Loader", "Graphium\\Store\\Loader"),
+            ("method", "load", "Graphium\\Store\\Loader\\load"),
+            ("class", "Base", "Graphium\\Store\\Base"),
+            ("trait", "Loggable", "Graphium\\Store\\Loggable"),
+            ("method", "log", "Graphium\\Store\\Loggable\\log"),
+            ("trait", "Panel", "Graphium\\Store\\Panel"),
+            ("method", "draw", "Graphium\\Store\\Panel\\draw"),
+            ("class", "Renderer", "Graphium\\Store\\Renderer"),
+            ("method", "draw", "Graphium\\Store\\Renderer\\draw"),
+            ("class", "DiagramStore", "Graphium\\Store\\DiagramStore"),
+            (
+                "method",
+                "__construct",
+                "Graphium\\Store\\DiagramStore\\__construct",
+            ),
+            ("method", "load", "Graphium\\Store\\DiagramStore\\load"),
+            (
+                "method",
+                "render_with",
+                "Graphium\\Store\\DiagramStore\\render_with",
+            ),
+            ("const", "LIMIT", "Graphium\\Store\\DiagramStore\\LIMIT"),
+            ("fn", "open_store", "Graphium\\Store\\open_store"),
+            ("fn", "render_panel", "Graphium\\Store\\render_panel"),
+            ("fn", "parse_config", "Graphium\\Store\\parse_config"),
+            ("fn", "quiet", "Graphium\\Store\\quiet"),
+        ],
+    );
+
+    // A property is not a declaration of the book.
+    assert!(
+        !parsed
+            .symbols
+            .iter()
+            .any(|symbol| symbol.name == "renderer"),
+        "a property is not a declaration: {:?}",
+        rows(&parsed)
+    );
+    let method = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.qname == "Graphium\\Store\\DiagramStore\\render_with")
+        .expect("the method");
+    let parent = method.parent.expect("the method hangs from its class");
+    assert_eq!(parsed.symbols[parent].name, "DiagramStore");
+}
+
+/// T3/S2: the `use` of a namespace, the call by name as written (the three
+/// call forms and `new`), the inheritance of a class (its base, its interfaces
+/// and its traits) and the types of the declarations — never an edge out of
+/// prose.
+#[cfg(feature = "lang-php")]
+#[test]
+fn php_relations_are_the_four_kinds_and_never_prose() {
+    let parsed = parse("src/store.php", PHP.as_bytes(), 0).expect("the grammar");
+
+    for (kind, name) in [
+        ("imports", "DiagramStore"),
+        ("imports", "Renderer"),
+        ("imports", "Panel"),
+        ("calls", "open_store"),
+        ("calls", "parse_config"),
+        ("calls", "render_panel"),
+        ("calls", "draw"),
+        ("calls", "DiagramStore"),
+        ("calls", "strlen"),
+        ("inherits", "Base"),
+        ("inherits", "Loader"),
+        ("inherits", "Loggable"),
+        ("inherits", "Panel"),
+        ("uses", "Renderer"),
+        ("uses", "DiagramStore"),
+        ("uses", "Panel"),
+    ] {
+        assert_edge(&parsed, kind, name);
+    }
+
+    assert_edge_owned(
+        &parsed,
+        "calls",
+        "parse_config",
+        "Graphium\\Store\\DiagramStore\\load",
+    );
+    assert_edge_owned(&parsed, "inherits", "Base", "Graphium\\Store\\DiagramStore");
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+}
+
+// ---------------------------------------------------------------------------
+// Ruby (T3 Batch 2)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-ruby")]
+const RUBY: &str = r#"
+require "json"
+require_relative "./lib"
+
+module Graphium
+  class Base
+  end
+
+  module Loggable
+    def log(message)
+      open_store()
+    end
+  end
+
+  class DiagramStore < Base
+    include Loggable
+
+    LIMIT = 3
+
+    def initialize(renderer)
+      @renderer = renderer
+    end
+
+    def load(input)
+      parse_config(input)
+    end
+
+    def render_with(other)
+      other.load("x")
+    end
+
+    def self.open_store
+      new(nil)
+    end
+  end
+end
+
+def open_store
+  Graphium::DiagramStore.new(nil)
+end
+
+def parse_config(input)
+  input.length
+end
+
+# A comment that mentions ignoredInComment() must not produce an edge.
+def quiet
+  text = "alsoIgnoredInAString()"
+  text
+end
+"#;
+
+/// T3/S2: the Ruby chapter keeps the classes and the modules with their methods
+/// under them, the singleton methods and the constants, with the `::` of the
+/// language in the `qname`. A metaprogrammed accessor is a call, not a symbol.
+#[cfg(feature = "lang-ruby")]
+#[test]
+fn ruby_declares_the_symbols_of_a_chapter_with_its_nesting() {
+    let parsed = parse("lib/store.rb", RUBY.as_bytes(), 0).expect("the Ruby grammar");
+    assert_eq!(parsed.lang, "ruby");
+    assert_symbols(
+        &parsed,
+        &[
+            ("module", "Graphium", "lib.store::Graphium"),
+            ("class", "Base", "lib.store::Graphium::Base"),
+            ("module", "Loggable", "lib.store::Graphium::Loggable"),
+            ("method", "log", "lib.store::Graphium::Loggable::log"),
+            ("class", "DiagramStore", "lib.store::Graphium::DiagramStore"),
+            ("const", "LIMIT", "lib.store::Graphium::DiagramStore::LIMIT"),
+            (
+                "method",
+                "initialize",
+                "lib.store::Graphium::DiagramStore::initialize",
+            ),
+            ("method", "load", "lib.store::Graphium::DiagramStore::load"),
+            (
+                "method",
+                "render_with",
+                "lib.store::Graphium::DiagramStore::render_with",
+            ),
+            (
+                "method",
+                "open_store",
+                "lib.store::Graphium::DiagramStore::open_store",
+            ),
+            ("fn", "open_store", "lib.store::open_store"),
+            ("fn", "parse_config", "lib.store::parse_config"),
+            ("fn", "quiet", "lib.store::quiet"),
+        ],
+    );
+
+    // `@renderer = renderer` is an instance variable, not a constant of the
+    // book; `text = …` inside a method is not one either.
+    for hidden in ["renderer", "text", "message"] {
+        assert!(
+            !parsed.symbols.iter().any(|symbol| symbol.name == hidden),
+            "`{hidden}` is not a declaration: {:?}",
+            rows(&parsed)
+        );
+    }
+    let method = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.qname == "lib.store::Graphium::DiagramStore::load")
+        .expect("the method");
+    let parent = method.parent.expect("the method hangs from its class");
+    assert_eq!(parsed.symbols[parent].name, "DiagramStore");
+}
+
+/// T3/S2: the `require` by the stem of its path, the send by its method name
+/// (and a `new` by the class it names), the superclass and the modules a class
+/// includes — never an edge out of prose. Ruby has no `uses`: no type
+/// annotations exist in its tree.
+#[cfg(feature = "lang-ruby")]
+#[test]
+fn ruby_relations_are_syntactic_and_never_prose() {
+    let parsed = parse("lib/store.rb", RUBY.as_bytes(), 0).expect("the grammar");
+
+    for (kind, name) in [
+        ("imports", "json"),
+        ("imports", "lib"),
+        ("calls", "open_store"),
+        ("calls", "parse_config"),
+        ("calls", "load"),
+        ("calls", "DiagramStore"),
+        ("calls", "length"),
+        ("inherits", "Base"),
+        ("inherits", "Loggable"),
+    ] {
+        assert_edge(&parsed, kind, name);
+    }
+
+    assert_edge_owned(
+        &parsed,
+        "calls",
+        "parse_config",
+        "lib.store::Graphium::DiagramStore::load",
+    );
+    assert_edge_owned(
+        &parsed,
+        "inherits",
+        "Base",
+        "lib.store::Graphium::DiagramStore",
+    );
+    assert!(
+        !parsed.edges.iter().any(|edge| edge.kind == "uses"),
+        "Ruby declares no type reference: {:?}",
+        parsed.edges
+    );
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+}
+
+// ---------------------------------------------------------------------------
+// SQL (T3 Batch 2)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-sql")]
+const SQL: &str = r#"
+-- The schema of the book.
+
+CREATE TABLE diagram_store (
+    id BIGINT PRIMARY KEY,
+    path VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE loader (
+    id BIGINT PRIMARY KEY,
+    store_id BIGINT NOT NULL REFERENCES diagram_store (id)
+);
+
+CREATE INDEX loader_store_idx ON loader (store_id);
+
+CREATE TYPE mode AS ENUM ('fast', 'slow');
+
+CREATE VIEW store_view AS
+SELECT s.id, l.id AS loader_id
+FROM diagram_store AS s
+JOIN loader AS l ON l.store_id = s.id;
+
+CREATE FUNCTION open_store (path TEXT) RETURNS BIGINT AS $$
+    SELECT 1;
+$$ LANGUAGE sql;
+
+-- A comment that mentions ignoredInComment() must not produce an edge.
+"#;
+
+/// T3/S2: the SQL chapter keeps the objects a schema declares — tables, views
+/// and types as `type`, functions and triggers as `fn` — and never a column,
+/// which is a field of that table and not a declaration of the book.
+#[cfg(feature = "lang-sql")]
+#[test]
+fn sql_declares_the_symbols_of_a_chapter_with_its_nesting() {
+    let parsed = parse("db/schema.sql", SQL.as_bytes(), 0).expect("the SQL grammar");
+    assert_eq!(parsed.lang, "sql");
+    assert_symbols(
+        &parsed,
+        &[
+            ("type", "diagram_store", "db.schema.diagram_store"),
+            ("type", "loader", "db.schema.loader"),
+            ("type", "mode", "db.schema.mode"),
+            ("type", "store_view", "db.schema.store_view"),
+            ("fn", "open_store", "db.schema.open_store"),
+        ],
+    );
+
+    // A column and an index are not declarations of the book.
+    for hidden in ["id", "path", "store_id", "loader_store_idx"] {
+        assert!(
+            !parsed.symbols.iter().any(|symbol| symbol.name == hidden),
+            "`{hidden}` is not a declaration: {:?}",
+            rows(&parsed)
+        );
+    }
+}
+
+/// T3/S2: SQL has no calls and no imports, so its one relation kind is `uses` —
+/// a query reads a table, an index reads the table it is built on and a foreign
+/// key reads the table it points to. The decision is documented in `sql.rs`.
+#[cfg(feature = "lang-sql")]
+#[test]
+fn sql_relations_are_the_table_references_and_never_prose() {
+    let parsed = parse("db/schema.sql", SQL.as_bytes(), 0).expect("the grammar");
+
+    for (kind, name) in [("uses", "diagram_store"), ("uses", "loader")] {
+        assert_edge(&parsed, kind, name);
+    }
+
+    // The whole vocabulary of SQL is `uses`: no call, no import, no
+    // inheritance exists in the tree of a schema.
+    for edge in &parsed.edges {
+        assert_eq!(edge.kind, "uses", "SQL declares only table references");
+    }
+    // The view reads the two tables of its query; the foreign key of `loader`
+    // reads `diagram_store`.
+    assert_edge_owned(&parsed, "uses", "diagram_store", "db.schema.store_view");
+    assert_edge_owned(&parsed, "uses", "loader", "db.schema.store_view");
+    assert_edge_owned(&parsed, "uses", "diagram_store", "db.schema.loader");
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+}
+
+// ---------------------------------------------------------------------------
+// Shell (T3 Batch 2)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-shell")]
+const SHELL: &str = r#"
+#!/usr/bin/env bash
+
+source "./lib.sh"
+
+LIMIT=3
+VERBOSE=true
+
+parse_config() {
+    local input="$1"
+    printf "%s" "$input"
+}
+
+open_store() {
+    parse_config "path"
+}
+
+build() {
+    open_store
+    . "./lib.sh"
+    echo "alsoIgnoredInAString()" # a comment that mentions ignoredInComment()
+}
+
+deploy() {
+    local target="$1"
+    build "$target"
+}
+"#;
+
+#[cfg(feature = "lang-shell")]
+const SHELL_LIB: &str = r#"
+#!/usr/bin/env bash
+
+LIB_VERSION="1.0"
+
+lib_help() {
+    printf "usage: build <target>"
+}
+"#;
+
+/// T3/S2: the Shell chapter keeps the functions of the script and the variables
+/// assigned at its root; a `local` of a function body is not a declaration of
+/// the book.
+#[cfg(feature = "lang-shell")]
+#[test]
+fn shell_declares_the_symbols_of_a_chapter_with_its_nesting() {
+    let parsed = parse("scripts/build.sh", SHELL.as_bytes(), 0).expect("the Shell grammar");
+    assert_eq!(parsed.lang, "shell");
+    assert_symbols(
+        &parsed,
+        &[
+            ("const", "LIMIT", "scripts.build.LIMIT"),
+            ("const", "VERBOSE", "scripts.build.VERBOSE"),
+            ("fn", "parse_config", "scripts.build.parse_config"),
+            ("fn", "open_store", "scripts.build.open_store"),
+            ("fn", "build", "scripts.build.build"),
+            ("fn", "deploy", "scripts.build.deploy"),
+        ],
+    );
+
+    for hidden in ["input", "target"] {
+        assert!(
+            !parsed.symbols.iter().any(|symbol| symbol.name == hidden),
+            "`{hidden}` is a local of a function: {:?}",
+            rows(&parsed)
+        );
+    }
+}
+
+/// T3/S2: every command of the script by the name it writes and the `source`/
+/// `.` of another script by the stem of its path — never an edge out of prose.
+/// A shell has no types, so there is no `uses` and no `inherits`.
+#[cfg(feature = "lang-shell")]
+#[test]
+fn shell_relations_are_syntactic_and_never_prose() {
+    let parsed = parse("scripts/build.sh", SHELL.as_bytes(), 0).expect("the grammar");
+
+    for (kind, name) in [
+        ("imports", "lib"),
+        ("calls", "parse_config"),
+        ("calls", "open_store"),
+        ("calls", "build"),
+        ("calls", "printf"),
+        ("calls", "echo"),
+    ] {
+        assert_edge(&parsed, kind, name);
+    }
+
+    assert_edge_owned(&parsed, "calls", "build", "scripts.build.deploy");
+    assert_edge_owned(&parsed, "calls", "open_store", "scripts.build.build");
+    for edge in &parsed.edges {
+        assert!(
+            matches!(edge.kind, "calls" | "imports"),
+            "a shell has no type reference: {edge:?}"
+        );
+    }
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+}
+
+// ---------------------------------------------------------------------------
 // The book (S3, D3): a mixed tree answers across languages
 // ---------------------------------------------------------------------------
 
@@ -1648,6 +2190,10 @@ fn the_registry_answers_the_four_new_languages() {
             cfg!(feature = "lang-c"),
             cfg!(feature = "lang-cpp"),
             cfg!(feature = "lang-csharp"),
+            cfg!(feature = "lang-php"),
+            cfg!(feature = "lang-ruby"),
+            cfg!(feature = "lang-sql"),
+            cfg!(feature = "lang-shell"),
         ]
         .iter()
         .filter(|enabled| **enabled)
@@ -1727,6 +2273,92 @@ fn the_resolution_rate_of_the_batch_one_languages_is_measured_on_their_fixtures(
         ("c", 79.0),
         ("cpp", 69.0),
         ("csharp", 64.0),
+    ] {
+        let row = by_lang(lang);
+        assert!(
+            row.percent() >= floor,
+            "`{lang}` resolves {:.1} % of {} edges, under the published floor of {} %: {row:?}",
+            row.percent(),
+            row.edges,
+            floor
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D3 for T3 Batch 2: the four new languages, measured on their own tree
+// ---------------------------------------------------------------------------
+
+/// D3/S4: the four languages of T3 Batch 2 measure their resolution on a book
+/// that holds only their fixtures, with the same rule and the same report as
+/// the five of C2 and the four of Batch 1 (`Book::resolution()`, `name_norm`,
+/// ≤5 definers). They are a separate tree on purpose: the published numbers of
+/// the other languages are measured on their own fixtures, and adding chapters
+/// with the same common names would move their fanout.
+#[cfg(all(
+    feature = "lang-php",
+    feature = "lang-ruby",
+    feature = "lang-sql",
+    feature = "lang-shell"
+))]
+#[test]
+fn the_resolution_rate_of_the_batch_two_languages_is_measured_on_their_fixtures() {
+    let scratch = Scratch::new("batch-two-resolution");
+    scratch.write("src/store.php", PHP);
+    scratch.write("lib/store.rb", RUBY);
+    scratch.write("db/schema.sql", SQL);
+    scratch.write("scripts/build.sh", SHELL);
+    scratch.write("scripts/lib.sh", SHELL_LIB);
+    let book = Arc::new(scratch.open());
+    scratch.indexer(&book).run_full().expect("the index");
+
+    let report = book.resolution().expect("the honesty report");
+    let by_lang = |lang: &str| {
+        report
+            .iter()
+            .find(|row| row.lang == lang)
+            .unwrap_or_else(|| panic!("the report has no `{lang}` row: {report:?}"))
+            .clone()
+    };
+
+    for lang in ["php", "ruby", "sql", "shell"] {
+        let row = by_lang(lang);
+        assert!(row.files >= 1, "`{lang}` has a chapter: {row:?}");
+        assert!(row.symbols >= 1, "`{lang}` declares something: {row:?}");
+        // SQL's relation set is deliberately small (table references only), so
+        // the floor of edges is the one of a language with one relation kind.
+        assert!(row.edges >= 4, "`{lang}` declares relations: {row:?}");
+        assert!(
+            row.resolved <= row.edges,
+            "a rate is never over 100 %: {row:?}"
+        );
+    }
+
+    println!(
+        "D3 resolutions (T3 Batch 2): {}",
+        report
+            .iter()
+            .map(|row| format!(
+                "{} {}/{} = {:.1} % ({} files, {} symbols)",
+                row.lang,
+                row.resolved,
+                row.edges,
+                row.percent(),
+                row.files,
+                row.symbols
+            ))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+
+    // The floors are the published numbers of `docs/PRD.md`, rounded down: a
+    // measurement that falls under them fails the suite. They are **measured
+    // on these fixtures**, never promises.
+    for (lang, floor) in [
+        ("php", 91.0),
+        ("ruby", 63.0),
+        ("sql", 96.0),
+        ("shell", 34.0),
     ] {
         let row = by_lang(lang);
         assert!(

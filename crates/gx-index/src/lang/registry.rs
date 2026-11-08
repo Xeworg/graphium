@@ -37,12 +37,14 @@ use super::engine::Grammar;
     feature = "lang-c",
     feature = "lang-cpp",
     feature = "lang-csharp",
+    feature = "lang-php",
+    feature = "lang-ruby",
+    feature = "lang-sql",
+    feature = "lang-shell",
 ))]
 use super::engine::{Anchor, ModuleSource, Rules, Walk};
 // The constructors are imports of their own: a slim build that compiles none
 // of the languages that use one of them does not warn about it.
-#[cfg(any(feature = "lang-rust", feature = "lang-python"))]
-use super::engine::leaf_in;
 #[cfg(any(
     feature = "lang-rust",
     feature = "lang-typescript",
@@ -50,8 +52,24 @@ use super::engine::leaf_in;
     feature = "lang-java",
     feature = "lang-javascript",
     feature = "lang-csharp",
+    feature = "lang-php",
+    feature = "lang-ruby",
 ))]
-use super::engine::{container, leaf};
+use super::engine::container;
+#[cfg(any(
+    feature = "lang-rust",
+    feature = "lang-typescript",
+    feature = "lang-python",
+    feature = "lang-java",
+    feature = "lang-javascript",
+    feature = "lang-csharp",
+    feature = "lang-php",
+    feature = "lang-ruby",
+    feature = "lang-shell",
+))]
+use super::engine::leaf;
+#[cfg(any(feature = "lang-rust", feature = "lang-python", feature = "lang-ruby"))]
+use super::engine::leaf_in;
 
 #[cfg(feature = "lang-c")]
 use super::c;
@@ -65,10 +83,18 @@ use super::go;
 use super::java;
 #[cfg(feature = "lang-javascript")]
 use super::javascript;
+#[cfg(feature = "lang-php")]
+use super::php;
 #[cfg(feature = "lang-python")]
 use super::python;
+#[cfg(feature = "lang-ruby")]
+use super::ruby;
 #[cfg(feature = "lang-rust")]
 use super::rust;
+#[cfg(feature = "lang-shell")]
+use super::shell;
+#[cfg(feature = "lang-sql")]
+use super::sql;
 #[cfg(feature = "lang-typescript")]
 use super::typescript;
 
@@ -379,12 +405,138 @@ pub const CSHARP: Grammar = Grammar {
     relations: csharp::relations,
 };
 
+/// PHP: the types of a file, with their methods as children, nested under the
+/// `namespace` the file declares — which is why the module path of a chapter
+/// comes from the tree (like Java and C#) and not from the path.
+///
+/// A trait and an interface are both a `trait` of the vocabulary and an enum is
+/// a `type`; a property is not a declaration of the book. The `const` group is
+/// the one hook: `const LIMIT = 3;` names its declaration in a `const_element`
+/// (see `php.rs`).
+#[cfg(feature = "lang-php")]
+pub const PHP: Grammar = Grammar {
+    lang: php::LANGUAGE,
+    extensions: &["php"],
+    language: php::language,
+    module: ModuleSource::Tree(php::module_path),
+    separator: "\\",
+    anchor: Anchor::LastSegment,
+    walk: Walk::Table(&Rules {
+        transparent: &[
+            "namespace_definition",
+            "declaration_list",
+            "enum_declaration_list",
+            "compound_statement",
+        ],
+        containers: &[
+            container("class_declaration", "class"),
+            container("interface_declaration", "trait"),
+            container("trait_declaration", "trait"),
+            container("enum_declaration", "type"),
+        ],
+        leaves: &[
+            leaf("method_declaration", "method"),
+            leaf("function_definition", "fn"),
+        ],
+        // A `const` group is one `const` per `const_element` (php::constants).
+        hooks: &[("const_declaration", php::constants)],
+    }),
+    relations: php::relations,
+};
+
+/// Ruby: the classes and the modules of a file, with the methods of both under
+/// them, and the constants assigned at the root of the file or of a class body.
+///
+/// A `def` outside a class or a module is a `fn` of the file; the metaprogrammed
+/// declarations (`attr_accessor`, `define_method`) stay calls, which is the
+/// honest scope of a syntactic pass (see `ruby.rs`).
+#[cfg(feature = "lang-ruby")]
+pub const RUBY: Grammar = Grammar {
+    lang: ruby::LANGUAGE,
+    extensions: &["rb"],
+    language: ruby::language,
+    module: ModuleSource::Path(ruby::module_path),
+    separator: "::",
+    anchor: Anchor::LastSegment,
+    walk: Walk::Table(&Rules {
+        transparent: &["body_statement"],
+        containers: &[container("class", "class"), container("module", "module")],
+        leaves: &[
+            leaf_in("method", "fn", &[("class", "method"), ("module", "method")]),
+            leaf("singleton_method", "method"),
+        ],
+        // `LIMIT = 3` is a constant; `@renderer = renderer` is not
+        // (ruby::constant).
+        hooks: &[("assignment", ruby::constant)],
+    }),
+    relations: ruby::relations,
+};
+
+/// SQL: the objects a schema declares — the tables, the views and the types as
+/// `type`, the functions and the triggers as `fn` — with the file as the module.
+///
+/// Every declaration is a hook: a `CREATE` statement of this grammar has no
+/// `name` field and names its object in an `object_reference` child (see
+/// `sql.rs`). Its only relation kind is `uses` — a query, an index and a
+/// foreign key read a table — and the decision is documented in that module.
+#[cfg(feature = "lang-sql")]
+pub const SQL: Grammar = Grammar {
+    lang: sql::LANGUAGE,
+    extensions: &["sql"],
+    language: sql::language,
+    module: ModuleSource::Path(sql::module_path),
+    separator: ".",
+    anchor: Anchor::LastSegment,
+    walk: Walk::Table(&Rules {
+        transparent: &["statement"],
+        containers: &[],
+        leaves: &[],
+        hooks: &[
+            ("create_table", sql::declaration),
+            ("create_view", sql::declaration),
+            ("create_materialized_view", sql::declaration),
+            ("create_type", sql::declaration),
+            ("create_function", sql::declaration),
+            ("create_trigger", sql::declaration),
+        ],
+    }),
+    relations: sql::relations,
+};
+
+/// Shell: the functions of a script and the variables assigned at its root,
+/// with the file as the module (`scripts.build`).
+///
+/// Bash is the grammar of the language of the book: it answers `.sh` and
+/// `.bash`. Shell needs no hook at all — a `function_definition` and a
+/// `variable_assignment` both spell their name in a field — and its relation
+/// kinds are `calls` and `imports` (see `shell.rs`).
+#[cfg(feature = "lang-shell")]
+pub const SHELL: Grammar = Grammar {
+    lang: shell::LANGUAGE,
+    extensions: &["sh", "bash"],
+    language: shell::language,
+    module: ModuleSource::Path(shell::module_path),
+    separator: ".",
+    anchor: Anchor::LastSegment,
+    walk: Walk::Table(&Rules {
+        transparent: &[],
+        containers: &[],
+        leaves: &[
+            leaf("function_definition", "fn"),
+            leaf("variable_assignment", "const"),
+        ],
+        hooks: &[],
+    }),
+    relations: shell::relations,
+};
+
 /// Every grammar this build ships, in the order the book lists them.
 ///
 /// The list is what the features left (T4/C3): the five languages of C2 by
 /// default, fewer in a slim build, and never a grammar that is not compiled.
-/// Batch 1 of T3 (JavaScript/JSX, C, C++, C#) comes after the five and is OFF
-/// by default, so the default binary and its behaviour do not change.
+/// Batch 1 of T3 (JavaScript/JSX, C, C++, C#) and Batch 2 (PHP, Ruby, SQL,
+/// Shell) come after the five and are OFF by default, so the default binary and
+/// its behaviour do not change.
 pub const GRAMMARS: &[Grammar] = &[
     #[cfg(feature = "lang-rust")]
     RUST,
@@ -404,6 +556,14 @@ pub const GRAMMARS: &[Grammar] = &[
     CPP,
     #[cfg(feature = "lang-csharp")]
     CSHARP,
+    #[cfg(feature = "lang-php")]
+    PHP,
+    #[cfg(feature = "lang-ruby")]
+    RUBY,
+    #[cfg(feature = "lang-sql")]
+    SQL,
+    #[cfg(feature = "lang-shell")]
+    SHELL,
 ];
 
 #[cfg(test)]

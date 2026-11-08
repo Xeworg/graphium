@@ -32,6 +32,15 @@ tree-sitter-javascript = { version = "0.25.0", optional = true }
 tree-sitter-c = { version = "0.24.2", optional = true }
 tree-sitter-cpp = { version = "0.23.4", optional = true }
 tree-sitter-c-sharp = { version = "0.23.5", optional = true }
+# T3 Batch 2 (S2/S4): PHP, Ruby, SQL and Shell, OFF by default like Batch 1.
+# SQL comes from `tree-sitter-sequel` — the maintained SQL grammar at the ABI of
+# the engine (tree-sitter-language 0.1). The crate called `tree-sitter-sql` on
+# crates.io stopped at 0.0.2 (2021, built against tree-sitter 0.19) and cannot
+# be loaded by this engine; `lang-sql` names the language, not the crate.
+tree-sitter-php = { version = "0.25.1", optional = true }
+tree-sitter-ruby = { version = "0.23.1", optional = true }
+tree-sitter-sequel = { version = "0.3.11", optional = true }
+tree-sitter-bash = { version = "0.25.1", optional = true }
 
 [features]
 # Default-on: the book ships the five languages of C2, so existing users see no
@@ -49,3 +58,10 @@ lang-javascript = ["dep:tree-sitter-javascript"]
 lang-c = ["dep:tree-sitter-c"]
 lang-cpp = ["dep:tree-sitter-cpp"]
 lang-csharp = ["dep:tree-sitter-c-sharp"]
+# T3 Batch 2: PHP, Ruby, SQL and Shell, all **off** by default. A build that
+# wants them asks: `--features "lang-php,lang-ruby,lang-sql,lang-shell"`.
+lang-php = ["dep:tree-sitter-php"]
+lang-ruby = ["dep:tree-sitter-ruby"]
+# The grammar crate is `tree-sitter-sequel`; the language is SQL.
+lang-sql = ["dep:tree-sitter-sequel"]
+lang-shell = ["dep:tree-sitter-bash"]

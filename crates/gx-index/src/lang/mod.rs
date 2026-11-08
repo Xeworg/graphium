@@ -22,9 +22,10 @@
 //! Each language is also a **cargo feature** of the engine (T4/C3, the lever of
 //! RNF1-quater): `lang-rust`, `lang-typescript`, `lang-python`, `lang-go` and
 //! `lang-java` are **on by default**, so nothing changes for a build that does
-//! not ask, and `lang-javascript`, `lang-c`, `lang-cpp` and `lang-csharp` (T3
-//! Batch 1) are **off by default**, so the default binary does not grow. A slim
-//! build drops a grammar together with its dependency —
+//! not ask, and `lang-javascript`, `lang-c`, `lang-cpp`, `lang-csharp` (T3
+//! Batch 1) and `lang-php`, `lang-ruby`, `lang-sql`, `lang-shell` (T3 Batch 2)
+//! are **off by default**, so the default binary does not grow. A slim build
+//! drops a grammar together with its dependency —
 //! `--no-default-features --features "lang-rust,lang-typescript"` — and this
 //! directory is the only place that knows: [`GRAMMARS`] simply lists the
 //! grammars of the build, and everything outside here speaks of [`ParsedFile`].
@@ -44,11 +45,19 @@ pub mod java;
 #[cfg(feature = "lang-javascript")]
 pub mod javascript;
 pub mod model;
+#[cfg(feature = "lang-php")]
+pub mod php;
 #[cfg(feature = "lang-python")]
 pub mod python;
 pub mod registry;
+#[cfg(feature = "lang-ruby")]
+pub mod ruby;
 #[cfg(feature = "lang-rust")]
 pub mod rust;
+#[cfg(feature = "lang-shell")]
+pub mod shell;
+#[cfg(feature = "lang-sql")]
+pub mod sql;
 #[cfg(feature = "lang-typescript")]
 pub mod typescript;
 
@@ -136,6 +145,17 @@ mod tests {
         }
         #[cfg(feature = "lang-csharp")]
         expected.push(("src/main.cs", "csharp"));
+        #[cfg(feature = "lang-php")]
+        expected.push(("src/main.php", "php"));
+        #[cfg(feature = "lang-ruby")]
+        expected.push(("src/main.rb", "ruby"));
+        #[cfg(feature = "lang-sql")]
+        expected.push(("src/main.sql", "sql"));
+        #[cfg(feature = "lang-shell")]
+        {
+            expected.push(("src/main.sh", "shell"));
+            expected.push(("src/main.bash", "shell"));
+        }
 
         for (path, lang) in expected {
             assert_eq!(language_for(Path::new(path)), Some(lang), "`{path}`");
@@ -154,6 +174,10 @@ mod tests {
                 cfg!(feature = "lang-c"),
                 cfg!(feature = "lang-cpp"),
                 cfg!(feature = "lang-csharp"),
+                cfg!(feature = "lang-php"),
+                cfg!(feature = "lang-ruby"),
+                cfg!(feature = "lang-sql"),
+                cfg!(feature = "lang-shell"),
             ]
             .iter()
             .filter(|enabled| **enabled)
@@ -161,7 +185,7 @@ mod tests {
             "one grammar per enabled language"
         );
         assert_eq!(language_for(Path::new("src/notes.txt")), None);
-        assert!(grammar("ruby").is_none());
+        assert!(grammar("kotlin").is_none());
         #[cfg(feature = "lang-typescript")]
         {
             assert_eq!(

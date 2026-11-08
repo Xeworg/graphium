@@ -991,10 +991,17 @@ fn the_book_refuses_a_chapter_of_a_language_the_registry_does_not_know() {
         panic!("a build without a grammar cannot open a book");
     };
     let valid = gx_index::lang::parse(&path, text.as_bytes(), 0).expect("a chapter of the build");
+    // A language no grammar of this build answers: one of a later batch, taken
+    // from the list and not hard-coded, so the test keeps meaning whichever
+    // features built the registry.
+    let unknown_lang = ["kotlin", "swift", "dart", "scala", "zig"]
+        .into_iter()
+        .find(|lang| gx_index::lang::grammar(lang).is_none())
+        .expect("a language of a later batch is not in this build");
     let unknown = ParsedFile {
-        path: "src/one.rb".to_string(),
-        lang: "ruby",
-        content_hash: "hash-of-ruby".to_string(),
+        path: "src/one.kt".to_string(),
+        lang: unknown_lang,
+        content_hash: "hash-of-unknown".to_string(),
         size: 10,
         mtime_ns: 0,
         symbols: Vec::new(),
@@ -1008,7 +1015,10 @@ fn the_book_refuses_a_chapter_of_a_language_the_registry_does_not_know() {
         .expect("the batch");
 
     assert_eq!(report.files_written, 1, "the valid chapter is written");
-    assert_eq!(report.files_skipped, 1, "`ruby` is refused, not written");
+    assert_eq!(
+        report.files_skipped, 1,
+        "`{unknown_lang}` is refused, not written"
+    );
     assert_eq!(book.counts().expect("the counts").0, 1);
     let langs: Vec<String> = book
         .with_writer(|connection| {
