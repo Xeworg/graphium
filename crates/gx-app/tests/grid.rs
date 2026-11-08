@@ -6,6 +6,15 @@
 
 use std::f64::consts::PI;
 
+/// The stylesheet of the plan: the tokens and the tile of the grid.
+const CSS: &str = include_str!("../frontend/src/app.css");
+/// The numbers of the contract and the code that publishes them to the
+/// stylesheet (`--grid-sin`, `--grid-cos`, `--zoom`).
+const JS: &str = concat!(
+    include_str!("../frontend/src/lib/contract.js"),
+    include_str!("../frontend/src/lib/grid.js"),
+);
+
 /// The deviation of the lines from the vertical (RF24).
 const ANGLE_DEGREES: f64 = 45.0;
 /// The diagonal of the rhombus: the measure the human sees (RF24).
@@ -55,7 +64,7 @@ fn the_cell_is_a_rhombus_with_equal_sides() {
 
 #[test]
 fn the_stylesheet_uses_the_same_numbers() {
-    let css = include_str!("../frontend/style.css");
+    let css = CSS;
     assert!(
         css.contains("--grid-angle: 45deg"),
         "the stylesheet must declare the angle of RF24"
@@ -116,7 +125,7 @@ fn the_prd_states_the_same_geometry() {
 
 #[test]
 fn the_frontend_keeps_the_sine_and_the_cosine_in_sync() {
-    let js = include_str!("../frontend/plan.js");
+    let js = JS;
     assert!(
         js.contains("GRID_ANGLE_DEGREES = 45"),
         "the frontend owns the angle of the grid"
@@ -204,7 +213,7 @@ fn the_tile_keeps_the_mesh_seamless_at_every_angle() {
 /// `cardinality-optional` no pinta nada por su cuenta) no necesitan regla.
 #[test]
 fn every_painted_class_of_the_drawing_has_a_rule_in_the_canvas() {
-    let css = include_str!("../frontend/style.css");
+    let css = CSS;
     let goldens = [
         include_str!("golden/graph-minimal.svg"),
         include_str!("golden/er-posts.svg"),

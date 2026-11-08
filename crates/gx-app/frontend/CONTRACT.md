@@ -3,14 +3,23 @@
 The parity checklist of the Svelte port (`odd/tasks/svelte-ui.md`, T1) and the
 map T4 walks item by item.
 
-Every line reference points at this worktree (`feature/svelte-ui`, from
-`main` @ 77bda03):
+> **Single frontend (2026-11-07).** `odd/tasks/frontend-consolidacion.md`
+> removed the vanilla page and moved this app to `crates/gx-app/frontend/`.
+> Citations of the form `plan.js:NNN` and `index.html:NNN` below are
+> provenance for the vanilla snapshot the port was written against; those
+> files no longer exist in the tree. The delivery records in §9 and the T4
+> notes quote the paths, scripts and commands of the branch they were taken
+> on (`frontend-svelte/`, `TAURI_CONFIG`, `scripts/svelte-*`): they are
+> history, not instructions. §10 keeps the retired switch and the coverage
+> map of the retired tests.
+
+Every line reference points at this worktree (`feature/frontend-consolidacion`):
 
 | File | What it is |
 | --- | --- |
-| `crates/gx-app/frontend/plan.js` | the vanilla page logic (2449 lines) |
-| `crates/gx-app/frontend/index.html` | the vanilla DOM (258 lines) |
-| `crates/gx-app/frontend/style.css` | the vanilla stylesheet (1352 lines) |
+| `crates/gx-app/frontend/src/lib/contract.js` | the numbers, keys, themes and events of the contract |
+| `crates/gx-app/frontend/src/app.css` | the stylesheet of the plan (the vanilla rules, kept) |
+| `crates/gx-app/frontend/src/App.svelte` | the surface: camera, objects, clones, culling, wire |
 | `crates/gx-app/src/app.rs` | the Tauri application: every listener and emit |
 | `crates/gx-app/src/camera.rs` | the placement/fit numbers the page must match |
 | `crates/gx-app/src/settings.rs` | `Settings`, the presets and their ranges |
@@ -281,24 +290,28 @@ family (`--shift-a`, `--shift-b`).
 
 ## 8. Parity checklist for T4
 
-How T4 certified this (2026-11-07): `tools/parity.mjs` runs the **real built
-bundle** of each frontend against a faked Tauri bridge, in headless Chromium
-over HTTP, and repeats the same probe on the vanilla page. A probe marked `equal`
-must observe the same value on both sides; that equality is the parity claim.
-The bridge is injected with `Page.addScriptToEvaluateOnNewDocument`, so it exists
-before the bundle reads `window.__TAURI__`; it records every emission with the
+How the checklist is enforced now: `tools/parity.mjs` runs the **real built
+bundle** against a faked Tauri bridge, in headless Chromium over HTTP, and
+asserts each probe's own expectation. It was differential while the A/B switch
+existed — each probe ran on the vanilla page too and an `equal` probe failed
+when the two differed, which is the T4 evidence of `odd/tasks/svelte-ui.md`;
+with the page retired the probes assert on the one bundle and the
+`equal`/`report` labels stay as checklist markers. The bridge is injected with
+`Page.addScriptToEvaluateOnNewDocument`, so it exists before the bundle reads
+`window.__TAURI__`; it records every emission with the
 `requestAnimationFrame` counter (which is how "two frames" is observed), feeds
 `graphium://` events to the listeners, and can be replaced by the
-`__TAURI_INTERNALS__` door or by nothing (C1). The five `static:` probes read
-files instead of a page (C9, C40-C43).
+`__TAURI_INTERNALS__` door or by nothing (C1). The four `static:` probes read
+files instead of a page (C9, C40, C41, C43); C42 retired with the vanilla
+stylesheet (§10).
 
 ```bash
-npx vite build                                        # the bundle under test
-node crates/gx-app/frontend-svelte/tools/parity.mjs   # both builds, 58 probes
+npm run build                                  # the bundle under test (`dist/`)
+node tools/parity.mjs                          # the §8 probes, exit 0 = certified
 ```
 
-Two probes are `report` instead of `equal`, and both are deliberate, documented
-differences:
+Two items are marked `report` in the checklist: they record a documented fact
+instead of an equality, and both stay visible on purpose.
 
 1. **C2/C3** — the Svelte port pushes one `camera-changed` **before**
    `graphium://ready` (`App.svelte`, the end of `onMount`), so Rust's camera copy
@@ -309,8 +322,8 @@ differences:
 
 **Blind spot, stated:** the harness is Chromium, not WebKitGTK. Everything that
 is DOM, CSS, wire or arithmetic is certified here; the WebKit half of the
-handshake is `DISPLAY=:0 scripts/svelte-smoke.sh` (`rendered=true reason=none`,
-which is only possible after A1 and A2), and the visual half is the two
+handshake is `DISPLAY=:0 scripts/smoke.sh` (`rendered=true reason=none`, which
+is only possible after A1 and A2), and the visual half is the two
 byte-identical screenshots T3 took (recorded in L8). **No item is NOT COVERED.**
 
 Tick only with the wire string, the payload keys and the numbers of this
@@ -543,7 +556,7 @@ document.
 
 ## 9. What the tasks delivered
 
-`crates/gx-app/frontend-svelte/`:
+`crates/gx-app/frontend/`:
 
 | File | Content |
 | --- | --- |
@@ -639,45 +652,51 @@ pending` has no emitter, so the ghost is unreachable from Rust today (C36);
 — the header comment differs (C42). The scaffold diagnostic chip and its
 `.scaffold` CSS are gone with T3.
 
-## 10. Selecting the Svelte build, and the evidence T1 took
+## 10. The A/B switch, RETIRED — and where the retired guards live
 
-The default path is untouched: `crates/gx-app/tauri.conf.json` still says
-`"frontendDist": "frontend"`, the vanilla files are byte-identical, and the
-Rust tests that `include_str!` them keep passing.
+This section is a historical note, not a step to run. Until
+`odd/tasks/frontend-consolidacion.md` the tree carried two frontends: the
+vanilla page (`crates/gx-app/frontend/`, removed) and this Svelte app
+(`crates/gx-app/frontend-svelte/`, now `crates/gx-app/frontend/`). The
+vanilla page was the default `frontendDist`; the Svelte bundle was selected
+with a `TAURI_CONFIG` JSON merge patch
+(`{"build":{"frontendDist":"frontend-svelte/dist"}}`) that both
+`tauri-build` and the codegen of `tauri::generate_context!()` applied.
 
-The switch is the `TAURI_CONFIG` environment variable, which both
-`tauri-build` (`tauri-build-2.7.4/src/lib.rs:655,681`) and the codegen of
-`tauri::generate_context!()` (`tauri-codegen-2.7.4/src/lib.rs:56-91`) merge
-into the parsed config with a JSON merge patch; `tauri-build` also emits
-`cargo:rerun-if-env-changed=TAURI_CONFIG`, so changing it recompiles `gx-app`
-and nothing else. Relative paths of the config are resolved against the
-directory of `tauri.conf.json` (`crates/gx-app`), so:
+S2 retired the switch. `tauri.conf.json` now says
+`frontendDist: "frontend/dist"`, no environment variable selects a
+frontend, and one path builds both halves:
 
 ```bash
-# 1. the Svelte bundle
-scripts/svelte-build.sh            # npm + vite build → crates/gx-app/frontend-svelte/dist
-
-# 2. the binary that embeds it
-TAURI_CONFIG='{"build":{"frontendDist":"frontend-svelte/dist"}}' cargo build -p gx-app
-
-# the helper that does both (and runs it with --run)
-scripts/svelte-tauri.sh
+scripts/build.sh              # npm ci (when needed) + npm run build + cargo build -p gx-app
+scripts/build.sh --run        # ... and open the window
+DISPLAY=:0 scripts/smoke.sh  # rendered=true reason=none in the real webview
 ```
 
-The vanilla build is the same command without the variable
-(`scripts/svelte-tauri.sh --vanilla`).
+Why there is no `build.beforeBuildCommand` in `tauri.conf.json`: this
+repository builds with cargo, never with the `tauri` CLI, and the Tauri CLI
+hooks do not run for `cargo build`. The order (Vite first, cargo second) is
+wired where it does run: `scripts/build.sh`, `.github/workflows/ci.yml`,
+`.github/workflows/release.yml` and `install.sh`.
 
-Evidence (T1, observed on this worktree):
+### Coverage map of the retired tests
 
-1. `cargo test -p gx-app` → green with the default (vanilla) config.
-2. `scripts/svelte-build.sh` → `dist/` with `index.html`,
-   `assets/index-*.js` (34.6 kB), `assets/index-*.css` (2.1 kB).
-3. `TAURI_CONFIG='{"build":{"frontendDist":"frontend-svelte/dist"}}' cargo build -p gx-app`
-   → the binary embeds the Svelte chunks; `strings target/debug/graphium` shows
-   `assets/index-<hash>.js` and no `plan.js`.
-4. `DISPLAY=:0 scripts/svelte-smoke.sh` → `rendered=true reason=none` for both
-   the vanilla and the Svelte binary. `rendered:true` is only possible after
-   `graphium://ready` (else `ui_error`) **and** `render_ack` (else
-   `ui_timeout`), so it is the observable form of A1 + A2 with the switch
-   active. The script isolates the socket in its own `XDG_RUNTIME_DIR` and the
-   settings in its own `HOME`, both under `/tmp`, and quits the owner it started.
+The six page suites (`tests/culling.rs`, `tests/panel.rs`,
+`tests/sessions_panel.rs`, `tests/settings_panel.rs`,
+`tests/user_plan_page.rs`, `tests/versions.rs`) asserted the vanilla page's
+implementation structure — function bodies, DOM building, element ids — and
+stopped existing with the page. What each one protected, and where that
+enforcement lives now:
+
+| What the retired suite protected | Where it lives now |
+| --- | --- |
+| grid geometry 59 / 45° / 41.72, the `--grid-*` tokens, the tile and the `.graphium` class rules | `tests/grid.rs`, unchanged assertions over `src/app.css` + `src/lib/contract.js`/`grid.js` |
+| every contract number (zoom 0.05-4.0, padding 24, ceiling 3, cull 0.4, the throttles, the pan, the hidden grid), the keys of `Settings`, the themes, the event names and the presets table | `tests/contract_numbers.rs` over `src/lib/contract.js` and `src/lib/presets.js`; the seven themes against `Theme::ALL` |
+| the panel of open diagrams with its `×`, the `◀ v3/7 ▶` history, the plan switcher, the settings panel and its ranges, the clone tools, the version preview, both empty states, the banner and the ghost — the observable rules of §8 | `tools/parity.mjs`: the §8 probes on the real built bundle, run by CI |
+| the wire (B1-B10, R1-R8), the acks and their timeouts, the camera copy, the settings file, the store, the plan of the human | the Rust suites: `tests/end_to_end.rs`, `tests/user_plan.rs`, `tests/settings.rs`, `tests/round_trip.rs`, `tests/placement.rs`, `tests/camera_fit.rs` |
+| the resize keeping the world point under the centre | `tests/camera_fit.rs`, now against `src/App.svelte`'s `onResize` |
+| the real webview half of the handshake (WebKitGTK, not Chromium) | `scripts/smoke.sh`, `rendered=true reason=none` |
+| C42 (`app.css` carried every rule of the vanilla `style.css`) and the vanilla side of C41 | retired with the page: there is no second stylesheet or source to diff. The surviving halves are C9 over `src/app.css` and C41 over the source (parity harness); the byte-level evidence stays in `odd/tasks/svelte-ui.md` (T4) and `odd/tasks/svelte-ui-t5-bench.md` |
+
+The A/B evidence itself is kept verbatim in `odd/tasks/svelte-ui.md` and
+`odd/tasks/svelte-ui-t5-bench.md`.

@@ -37,6 +37,23 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # El plano es una app Svelte (`crates/gx-app/frontend`) y `tauri::
+      # generate_context!()` embebe `frontend/dist` al compilar: el build de
+      # Vite tiene que correr ANTES de cualquier `cargo build`/`cargo test`.
+      # Sin este paso el workspace no compila en un checkout limpio
+      # (frontend-consolidacion, L3).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/gx-app/frontend/package-lock.json
+
+      - name: Frontend bundle (Vite)
+        working-directory: crates/gx-app/frontend
+        run: |
+          npm ci --no-fund --no-audit
+          npm run build
+
       - name: Formatting
         run: cargo fmt --all -- --check
 
@@ -45,6 +62,20 @@ jobs:
 
       - name: Tests
         run: cargo test --workspace
+
+      # Las seis suites de página que la consolidación retiró dejan su rol de
+      # comportamiento en este arnés: las reglas de CONTRACT.md §8 sobre el
+      # bundle real, con el puente de Tauri falso, en el Chrome del runner
+      # (CONTRACT.md §10, el mapa de cobertura).
+      - name: Frontend behavior (parity harness)
+        working-directory: crates/gx-app/frontend
+        run: |
+          chromium="$(command -v google-chrome || command -v chromium-browser || command -v chromium || true)"
+          if [ -z "$chromium" ]; then
+            echo "::error::the parity harness needs a Chromium on PATH"
+            exit 1
+          fi
+          node tools/parity.mjs --chromium "$chromium"
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings

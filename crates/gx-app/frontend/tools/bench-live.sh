@@ -174,8 +174,8 @@ sum_rss() {
 
 small="$runtime/small.json"
 large="$runtime/large.json"
-node "$root/crates/gx-app/frontend-svelte/tools/diagram.mjs" 12 >"$small"
-node "$root/crates/gx-app/frontend-svelte/tools/diagram.mjs" "$nodes" >"$large"
+node "$root/crates/gx-app/frontend/tools/diagram.mjs" 12 >"$small"
+node "$root/crates/gx-app/frontend/tools/diagram.mjs" "$nodes" >"$large"
 
 # The MCP handshake.
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"graphium-bench","version":"0"}}}' >&3

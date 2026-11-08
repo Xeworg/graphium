@@ -9,11 +9,11 @@
 # where "the page announced itself AND confirmed the paint" is observable.
 #
 # Usage:
-#   scripts/svelte-smoke.sh [binary]
+#   scripts/smoke.sh [binary]
 #
-#   binary  target/debug/graphium (default) — it tests whatever frontend that
-#           binary embeds: the vanilla one (`cargo build -p gx-app`) or the
-#           Svelte one (`scripts/svelte-tauri.sh`).
+#   binary  target/debug/graphium (default) — build it with `scripts/build.sh`,
+#           which runs `npm run build` before `cargo build -p gx-app` (the
+#           bundle has to exist when `tauri::generate_context!()` embeds it).
 #
 # `SMOKE_HOLD_SECONDS` (default 8) is how long the session stays open after the
 # call, to look at the window before the owner leaves.
@@ -32,11 +32,11 @@ binary=${1:-$root/target/debug/graphium}
 hold_seconds=${SMOKE_HOLD_SECONDS:-8}
 
 if [ ! -x "$binary" ]; then
-  echo "svelte-smoke: no binary at $binary (build it first)" >&2
+  echo "smoke: no binary at $binary (build it first)" >&2
   exit 2
 fi
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
-  echo "svelte-smoke: no DISPLAY: the render hook reports 'headless' instead of painting" >&2
+  echo "smoke: no DISPLAY: the render hook reports 'headless' instead of painting" >&2
   exit 2
 fi
 
@@ -92,7 +92,7 @@ document='"diagram":{"version":1,"kind":"graph","title":"smoke","direction":"TB"
 # The three well-known lines of the transport (initialize, the notification
 # and the call), the same shape the Rust tests drive in `gx-mcp`.
 {
-  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"graphium-svelte-smoke","version":"0"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"graphium-smoke","version":"0"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
   printf '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"render_diagram","arguments":{%s}}}\n' "$document"
   sleep "$hold_seconds"
@@ -114,7 +114,7 @@ done
 
 answer=$(grep '"id":2' "$out" 2>/dev/null | head -1 || true)
 if [ -z "$answer" ]; then
-  echo "svelte-smoke: no answer for the render call" >&2
+  echo "smoke: no answer for the render call" >&2
   echo "--- stderr" >&2
   cat "$runtime/stderr" >&2 || true
   echo "--- stdout" >&2
@@ -126,11 +126,11 @@ rendered=$(printf '%s' "$answer" | grep -o '"rendered":[a-z]*' | head -1 | cut -
 reason=$(printf '%s' "$answer" | grep -o '"reason":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
 diagram=$(printf '%s' "$answer" | grep -o '"diagram_id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
 
-echo "svelte-smoke: diagram=${diagram:-?} rendered=${rendered:-?} reason=${reason:-none}"
-echo "svelte-smoke: binary=$binary"
+echo "smoke: diagram=${diagram:-?} rendered=${rendered:-?} reason=${reason:-none}"
+echo "smoke: binary=$binary"
 
 if [ "$rendered" = "true" ]; then
   exit 0
 fi
-echo "svelte-smoke: the window did not confirm the paint (reason=${reason:-?})" >&2
+echo "smoke: the window did not confirm the paint (reason=${reason:-?})" >&2
 exit 1

@@ -29,7 +29,10 @@ Integraciones propias de los clientes (Pi primero): [`extensions/`](extensions/R
 
 ## Compilar
 
-Únicas dependencias de sistema: `webkit2gtk-4.1` y `gtk3`.
+Únicas dependencias de sistema: `webkit2gtk-4.1` y `gtk3`. Para compilar desde
+el repositorio hace falta además **Node 22 y npm**: el plano es una app Svelte
+y su bundle se embebe en el binario al compilar (`scripts/build.sh` hace
+`npm ci` + `npm run build` y después `cargo build`).
 
 ```bash
 # Fedora
@@ -39,6 +42,14 @@ sudo apt-get install libwebkit2gtk-4.1-dev libgtk-3-dev
 
 cargo build --release --bin graphium
 cargo test --workspace
+```
+
+`scripts/build.sh` hace las dos mitades en orden (`npm ci` + `npm run build` →
+`cargo build`); si lo hacés a mano, compilá el bundle primero:
+
+```bash
+cd crates/gx-app/frontend && npm ci && npm run build && cd -
+cargo build --release --bin graphium
 ```
 
 ## Instalar

@@ -457,7 +457,8 @@ graphium/
 │   ├── gx-render-svg/          # ⭐ SVG propio: rustybuzz + fuente embebida; feature "png" (resvg).
 │   ├── gx-mcp/                 # rmcp: tools, errores RFC-7386, validación, list/get. Testeable in-process.
 │   └── gx-app/                 # Tauri: ventana, single-instance socket, eventos. Cáscara delgada.
-│       └── frontend/           # JS vanilla: canvas+grilla + zoom/pan + panel lateral + insertar SVG + estados vacío-error. Cero librerías.
+│       └── frontend/           # App Svelte + Vite: bundle embebido en el binario (canvas+grilla + zoom/pan + paneles + estados vacío-error). Se compila con npm antes de cargo.
+│           └── src/lib/contract.js  # Los números del contrato (tests/contract_numbers.rs los fija).
 ├── assets/fonts/               # TTF OFL embebidos (determinismo O8)
 ├── .github/workflows/          # CI: webkit2gtk image, tests, golden-SVG hash, cargo tree gate, builds deb/AppImage
 └── docs/{PRD.md, QUICKSTART.md}
@@ -469,7 +470,7 @@ graphium/
 | Mejora/cambio de layout | `gx-layout` (detrás del trait) |
 | Estilo/shapes/temas/export | `gx-render-svg` |
 | Tool MCP nueva | `gx-mcp` |
-| UI (canvas/grilla, panel lateral, estados, gestos) | `gx-app/frontend` |
+| UI (canvas/grilla, paneles, estados, gestos) | `gx-app/frontend` (Svelte + Vite; `src/lib/contract.js` fija los números) |
 
 **`gx-mcp` y `gx-app` jamás cambian al agregar kinds** (O7).
 

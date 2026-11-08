@@ -24,7 +24,7 @@ binario, registra el servidor MCP para la sesión y agrega el comando
 - **`/graphium open`** abre la ventana del plano sin pedirle un diagrama al
   agente.
 - Si no encuentra el binario, **no rompe la sesión**: avisa qué hacer
-  (`GRAPHIUM_BIN` o `cargo build --release`).
+  (`GRAPHIUM_BIN` o `scripts/build.sh --release` en un checkout del repositorio).
 
 Dónde busca el binario, en orden:
 

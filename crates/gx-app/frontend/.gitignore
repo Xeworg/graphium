@@ -1,0 +1,5 @@
+# Build outputs of the Svelte app. `dist/` is what
+# `tauri.conf.json` (`frontendDist: "frontend/dist"`) embeds; `node_modules/`
+# is the local install. Neither is source.
+/dist
+/node_modules
