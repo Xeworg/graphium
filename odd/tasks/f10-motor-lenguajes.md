@@ -600,3 +600,197 @@ languages ride on it.
   PRD updated in RNF1, RNF1-quater and the features paragraph; ci.yml
   gate moved. This is arithmetic under the owner's single-binary policy
   (2026-11-07), not a new decision.
+
+- L12 (2026-11-07, worker, T3 Batch 4: S2 S4): Scala, R, Lua and Zig landed —
+  **the twenty languages of the approved list are complete.** Inside `default`
+  from the start (the single-binary contract of L9), and **the schema needed
+  nothing for the fourth time**: no `SCHEMA_VERSION` bump, no `CHECK`, no
+  migration (L7's contract held for four more languages without one line of
+  `schema.rs`, which this cut may not touch).
+  - **Grammar providers — no substitution this time.** `tree-sitter-scala`
+    0.26.9, `tree-sitter-r` 1.3.0, `tree-sitter-lua` 0.5.0 and
+    `tree-sitter-zig` 1.1.2: all four publish `tree-sitter-language` 0.1 (the
+    ABI of the engine) as a **normal** dependency and their parsers declare
+    language version 14 or 15, so every `Language` loads in this engine as-is.
+    The registry test that types every node kind of every table against its
+    grammar (`node_kind_for_id`) passed for the four before a fixture ran, and
+    it caught nothing — unlike L8's SQL and L10's Kotlin, no crate had to be
+    swapped.
+  - **The four languages (Batch 4)** — the registry entry of each is the whole
+    of what the engine knows, and each decision below is written in its module
+    and in the entry's doc:
+    - `lang-scala` (`.scala`, `.sc`): **module from the `package` the file
+      declares** (like Java, C#, PHP and Kotlin), directory as the fallback.
+      **The `object` decision:** a Scala `object` defines a class *and its only
+      instance* — the spec's singleton object, and the compiler emits a real
+      class — so it is a **`class`** of the book and its members nest under it
+      (`graphium.store.Defaults.open`); it is **not** the `module` kind, because
+      an object is a value that can extend a class, implement a trait and be
+      passed around, and the fixture's `object Defaults extends Loader` reads as
+      `inherits` from it. **A `case class` is a class** (the `case` modifier
+      synthesises `apply`/`unapply`/`copy` and changes no declaration the source
+      spells: Kotlin's data-class rule), a `trait` is a `trait`, a Scala 3 `enum`
+      a `type`, a `type X = Y` a `type`. `val`/`var` name their binding in the
+      `pattern` field — the one hook — so a root-level binding is a `const` and a
+      `val`/`var` inside a type is a field (no declaration, the rule of every
+      chapter), and an abstract `val` of a trait declares no value. A companion
+      class and object share a name and the book numbers the second symbol with
+      the contract it already has (`#2`), pinned by a unit test. Not read, on
+      purpose and documented: a `given` (it names itself only sometimes), an
+      `extension` (its type lives in the parameter list) and a `package object`
+      (it *is* the package) are not declarations, and a `derives` clause is a
+      generated instance, not `inherits` (Swift's `where` rule). Relations: all
+      four kinds — `calls` (`parseConfig(x)`, `store.load(x)`, the `apply` sugar
+      `DiagramStore(…)` and `new DiagramStore(…)`), `imports` (last segment, and
+      the **alias** of a renamed import: `import a.b.{Painter => Renamed}` binds
+      `Renamed`), `inherits` (every type of an `extends` clause, `with`
+      included) and `uses` (parameter, return, `val`/`var` and type-alias types;
+      a path type names its last segment).
+    - `lang-r` (`.r`, `.R` — a script is spelled both ways and the extension
+      never depends on the case the author chose): the file is the module
+      (`R/store.R` → `R.store`). **The R decision: an assignment creates a
+      variable, and `f <- function(…)` is a `fn`.** The grammar gives
+      `function_definition` the keyword (`function`) in its `name` field and
+      never the bound identifier, so the name comes from the assignment: the one
+      hook reads the `operator` **field** of `binary_operator` — `<-`, `<<-`,
+      `=` and `:=` bind the left name, `->`/`->>` the right one — and writes a
+      `fn` when the value is a function definition and a `const` otherwise
+      (R has no types, so a binding is a binding; Python's module-assignment
+      rule). A binding inside a body is not a declaration of the chapter.
+      `assign("x", 3)`, `setClass("Foo", …)` and the R6 `R6Class("Foo", …)`
+      **stay calls**: a class synthesised from a string argument is a semantic
+      pass, and the book publishes what the syntax tree spells (Ruby's
+      metaprogramming rule of L8). Honest limit, in the module: a function
+      written the right way round (`function(…) … -> f`) parses the operator
+      *inside* the function body, so it declares no `fn` because the grammar
+      says it is a body. Relations: **`calls`** (every `call`, with the name of
+      the member for `store$load(…)`/`pkg::fun(…)`) and **`imports`** (`source`/
+      `sys.source` by the stem of the path they read, `library`/`require`/
+      `requireNamespace` by the package they name — Shell's rule of L8) — and
+      **no `inherits` and no `uses`**: R's inheritance lives in string arguments
+      of calls and a type is a runtime attribute, never syntax this grammar
+      marks. Two relation kinds by decision, and the fixture measures two.
+    - `lang-lua` (`.lua`): the file is the module (`src/store.lua` →
+      `src.store`; `init.lua` names its directory, the language's convention).
+      **The Lua decision: a table is the module, and a table of functions is
+      what the language calls a module.** So `local Store = {}` is a **`module`**
+      symbol, `function Store.open(…)` a **`fn`** under it and
+      `function Store:load(…)` a **`method`** under it — the colon form takes the
+      implicit `self`, which is the one thing Lua calls a method. **The two
+      spellings are one declaration**: `M.f = function(…) end` is sugar-identical
+      to `function M.f(…)`, so both write `fn f` under `M`; any other root
+      binding is a `const` (`local LIMIT = 3`, `local painter = require(…)`), and
+      a field that is only data (`M.count = 1`) is not a declaration (the field
+      rule of every chapter). A table the file never declares still gets its
+      `module` symbol — created at the table the first function names and
+      **reused** when the declaration comes later, so a chapter never holds two
+      symbols of one `qname` by accident (pinned by a unit test). Relations:
+      **`calls`** (every `function_call`: `parse_config(x)`, `Store.load(x)`,
+      `self.load(x)`) and **`imports`** (`require("lib.render")` → `render`) —
+      no `inherits` and no `uses`, because the language has neither types nor
+      supertypes.
+    - `lang-zig` (`.zig`): the file is the module (`src/store.zig` →
+      `src.store`). **The Zig decision: a `const` that holds a type is a `type`,
+      and the declarations of that type live inside the `const`.** Zig has no
+      class and no namespace keyword: a type is
+      `const X = struct { pub fn m() … }`, and the grammar spells
+      `variable_declaration` with **no field at all** (the identifier is the
+      first named child and the value the last), so one hook reads it: a
+      `struct`/`union`/`enum`/`opaque` value makes a **`type` container** and the
+      `fn`s inside it are its **`method`s** (`src.store.DiagramStore.load`); any
+      other value is a **`const`** of the file (`const LIMIT: usize = 3`), which
+      is the binding the language refers to. A `fn` at the root is a `fn`, a
+      `container_field` is a field (no declaration), a `test "…"` block declares
+      nothing, and `const std = @import("std")` is a `const` like any other
+      binding. **No `inherits`**: Zig is not object-oriented and has no
+      supertypes — the kind is not invented for it. Relations: `calls`
+      (`parseConfig(a, b)`, `store.load(x)`, `DiagramStore.init(p)`),
+      `imports` (`@import("render.zig")` → `render`: a builtin named `@import`
+      is the import statement the language gives) and `uses` (parameter, return,
+      `const` and field types; a user type is a plain `identifier` in this
+      grammar and a `builtin_type` — `usize`, `u8` — is not a declaration).
+  - **Language N+1 after this cut**: still one module + one registry entry +
+    dependency/feature + fixture/floor + PRD row + re-measure, and still **no
+    schema change**. Batch 4 needed no new kind of engine work: four table
+    walks, **six hooks in total** (Scala's two `val`/`var` definitions, R's one
+    assignment, Lua's two, Zig's one `const`), one file (`emit.rs`) widened by
+    one `cfg` so a Scala-only build compiles the directory fallback. The list is
+    now complete, so there is no language N+1.
+  - **D3** (`-- --nocapture`, the four features on). Batch 4, on **its own**
+    fixture tree (the rule of L7/L8/L10), which for Scala, R and Lua also holds a
+    second file of the same language with what the first one imports
+    (`graphium.render`, `R/render.R`, `lua/render.lua`) — a real tree has those,
+    and D3 is measured on a tree: **Scala 48,5 % (16/33), R 50,0 % (4/8),
+    Lua 80,0 % (4/5), Zig 87,5 % (7/8)**. Floors pinned at **45 / 46 / 76 / 83 %**
+    (measured minus 3,5–4 points, never inflated). Scala and R are the Python/
+    Swift case — their signatures name `Int`, `String` and functions of packages
+    the book does not hold — while Lua and Zig resolve most of what they declare
+    because the declarations and the calls live in one file; Zig has one import
+    edge per chapter (`@import` names a file, not a symbol) and R and Lua declare
+    two relation kinds by decision, so their edge counts are small on purpose.
+    The **sixteen** existing languages, same tests, same `--nocapture`:
+    **byte-identical** table — TypeScript 48,0 % (12/25), Rust 36,4 % (4/11),
+    Java 29,6 % (8/27), Go 17,2 % (5/29), Python 14,8 % (4/27), JavaScript
+    66,7 % (8/12), C 81,8 % (9/11), C++ 71,4 % (10/14), C# 66,7 % (10/15), PHP
+    95,0 % (19/20), Ruby 66,7 % (6/9), SQL 100 % (4/4), Shell 37,5 % (3/8),
+    Swift 24,1 % (7/29), Kotlin 26,9 % (7/26), Dart 25,9 % (7/27). Differential
+    check of the technique of L5/L10: the base tree (`git archive HEAD` into a
+    `mktemp -d`, its own target dir, same command and `--nocapture`) prints the
+    **same four lines byte for byte** — the base tree has no batch-4 line — exit
+    **0**: the cut moved nothing of the languages that already existed.
+  - **Binary — MEASURED, UNDER THE GATE.** Default `graphium` (release,
+    opt-level=z, lto, strip, the CI command `cargo build --release --bin
+    graphium`): **40.318.232 B before → 45.789.848 B after**, **+5.471.616 B**
+    for the four grammars (≈1,37 MB each, half of batch 3's ≈3,03 MB) — **79,5 %
+    of the 57.600.000 B gate** and comfortably under the declared 55 MB, below
+    the ~52 MB the L11 ceiling change assumed. `ci.yml` untouched (the ceiling is
+    not this cut's). The **slim reference is byte-identical to L5/L9/L10**:
+    `-p gx-app --no-default-features --features "lang-rust,lang-typescript"` =
+    **13.241.496 B** — the four grammars cost the slim build nothing. Node kinds
+    of all four (`template_body`, `method_index_expression`, `container_field`,
+    plus Swift's `inheritance_specifier`) were found in the stripped binary, so
+    the measurement is the twenty-language default and not a slim one.
+    **Why the CI command measures twenty and `-p gx-app` does not** (verified
+    both ways on this tree, not inferred): a bare `cargo build` in a virtual
+    workspace selects **every** default member, so `gx-index` is a selected
+    package and its own `default` (the twenty `lang-*` features) is enabled;
+    `cargo build --release --bin graphium -p gx-app` selects only the app, which
+    forwards five languages through `gx-mcp`, and measures **14.363.032 B with
+    no batch-4 node kind in the binary** (byte-identical to the five-language
+    default of L7). The gate is the first command, so the published number is the
+    twenty-language one — and the forwarding of `gx-app`/`gx-mcp` (four
+    languages of the book, outside this cut's surfaces: L9's single-binary
+    decision landed the grammars in `gx-index`'s `default` and did not touch the
+    two forwarding lists) is a finding for the orchestrator, not a change this
+    batch could make.
+  - **Gates (exit codes without pipes)**: `cargo test --workspace` **0** (42
+    suites ok, 0 failed — every one of the twenty languages in the default run);
+    `cargo test -p gx-index` **0** (lib 88, book 22, end_to_end 3, languages 46,
+    relations 7); `cargo fmt --check` **0**;
+    `cargo clippy --workspace --all-targets` **0** (0 warnings);
+    `cargo build --release --bin graphium` **0**;
+    `cargo build -p gx-index --no-default-features --features lang-X` **0** for
+    each of the four (the Scala-only slim build warns about `dotted_module`, the
+    pre-existing pattern of L7/L8/L10's slim builds: this grammar takes the
+    directory fallback and not the dotted module path). The known
+    `--no-default-features` failures of L5 are untouched and out of this cut.
+  - **Two stale tests fixed in passing (inside this cut's surfaces)**:
+    `crates/gx-index/src/lang/mod.rs` asserted `grammar("scala").is_none()` as
+    the archetype of a language the build does not know; Scala is now one of the
+    twenty, so the assertion moved to `julia` (an alternate of L6, not a
+    language of the book). `crates/gx-index/tests/book.rs` derived its unknown
+    language from `["kotlin", "swift", "dart", "scala", "zig"]`, which this batch
+    emptied — it now derives it from the alternates that no batch landed
+    (`julia`/`elixir`/`ocaml`/`objectivec`), so it keeps meaning whichever
+    features built the registry.
+  - **Scope note for the reviewer**: `Cargo.lock` (workspace root) changed — four
+    packages added (`tree-sitter-scala` 0.26.9, `tree-sitter-r` 1.3.0,
+    `tree-sitter-lua` 0.5.0, `tree-sitter-zig` 1.1.2, +44 lines) and **nothing
+    moved**: no version of an existing crate changed (`cc` stays 1.2.67,
+    `tree-sitter-language` stays 0.1.9), unlike L8's `cc` downgrade. The lock is
+    outside the listed surfaces and the dependencies cannot land without it (L7's
+    note verbatim). No other surface was touched: `crates/gx-app`, `gx-mcp`,
+    `gx-core`, `gx-kinds`, `gx-layout`, `schema.rs` and `.github/workflows/ci.yml`
+    are untouched. `docs/PRD.md` is updated in RNF1, RNF1-quater, the D3
+    paragraph and the features paragraph (twenty, measured numbers, the four
+    grammar crates).
