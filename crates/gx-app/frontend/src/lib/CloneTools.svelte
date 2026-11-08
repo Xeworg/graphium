@@ -21,34 +21,27 @@
   const updatable = $derived(Boolean(clone && clone.updatable));
   const at = $derived(clone === null ? current : cloneVersionAt(clone, viewed));
 
-  let pillEl = $state(null);
+  // The width of the pill is measured by `bind:offsetWidth` (T3 of
+  // `odd/tasks/mejoras-frontend.md`): Svelte keeps `pillWidth` in step with the
+  // element, so the effect below reads a reactive value instead of measuring the
+  // DOM and listing its own inputs with `void` to make them dependencies.
+  let pillWidth = $state(0);
   let overhang = $state(false);
 
   // The pill is measured against the rectangle of its object (`.content` is the
-  // object, in plan units): it grows inward while it fits and centers over the
-  // top edge when the object is narrower than the pill itself.
+  // object, in plan units, and for a clone its rectangle **is** the object —
+  // `width` is that rectangle): it grows inward while it fits and centers over
+  // the top edge when the object is narrower than the pill itself.
   $effect(() => {
-    // Dependencies: the object's width, whether it is on screen at all, and
-    // everything that changes the width of the pill.
-    void width;
-    void hidden;
-    void count;
-    void oldest;
-    void current;
-    void updatable;
-    if (pillEl === null) {
-      return;
-    }
-    const objectWidth = pillEl.parentElement?.clientWidth ?? 0;
-    if (objectWidth === 0) {
+    if (hidden || pillWidth === 0 || width === 0) {
       // A hidden object has no layout to measure: keep the last decision.
       return;
     }
-    overhang = pillEl.offsetWidth > objectWidth;
+    overhang = pillWidth > width;
   });
 </script>
 
-<div class="diagram-clone-tools" class:overhang bind:this={pillEl}>
+<div class="diagram-clone-tools" class:overhang bind:offsetWidth={pillWidth}>
   <!-- A version the history discarded cannot be browsed: the indicator falls
        back to the newest one the owner can draw (RF14, L5). -->
   <div class="panel-item-versions clone-versions" class:hidden={!(count > 1)}>

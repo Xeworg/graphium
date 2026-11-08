@@ -3,13 +3,13 @@
   // (S2). `CONTRACT.md` is the parity checklist T4 walks.
   //
   // What this component owns: the camera (wheel zoom anchored at the cursor,
-  // drag pan, the animated pan, the camera intents of the renders), the
-  // objects with their `×`, their box and the culling (≤ 3 live SVGs), the
-  // wholesale reconciliation from `graphium://state`, the clones of the user
-  // plan (their move by drag, their tools pill) and every remaining piece of
-  // chrome of the vanilla page: the panel of open diagrams, the history of
-  // versions, the switcher of plans, the settings panel, the error banner and
-  // the render ghost.
+  // the pinch of two fingers, drag pan, the animated pan, the camera intents of
+  // the renders), the objects with their `×`, their box and the culling (≤ 3
+  // live SVGs), the wholesale reconciliation from `graphium://state`, the
+  // clones of the user plan (their move by drag, their tools pill) and every
+  // remaining piece of chrome of the vanilla page: the panel of open diagrams,
+  // the history of versions, the switcher of plans, the settings panel, the
+  // error banner and the render ghost.
   //
   // The panels themselves are components (`PlanPanel`, `SessionsPanel`,
   // `SettingsPanel`, `CloneTools`); this file keeps the state, the wire and
@@ -19,9 +19,7 @@
 
   import {
     CAMERA_THROTTLE_MS,
-    CULL_ZOOM,
     EVENTS,
-    MAX_LIVE_SVGS,
     OBJECT_PADDING,
     PAN_MS,
     SETTINGS_THROTTLE_MS,
@@ -31,7 +29,8 @@
   } from "./lib/contract.js";
   import { emit, listen } from "./lib/tauri.js";
   import {
-    gridPaint,
+    gridPaintCamera,
+    gridPaintStatic,
     palettePaint,
     settingsFromPayload,
     settingsId,
@@ -40,10 +39,8 @@
   import {
     cameraOn,
     clampZoom,
-    distanceToView,
+    cullDecide,
     objectCenter,
-    rectsIntersect,
-    visibleRect,
     zoomAtPoint,
   } from "./lib/plane.js";
   import { boxText, sessionEndedNotice } from "./lib/labels.js";
@@ -59,8 +56,11 @@
   // The settings of the human. `null` until the first `graphium://settings`.
   let settings = $state(null);
   // The state Rust owns (PRD §8.6.1): the truth about what the plan shows and
-  // the only source of the panels (C22).
-  let state = $state({ diagrams: [], sessions: [], clones: [] });
+  // the only source of the panels (C22). It is `$state.raw` because it is
+  // replaced wholesale on every `graphium://state` (C17) and no code writes one
+  // of its three arrays in place: the deep proxy would only wrap every diagram
+  // and every clone of the payload for nothing.
+  let state = $state.raw({ diagrams: [], sessions: [], clones: [] });
   // The objects of the plane, in arrival order — the same order the vanilla
   // `objects` Map iterates (plan.js:275). Diagrams and clones share it; the
   // ids never collide (the store numbers `d-…`, the owner numbers `c-…`).
@@ -91,7 +91,6 @@
   // --- machinery outside reactivity ----------------------------------------
 
   let planEl = $state(null);
-  let diagramsEl = $state(null);
   // The size of the plan in CSS pixels, before the current resize
   // (plan.js:287-290). Refreshed before every culling decision that follows
   // an insertion or a paint.
@@ -104,6 +103,21 @@
   // The clone the pointer is moving (B3 of `f8-planos.md`): dragging an
   // **object** of the user plan moves it; dragging the background pans.
   let moving = null;
+  // The touch pointers the surface follows (T4 of
+  // `odd/tasks/mejoras-frontend.md`): the map keeps where each finger is, and
+  // two of them are a pinch. Only touch and pen pointers come in here — the
+  // mouse has one pointer, and the mouse drags keep the path they always had.
+  const touchPointers = new Map();
+  // The pinch in flight: where the midpoint of the two fingers was and how far
+  // apart they were on the last sample. `null` while fewer than two fingers are
+  // on the surface.
+  let pinch = null;
+  // The pointer samples waiting for the next frame (T4): `getCoalescedEvents()`
+  // hands the physical samples the display produced between two frames in one
+  // event, and the surface consumes the whole batch once per frame instead of
+  // reacting to each event (the culling and `camera-changed` follow the frame).
+  let pointerSamples = [];
+  let pointerFrame = null;
   const planCameras = new Map();
   // The 100 ms throttle and the `settingsId` dedupe of `settings-changed`
   // (C6; plan.js:744-773).
@@ -113,14 +127,32 @@
   // The timer of «calculando layout…» -> `N nodos, M edges` (C36).
   let ghostTimer = null;
 
-  const grid = $derived(gridPaint(settings, camera));
+  // The grid is published in the two halves it is written in (T1): the six
+  // variables that only the settings decide — written once per settings change
+  // — and the five the camera derives, written on every camera write. One
+  // effect for all eleven rewrote the six on every pan frame: six CSSOM writes
+  // per frame that could not change anything.
+  const gridStatic = $derived(gridPaintStatic(settings));
+  const gridCamera = $derived(gridPaintCamera(settings, camera));
   const palette = $derived(palettePaint(settings));
-  // The camera transform of the layer. The vanilla page applies the same
-  // transform to every object (`plan.js:393-396`); one transform on the
-  // camera layer is the same result for one write.
-  const layerTransform = $derived(
-    `translate(${camera.tx}px, ${camera.ty}px) scale(${camera.zoom})`,
-  );
+  // The camera transform of the layer is pure CSS since T2 of
+  // `odd/tasks/mejoras-frontend.md`: `.diagrams` reads `--tx`/`--ty`/`--zoom`,
+  // which `gridPaintCamera` already publishes on `#plan` with every camera
+  // write. One stylesheet rule, zero JavaScript per frame.
+  //
+  // How many diagrams the state lists per session, in one pass (T3 of
+  // `odd/tasks/mejoras-frontend.md`): `sessionRows` asks once per row and the
+  // plan on screen asks again, so a `filter` per caller walked the same array
+  // once per session. The index is rebuilt when the state is replaced and read
+  // by `sessionDiagramCount`.
+  const diagramCounts = $derived.by(() => {
+    const counts = new Map();
+    for (const diagram of state.diagrams) {
+      const sessionId = diagram.session_id;
+      counts.set(sessionId, (counts.get(sessionId) ?? 0) + 1);
+    }
+    return counts;
+  });
   // How many objects the plan on screen has (A2; B1): the clones on the user
   // plan, the diagrams of the session otherwise.
   const planObjectCount = $derived(
@@ -144,10 +176,17 @@
   );
 
   // The grid and the palette, published to the stylesheets exactly like
-  // `applyGrid`/`applySettings` do (`plan.js:362-383`, `plan.js:729-742`).
+  // `applyGrid`/`applySettings` do (`plan.js:362-383`, `plan.js:729-742`). The
+  // static half depends on `settings` alone, so a pan frame never enters it.
   $effect(() => {
     if (!planEl) return;
-    for (const [name, value] of Object.entries(grid)) {
+    for (const [name, value] of Object.entries(gridStatic)) {
+      planEl.style.setProperty(name, value);
+    }
+  });
+  $effect(() => {
+    if (!planEl) return;
+    for (const [name, value] of Object.entries(gridCamera)) {
       planEl.style.setProperty(name, value);
     }
   });
@@ -157,10 +196,6 @@
     for (const [name, value] of Object.entries(palette)) {
       root.style.setProperty(name, value);
     }
-  });
-  $effect(() => {
-    if (!diagramsEl) return;
-    diagramsEl.style.transform = layerTransform;
   });
 
   // --- records --------------------------------------------------------------
@@ -183,9 +218,14 @@
       // Whether the drawing is out of the DOM (RNF1-ter). Born culled.
       culled: true,
       hidden: false,
+      // The drawing as the owner delivered it — the markup string, never a
+      // parsed DOM node inside reactive state (T2): `{@html}` parses it on
+      // each mount, and the measured cost of one re-parse of the 300-node
+      // fixture (1.47 ms, `tools/measure-html.mjs`) is under the agreed
+      // ~3 ms threshold.
       svg: null,
-      // The drawing of the version the human is browsing, while it lasts
-      // (C27). The culling re-mounts this one, not the live drawing under it.
+      // The markup of the version the human is browsing, while it lasts
+      // (C27). The culling re-parses this one, not the live drawing under it.
       previewSvg: null,
       // The entry of the clone this object is, as the owner states it (B1;
       // plan.js:1690): the tools pill reads its counts from here.
@@ -246,10 +286,24 @@
   /**
    * Pans until `target` over `PAN_MS` (250 ms), cubic ease-out, and never
    * touches the zoom (plan.js:600-623, C12).
+   *
+   * With `prefers-reduced-motion: reduce` (T3 of
+   * `odd/tasks/mejoras-frontend.md`) the 250 ms glide is exactly the motion the
+   * human asked not to see: the camera lands on the object in this frame. The
+   * result of the pan is the same — the zoom is still untouched (C12) — and the
+   * question is asked on every call, because the system setting can change
+   * while the page is open.
    */
   function panTo(target) {
     cancelPan();
     const from = { tx: camera.tx, ty: camera.ty };
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      camera.tx = target.tx;
+      camera.ty = target.ty;
+      applyCulling();
+      notifyCamera();
+      return;
+    }
     const started = window.performance.now();
     const step = (now) => {
       const elapsed = Math.min(1, (now - started) / PAN_MS);
@@ -292,6 +346,14 @@
 
   // --- pointer handlers (plan.js:416-551) -----------------------------------
 
+  /**
+   * One step of the wheel, anchored at the cursor (plan.js:389-396, C10). It
+   * is the template's `onwheel` of the surface (T4 of
+   * `odd/tasks/mejoras-frontend.md`): a handler attached to an element is not
+   * passive in WebKitGTK, so `preventDefault` reaches the engine — measured on
+   * the real window before moving it out of the imperative block, which is
+   * what L7 records.
+   */
   function onWheel(event) {
     event.preventDefault();
     // The human taking the wheel is the new owner of the view: a pan in
@@ -329,6 +391,7 @@
     selectedId = rec.id;
     moving = {
       rec,
+      pointerId: event.pointerId,
       fromX: event.clientX,
       fromY: event.clientY,
       x: rec.rect.x,
@@ -344,9 +407,14 @@
    * screen pixels and the plan in plan units, and the zoom of the camera is
    * what joins them (B3). The object is one reactive rectangle: moving it
    * repaints the content and the box.
+   *
+   * The two coordinates are written **in place** (T3 of
+   * `odd/tasks/mejoras-frontend.md`): a spread per `pointermove` allocated a new
+   * rectangle, and a new content with it, sixty times per second of drag.
    */
   function setClonePlace(rec, x, y) {
-    rec.rect = { ...rec.rect, x, y };
+    rec.rect.x = x;
+    rec.rect.y = y;
     placeCloneContent(rec);
   }
 
@@ -358,6 +426,21 @@
     if (event.target instanceof Element && event.target.closest("button")) {
       return;
     }
+    // Every finger on the surface is followed (T4 of
+    // `odd/tasks/mejoras-frontend.md`): the second one turns the gesture into a
+    // pinch, and the first one keeps the single-finger drag of the camera it
+    // always had.
+    if (event.pointerType !== "mouse") {
+      touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (touchPointers.size >= 2) {
+        // Two or more fingers are a pinch and nothing else: a third one is
+        // followed by the map but starts no gesture of its own.
+        if (pinch === null) {
+          startPinch();
+        }
+        return;
+      }
+    }
     const clone = cloneUnder(event.target);
     if (clone !== null) {
       moveCloneStart(event, clone);
@@ -368,34 +451,147 @@
     planEl.setPointerCapture(event.pointerId);
   }
 
-  function onPointerMove(event) {
-    if (moving !== null) {
-      const zoom = camera.zoom > 0 ? camera.zoom : 1;
-      setClonePlace(
-        moving.rec,
-        moving.x + (event.clientX - moving.fromX) / zoom,
-        moving.y + (event.clientY - moving.fromY) / zoom,
-      );
-      return;
-    }
-    if (!dragging) {
-      return;
-    }
-    camera.tx = dragging.tx + (event.clientX - dragging.x);
-    camera.ty = dragging.ty + (event.clientY - dragging.y);
-    applyCulling();
-    notifyCamera();
+  /**
+   * The midpoint and the spread of the two fingers of the pinch. The values
+   * are screen pixels: the pinch, like the wheel, works in the coordinates the
+   * hand speaks (plan.js:389-396).
+   */
+  function pinchGeometry() {
+    const [first, second] = [...touchPointers.values()];
+    return {
+      x: (first.x + second.x) / 2,
+      y: (first.y + second.y) / 2,
+      distance: Math.hypot(second.x - first.x, second.y - first.y),
+    };
   }
 
-  function endDrag(event) {
+  /**
+   * Makes the pair of fingers a pinch (T4 of `odd/tasks/mejoras-frontend.md`):
+   * whatever one finger was doing stops where it is — a clone keeps the place
+   * the hand gave it and the camera stops panning — and the two start feeding
+   * `zoomAtPoint` (`lib/plane.js`), the same pure arithmetic the wheel uses.
+   */
+  function startPinch() {
+    if (moving !== null) {
+      finishGesture(moving.pointerId);
+    }
+    dragging = null;
+    draggingNow = false;
+    pinch = pinchGeometry();
+  }
+
+  /**
+   * One step of the pinch: the midpoint of the two fingers is the anchor of the
+   * zoom (C10, the same `zoomAtPoint` of the wheel), and the travel of the
+   * midpoint pans, so the plan follows the hand instead of only growing around
+   * it. The world point that was under the last midpoint ends under the new
+   * one, which is what a zoom anchored at the cursor means for two fingers.
+   * The culling and the camera copy follow once per frame, in
+   * `flushPointerSamples`.
+   */
+  function applyPinch() {
+    if (pinch === null) {
+      return;
+    }
+    const now = pinchGeometry();
+    if (!(pinch.distance > 0) || !(now.distance > 0)) {
+      pinch = now;
+      return;
+    }
+    const next = zoomAtPoint(camera, pinch.x, pinch.y, now.distance / pinch.distance);
+    camera.tx = next.tx + (now.x - pinch.x);
+    camera.ty = next.ty + (now.y - pinch.y);
+    camera.zoom = next.zoom;
+    pinch = now;
+  }
+
+  /**
+   * Stacks the samples of a `pointermove` and lets the next frame consume them
+   * (T4 of `odd/tasks/mejoras-frontend.md`). One event may carry the physical
+   * samples of a whole frame through `getCoalescedEvents()` — or none, when the
+   * engine has nothing to add to the event itself.
+   */
+  function onPointerMove(event) {
+    const coalesced =
+      typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [];
+    const source = coalesced.length === 0 ? [event] : coalesced;
+    for (const sample of source) {
+      pointerSamples.push({
+        pointerId: sample.pointerId ?? event.pointerId,
+        x: sample.clientX,
+        y: sample.clientY,
+      });
+    }
+    schedulePointerFrame();
+  }
+
+  function schedulePointerFrame() {
+    if (pointerFrame !== null) {
+      return;
+    }
+    pointerFrame = window.requestAnimationFrame(() => {
+      pointerFrame = null;
+      flushPointerSamples();
+    });
+  }
+
+  /**
+   * Consumes the queued samples in the order the hand made them: the pan and
+   * the move of a clone are absolute (the last sample is the hand's place), the
+   * pinch is incremental (every sample counts, its anchor moves). One culling
+   * and one `camera-changed` per frame follow the camera writes, never per
+   * sample (C4, C5).
+   */
+  function flushPointerSamples() {
+    if (pointerSamples.length === 0) {
+      return;
+    }
+    const batch = pointerSamples;
+    pointerSamples = [];
+    let cameraMoved = false;
+    for (const sample of batch) {
+      if (pinch !== null && touchPointers.has(sample.pointerId)) {
+        touchPointers.set(sample.pointerId, { x: sample.x, y: sample.y });
+        applyPinch();
+        cameraMoved = true;
+        continue;
+      }
+      if (moving !== null) {
+        const zoom = camera.zoom > 0 ? camera.zoom : 1;
+        setClonePlace(
+          moving.rec,
+          moving.x + (sample.x - moving.fromX) / zoom,
+          moving.y + (sample.y - moving.fromY) / zoom,
+        );
+        continue;
+      }
+      if (!dragging) {
+        continue;
+      }
+      camera.tx = dragging.tx + (sample.x - dragging.x);
+      camera.ty = dragging.ty + (sample.y - dragging.y);
+      cameraMoved = true;
+    }
+    if (cameraMoved) {
+      applyCulling();
+      notifyCamera();
+    }
+  }
+
+  /**
+   * Ends the gesture `pointerId` was doing (plan.js:432-470). The place a clone
+   * ended in is the only thing that crosses the wire: a click without movement
+   * asks for nothing (B3).
+   */
+  function finishGesture(pointerId) {
     // The hand let go of a clone: the object stays where it is and the owner
     // keeps that place (B3).
     if (moving !== null) {
       const move = moving;
       moving = null;
       draggingNow = false;
-      if (planEl.hasPointerCapture(event.pointerId)) {
-        planEl.releasePointerCapture(event.pointerId);
+      if (planEl.hasPointerCapture(pointerId)) {
+        planEl.releasePointerCapture(pointerId);
       }
       const rect = move.rec.rect;
       if (rect.x !== move.x || rect.y !== move.y) {
@@ -413,9 +609,34 @@
     }
     dragging = null;
     draggingNow = false;
-    if (planEl.hasPointerCapture(event.pointerId)) {
-      planEl.releasePointerCapture(event.pointerId);
+    if (planEl.hasPointerCapture(pointerId)) {
+      planEl.releasePointerCapture(pointerId);
     }
+  }
+
+  function endDrag(event) {
+    // The samples the frame has not consumed yet are the last place of the
+    // hand: they land before the gesture closes, so the last pixel of a drag is
+    // never lost (and a click that did not move still writes nothing).
+    flushPointerSamples();
+
+    if (touchPointers.delete(event.pointerId) && pinch !== null) {
+      // The pair is the gesture, not one finger: with two fingers still on the
+      // surface the remaining pair re-anchors the pinch where it is; with fewer
+      // there is no pinch left, and the finger that stays does not become a pan
+      // (the plan would jump under it).
+      if (touchPointers.size >= 2) {
+        pinch = pinchGeometry();
+      } else {
+        pinch = null;
+        draggingNow = false;
+      }
+      if (planEl.hasPointerCapture(event.pointerId)) {
+        planEl.releasePointerCapture(event.pointerId);
+      }
+      return;
+    }
+    finishGesture(event.pointerId);
   }
 
   /** A resize keeps the world point under the centre; it never refits. */
@@ -434,56 +655,21 @@
   // --- culling (plan.js:2064-2195) -------------------------------------------
 
   /**
-   * Decides, object by object, whether its SVG stays in the DOM (RNF1-ter,
-   * C14): at most `MAX_LIVE_SVGS` drawings, the ones closest to the centre
-   * of the view; everything out of the view, below `CULL_ZOOM`, or of a plan
-   * that is not on screen, becomes a box. It runs on every camera write.
+   * The one funnel of the culling (RNF1-ter, C14): every camera write — pan
+   * step, wheel step, pinch step, camera intent, resize, insertion, plan switch
+   * — crosses here, and nowhere else do the `culled` flags move. The decision
+   * itself is pure (`cullDecide` in `lib/plane.js`); this half applies it to the
+   * records, imperatively — never a `$effect`, which would re-enter reactivity
+   * right after the DOM writes of the frame.
+   *
+   * An object the decision keeps alive whose drawing has not arrived yet (a
+   * clone waiting for its paint) keeps its box: there is nothing to mount.
    */
   function applyCulling() {
-    const view = visibleRect(camera, viewport);
-    const zoomedOut = camera.zoom < CULL_ZOOM;
-    const candidates = [];
+    const alive = cullDecide(plane, camera, viewport);
     for (const rec of plane) {
-      if (rec.hidden) {
-        cullRecord(rec);
-        continue;
-      }
-      if (zoomedOut || !rectsIntersect(rec.rect, view)) {
-        cullRecord(rec);
-        continue;
-      }
-      candidates.push({ rec, distance: distanceToView(rec.rect, view) });
+      rec.culled = !alive.has(rec.id) || !(rec.previewSvg || rec.svg);
     }
-    candidates.sort((left, right) => left.distance - right.distance);
-    for (let index = 0; index < candidates.length; index += 1) {
-      if (index < MAX_LIVE_SVGS) {
-        materializeRecord(candidates[index].rec);
-      } else {
-        cullRecord(candidates[index].rec);
-      }
-    }
-  }
-
-  function cullRecord(rec) {
-    if (rec.culled) {
-      return;
-    }
-    // The drawing leaves the page; the node stays reachable in `rec.svg`, so
-    // coming back into the view re-mounts the same node (the action in the
-    // template does the swap).
-    rec.culled = true;
-  }
-
-  function materializeRecord(rec) {
-    if (!rec.culled) {
-      return;
-    }
-    // An object whose drawing has not arrived yet (a clone waiting for its
-    // paint) keeps its box: there is nothing to mount yet.
-    if (!rec.previewSvg && !rec.svg) {
-      return;
-    }
-    rec.culled = false;
   }
 
   // --- plans (plan.js:1204-1400) ----------------------------------------------
@@ -498,7 +684,7 @@
   }
 
   function sessionDiagramCount(sessionId) {
-    return state.diagrams.filter((diagram) => diagram.session_id === sessionId).length;
+    return diagramCounts.get(sessionId) ?? 0;
   }
 
   /** The plan the state leaves on screen when the human has not chosen one. */
@@ -579,23 +765,45 @@
 
   /** The session of the plan on screen is gone: switch, never stay empty. */
   function reconcileActivePlan() {
+    if (planOnScreenEnded()) {
+      const ended = activePlan;
+      const next = initialPlan();
+      showPlan(next === null ? null : { id: next.id, label: next.label });
+      if (ended !== null) {
+        sessionMessage = sessionEndedNotice(ended, next);
+      }
+    }
+    // A plan the state no longer lists has nobody to come back to: its camera
+    // leaves with the session, or the map grows with one entry per session the
+    // human ever visited (A2). After `showPlan`, which saves the camera of the
+    // plan it leaves — including the one that just ended.
+    prunePlanCameras();
+  }
+
+  /**
+   * Whether the plan on screen has to leave (A2): its session is gone, or no
+   * plan has come on screen yet — the first state has to show one.
+   */
+  function planOnScreenEnded() {
     // The plan of the human does not end with a session.
-    if (activePlan !== null && activePlan.id === USER_PLAN.id) {
-      return;
+    if (activePlan === null) {
+      return true;
     }
-    if (
-      activePlan !== null &&
-      state.sessions.some((session) => session.id === activePlan.id)
-    ) {
-      return;
+    if (activePlan.id === USER_PLAN.id) {
+      return false;
     }
-    const ended = activePlan;
-    const next = initialPlan();
-    showPlan(next === null ? null : { id: next.id, label: next.label });
-    if (ended === null) {
-      return;
+    return !state.sessions.some((session) => session.id === activePlan.id);
+  }
+
+  /** Forgets the camera of every plan the state does not list any more. */
+  function prunePlanCameras() {
+    const live = new Set(state.sessions.map((session) => session.id));
+    live.add(USER_PLAN_ID);
+    for (const planId of [...planCameras.keys()]) {
+      if (!live.has(planId)) {
+        planCameras.delete(planId);
+      }
     }
-    sessionMessage = sessionEndedNotice(ended, next);
   }
 
   // --- diagrams (plan.js:1879-2062) -------------------------------------------
@@ -645,6 +853,9 @@
     }
     const holder = document.createElement("div");
     holder.innerHTML = p.svg || "";
+    // One parse here, at arrival: it validates the payload and reads the
+    // width/height the rectangle needs. The record keeps the STRING — the
+    // template's `{@html}` parses on each mount (T2).
     const svg = holder.querySelector("svg");
     if (!svg) {
       emit(EVENTS.renderAck, { req_id: p.req_id, ok: false });
@@ -675,7 +886,7 @@
       w: width,
       h: height,
     };
-    rec.svg = svg;
+    rec.svg = p.svg || "";
     rec.rect = {
       x: center.x - width / 2 - OBJECT_PADDING,
       y: center.y - height / 2 - OBJECT_PADDING,
@@ -761,9 +972,7 @@
    * changes shape because of the history. The live drawing stays reachable on
    * the record for the restore.
    */
-  function paintPreview(rec, svg) {
-    const width = Number.parseFloat(svg.getAttribute("width") || "0");
-    const height = Number.parseFloat(svg.getAttribute("height") || "0");
+  function paintPreview(rec, svgMarkup, width, height) {
     const center = {
       x: rec.rect.x + rec.rect.w / 2,
       y: rec.rect.y + rec.rect.h / 2,
@@ -774,7 +983,7 @@
       w: width,
       h: height,
     };
-    rec.previewSvg = svg;
+    rec.previewSvg = svgMarkup;
   }
 
   /** Brings the live drawing back: the preview leaves the plan (C26). */
@@ -812,7 +1021,7 @@
     if (!svg) {
       return;
     }
-    paintPreview(rec, svg);
+    paintPreview(rec, payload.svg || "", Number.parseFloat(svg.getAttribute("width") || "0"), Number.parseFloat(svg.getAttribute("height") || "0"));
   }
 
   // --- clones of the user plan (plan.js:1510-1877) ----------------------------
@@ -837,14 +1046,16 @@
    * Puts the object of a clone where its rectangle says. The content **is**
    * the object — the drawing centers inside it with the stylesheet — so moving
    * a clone is moving one rectangle, and its tools travel with it.
+   *
+   * The four fields are written in place (T3): `setClonePlace` calls this on
+   * every `pointermove` of a drag, and a fresh object per frame is garbage the
+   * frame does not need.
    */
   function placeCloneContent(rec) {
-    rec.content = {
-      x: rec.rect.x,
-      y: rec.rect.y,
-      w: rec.rect.w,
-      h: rec.rect.h,
-    };
+    rec.content.x = rec.rect.x;
+    rec.content.y = rec.rect.y;
+    rec.content.w = rec.rect.w;
+    rec.content.h = rec.rect.h;
   }
 
   /** Reads from the state where a clone sits and what it is called (B3). */
@@ -878,14 +1089,14 @@
   /** Mounts the drawing the owner rendered for a clone (B1, B2). */
   function mountCloneDrawing(rec, payloadSvg) {
     const holder = document.createElement("div");
-    holder.innerHTML = payloadSvg;
-    const svg = holder.querySelector("svg");
-    if (!svg) {
+    holder.innerHTML = payloadSvg || "";
+    // The parse validates; the record keeps the string (T2).
+    if (!holder.querySelector("svg")) {
       return;
     }
-    // A **new** drawing, not the one that left the page: the action swaps the
-    // nodes and the culling re-decides right after.
-    rec.svg = svg;
+    // A **new** drawing, not the one that left the page: `{@html}` swaps the
+    // tree and the culling re-decides right after.
+    rec.svg = payloadSvg || "";
     rec.previewSvg = null;
     rec.culled = false;
   }
@@ -1114,13 +1325,26 @@
    * history of its original), like the arrows of its panel item. A field that
    * holds the keyboard keeps its arrows: the history never steals them from the
    * human.
+   *
+   * Two guards of T3 of `odd/tasks/mejoras-frontend.md`: an event another
+   * handler already consumed is not the event of the history
+   * (`defaultPrevented`), and a text editor keeps its arrows as well as a field
+   * does — `[contenteditable]` is where the human writes, and a diagram on the
+   * plan is focusable now, so both cases are one Tab away.
    */
   function onKeyDown(event) {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
       return;
     }
+    if (event.defaultPrevented) {
+      return;
+    }
     const target = event.target;
-    if (target instanceof HTMLElement && target.matches("input, textarea, select")) {
+    if (
+      target instanceof Element &&
+      target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !==
+        null
+    ) {
       return;
     }
     if (selectedId === null) {
@@ -1145,52 +1369,23 @@
     event.preventDefault();
   }
 
-  // --- the culling's DOM half ---------------------------------------------------
-
-  /**
-   * Mounts (and unmounts, and swaps) the drawing of an object inside its
-   * `.content`, prepended the way the vanilla page does it (`content.prepend`
-   * in `insertDiagram`, `paintPreview` and `materializeObject`), so the `×` of a
-   * diagram keeps painting above it and the tools of a clone keep their corner.
-   * This is the DOM half of the culling: the flags live on the record, the
-   * nodes move here. The preview of a version is what the culling re-mounts
-   * while it lasts (C27).
-   */
-  function svgMount(node, params) {
-    let mounted = null;
-    const apply = (current) => {
-      const target = current.culled ? null : current.preview || current.svg;
-      if (mounted === target) {
-        return;
-      }
-      if (mounted) {
-        mounted.remove();
-        mounted = null;
-      }
-      if (target) {
-        node.prepend(target);
-        mounted = target;
-      }
-    };
-    apply(params);
-    return { update: apply };
-  }
-
   // --- wiring (plan.js:2332-2449) ----------------------------------------------
 
   onMount(() => {
     refreshViewport();
 
-    // The listeners of the surface, attached the way the vanilla page does:
-    // the wheel is not passive, because it calls `preventDefault`
-    // (plan.js:398-412).
-    planEl.addEventListener("wheel", onWheel, { passive: false });
+    // The pointer of the surface stays imperative (it needs the order the
+    // vanilla page has: down, move, up, cancel, and nothing else between), and
+    // each one is removed in the cleanup below. The wheel is NOT here anymore
+    // (T4 of `odd/tasks/mejoras-frontend.md`): it lives in the template, on
+    // `#plan`, and the empirical test of the real WebKitGTK decided it — see
+    // the `onwheel` of the surface and L7. The resize and the keyboard are not
+    // here either: they belong to `<svelte:window>` below, which removes them
+    // when the page goes.
     planEl.addEventListener("pointerdown", onPointerDown);
     planEl.addEventListener("pointermove", onPointerMove);
     planEl.addEventListener("pointerup", endDrag);
     planEl.addEventListener("pointercancel", endDrag);
-    window.addEventListener("resize", onResize);
-    window.addEventListener("keydown", onKeyDown);
 
     // Every listener is registered **before** `graphium://ready` leaves, or
     // the burst Rust answers with would reach nobody (C2).
@@ -1209,9 +1404,14 @@
     listen(EVENTS.state, (event) => {
       // The model lives in Rust (PRD §8.6.1): the page only reads the state.
       const payload = event.payload || {};
-      state.diagrams = Array.isArray(payload.diagrams) ? payload.diagrams : [];
-      state.sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
-      state.clones = Array.isArray(payload.clones) ? payload.clones : [];
+      // Wholesale, never field by field: `state` is `$state.raw`, so the three
+      // arrays are new on every event and the identity of the object is what
+      // tells the page the state moved (C17).
+      state = {
+        diagrams: Array.isArray(payload.diagrams) ? payload.diagrams : [],
+        sessions: Array.isArray(payload.sessions) ? payload.sessions : [],
+        clones: Array.isArray(payload.clones) ? payload.clones : [],
+      };
       // A session the owner dropped takes its plan away: switch, never an
       // empty surface without explanation (A2, C29).
       reconcileActivePlan();
@@ -1247,27 +1447,66 @@
     emit(EVENTS.ready, {});
 
     return () => {
-      planEl.removeEventListener("wheel", onWheel);
+      // The pointer is still imperative, so it is removed by hand; the wheel
+      // left with the component (it is the template's `onwheel`).
       planEl.removeEventListener("pointerdown", onPointerDown);
       planEl.removeEventListener("pointermove", onPointerMove);
       planEl.removeEventListener("pointerup", endDrag);
       planEl.removeEventListener("pointercancel", endDrag);
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("keydown", onKeyDown);
+      // A frame of pointer samples in flight belongs to the surface that is
+      // leaving: it is cancelled with it, and the next mount starts empty.
+      if (pointerFrame !== null) {
+        window.cancelAnimationFrame(pointerFrame);
+        pointerFrame = null;
+      }
+      pointerSamples = [];
+      touchPointers.clear();
+      pinch = null;
+      // A timer that fires after the component is gone writes to a page that
+      // is no longer there: the two throttles and the ghost of a render in
+      // flight leave with it.
+      window.clearTimeout(cameraTimer);
+      cameraTimer = null;
+      window.clearTimeout(settingsTimer);
+      settingsTimer = null;
+      settingsPending = null;
+      window.clearTimeout(ghostTimer);
+      ghostTimer = null;
     };
   });
 </script>
 
+<!-- The resize and the keyboard of the page: the template owns both, so the
+     component removes them when it goes (the teardown bug of T1). -->
+<svelte:window onresize={onResize} onkeydown={onKeyDown} />
+
 <!-- The plan: an infinite surface with a grid. The camera lives here
-     (PRD §7.1, `index.html:11-13`). -->
-<div id="plan" class="plan" class:dragging={draggingNow} bind:this={planEl}>
-  <div class="diagrams" bind:this={diagramsEl}>
+     (PRD §7.1, `index.html:11-13`).
+
+     The wheel is the template's (T4 of `odd/tasks/mejoras-frontend.md`): Svelte
+     attaches the handler to the element itself, where a listener is not passive
+     — proven on the real WebKitGTK window (L7) — so `preventDefault` reaches
+     the engine exactly like the imperative `{ passive: false }` of before, and
+     the handler leaves with the component. -->
+<div id="plan" class="plan" class:dragging={draggingNow} bind:this={planEl} onwheel={onWheel}>
+  <!-- The camera layer: its transform is the stylesheet rule on `.diagrams`
+       reading `--tx`/`--ty`/`--zoom` (T2). -->
+  <div class="diagrams">
     {#each plane as rec (rec.id)}
+      <!-- The object keeps the keyboard (T3 of `odd/tasks/mejoras-frontend.md`):
+           `tabindex` on a `group` is what the linter flags, and the trade is
+           deliberate — the focus is what chooses the object and what makes the
+           history of versions reachable with the arrows. -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <div
         class="diagram"
         class:clone={rec.kind === "clone"}
         class:plan-hidden={rec.hidden}
         data-id={rec.id}
+        role="group"
+        aria-label={boxText(rec)}
+        tabindex="0"
+        onfocus={() => (selectedId = rec.id)}
       >
         <!-- The box that stands in for the drawing while it is out of the DOM
              (RNF1-ter). Before the content, so the `×` keeps painting above
@@ -1288,8 +1527,14 @@
           style:top="{rec.content.y}px"
           style:width="{rec.content.w}px"
           style:height="{rec.content.h}px"
-          use:svgMount={{ culled: rec.culled, svg: rec.svg, preview: rec.previewSvg }}
         >
+          <!-- The drawing, before the tools so the `×` of a diagram keeps
+               painting above it (the prepend order the action kept). It is
+               `{@html}` since T2: one re-parse per mount, measured at
+               1.47 ms over the 300-node fixture — under the agreed ~3 ms. -->
+          {#if !rec.culled && (rec.previewSvg || rec.svg)}
+            {@html rec.previewSvg || rec.svg}
+          {/if}
           {#if rec.kind === "diagram"}
             <!-- The `×` of the object (PRD §7 RF28): it shows up when the
                  pointer walks over the diagram, in the padding ring. -->

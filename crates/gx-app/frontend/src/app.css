@@ -362,6 +362,23 @@ body {
   position: fixed;
   inset: 0;
   overflow: hidden;
+  /* The surface is not a scroll container (T3 of
+   * `odd/tasks/mejoras-frontend.md`): a `.diagram` is focusable now, and a
+   * browser that scrolls a `hidden` box to reveal the focused object would
+   * move the drawings without the camera — the camera is the only thing that
+   * moves this plan. `clip` does not scroll, so that can never happen; measured
+   * in Chromium, neither value scrolls `#plan` when an off-screen object takes
+   * the focus, and browsers without `clip` keep the `hidden` of the line above,
+   * which is the behaviour of before. */
+  overflow: clip;
+  /* The hand's gestures belong to the plan (T4 of
+   * `odd/tasks/mejoras-frontend.md`): with `touch-action: none` the engine
+   * stops claiming the two-finger gesture for itself (page scroll, page zoom)
+   * and the pointer events of a pinch reach the surface, which turns them into
+   * `zoomAtPoint`. The rule wins over the descendants too — `touch-action` is
+   * decided by the chain from the touch target up to the nearest scroller — so
+   * one declaration on the surface covers every object on it. */
+  touch-action: none;
   background-color: var(--bg);
   cursor: grab;
   /* Phase of every family: the pan projected on the normal of that family.
@@ -413,16 +430,23 @@ body {
   position: absolute;
   inset: 0;
   transform-origin: 0 0;
+  /* The camera transform is pure CSS (T2 of odd/tasks/mejoras-frontend.md):
+   * `--tx`/`--ty`/`--zoom` are published on `#plan` with every camera write,
+   * and this rule is the only consumer. The vanilla page applied the same
+   * transform to every object (plan.js:393-396); one transform on the camera
+   * layer is the same result for one write. */
+  transform: translate(var(--tx), var(--ty)) scale(var(--zoom));
+  will-change: transform;
 }
 
-/* One container per diagram. The camera transform lives here: the SVG
- * inside keeps plan units and is never rescaled on its own (PRD §7.2). */
+/* One container per diagram. The SVG inside keeps plan units and is never
+ * rescaled on its own (PRD §7.2); the camera transform lives on `.diagrams`,
+ * one layer above. */
 .diagram {
   position: absolute;
   left: 0;
   top: 0;
   transform-origin: 0 0;
-  will-change: transform;
 }
 
 .diagram > .content {
@@ -453,6 +477,17 @@ body {
 .diagram:focus-within > .content {
   outline: 1px dashed var(--hairline);
   outline-offset: 0;
+  border-radius: 8px;
+}
+
+/* The object keeps the keyboard (T3 of `odd/tasks/mejoras-frontend.md`):
+ * `.diagram` is focusable, the focus chooses the object and the arrows of the
+ * keyboard walk its history. The dashed ring of the pointer says nothing about
+ * where the keyboard is, so the focused object gets the same accent ring every
+ * other control of the page has. */
+.diagram:focus-visible > .content {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
   border-radius: 8px;
 }
 
@@ -1146,14 +1181,23 @@ body {
 
 /* Why the plan on screen changed when the session that owned it ended (S2,
  * D4; A2): a notice in the switcher, never an empty surface with no
- * explanation. */
+ * explanation. T3 of `odd/tasks/mejoras-frontend.md`: the notice is a
+ * `role="status"` live region and it lived inside `#sessions-panel`, whose
+ * `display:none` while the panel is closed — its default state — made it mute
+ * for the screen reader and invisible for everybody else. It is a sibling of
+ * the aside now, always in the accessibility tree, and visually hidden: the
+ * string is the C29 one, the announcement arrives whether the panel is open or
+ * not, and it never paints over the plan. */
 .session-notice {
-  margin: 0;
-  padding: 6px 8px;
-  font-size: 12px;
-  background: var(--code-bg);
-  border-left: 2px solid var(--accent);
-  border-radius: 4px;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* The settings of the plan (PRD §7.1 RF25, S19): the gear, top-right of the
@@ -1360,9 +1404,21 @@ body {
 .panel-item-open:focus-visible,
 .panel-item-close:focus-visible,
 .panel-item-clone:focus-visible,
+.panel-item-version-step:focus-visible,
 .clone-refresh:focus-visible,
 .session-row:focus-visible,
 .diagram-close:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* Motion respects the system (T3 of `odd/tasks/mejoras-frontend.md`): the two
+ * fades of the chrome (the `×` of an object and the pill of a clone) are the
+ * stylesheet half of the rule; the other half is the 250 ms pan of the camera,
+ * and it lives in `App.svelte` (`panTo`). */
+@media (prefers-reduced-motion: reduce) {
+  .diagram-close,
+  .diagram-clone-tools {
+    transition: none;
+  }
 }
