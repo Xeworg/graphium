@@ -281,158 +281,267 @@ family (`--shift-a`, `--shift-b`).
 
 ## 8. Parity checklist for T4
 
+How T4 certified this (2026-11-07): `tools/parity.mjs` runs the **real built
+bundle** of each frontend against a faked Tauri bridge, in headless Chromium
+over HTTP, and repeats the same probe on the vanilla page. A probe marked `equal`
+must observe the same value on both sides; that equality is the parity claim.
+The bridge is injected with `Page.addScriptToEvaluateOnNewDocument`, so it exists
+before the bundle reads `window.__TAURI__`; it records every emission with the
+`requestAnimationFrame` counter (which is how "two frames" is observed), feeds
+`graphium://` events to the listeners, and can be replaced by the
+`__TAURI_INTERNALS__` door or by nothing (C1). The five `static:` probes read
+files instead of a page (C9, C40-C43).
+
+```bash
+npx vite build                                        # the bundle under test
+node crates/gx-app/frontend-svelte/tools/parity.mjs   # both builds, 58 probes
+```
+
+Two probes are `report` instead of `equal`, and both are deliberate, documented
+differences:
+
+1. **C2/C3** — the Svelte port pushes one `camera-changed` **before**
+   `graphium://ready` (`App.svelte`, the end of `onMount`), so Rust's camera copy
+   is never stale. The vanilla page does not. It is safe by B2 (Rust answers
+   nothing) and harmless at any time (`app.rs:727` only stores the copy); the
+   harness reports it so it stays visible.
+2. **C31** — the overhang of the clone pill (see the item).
+
+**Blind spot, stated:** the harness is Chromium, not WebKitGTK. Everything that
+is DOM, CSS, wire or arithmetic is certified here; the WebKit half of the
+handshake is `DISPLAY=:0 scripts/svelte-smoke.sh` (`rendered=true reason=none`,
+which is only possible after A1 and A2), and the visual half is the two
+byte-identical screenshots T3 took (recorded in L8). **No item is NOT COVERED.**
+
 Tick only with the wire string, the payload keys and the numbers of this
-document. `T1` marks what the scaffold already satisfies (verified by
-`scripts/svelte-smoke.sh`, §10).
+document.
 
 **Bridge and handshake**
 
-- [ ] C1 `src/lib/tauri.js` uses `window.__TAURI__.event` first and `plugin:event|emit`
-      / `plugin:event|listen` as the fallback, with the same console error text. — **T1 done**
-- [ ] C2 The page registers every listener **before** emitting `graphium://ready`. — **T1 done**
-- [ ] C3 `graphium://ready` is emitted once, with `{}`, after the surface exists. — **T1 done**
-- [ ] C4 `render_ack ok:true` is emitted after two `requestAnimationFrame`, and
-      `ok:false` only when the payload has no `<svg>`. — **T1 done** (placeholder mount)
-- [ ] C5 `camera-changed` is throttled to 100 ms and carries `{tx,ty,zoom}`. — **T2 done**
-- [ ] C6 `settings-changed` is throttled to 100 ms, deduplicated by `settingsId`,
-      and never sent before the first `graphium://settings`. — **T3 done**
-      (`notifySettings`/`onSettingsChange` in `App.svelte`; observed in the
-      browser harness: nothing leaves the page before the first settings, a
-      burst of two inputs is one write, a repeated value is no write)
+- [x] C1 `src/lib/tauri.js` uses `window.__TAURI__.event` first and `plugin:event|emit`
+      / `plugin:event|listen` as the fallback, with the same console error text. — **T4 ✓**
+      `parity: bridge-fallback` (ready and the seven listeners travel through
+      `__TAURI_INTERNALS__.invoke` with `{}`) and `parity: bridge-missing` (no
+      bridge: no emission at all and `graphium: no hay puente de Tauri para
+      emitir graphium://ready`, identical in both builds).
+- [x] C2 The page registers every listener **before** emitting `graphium://ready`. — **T4 ✓**
+      `parity: listeners before ready`: the seven functional listeners
+      (`settings`, `state`, `render`, `version-paint`, `clone-paint`, `pending`,
+      `error`) are all registered when ready leaves; the only pre-handshake
+      emission is the T2 camera copy (see the note above).
+- [x] C3 `graphium://ready` is emitted once, with `{}`, after the surface exists. — **T4 ✓**
+      same probe: exactly one ready, payload `{}`, `#plan` in the DOM at emit
+      time; the portable half of the gate is the smoke run (`ready` else
+      `ui_error`).
+- [x] C4 `render_ack ok:true` is emitted after two `requestAnimationFrame`, and
+      `ok:false` only when the payload has no `<svg>`. — **T4 ✓** `parity:
+      render_ack`: one ack for the render (r1, ok:true) emitted 2 frames after
+      the dispatch; C21's broken payload gets ok:false and mounts nothing.
+- [x] C5 `camera-changed` is throttled to 100 ms and carries `{tx,ty,zoom}`. — **T4 ✓**
+      `parity: camera-changed`: a burst of three wheels produced exactly one
+      event, keys `tx,ty,zoom`, value equal to the live camera.
+- [x] C6 `settings-changed` is throttled to 100 ms, deduplicated by `settingsId`,
+      and never sent before the first `graphium://settings`. — **T4 ✓**
+      `parity: settings gate` + `parity: settings burst`: 0 events before Rust
+      speaks, 2 inputs in 20 ms → 1 write with the 13 keys and the last value, a
+      repeated value → 0 writes.
 
 **Grid, camera, culling**
 
-- [ ] C7 The grid publishes `--grid-angle`, `--grid-sin`, `--grid-cos`,
+- [x] C7 The grid publishes `--grid-angle`, `--grid-sin`, `--grid-cos`,
       `--grid-tan`, `--grid-diagonal`, `--grid-color`, `--grid-step`,
-      `--grid-opacity` with the vanilla formulas. — **T1 done**
-- [ ] C8 The grid hides below `GRID_HIDE_ZOOM` and when `grid_visible` is false. — **T1 done**
-- [ ] C9 The stylesheet keeps `--grid-angle: 45deg`, `--grid-diagonal: 59px`,
+      `--grid-opacity` with the vanilla formulas. — **T4 ✓** `parity: grid
+      vars`: `45deg`, `0.7071`, `0.7071`, `1.0000`, `59px`, the settings
+      colour, `41.72px`, `1` — byte-identical on both builds.
+- [x] C8 The grid hides below `GRID_HIDE_ZOOM` and when `grid_visible` is false. — **T4 ✓**
+      `parity: grid hides` (`--grid-opacity: 0` with `grid_visible:false`, and
+      again at zoom 0.263).
+- [x] C9 The stylesheet keeps `--grid-angle: 45deg`, `--grid-diagonal: 59px`,
       `--grid-step: 41.72px`, the tile `calc(diagonal * tan * zoom) ×
-      calc(diagonal * zoom)` and the two per-family phases. — **T1 done**
-- [ ] C10 Zoom clamps to `[0.05, 4.0]` with step 1.1 and keeps the world point
-      under the cursor fixed; a wheel cancels the pan in flight. — **T2 done**
-- [ ] C11 Drag pans the camera; drag on a clone of the user plan moves the clone
-      (screen px ÷ zoom) and emits `graphium://clone-move` only when it moved. — **T2 + T3 done** (`cloneUnder`/`moveCloneStart`/`endDrag` in `App.svelte`:
-      the move is `screen px ÷ zoom`, a click writes nothing)
-- [ ] C12 A camera intent (`render.camera`) sets the camera and cancels the pan;
-      without an intent the camera pans (`PAN_MS`, cubic) and never changes the zoom. — **T2 done**
-- [ ] C13 A window resize keeps the world point under the centre (no refit). — **T2 done**
-- [ ] C14 Culling keeps at most 3 live SVGs, culls out-of-view objects and any
+      calc(diagonal * zoom)` and the two per-family phases. — **T4 ✓**
+      `static: grid tokens` reads the declarations, the two `calc()` tiles and
+      `--shift-a`/`--shift-b` out of both stylesheets.
+- [x] C10 Zoom clamps to `[0.05, 4.0]` with step 1.1 and keeps the world point
+      under the cursor fixed; a wheel cancels the pan in flight. — **T4 ✓**
+      `parity: zoom clamps` (4.0 and 0.05 exact after 22 and 60 wheels),
+      `parity: zoom anchor` (world point moves < 0.05 px), `parity: pan` (a
+      wheel during a pan stops it: the camera lands where the wheel left it).
+- [x] C11 Drag pans the camera; drag on a clone of the user plan moves the clone
+      (screen px ÷ zoom) and emits `graphium://clone-move` only when it moved. — **T4 ✓**
+      `parity: background drag` (the hand moves `tx/ty` by the pointer delta),
+      `parity: clone click` (no movement → no event), `parity: clone drag` (one
+      event, `pos` delta 40/20 px ÷ zoom, and the object moved on the plan).
+- [x] C12 A camera intent (`render.camera`) sets the camera and cancels the pan;
+      without an intent the camera pans (`PAN_MS`, cubic) and never changes the
+      zoom. — **T4 ✓** `parity: camera intent` (50/60/2 exactly, still there
+      400 ms later), `parity: second object pans` (zoom untouched, not a jump,
+      lands on `cameraOn(centre)` within 0.6 px).
+- [x] C13 A window resize keeps the world point under the centre (no refit). — **T4 ✓**
+      `parity: resize` (viewport 1280×800 → 1100×720: the centre world point
+      moves < 0.5 plan units, zoom unchanged).
+- [x] C14 Culling keeps at most 3 live SVGs, culls out-of-view objects and any
       zoom below 0.4, breaks ties by distance to the view centre, and every
-      `applyCamera` re-decides. — **T2 done**
-- [ ] C15 A culled object becomes a box reading `<title> — <w> × <h>` in plan
-      units, with the title falling back to the `diagram_id`. — **T2 done**
-- [ ] C16 Each plan keeps its own camera; the first object of a plan is framed by
-      the event's camera, later ones pan; `plan-hidden` hides and never closes. — **T2 + T3 done** (cameras and `plan-hidden` in T2; the switch is the
-      switcher rows of T3)
+      `applyCamera` re-decides. — **T4 ✓** `parity: culling` (5 objects → 3 live
+      SVGs `a,b,c` = the closest, 2 boxes), `parity: culling zoom` (0 live at
+      zoom 0.263), and the same probe after a focus intent (re-decided).
+- [x] C15 A culled object becomes a box reading `<title> — <w> × <h>` in plan
+      units, with the title falling back to the `diagram_id`. — **T4 ✓**
+      `parity: box text`: `d-4 — 248 × 168` (no state title yet → the id is the
+      caption), every box matching `/ — \d+ × \d+$/`.
+- [x] C16 Each plan keeps its own camera; the first object of a plan is framed by
+      the event's camera, later ones pan; `plan-hidden` hides and never closes. — **T4 ✓**
+      `parity: plan-hidden` (the other plan's object carries the class and is
+      still in the DOM), `parity: plan cameras` (leave plan 1 at 0/0, enter plan
+      2 at 100/100, return to 0/0 exactly).
 
 **Objects and state**
 
-- [ ] C17 `graphium://state` replaces `diagrams`/`sessions`/`clones` wholesale;
-      nothing on screen exists that the event does not carry. — **T2 done**
-- [ ] C18 Objects are dropped when the state no longer lists them; `selectedId`
-      clears; titles and rectangles are refreshed from the state. — **T2 done**
-- [ ] C19 A render of a `diagram_id` already on the plan replaces the object (and
-      drops its preview). — **T2 done**
-- [ ] C20 `placement` is the object corner: the SVG sits `OBJECT_PADDING` inside. — **T2 done** (real object)
-- [ ] C21 A render payload whose `svg` holds no `<svg>` gets `render_ack ok:false`
-      and mounts nothing. — **T1 done**
-- [ ] C22 Rust's `graphium://state` after the ack is the only source of the panel. — **T3 done** (`PlanPanel` reads the `diagrams` prop, which is exactly
-      `state.diagrams`)
+- [x] C17 `graphium://state` replaces `diagrams`/`sessions`/`clones` wholesale;
+      nothing on screen exists that the event does not carry. — **T4 ✓**
+      `parity: state drops`: the panel and the plan list exactly the state's
+      entries after a replacement.
+- [x] C18 Objects are dropped when the state no longer lists them; `selectedId`
+      clears; titles and rectangles are refreshed from the state. — **T4 ✓**
+      same probe: the dropped object leaves the plan, the selected row with it,
+      and `renombrado` arrives in the panel.
+- [x] C19 A render of a `diagram_id` already on the plan replaces the object (and
+      drops its preview). — **T4 ✓** `parity: re-render`: one object for `d-1`
+      after two renders, the second drawing (`data-marker="second"`) mounted.
+- [x] C20 `placement` is the object corner: the SVG sits `OBJECT_PADDING` inside. — **T4 ✓**
+      `parity: placement`: content at 124/124 (= placement 100 + 24), box at
+      100/100 with 368×228.
+- [x] C21 A render payload whose `svg` holds no `<svg>` gets `render_ack ok:false`
+      and mounts nothing. — **T4 ✓** `parity: no <svg>`: ack `r2/ok:false`, the
+      object count unchanged.
+- [x] C22 Rust's `graphium://state` after the ack is the only source of the panel. — **T4 ✓**
+      `parity: panel rows`: two rows appear only after the state, with the
+      fields the state carries.
 
 **Panels**
 
-- [ ] C23 Panel of open diagrams: title, kind, `updated_at` in `es` short format,
-      `×` (emit close), `⧉` (emit clone), selection marks and pans. — **T3 done**
-      (`PlanPanel.svelte`, `formatUpdated`/`labels.js`, `selectDiagram`)
-- [ ] C24 «sin diagramas abiertos» while the list is empty; the toggle flips
-      `aria-expanded`. — **T3 done** (starts open, like `index.html:21-35`)
-- [ ] C25 Version nav `◀ v3/7 ▶` only when `version_count > 1`, disabled at the
-      ends, position `at - oldest_version + 1` over `version_count`. — **T3 done**
-      (`history.js`; observed: `v7/7` at the live drawing, `◀` → `v6/7` and a
-      `graphium://version-view {diagram_id, version: 10}`)
-- [ ] C26 `graphium://version-view` for an older version, live drawing restored
+- [x] C23 Panel of open diagrams: title, kind, `updated_at` in `es` short format,
+      `×` (emit close), `⧉` (emit clone), selection marks and pans. — **T4 ✓**
+      `parity: panel rows` (title/kind/non-empty `es` date), `parity: select row`
+      (`.selected`, `aria-current`, the camera on the object's centre),
+      `parity: close/clone` (`{diagram_id}` payloads).
+- [x] C24 «sin diagramas abiertos» while the list is empty; the toggle flips
+      `aria-expanded`. — **T4 ✓** `parity: panel toggle`: starts open
+      (`aria-expanded="true"`, as `index.html:21-35`), closes and reopens, and
+      the empty text is the vanilla one.
+- [x] C25 Version nav `◀ v3/7 ▶` only when `version_count > 1`, disabled at the
+      ends, position `at - oldest_version + 1` over `version_count`. — **T4 ✓**
+      `parity: version indicator`: `v7/7`, ◀ enabled, ▶ disabled, no nav at
+      `version_count = 1` (the culling fixture).
+- [x] C26 `graphium://version-view` for an older version, live drawing restored
       (no event) at the newest; the first version the history discarded falls
-      back to the newest. — **T3 done** (observed: `▶` back to the newest emits
-      nothing and returns to `v7/7`; an out-of-range view reads as the live one)
-- [ ] C27 A preview replaces the drawing in place, keeps the object rectangle and
-      is what the culling re-mounts. — **T3 done** (`paintPreview`/`restoreLive`;
-      the `svgMount` action mounts `previewSvg` before `svg`)
-- [ ] C28 Switcher: «Mi plano» first, then one row per session (family dot,
+      back to the newest. — **T4 ✓** `parity: version back` (◀ → `{version:6}`,
+      `v6/7`), `parity: version forward` (▶ at the newest: no event, `v7/7`, the
+      live drawing back).
+- [x] C27 A preview replaces the drawing in place, keeps the object rectangle and
+      is what the culling re-mounts. — **T4 ✓** `parity: preview`: the preview
+      marker is the only drawing in `.content`, the box rect stays 100/100/368×
+      228.
+- [x] C28 Switcher: «Mi plano» first, then one row per session (family dot,
       label, count, family name, project last segment or «sin proyecto»,
-      `activa`/`en gracia`), the chosen plan marked. — **T3 done**
-      (`SessionsPanel.svelte`, `labels.js`)
-- [ ] C29 `initialPlan` = first session with diagrams, else first session, else
-      none; a session that vanished shows the notice and switches. — **T3 done**
-      (observed notice: `la sesión «graphium-1» terminó; muestro el plano de «sesión dos»`)
-- [ ] C30 `←`/`→` walk the history of the selected object (clone or diagram) and
-      never steal arrows from an `input`/`textarea`/`select`. — **T3 done**
-      (`onKeyDown` in `App.svelte`; a clone walks the history of its original)
-- [ ] C31 User plan: clone object with its `×`, `↻`, `◀ n/m ▶` pill (no `v`
+      `activa`/`en gracia`), the chosen plan marked. — **T4 ✓**
+      `parity: switcher rows`: 3 rows, `Mi plano` first, label/family/project
+      (`graphium` from `/home/…/graphium`)/`activa`/count/title, and
+      `en gracia` + `family-claude` on the second session.
+- [x] C29 `initialPlan` = first session with diagrams, else first session, else
+      none; a session that vanished shows the notice and switches. — **T4 ✓**
+      `parity: notice`: after the state drops `s1`, the plan is `sesión dos` and
+      the text is exactly `la sesión «graphium-1» terminó; muestro el plano de
+      «sesión dos»` (equal in both builds).
+- [x] C30 `←`/`→` walk the history of the selected object (clone or diagram) and
+      never steal arrows from an `input`/`textarea`/`select`. — **T4 ✓**
+      `parity: arrows`: `←` on the selected clone emits
+      `graphium://clone-view {clone_id, version:4}` (one step back from the
+      photo, 5) and is consumed; a focused `#settings-grid-opacity` keeps its
+      arrow (no event, not prevented).
+- [x] C31 User plan: clone object with its `×`, `↻`, `◀ n/m ▶` pill (no `v`
       prefix), refresh disabled unless `updatable`, history only with
-      `version_count > 1`. — **T3 done** (`CloneTools.svelte`; observed `2/7`,
-      the refresh disabled and its title `el original ya no está en el plan` once
-      `updatable` is false, and the `×` emitting `graphium://clone-remove`).
-      L8 note: the pill measures itself against the **object's** width
-      (`.content.clientWidth`), so a wide clone keeps it at the corner and a
-      narrow one hangs it centered; the vanilla measured the `.diagram`
-      container, which has no width (all its children are absolute), so it always
-      applied `.overhang`. The port follows the written rule (L8/C31: «overhang
-      centered when the object is narrower»); T4 should know this is the one
-      observed visual difference of the pill on wide objects.
-- [ ] C32 `graphium://clone-view` without version for the refresh, with version
-      for a step; a version equal to `snapshot_version` sends the refresh form. — **T3 done** (`refreshClone` emits `{clone_id}`; `viewCloneVersion` emits
-      `{clone_id, version}` and, at the photo, resets the view — `refreshClone`'s
-      form, as `plan.js:1830-1877` writes it)
-- [ ] C33 A clone paint with a newer version ends the browsing; an older one is a
+      `version_count > 1`. — **T4 ✓** `parity: pill` (`◀ 5/7 ▶`, refresh
+      enabled with `actualizar el clon`, the `×` inside the pill),
+      `parity: clone closed` (refresh disabled with `el original ya no está en
+      el plan`, both steps disabled), `parity: pill remove`
+      (`graphium://clone-remove {clone_id}`).
+      L8 note, confirmed by the harness (`report`): the pill measures itself
+      against the **object's** width (`.content.clientWidth`), so a wide clone
+      keeps it at the corner and a narrow one hangs it centered; the vanilla
+      measured the `.diagram` container, which has no width (all its children are
+      absolute), so it always applied `.overhang`. Observed on a 368-px clone:
+      Svelte `overhang:false`, vanilla `overhang:true`. The port follows the
+      written rule; this is the one observed visual difference of the pill.
+- [x] C32 `graphium://clone-view` without version for the refresh, with version
+      for a step; a version equal to `snapshot_version` sends the refresh form. — **T4 ✓**
+      `parity: refresh` (the `↻` payload is `{clone_id}` with no `version` key)
+      and `parity: arrows` (the step carries `version`).
+- [x] C33 A clone paint with a newer version ends the browsing; an older one is a
       preview; `bring` brings the user plan on screen and pans (the first object
-      just takes the plan's camera). — **T3 done** (`applyClonePaint`)
-- [ ] C34 Empty states: `#empty` only when the plan on screen has no objects and
-      is not the user plan; `#empty-user` on the user plan. — **T3 done**
-      (`showEmpty`/`showEmptyUser`, both derived from the plan on screen)
-- [ ] C35 Banner shows `path`, `message`, `hint` and `+N errores` when `extra > 0`;
-      the close button hides it; `graphium://error` also hides the ghost. — **T3 done**
-- [ ] C36 Ghost: «calculando layout…» then `N nodos, M edges` after 2000 ms;
+      just takes the plan's camera). — **T4 ✓** `parity: clone bring` (user
+      plan on screen, session object hidden, the clone drawing mounted),
+      `parity: photo browsing` (version 3 → `3/7`, snapshot 5 → `5/7` and the
+      photo mounted).
+- [x] C34 Empty states: `#empty` only when the plan on screen has no objects and
+      is not the user plan; `#empty-user` on the user plan. — **T4 ✓**
+      `parity: empty states`: on a session plan `#empty` shows and `#empty-user`
+      hides; on `Mi plano` the opposite, with the vanilla texts
+      (`esperando al agente…`, `tu plano está vacío`).
+- [x] C35 Banner shows `path`, `message`, `hint` and `+N errores` when `extra > 0`;
+      the close button hides it; `graphium://error` also hides the ghost. — **T4 ✓**
+      `parity: banner`: the four fields with `+2 errores`, the close button, and
+      the ghost hidden by the same error.
+- [x] C36 Ghost: «calculando layout…» then `N nodos, M edges` after 2000 ms;
       hidden by a render or an error. (`graphium://pending` has no emitter: keep
-      the handler, do not invent an event.) — **T3 done** (observed: the counts
-      after the 2 s timer, hidden by `graphium://error` and by a render)
-- [ ] C37 Settings panel: 6 pickers + 7 theme radios with swatches from
+      the handler, do not invent an event.) — **T4 ✓** `parity: ghost`: the
+      first text, the counts after 2.2 s, hidden by a render and by an error.
+      The event still has no emitter in this tree (§5.7/R8).
+- [x] C37 Settings panel: 6 pickers + 7 theme radios with swatches from
       `PLAN_PRESETS`/`THEME_PRESETS`, values next to the sliders, Escape closes,
-      focus goes back to the toggle. — **T3 done** (`SettingsPanel.svelte`: the
-      six grid/palette pickers, the six colour overrides of the same panel, and
-      the seven chips with four dots each from `THEME_CHIPS`; `0.10`, `100px`
-      and `45°` beside the sliders; Escape closes and the focus returns)
-- [ ] C38 No control may emit `settings-changed` before the first
+      focus goes back to the toggle. — **T4 ✓** `parity: settings panel`: the
+      12 control ids, 7 radios, 28 swatches, `1.00`/`59px`/`45°` next to their
+      sliders; `parity: Escape` closes the dialog and returns the focus to
+      `#settings-toggle`.
+- [x] C38 No control may emit `settings-changed` before the first
       `graphium://settings` arrives, and every input change repaints the grid
-      and the palette immediately. — **T3 done** (observed: `data-theme` and
-      `--bg` follow the new settings, `#plan`'s `--grid-color` repaints at once)
-- [ ] C39 `data-theme` on the root element follows the settings theme (unknown →
-      `dark`), and the palette variables are painted over it. — **T1 done** (root + palette)
+      and the palette immediately. — **T4 ✓** `parity: settings gate` (0 writes
+      before the first settings) and `parity: settings repaint` (`data-theme`,
+      `--bg`, `--accent`, `--grid-color` follow the new value at once).
+- [x] C39 `data-theme` on the root element follows the settings theme (unknown →
+      `dark`), and the palette variables are painted over it. — **T4 ✓**
+      `parity: settings repaint`: `data-theme="light"` and `--bg`/`--accent`
+      applied; an unknown theme reads as `dark`.
 
 **Numbers and text**
 
-- [ ] C40 Every number of §6 appears once, with the vanilla value, discoverable
-      from the Svelte source. — **T1 done** (`src/lib/contract.js`)
-- [ ] C41 Every user-visible string is the vanilla one, verbatim (Spanish), e.g.
+- [x] C40 Every number of §6 appears once, with the vanilla value, discoverable
+      from the Svelte source. — **T4 ✓** `static: contract numbers`: the ten
+      values (59, 45°, 0.3, 0.05/4.0, 1.1, 100/100 ms, 250 ms, 24, 3/0.4) are
+      in `src/lib/contract.js`; the perpendicular step 41.72 follows from the
+      formulas and C9 checks it in the stylesheet.
+- [x] C41 Every user-visible string is the vanilla one, verbatim (Spanish), e.g.
       `esperando al agente…`, `sin diagramas abiertos`, `en gracia`,
       `actualizar el clon`, `el original ya no está en el plan`,
-      `la sesión «…» terminó; muestro el plano de «…»`. — **T3 done** (the
-      built strings live in `src/lib/labels.js`; the markup keeps its own;
-      observed character by character in the browser harness)
-
-**Stylesheet**
-
-- [ ] C42 The parallel build carries the whole of `style.css` (all three panels,
+      `la sesión «…» terminó; muestro el plano de «…»`. — **T4 ✓**
+      `static: strings` (7 verbatim literals in the Svelte sources) plus the
+      runtime probes that compare the **rendered** texts with the vanilla page
+      (`parity: switcher rows`, `notice`, `empty states`, `banner`, `ghost`,
+      `panel toggle`), all equal.
+- [x] C42 The parallel build carries the whole of `style.css` (all three panels,
       the objects, the boxes, the banner, the ghost) with the same class names
-      as today. — **T2 + T3 done** (`src/app.css` is the vanilla stylesheet byte
-      for byte, plus the `#app { height: 100% }` rule the Svelte mount needs;
-      the palette, the seven theme blocks and the `.graphium` drawing classes
-      arrived with T3)
-- [ ] C43 No inline `style="…"` attribute in markup: CSS variables go through
+      as today. — **T4 ✓** `static: stylesheet`: every rule and declaration of
+      `style.css` is in `src/app.css` (comments stripped, the `#app { height:
+      100% }` mount rule removed: identical token stream, same rule count). T3's
+      «byte for byte» was slightly optimistic — the header comment differs, the
+      rules do not; corrected here.
+- [x] C43 No inline `style="…"` attribute in markup: CSS variables go through
       CSSOM (`setProperty`), which the CSP (`tauri.conf.json:12`,
-      `default-src 'self'`) does not police. — **T1 done**
+      `default-src 'self'`) does not police. — **T4 ✓** `static: inline styles`:
+      no `style=` attribute and no `<style>` block in any `.svelte` file or in
+      either served HTML; the grid/palette variables are observed in the page as
+      `style.setProperty` values (C7/C39).
 
-## 9. What the tasks delivered, and what T4 inherits
+## 9. What the tasks delivered
 
 `crates/gx-app/frontend-svelte/`:
 
@@ -509,12 +618,26 @@ version preview) render **byte-identical screenshots**. There is no JS test
 runner in this package and adding one would mutate dependencies, so those
 checks are evidence of this task, not committed tests.
 
-**T4 inherits:** the checklist of §8 (every item is now marked), the smoke test
-of §10 and the two documented findings: (1) the pill of a clone measures itself
-against the object's width, so a wide clone keeps it at the corner while the
-vanilla page always applied `.overhang` (see the C31 note); (2) `+N errores` in
-the banner is unreachable because Rust never sends `extra` (§5.7). The scaffold
-diagnostic chip and its `.scaffold` CSS are gone with T3.
+**What T4 delivered (2026-11-07):** the certification of §8, item by item, with
+the harness that produced it (`tools/parity.mjs`, committed with this document):
+58 probes against the real bundle of each frontend — the Svelte one and the
+vanilla page, same browser, same fake bridge — of which the `equal` ones must
+observe the same value on both sides. Every item of §8 carries its evidence
+line. The two differences the harness reports instead of requiring equality are
+the T2 pre-ready `camera-changed` copy (C2) and the overhang of the clone pill
+(C31); the blind spot is stated in §8: Chromium is not WebKitGTK, whose half of
+the handshake is `scripts/svelte-smoke.sh` and whose visuals are T3's two
+byte-identical screenshots.
+
+The five findings T4 confirms and hands over: (1) the pill of a clone measures
+itself against the object's width, so a wide clone keeps it at the corner while
+the vanilla page always applied `.overhang` (C31); (2) `+N errores` in the
+banner is unreachable because Rust never sends `extra` (§5.7); (3) `graphium://
+pending` has no emitter, so the ghost is unreachable from Rust today (C36);
+(4) the Svelte page emits one `camera-changed` before the handshake, deliberately
+(C2); (5) T3's «byte for byte» for `src/app.css` meant *the rules*, not the prose
+— the header comment differs (C42). The scaffold diagnostic chip and its
+`.scaffold` CSS are gone with T3.
 
 ## 10. Selecting the Svelte build, and the evidence T1 took
 
