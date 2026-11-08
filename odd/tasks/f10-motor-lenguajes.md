@@ -932,3 +932,7 @@ languages ride on it.
     all twenty entries + one data test), `crates/gx-index/src/resolution.rs`
     (the rule), `crates/gx-index/tests/languages.rs` (the three floors moved
     up + the new guard test), `docs/PRD.md` and this doc.
+- L14 (2026-11-07, orchestrator): the ceiling closed as T6 recommended —
+  declared 48 MB (CI gate 50,300,000 B in ci.yml; PRD RNF1/RNF1-quater
+  rewritten). Measured: default 45,806,232 B with twenty grammars (88.9% of
+  the ceiling); slim byte-identical. The owner adopted the recommendation.
