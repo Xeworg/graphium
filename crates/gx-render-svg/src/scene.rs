@@ -14,6 +14,8 @@
 //! - It carries no colour (S3): the palette names the CSS custom properties of
 //!   the page.
 
+use std::collections::BTreeMap;
+
 use gx_core::{
     Ir, IrEdge, IrEvent, IrGraph, IrNode, IrTimeline, LayoutEdge, LayoutGraph, LayoutGroup,
     NodeBox, Palette, Rect, Scene, SceneBand, SceneEdge, SceneEvent, SceneNode, ScenePalette,
@@ -107,6 +109,12 @@ impl<'a> Drawing<'a> {
 
     /// The drawing as the scene the window mounts (S3).
     pub(crate) fn to_scene(&self, palette: &Palette) -> Scene {
+        // The painter keys the edges by `edge.id`, so the ids of the scene must
+        // be unique. `m-<from>-<to>` cannot tell two parallel edges apart, so
+        // the first edge of a pair keeps the exact id of the drawing and the
+        // later ones are suffixed `-2`, `-3`, … in paint order. Only the scene
+        // disambiguates: the exported markup keeps the plain id.
+        let mut parallel: BTreeMap<(String, String), usize> = BTreeMap::new();
         Scene {
             canvas: self.canvas,
             tokens: scene_tokens(),
@@ -136,7 +144,7 @@ impl<'a> Drawing<'a> {
                 .iter()
                 .filter(|(_, route)| !route.points.is_empty())
                 .map(|(edge, route)| SceneEdge {
-                    id: edge_id(&edge.from, &edge.to),
+                    id: scene_edge_id(&mut parallel, &edge.from, &edge.to),
                     from: edge.from.clone(),
                     to: edge.to.clone(),
                     label: edge.label.clone(),
@@ -192,6 +200,23 @@ impl<'a> Drawing<'a> {
 /// The scene of a drawing (`f11-elementos.md`, T1).
 pub fn scene(ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> Scene {
     Drawing::of(ir, layout).to_scene(palette)
+}
+
+/// The id of one edge of the scene: unique inside a `Scene`.
+///
+/// The first edge between a pair of nodes carries exactly the id of the
+/// drawing, [`edge_id`]; the ones that follow carry `-2`, `-3`, … in paint
+/// order. The counter is per pair and deterministic, so the same document
+/// always yields the same ids.
+fn scene_edge_id(seen: &mut BTreeMap<(String, String), usize>, from: &str, to: &str) -> String {
+    let count = seen.entry((from.to_string(), to.to_string())).or_insert(0);
+    *count += 1;
+    let id = edge_id(from, to);
+    if *count == 1 {
+        id
+    } else {
+        format!("{id}-{count}")
+    }
 }
 
 /// The frozen numbers of the drawing (S5): the tokens of F0 plus the glyph

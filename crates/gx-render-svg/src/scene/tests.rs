@@ -1,5 +1,7 @@
 //! Behavioural tests of the scene builder (`f11-elementos.md`, T1, S3-S5).
 
+use std::collections::BTreeSet;
+
 use gx_core::ir::Span;
 use gx_core::{
     Direction, Emphasis, Ir, IrEdge, IrEvent, IrGraph, IrLane, IrNode, IrRow, IrTimeline,
@@ -118,6 +120,89 @@ fn the_scene_mirrors_the_routed_edges() {
             .map(|edge| edge.id.as_str())
             .collect::<Vec<_>>(),
         vec!["m-read-ok"]
+    );
+}
+
+/// S3: a document without parallel edges keeps the exact ids of the drawing.
+/// The disambiguation counter is per pair and per direction: `a->b` and `b->a`
+/// are two different lines and neither is suffixed.
+#[test]
+fn an_edge_without_a_parallel_twin_keeps_its_exact_id() {
+    let ir = fixture::graph(
+        vec![
+            fixture::node("a", "A"),
+            fixture::node("b", "B"),
+            fixture::node("c", "C"),
+        ],
+        vec![
+            fixture::labeled_edge("a", "b", "ida"),
+            fixture::labeled_edge("b", "a", "vuelta"),
+            fixture::labeled_edge("a", "c", "otra"),
+        ],
+    );
+    let layout = fixture::layout(
+        &[
+            ("a", Point::new(60.0, 40.0), Size::new(104.0, 44.0)),
+            ("b", Point::new(60.0, 130.0), Size::new(104.0, 44.0)),
+            ("c", Point::new(180.0, 40.0), Size::new(104.0, 44.0)),
+        ],
+        vec![
+            fixture::routed("a", "b", &[(60.0, 40.0), (60.0, 108.0)], None),
+            fixture::routed("b", "a", &[(80.0, 108.0), (80.0, 40.0)], None),
+            fixture::routed("a", "c", &[(112.0, 40.0), (128.0, 40.0)], None),
+        ],
+        Rect::new(0.0, 0.0, 240.0, 170.0),
+    );
+
+    let scene = build_scene(&ir, &layout, &palette());
+
+    let ids: Vec<&str> = scene.edges.iter().map(|edge| edge.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["m-a-b", "m-a-c", "m-b-a"],
+        "one edge per pair keeps the id of the drawing"
+    );
+}
+
+/// S3: two edges between the same pair of nodes are two lines, so the scene
+/// gives them two ids. The scene is the payload of a `keyed each` on `edge.id`
+/// and a duplicated key makes the window refuse to mount, so the id of the
+/// later twins is suffixed in paint order. The first edge of the pair keeps
+/// exactly the id of the drawing.
+#[test]
+fn parallel_edges_get_distinct_ids() {
+    let ir = fixture::emphasized_ir();
+    let layout = fixture::emphasized_layout();
+
+    let scene = build_scene(&ir, &layout, &palette());
+
+    let ids: Vec<&str> = scene.edges.iter().map(|edge| edge.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["m-read-ok", "m-read-ok-2", "m-read-ok-3"],
+        "the first twin keeps the id of the drawing, the rest are suffixed"
+    );
+    let distinct: BTreeSet<&str> = ids.iter().copied().collect();
+    assert_eq!(
+        distinct.len(),
+        ids.len(),
+        "the painter keys by id, so no twin may repeat one"
+    );
+    assert_eq!(scene.edges.len(), 3, "every routed edge is drawn");
+    let ends: Vec<(&str, &str)> = scene
+        .edges
+        .iter()
+        .map(|edge| (edge.from.as_str(), edge.to.as_str()))
+        .collect();
+    assert_eq!(
+        ends,
+        vec![("read", "ok"), ("read", "ok"), ("read", "ok")],
+        "every twin keeps its ends"
+    );
+    assert_eq!(
+        build_scene(&ir, &layout, &palette()).edges[1].id,
+        "m-read-ok-2",
+        "the suffix is deterministic"
     );
 }
 
