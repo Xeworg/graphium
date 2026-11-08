@@ -172,6 +172,18 @@
 
   // The keyboard goes back to where it came from (plan.js:790-800): whether the
   // focus was inside the panel is read *before* the panel hides.
+  //
+  // T3 of `odd/tasks/mejoras-frontend.md` — the decision the task asked for
+  // (trap the dialog or drop the role): the panel is NOT a modal dialog and it
+  // does not become one. It floats over a plan the human keeps using while it
+  // is open — a slider of the panel repaints that plan live, and the diagram
+  // panel and the switcher stay reachable — so trapping Tab inside it would be
+  // a keyboard trap in a panel that blocks nothing. `role="dialog"` promised a
+  // modality the panel never had; the panel is a labelled `group` and the
+  // disclosure grammar lives on the gear (`aria-expanded` + `aria-controls`),
+  // with Escape closing it and the focus coming back to the gear. What the
+  // rejected half would have required (a focus trap) is written down in
+  // `odd/tasks/mejoras-frontend.md` (L6).
   let wasInside = false;
   $effect.pre(() => {
     if (!open) {
@@ -200,13 +212,16 @@
   onclick={() => (open = !open)}>⚙</button
 >
 
+<!-- The Escape of the panel listens here, on the panel as a whole, and a
+     `group` is not an interactive element: the keyboard never focuses the panel
+     itself, it only bubbles through it. `svelte-ignore` says so on purpose. -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   id="settings-panel"
   class="settings-panel"
   class:hidden={!open}
-  role="dialog"
+  role="group"
   aria-label="ajustes del plano"
-  tabindex="-1"
   bind:this={panelEl}
   onkeydown={(event) => {
     if (event.key === "Escape") {

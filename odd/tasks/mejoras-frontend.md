@@ -160,3 +160,104 @@ orquestador). Persisted in project memory: `analisis-frontend-*` and
   no ve el documento de la feature fuera del cwd del orquestador): T2 fue
   inline por orden del runtime; T3 se relanza con `workspace_root` apuntando
   al worktree.
+- L6 (2026-11-08, worker T3): a11y y UX entregadas — los once ítems de la
+  línea T3, con las dos decisiones que la tarea pedía documentadas (2 y 4).
+  (1) `.panel-item-version-step` entra en la regla del focus-ring: los `◀`/`▶`
+  del historial (panel y píldora del clon comparten clase) dejaban un foco
+  invisible al tabular. (2) **Decisión**: el notice del switcher sale del
+  `<aside>` y pasa a ser una región viva `role="status"` fuera de él,
+  visualmente oculta — `.session-notice` es ahora la receta
+  `position:absolute/1px/clip-path:inset(50%)`, sin `display:none`, y el
+  elemento vive SIEMPRE en el árbol (sin `class:hidden`) porque una región viva
+  tiene que existir antes de que su texto cambie. Por qué así y no «visible
+  dentro del panel»: el `#sessions-panel` arranca cerrado
+  (`aria-expanded="false"`, `plan.js:1152-1508`) y su `display:none` no
+  anunciaba nada y no pintaba nada — el aviso era mudo y ciego en el estado por
+  defecto. La string es la C29 tal cual (`sessionEndedNotice`), y el anuncio ya
+  no depende de que el panel esté abierto. (3) `Escape` cierra y devuelve el
+  foco al toggle en `PlanPanel` y `SessionsPanel`, copiando el patrón de
+  `SettingsPanel` (`$effect.pre` que lee si el foco estaba adentro *antes* de
+  esconder, `$effect` que lo devuelve). (4) **Decisión**: se quita
+  `role="dialog"` de `#settings-panel` (queda `role="group"` + `aria-label`, y
+  la gramática de disclosure en el engranaje: `aria-expanded` +
+  `aria-controls`). Se rechaza el trap: el panel NO es modal — flota sobre un
+  plano que el humano sigue usando (un slider lo repinta en vivo) y el panel de
+  diagramas y el switcher siguen alcanzables, así que atrapar el Tab adentro
+  sería una trampa de teclado en un panel que no bloquea nada; `role="dialog"`
+  prometía una modalidad que el panel nunca tuvo. `tabindex="-1"` del panel
+  cayó con el rol. (5) `ul#panel-list`: roving tabindex (un solo tab stop, el
+  de la fila con foco, si no el del diagrama elegido, si no el primero) e
+  ↑/↓/Home/End que mueven el foco; el listener va en la fila (`.panel-item-open`)
+  y no en el `<ul>`, que no es un elemento interactivo. (6) Los `←`/`→` del
+  historial respetan `event.defaultPrevented` y `[contenteditable]`
+  (`:not([contenteditable="false"])`, con `closest` en vez de `matches`): un
+  evento que otro manejador ya consumió no es el evento del historial, y donde
+  el humano escribe nadie le roba las flechas. (7) `.diagram` es focusable
+  (`role="group"` + `aria-label={boxText(rec)}` + `tabindex="0"`, el foco
+  escribe `selectedId`): eso es lo que vuelve alcanzable por teclado el
+  historial por flechas — antes había que clonar/arrastrar o elegir la fila del
+  panel para seleccionar un objeto, y el `×` y la píldora del clon ya se
+  revelan por foco (el `×` con su propio `:focus-visible`, la píldora con
+  `.diagram.clone:focus-within`, que ahora también se cumple al enfocar el
+  objeto). El plano declara `overflow: clip` además de
+  `hidden` para que ningún navegador desplace el plano para "mostrar" el objeto
+  enfocado (medido en Chromium: ni `hidden` ni `clip` desplazan `#plan` con un
+  objeto fuera de pantalla enfocado; `clip` lo hace estructural y cae a
+  `hidden` donde no exista). (8) `prefers-reduced-motion`: `panTo` pregunta
+  `matchMedia` en cada llamada (el ajuste del sistema puede cambiar con la
+  página abierta) y aterriza la cámara en el frame — mismo destino, zoom
+  intacto (C12) —; los dos fades del chrome (`transition: opacity` de
+  `.diagram-close` y `.diagram-clone-tools`) se apagan en un
+  `@media (prefers-reduced-motion: reduce)`. (9) `bind:offsetWidth` en
+  `CloneTools`: la píldora publica su ancho como valor reactivo y el `$effect`
+  ya no mide el DOM ni mantiene la lista `void width/hidden/count/…`; el ancho
+  del objeto sale del prop `width` (para un clon su rectángulo **es** el
+  objeto), así que la decisión es `pillWidth > width`. (10) `setClonePlace`
+  escribe `rec.rect.x/y` en el lugar y `placeCloneContent` escribe los cuatro
+  campos de `rec.content` en el lugar: el spread por `pointermove` asignaba un
+  rectángulo nuevo (y un content nuevo) sesenta veces por segundo de arrastre.
+  (11) `$derived.by` con el índice `session_id → count` (`diagramCounts`):
+  `sessionDiagramCount` era un `filter` sobre todos los diagramas y lo llamaba
+  una vez por fila del switcher más la del plano en pantalla.
+  Evidencia (medida, no argumento): el arnés de paridad es la suite de
+  comportamiento y `tools/` no está en la superficie de edición de esta tarea
+  (la paridad se queda en 57), así que la verificación funcional se corrió con
+  un arnés descartable FUERA del worktree (`/tmp`, Chromium headless sobre el
+  bundle real, mismo `tools/lib/harness.mjs` y mismo puente falso que
+  `parity.mjs`): 16 comprobaciones, **7/16 en el bundle base y 16/16 con el
+  cambio**. Las rojas del base son exactamente los ítems: `.panel-item-version-step`
+  sin regla (0 reglas), `role="dialog"` todavía puesto, 2 tab stops en
+  `#panel-list` en vez de 1, `Escape` sin consumir en los dos paneles, el objeto
+  sin `tabindex` (`null`), el notice todavía adentro de `#sessions-panel`, y el
+  `pan` animando con `prefers-reduced-motion: reduce`
+  (`early` −234.38/−191.21 vs `later` −904/−737.5). Verde con el cambio:
+  `role="group"` + `aria-label="ajustes del plano"`; un solo tab stop y
+  ↑/↓/Home/End moviendo el foco con el tabindex siguiéndolo; `Escape` cerrando
+  y devolviendo el foco a `#panel-toggle` y a `#sessions-toggle`;
+  `.diagram[tabindex="0"]` cuyo foco marca la fila del panel
+  (`aria-current="true"`) y `←` pide `graphium://version-view
+  {diagram_id:"d-1", version:6}`; los tres guards (control positivo: el handler
+  global SÍ emite antes de los guards, y no emite con `[contenteditable]`, ni
+  con el evento ya consumido, ni desde `#settings-grid-opacity`; en el base ese
+  bloque no podía fallar porque sin `tabindex` no había selección y el handler
+  estaba inerte, por eso lleva el control positivo); el notice con caja 1×1,
+  `role="status"`, `display` distinto de `none` y el texto exacto de C29; con
+  emulación de menos movimiento la cámara ya está en el destino a los 30 ms
+  (356/142.5 en los dos muestreos) y sin la emulación vuelve a animar. Los tres
+  ítems de rendimiento son PRESERVE y se compararon contra el bundle base con
+  la misma entrada: `overhang` de la píldora (`false`, 140 px de píldora contra
+  368 px de objeto — igual que el reporte `C31` de la paridad), el arrastre de
+  un clon (40/20 px de pantalla → `{x:640,y:420}` en `graphium://clone-move` y
+  `left:640px; top:420px` en el objeto — idéntico al base) y los conteos del
+  switcher (`Mi plano:1`, `graphium-1:2`, `sesión dos:1`)
+  Gates (códigos reales, todos en primer plano): `npm run build` exit 0 (sin
+  warnings de a11y de Svelte; los cuatro `svelte-ignore` —Escape en los dos
+  asides y en el panel de ajustes, `tabindex` del objeto— están justificados en
+  el markup), `node tools/parity.mjs` 57/57 exit 0, `DISPLAY=:0
+  scripts/smoke.sh` → `rendered=true reason=none` exit 0 (con `cargo build -p
+  gx-app` exit 0 antes, que embebe `frontend/dist`), `cargo test --workspace`
+  37 suites / 0 failed, `cargo fmt --check` exit 0, `cargo clippy --workspace`
+  exit 0. Sin commit y sin push: los hace el orquestador (S4). Lo que NO se
+  tocó: payloads/throttles de `CONTRACT.md`, los números 59/45°/41.72/24/3/0.4/
+  zoom 0.05-4.0, ninguna string C41 (la del notice incluida), y los ítems de T4
+  (wheel template test, pinch, `getCoalescedEvents`) siguen fuera.

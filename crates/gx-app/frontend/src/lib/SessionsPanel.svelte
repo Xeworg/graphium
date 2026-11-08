@@ -31,6 +31,32 @@
   let open = $state(false);
 
   const chosen = (planId) => planId !== null && planId === activePlanId;
+
+  let panelEl = $state(null);
+  let toggleEl = $state(null);
+
+  function close() {
+    open = false;
+  }
+
+  // Escape closes and the keyboard goes back to the toggle, the pattern of
+  // `SettingsPanel` (T3 of `odd/tasks/mejoras-frontend.md`): whether the focus
+  // was inside the panel is read *before* the panel hides.
+  let wasInside = false;
+  $effect.pre(() => {
+    if (!open) {
+      wasInside = panelEl !== null && panelEl.contains(document.activeElement);
+    }
+  });
+  $effect(() => {
+    if (open) {
+      return;
+    }
+    if (wasInside) {
+      wasInside = false;
+      toggleEl?.focus();
+    }
+  });
 </script>
 
 <button
@@ -41,10 +67,27 @@
   aria-expanded={open}
   aria-controls="sessions-panel"
   title="sesiones"
+  bind:this={toggleEl}
   onclick={() => (open = !open)}>◉</button
 >
 
-<aside id="sessions-panel" class="sessions-panel" class:hidden={!open} aria-label="sesiones">
+<!-- The Escape of the panel listens on the aside, which is not an interactive
+     element: the key belongs to the panel as a whole and bubbles through it.
+     `svelte-ignore` states that on purpose. -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<aside
+  id="sessions-panel"
+  class="sessions-panel"
+  class:hidden={!open}
+  aria-label="sesiones"
+  bind:this={panelEl}
+  onkeydown={(event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+    }
+  }}
+>
   <h2 class="panel-title">sesiones</h2>
   <div id="session-list" class="session-list" role="group" aria-label="planos">
     <!-- The plan of the human (B1; S4): always first, even with no session at
@@ -99,7 +142,15 @@
       </button>
     {/each}
   </div>
-  <p id="session-notice" class="session-notice" class:hidden={notice === ""} role="status">
-    {notice}
-  </p>
+  <!-- The notice (S2, D4; A2) is NOT here since T3 of
+       `odd/tasks/mejoras-frontend.md`: this aside is `display:none` while the
+       panel is closed — its default state — so a live region inside it never
+       announced anything. It is the sibling below. -->
 </aside>
+
+<!-- Why the plan on screen changed when the session that owned it ended (S2,
+     D4; A2): a `role="status"` live region, outside the aside above, always in
+     the accessibility tree and visually hidden by `.session-notice`. The string
+     is the C29 one; the announcement no longer depends on the panel being
+     open. -->
+<p id="session-notice" class="session-notice" role="status">{notice}</p>

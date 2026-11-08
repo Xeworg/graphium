@@ -124,6 +124,20 @@
   // `odd/tasks/mejoras-frontend.md`: `.diagrams` reads `--tx`/`--ty`/`--zoom`,
   // which `gridPaintCamera` already publishes on `#plan` with every camera
   // write. One stylesheet rule, zero JavaScript per frame.
+  //
+  // How many diagrams the state lists per session, in one pass (T3 of
+  // `odd/tasks/mejoras-frontend.md`): `sessionRows` asks once per row and the
+  // plan on screen asks again, so a `filter` per caller walked the same array
+  // once per session. The index is rebuilt when the state is replaced and read
+  // by `sessionDiagramCount`.
+  const diagramCounts = $derived.by(() => {
+    const counts = new Map();
+    for (const diagram of state.diagrams) {
+      const sessionId = diagram.session_id;
+      counts.set(sessionId, (counts.get(sessionId) ?? 0) + 1);
+    }
+    return counts;
+  });
   // How many objects the plan on screen has (A2; B1): the clones on the user
   // plan, the diagrams of the session otherwise.
   const planObjectCount = $derived(
@@ -257,10 +271,24 @@
   /**
    * Pans until `target` over `PAN_MS` (250 ms), cubic ease-out, and never
    * touches the zoom (plan.js:600-623, C12).
+   *
+   * With `prefers-reduced-motion: reduce` (T3 of
+   * `odd/tasks/mejoras-frontend.md`) the 250 ms glide is exactly the motion the
+   * human asked not to see: the camera lands on the object in this frame. The
+   * result of the pan is the same — the zoom is still untouched (C12) — and the
+   * question is asked on every call, because the system setting can change
+   * while the page is open.
    */
   function panTo(target) {
     cancelPan();
     const from = { tx: camera.tx, ty: camera.ty };
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      camera.tx = target.tx;
+      camera.ty = target.ty;
+      applyCulling();
+      notifyCamera();
+      return;
+    }
     const started = window.performance.now();
     const step = (now) => {
       const elapsed = Math.min(1, (now - started) / PAN_MS);
@@ -355,9 +383,14 @@
    * screen pixels and the plan in plan units, and the zoom of the camera is
    * what joins them (B3). The object is one reactive rectangle: moving it
    * repaints the content and the box.
+   *
+   * The two coordinates are written **in place** (T3 of
+   * `odd/tasks/mejoras-frontend.md`): a spread per `pointermove` allocated a new
+   * rectangle, and a new content with it, sixty times per second of drag.
    */
   function setClonePlace(rec, x, y) {
-    rec.rect = { ...rec.rect, x, y };
+    rec.rect.x = x;
+    rec.rect.y = y;
     placeCloneContent(rec);
   }
 
@@ -474,7 +507,7 @@
   }
 
   function sessionDiagramCount(sessionId) {
-    return state.diagrams.filter((diagram) => diagram.session_id === sessionId).length;
+    return diagramCounts.get(sessionId) ?? 0;
   }
 
   /** The plan the state leaves on screen when the human has not chosen one. */
@@ -836,14 +869,16 @@
    * Puts the object of a clone where its rectangle says. The content **is**
    * the object — the drawing centers inside it with the stylesheet — so moving
    * a clone is moving one rectangle, and its tools travel with it.
+   *
+   * The four fields are written in place (T3): `setClonePlace` calls this on
+   * every `pointermove` of a drag, and a fresh object per frame is garbage the
+   * frame does not need.
    */
   function placeCloneContent(rec) {
-    rec.content = {
-      x: rec.rect.x,
-      y: rec.rect.y,
-      w: rec.rect.w,
-      h: rec.rect.h,
-    };
+    rec.content.x = rec.rect.x;
+    rec.content.y = rec.rect.y;
+    rec.content.w = rec.rect.w;
+    rec.content.h = rec.rect.h;
   }
 
   /** Reads from the state where a clone sits and what it is called (B3). */
@@ -1113,13 +1148,26 @@
    * history of its original), like the arrows of its panel item. A field that
    * holds the keyboard keeps its arrows: the history never steals them from the
    * human.
+   *
+   * Two guards of T3 of `odd/tasks/mejoras-frontend.md`: an event another
+   * handler already consumed is not the event of the history
+   * (`defaultPrevented`), and a text editor keeps its arrows as well as a field
+   * does — `[contenteditable]` is where the human writes, and a diagram on the
+   * plan is focusable now, so both cases are one Tab away.
    */
   function onKeyDown(event) {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
       return;
     }
+    if (event.defaultPrevented) {
+      return;
+    }
     const target = event.target;
-    if (target instanceof HTMLElement && target.matches("input, textarea, select")) {
+    if (
+      target instanceof Element &&
+      target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !==
+        null
+    ) {
       return;
     }
     if (selectedId === null) {
@@ -1251,11 +1299,20 @@
        reading `--tx`/`--ty`/`--zoom` (T2). -->
   <div class="diagrams">
     {#each plane as rec (rec.id)}
+      <!-- The object keeps the keyboard (T3 of `odd/tasks/mejoras-frontend.md`):
+           `tabindex` on a `group` is what the linter flags, and the trade is
+           deliberate — the focus is what chooses the object and what makes the
+           history of versions reachable with the arrows. -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <div
         class="diagram"
         class:clone={rec.kind === "clone"}
         class:plan-hidden={rec.hidden}
         data-id={rec.id}
+        role="group"
+        aria-label={boxText(rec)}
+        tabindex="0"
+        onfocus={() => (selectedId = rec.id)}
       >
         <!-- The box that stands in for the drawing while it is out of the DOM
              (RNF1-ter). Before the content, so the `×` keeps painting above
