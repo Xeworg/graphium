@@ -825,6 +825,546 @@ fn java_relations_are_the_four_kinds_and_never_prose() {
 }
 
 // ---------------------------------------------------------------------------
+// JavaScript / JSX (T3 Batch 1)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-javascript")]
+const JAVASCRIPT: &str = r#"
+import { Store } from "./store";
+import legacy from "./legacy";
+import * as helper from "./helper";
+export { quiet } from "./quiet";
+
+export class ToolBox extends Base {
+  static LIMIT = 3;
+  store;
+
+  constructor(store) {
+    this.store = store;
+  }
+
+  load(input) {
+    return this.store.load(input);
+  }
+
+  renderWith(other) {
+    return openStore(this.store);
+  }
+}
+
+export class Panel extends ToolBox {
+  paint(store) {
+    return render(store);
+  }
+}
+
+export function openStore(store) {
+  return new ToolBox(store);
+}
+
+export const helper2 = (input) => legacy.run(input);
+
+export function View(props) {
+  const label = props.store.load("x");
+  return <section className="box"><Panel store={openStore(props.store)} /></section>;
+}
+
+class Quiet {
+  quiet() {
+    // A comment that mentions ignoredInComment() must not produce an edge.
+    const text = "alsoIgnoredInAString()";
+    return text;
+  }
+}
+"#;
+
+/// T3/S2: the JavaScript chapter keeps the functions, the classes with their
+/// methods and the module-level constants, and JSX is the same grammar (the
+/// `.jsx` file of `javascript.rs` is parsed by this one).
+#[cfg(feature = "lang-javascript")]
+#[test]
+fn javascript_declares_the_symbols_of_a_chapter_with_its_nesting() {
+    let parsed = parse("web/tools.js", JAVASCRIPT.as_bytes(), 0).expect("the JavaScript grammar");
+    assert_eq!(parsed.lang, "javascript");
+    assert_symbols(
+        &parsed,
+        &[
+            ("class", "ToolBox", "web.tools.ToolBox"),
+            ("method", "constructor", "web.tools.ToolBox.constructor"),
+            ("method", "load", "web.tools.ToolBox.load"),
+            ("method", "renderWith", "web.tools.ToolBox.renderWith"),
+            ("class", "Panel", "web.tools.Panel"),
+            ("method", "paint", "web.tools.Panel.paint"),
+            ("fn", "openStore", "web.tools.openStore"),
+            ("const", "helper2", "web.tools.helper2"),
+            ("fn", "View", "web.tools.View"),
+            ("class", "Quiet", "web.tools.Quiet"),
+            ("method", "quiet", "web.tools.Quiet.quiet"),
+        ],
+    );
+
+    // A method hangs from its class, the same as every language of the book.
+    let method = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.qname == "web.tools.ToolBox.renderWith")
+        .expect("the method");
+    let parent = method.parent.expect("the method hangs from its class");
+    assert_eq!(parsed.symbols[parent].name, "ToolBox");
+}
+
+/// T3/S7: the three relation kinds of the language — the import, the call by
+/// name as written and `extends` — never an edge out of prose or out of JSX
+/// markup.
+#[cfg(feature = "lang-javascript")]
+#[test]
+fn javascript_relations_are_syntactic_and_never_prose() {
+    let parsed = parse("web/tools.js", JAVASCRIPT.as_bytes(), 0).expect("the grammar");
+
+    for (kind, name) in [
+        ("imports", "Store"),
+        ("imports", "legacy"),
+        ("imports", "helper"),
+        ("imports", "quiet"),
+        ("calls", "load"),
+        ("calls", "openStore"),
+        ("calls", "ToolBox"),
+        ("calls", "render"),
+        ("calls", "run"),
+        ("inherits", "Base"),
+        ("inherits", "ToolBox"),
+    ] {
+        assert_edge(&parsed, kind, name);
+    }
+
+    assert_edge_owned(
+        &parsed,
+        "calls",
+        "openStore",
+        "web.tools.ToolBox.renderWith",
+    );
+    assert_edge_owned(&parsed, "calls", "run", "web.tools.helper2");
+    assert_edge_owned(&parsed, "inherits", "ToolBox", "web.tools.Panel");
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+    // JSX is markup: the element and its attribute are not relations.
+    for markup in ["section", "Panel", "className", "box"] {
+        assert!(
+            !parsed.edges.iter().any(|edge| edge.dst_name == markup),
+            "`{markup}` is JSX markup: {:?}",
+            parsed.edges
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// C (T3 Batch 1)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-c")]
+const C: &str = r#"
+#include <stdio.h>
+#include "store.h"
+
+struct DiagramStore {
+    char *path;
+    int count;
+};
+
+typedef struct DiagramStore Store;
+
+const int LIMIT = 3;
+static int counter = 0;
+
+struct Loader {
+    int (*load)(Store *store);
+};
+
+static int parse_config(char *path) {
+    return 0;
+}
+
+int open_store(Store *store) {
+    return parse_config(store->path);
+}
+
+void render_with(Store *store, struct Loader *loader) {
+    printf("%d", open_store(store));
+    loader->load(store);
+}
+
+int quiet(void) {
+    /* A comment that mentions ignoredInComment() must not produce an edge. */
+    const char *text = "alsoIgnoredInAString()";
+    return 0;
+}
+"#;
+
+/// T3/S2: the C chapter keeps the structs, the typedefs, the file-scope
+/// variables and the functions — named by their declarators, never by a
+/// `name` field — with the file as the module.
+#[cfg(feature = "lang-c")]
+#[test]
+fn c_declares_the_symbols_of_a_chapter_with_its_nesting() {
+    let parsed = parse("c/store.c", C.as_bytes(), 0).expect("the C grammar");
+    assert_eq!(parsed.lang, "c");
+    assert_symbols(
+        &parsed,
+        &[
+            ("type", "DiagramStore", "c.store.DiagramStore"),
+            ("type", "Store", "c.store.Store"),
+            ("const", "LIMIT", "c.store.LIMIT"),
+            ("static", "counter", "c.store.counter"),
+            ("type", "Loader", "c.store.Loader"),
+            ("fn", "parse_config", "c.store.parse_config"),
+            ("fn", "open_store", "c.store.open_store"),
+            ("fn", "render_with", "c.store.render_with"),
+            ("fn", "quiet", "c.store.quiet"),
+        ],
+    );
+
+    // A `struct` specifier with no body is a type reference, not a second
+    // declaration of the type.
+    let stores = parsed
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.name == "DiagramStore")
+        .count();
+    assert_eq!(stores, 1, "{:?}", rows(&parsed));
+}
+
+/// T3/S7: the `#include`, the call by name as written and the type references
+/// of the chapter — never an edge out of prose.
+#[cfg(feature = "lang-c")]
+#[test]
+fn c_relations_are_syntactic_and_never_prose() {
+    let parsed = parse("c/store.c", C.as_bytes(), 0).expect("the grammar");
+
+    for (kind, name) in [
+        ("imports", "stdio"),
+        ("imports", "store"),
+        ("calls", "parse_config"),
+        ("calls", "open_store"),
+        ("calls", "printf"),
+        ("calls", "load"),
+        ("uses", "Store"),
+        ("uses", "Loader"),
+    ] {
+        assert_edge(&parsed, kind, name);
+    }
+
+    assert_edge_owned(&parsed, "calls", "open_store", "c.store.render_with");
+    assert_edge_owned(&parsed, "calls", "parse_config", "c.store.open_store");
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+}
+
+// ---------------------------------------------------------------------------
+// C++ (T3 Batch 1)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-cpp")]
+const CPP: &str = r#"
+#include <vector>
+#include "store.h"
+
+namespace store {
+
+class Base {};
+
+template <typename T>
+class Holder {
+public:
+    T get();
+private:
+    T value;
+};
+
+class DiagramStore : public Base, private Holder<DiagramStore> {
+public:
+    DiagramStore(const char *path);
+    int load(const char *input);
+    int render_with(DiagramStore &other) { return open_store().load("x"); }
+private:
+    std::vector<int> values;
+};
+
+int DiagramStore::load(const char *input) {
+    return parse_config(input);
+}
+
+int open_store() {
+    return 0;
+}
+
+int parse_config(const char *input) {
+    return 0;
+}
+
+const int LIMIT = 3;
+
+using Alias = DiagramStore;
+
+int quiet() {
+    // A comment that mentions ignoredInComment() must not produce an edge.
+    const char *text = "alsoIgnoredInAString()";
+    return 0;
+}
+
+} // namespace store
+"#;
+
+/// T3/S2: the C++ chapter keeps the classes (with their methods and their
+/// method declarations), the functions, the type aliases and the constants;
+/// the `namespace` names the source, not the `qname`.
+#[cfg(feature = "lang-cpp")]
+#[test]
+fn cpp_declares_the_symbols_of_a_chapter_with_its_nesting() {
+    let parsed = parse("cpp/store.cpp", CPP.as_bytes(), 0).expect("the C++ grammar");
+    assert_eq!(parsed.lang, "cpp");
+    assert_symbols(
+        &parsed,
+        &[
+            ("class", "Base", "cpp.store.Base"),
+            ("class", "Holder", "cpp.store.Holder"),
+            ("method", "get", "cpp.store.Holder.get"),
+            ("class", "DiagramStore", "cpp.store.DiagramStore"),
+            (
+                "method",
+                "DiagramStore",
+                "cpp.store.DiagramStore.DiagramStore",
+            ),
+            ("method", "load", "cpp.store.DiagramStore.load"),
+            (
+                "method",
+                "render_with",
+                "cpp.store.DiagramStore.render_with",
+            ),
+            ("fn", "load", "cpp.store.load"),
+            ("fn", "open_store", "cpp.store.open_store"),
+            ("fn", "parse_config", "cpp.store.parse_config"),
+            ("const", "LIMIT", "cpp.store.LIMIT"),
+            ("type", "Alias", "cpp.store.Alias"),
+            ("fn", "quiet", "cpp.store.quiet"),
+        ],
+    );
+
+    // A data field is not a declaration of the book; the method of the class
+    // hangs from the class.
+    assert!(
+        !parsed.symbols.iter().any(|symbol| symbol.name == "values"),
+        "a field is not a declaration: {:?}",
+        rows(&parsed)
+    );
+    let method = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.qname == "cpp.store.DiagramStore.render_with")
+        .expect("the method");
+    let parent = method.parent.expect("the method hangs from its class");
+    assert_eq!(parsed.symbols[parent].name, "DiagramStore");
+}
+
+/// T3/S7: the `#include`, the call by name as written, the base classes and
+/// the type references — never an edge out of prose.
+#[cfg(feature = "lang-cpp")]
+#[test]
+fn cpp_relations_are_the_four_kinds_and_never_prose() {
+    let parsed = parse("cpp/store.cpp", CPP.as_bytes(), 0).expect("the grammar");
+
+    for (kind, name) in [
+        ("imports", "vector"),
+        ("imports", "store"),
+        ("calls", "open_store"),
+        ("calls", "load"),
+        ("calls", "parse_config"),
+        ("inherits", "Base"),
+        ("inherits", "Holder"),
+        ("uses", "DiagramStore"),
+        ("uses", "vector"),
+    ] {
+        assert_edge(&parsed, kind, name);
+    }
+
+    assert_edge_owned(
+        &parsed,
+        "calls",
+        "open_store",
+        "cpp.store.DiagramStore.render_with",
+    );
+    assert_edge_owned(&parsed, "inherits", "Base", "cpp.store.DiagramStore");
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+}
+
+// ---------------------------------------------------------------------------
+// C# (T3 Batch 1)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-csharp")]
+const CSHARP: &str = r#"
+using System;
+using System.Collections.Generic;
+
+namespace Graphium.Store;
+
+public interface ILoader
+{
+    int Load(string input);
+}
+
+public class Base
+{
+    protected string name;
+}
+
+public class DiagramStore : Base, ILoader
+{
+    private readonly List<ILoader> loaders;
+
+    public DiagramStore(List<ILoader> loaders)
+    {
+        this.loaders = loaders;
+    }
+
+    public int Load(string input)
+    {
+        return ParseConfig(input);
+    }
+
+    public DiagramStore RenderWith(DiagramStore other)
+    {
+        return OpenStore().Load("x");
+    }
+
+    public static DiagramStore OpenStore()
+    {
+        return new DiagramStore(new List<ILoader>());
+    }
+}
+
+public static class Tools
+{
+    public static int ParseConfig(string input)
+    {
+        return input.Length;
+    }
+}
+
+public record Pair(string Left, string Right);
+
+public enum Mode
+{
+    Fast,
+}
+
+public delegate int Handler(string input);
+
+public class Quiet
+{
+    public string Silent()
+    {
+        // A comment that mentions ignoredInComment() must not produce an edge.
+        string text = "alsoIgnoredInAString()";
+        return text;
+    }
+}
+"#;
+
+/// T3/S2: the C# chapter keeps the types of the file — a record is a class, a
+/// struct a type, an interface a trait and a delegate a type — under the
+/// namespace the file declares.
+#[cfg(feature = "lang-csharp")]
+#[test]
+fn csharp_declares_the_symbols_of_a_chapter_with_its_nesting() {
+    let parsed = parse("dotnet/Store.cs", CSHARP.as_bytes(), 0).expect("the C# grammar");
+    assert_eq!(parsed.lang, "csharp");
+    assert_symbols(
+        &parsed,
+        &[
+            ("trait", "ILoader", "Graphium.Store.ILoader"),
+            ("method", "Load", "Graphium.Store.ILoader.Load"),
+            ("class", "Base", "Graphium.Store.Base"),
+            ("class", "DiagramStore", "Graphium.Store.DiagramStore"),
+            (
+                "method",
+                "DiagramStore",
+                "Graphium.Store.DiagramStore.DiagramStore",
+            ),
+            ("method", "Load", "Graphium.Store.DiagramStore.Load"),
+            (
+                "method",
+                "RenderWith",
+                "Graphium.Store.DiagramStore.RenderWith",
+            ),
+            (
+                "method",
+                "OpenStore",
+                "Graphium.Store.DiagramStore.OpenStore",
+            ),
+            ("class", "Tools", "Graphium.Store.Tools"),
+            ("method", "ParseConfig", "Graphium.Store.Tools.ParseConfig"),
+            ("class", "Pair", "Graphium.Store.Pair"),
+            ("type", "Mode", "Graphium.Store.Mode"),
+            ("type", "Handler", "Graphium.Store.Handler"),
+            ("class", "Quiet", "Graphium.Store.Quiet"),
+            ("method", "Silent", "Graphium.Store.Quiet.Silent"),
+        ],
+    );
+
+    // A field or a property is not a declaration of the book.
+    for field in ["loaders", "name", "Count"] {
+        assert!(
+            !parsed.symbols.iter().any(|symbol| symbol.name == field),
+            "`{field}` is not a declaration: {:?}",
+            rows(&parsed)
+        );
+    }
+    let method = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.qname == "Graphium.Store.DiagramStore.RenderWith")
+        .expect("the method");
+    let parent = method.parent.expect("the method hangs from its class");
+    assert_eq!(parsed.symbols[parent].name, "DiagramStore");
+}
+
+/// T3/S7: the `using`, the call by name as written, the base list and the type
+/// references — never an edge out of prose.
+#[cfg(feature = "lang-csharp")]
+#[test]
+fn csharp_relations_are_the_four_kinds_and_never_prose() {
+    let parsed = parse("dotnet/Store.cs", CSHARP.as_bytes(), 0).expect("the grammar");
+
+    for (kind, name) in [
+        ("imports", "System"),
+        ("imports", "Generic"),
+        ("calls", "ParseConfig"),
+        ("calls", "OpenStore"),
+        ("calls", "Load"),
+        ("calls", "DiagramStore"),
+        ("calls", "List"),
+        ("inherits", "Base"),
+        ("inherits", "ILoader"),
+        ("uses", "List"),
+        ("uses", "ILoader"),
+        ("uses", "DiagramStore"),
+    ] {
+        assert_edge(&parsed, kind, name);
+    }
+
+    assert_edge_owned(
+        &parsed,
+        "calls",
+        "ParseConfig",
+        "Graphium.Store.DiagramStore.Load",
+    );
+    assert_edge_owned(&parsed, "inherits", "Base", "Graphium.Store.DiagramStore");
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+}
+
+// ---------------------------------------------------------------------------
 // The book (S3, D3): a mixed tree answers across languages
 // ---------------------------------------------------------------------------
 
@@ -1093,6 +1633,108 @@ fn the_registry_answers_the_four_new_languages() {
         });
         assert_eq!(parsed.lang, lang, "the language of `{path}`");
     }
-    // Five languages, one grammar each; TypeScript covers both grammars.
-    assert_eq!(GRAMMARS.len(), 5);
+    // One grammar per language of the build; TypeScript covers both of its
+    // grammars. The expectations are built with the same features that built
+    // the grammars (T4/C3), so a slim build is checked against itself.
+    assert_eq!(
+        GRAMMARS.len(),
+        [
+            cfg!(feature = "lang-rust"),
+            cfg!(feature = "lang-typescript"),
+            cfg!(feature = "lang-python"),
+            cfg!(feature = "lang-go"),
+            cfg!(feature = "lang-java"),
+            cfg!(feature = "lang-javascript"),
+            cfg!(feature = "lang-c"),
+            cfg!(feature = "lang-cpp"),
+            cfg!(feature = "lang-csharp"),
+        ]
+        .iter()
+        .filter(|enabled| **enabled)
+        .count()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// D3 for T3 Batch 1: the four new languages, measured on their own tree
+// ---------------------------------------------------------------------------
+
+/// D3/S4: the four languages of T3 Batch 1 measure their resolution on a book
+/// that holds only their fixtures, with the same rule and the same report as
+/// the five of C2 (`Book::resolution()`, `name_norm`, ≤5 definers). They are a
+/// separate tree on purpose: the published numbers of the five are measured on
+/// the C2 fixtures, and adding chapters with the same common names would move
+/// their fanout — the measurement is per tree, never a shared pool that one
+/// batch can move.
+#[cfg(all(
+    feature = "lang-javascript",
+    feature = "lang-c",
+    feature = "lang-cpp",
+    feature = "lang-csharp"
+))]
+#[test]
+fn the_resolution_rate_of_the_batch_one_languages_is_measured_on_their_fixtures() {
+    let scratch = Scratch::new("batch-one-resolution");
+    scratch.write("web/tools.js", JAVASCRIPT);
+    scratch.write("c/store.c", C);
+    scratch.write("cpp/store.cpp", CPP);
+    scratch.write("dotnet/Store.cs", CSHARP);
+    let book = Arc::new(scratch.open());
+    scratch.indexer(&book).run_full().expect("the index");
+
+    let report = book.resolution().expect("the honesty report");
+    let by_lang = |lang: &str| {
+        report
+            .iter()
+            .find(|row| row.lang == lang)
+            .unwrap_or_else(|| panic!("the report has no `{lang}` row: {report:?}"))
+            .clone()
+    };
+
+    for lang in ["javascript", "c", "cpp", "csharp"] {
+        let row = by_lang(lang);
+        assert!(row.files >= 1, "`{lang}` has a chapter: {row:?}");
+        assert!(row.symbols >= 1, "`{lang}` declares something: {row:?}");
+        assert!(row.edges >= 5, "`{lang}` declares relations: {row:?}");
+        assert!(
+            row.resolved <= row.edges,
+            "a rate is never over 100 %: {row:?}"
+        );
+    }
+
+    println!(
+        "D3 resolutions (T3 Batch 1): {}",
+        report
+            .iter()
+            .map(|row| format!(
+                "{} {}/{} = {:.1} % ({} files, {} symbols)",
+                row.lang,
+                row.resolved,
+                row.edges,
+                row.percent(),
+                row.files,
+                row.symbols
+            ))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+
+    // The floors are the published numbers of `docs/PRD.md`, rounded down: a
+    // measurement that falls under them fails the suite. They are **measured
+    // on these fixtures**, never promises.
+    for (lang, floor) in [
+        ("javascript", 64.0),
+        ("c", 79.0),
+        ("cpp", 69.0),
+        ("csharp", 64.0),
+    ] {
+        let row = by_lang(lang);
+        assert!(
+            row.percent() >= floor,
+            "`{lang}` resolves {:.1} % of {} edges, under the published floor of {} %: {row:?}",
+            row.percent(),
+            row.edges,
+            floor
+        );
+    }
 }

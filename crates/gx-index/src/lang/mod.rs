@@ -5,7 +5,7 @@
 //! contributes what only it knows — the tree-sitter grammar, the module path of
 //! a file, the relations it reads and the few hooks its grammar needs
 //! ([`engine`]) — and its node-kind → kind tables, its transparent kinds and its
-//! containers live in one registry next to the tables of the other four
+//! containers live in one registry next to the tables of the others
 //! ([`registry`]). Nothing outside this directory moves: the schema, the
 //! queries, the watcher and the tools speak of [`ParsedFile`], whichever grammar
 //! produced it, and the relation vocabulary of the edges is the schema's, not
@@ -14,23 +14,35 @@
 //! Adding a language (T3) is therefore: a grammar dependency and a cargo feature
 //! in `Cargo.toml`, a module next to the others with its `language()`,
 //! `module_path()` and `relations()` (plus a hook only where its grammar names a
-//! declaration in a way the tables cannot), its entry in [`registry::GRAMMARS`].
-//! The pipeline (`engine::extract`) and the queries are not touched.
+//! declaration in a way the tables cannot), its entry in [`registry::GRAMMARS`],
+//! and its fixtures and floor in `tests/languages.rs`. The pipeline
+//! (`engine::extract`), the queries and the schema are not touched: the `lang`
+//! values of the table `file` are the entries of the registry.
 //!
 //! Each language is also a **cargo feature** of the engine (T4/C3, the lever of
 //! RNF1-quater): `lang-rust`, `lang-typescript`, `lang-python`, `lang-go` and
-//! `lang-java`, all five **on by default**, so nothing changes for a build that
-//! does not ask. A slim build drops a grammar together with its dependency —
+//! `lang-java` are **on by default**, so nothing changes for a build that does
+//! not ask, and `lang-javascript`, `lang-c`, `lang-cpp` and `lang-csharp` (T3
+//! Batch 1) are **off by default**, so the default binary does not grow. A slim
+//! build drops a grammar together with its dependency —
 //! `--no-default-features --features "lang-rust,lang-typescript"` — and this
 //! directory is the only place that knows: [`GRAMMARS`] simply lists the
 //! grammars of the build, and everything outside here speaks of [`ParsedFile`].
 
+#[cfg(feature = "lang-c")]
+pub mod c;
+#[cfg(feature = "lang-cpp")]
+pub mod cpp;
+#[cfg(feature = "lang-csharp")]
+pub mod csharp;
 mod emit;
 pub mod engine;
 #[cfg(feature = "lang-go")]
 pub mod go;
 #[cfg(feature = "lang-java")]
 pub mod java;
+#[cfg(feature = "lang-javascript")]
+pub mod javascript;
 pub mod model;
 #[cfg(feature = "lang-python")]
 pub mod python;
@@ -106,6 +118,24 @@ mod tests {
         expected.push(("src/main.go", "go"));
         #[cfg(feature = "lang-java")]
         expected.push(("src/main.java", "java"));
+        #[cfg(feature = "lang-javascript")]
+        {
+            expected.push(("src/main.js", "javascript"));
+            expected.push(("src/main.jsx", "javascript"));
+            expected.push(("src/main.mjs", "javascript"));
+        }
+        #[cfg(feature = "lang-c")]
+        {
+            expected.push(("src/main.c", "c"));
+            expected.push(("src/main.h", "c"));
+        }
+        #[cfg(feature = "lang-cpp")]
+        {
+            expected.push(("src/main.cpp", "cpp"));
+            expected.push(("src/main.hpp", "cpp"));
+        }
+        #[cfg(feature = "lang-csharp")]
+        expected.push(("src/main.cs", "csharp"));
 
         for (path, lang) in expected {
             assert_eq!(language_for(Path::new(path)), Some(lang), "`{path}`");
@@ -120,6 +150,10 @@ mod tests {
                 cfg!(feature = "lang-python"),
                 cfg!(feature = "lang-go"),
                 cfg!(feature = "lang-java"),
+                cfg!(feature = "lang-javascript"),
+                cfg!(feature = "lang-c"),
+                cfg!(feature = "lang-cpp"),
+                cfg!(feature = "lang-csharp"),
             ]
             .iter()
             .filter(|enabled| **enabled)

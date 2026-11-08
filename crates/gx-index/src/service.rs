@@ -159,6 +159,11 @@ pub fn ensure(config: &BooksConfig, project_root: &Path) -> Result<Arc<BookHandl
             Book::rebuild_message(&reason)
         );
     }
+    if book.report().migrated {
+        eprintln!(
+            "gx-index: relaxed the `lang` check of the book of `{key}` in place: every chapter kept"
+        );
+    }
     let indexer = Arc::new(Indexer::new(
         book.clone(),
         canonical.clone(),

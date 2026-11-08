@@ -107,6 +107,7 @@ impl Book {
             probed: false,
             quick_checked: false,
             rebuilt: None,
+            migrated: false,
         };
 
         let connection = if location.database.exists() {
@@ -117,8 +118,9 @@ impl Book {
                 registry.nonce(&location.key).as_deref(),
             );
             match outcome {
-                schema::ProbeOutcome::Ready { unclean } => {
+                schema::ProbeOutcome::Ready { unclean, migrated } => {
                     report.quick_checked = unclean;
+                    report.migrated = migrated;
                     existing.expect("a ready probe hands the connection")
                 }
                 schema::ProbeOutcome::Rebuild(reason) => {
@@ -240,6 +242,18 @@ impl Book {
         let mut next_id = next_symbol_id(&writer)?;
 
         for (index, file) in parsed.iter().enumerate() {
+            // The languages of the book are the registry of the build (T3/S4),
+            // and this is the one insert path: a chapter whose language has no
+            // grammar here is refused before it touches the `file` table, and
+            // the DDL carries no list that could refuse a language instead.
+            if !schema::accepts_language(file.lang) {
+                eprintln!(
+                    "gx-index: the chapter `{}` was skipped: `{}` is not a language of this build",
+                    file.path, file.lang
+                );
+                report.files_skipped += 1;
+                continue;
+            }
             let savepoint = format!("chapter_{index}");
             writer.execute_batch(&format!("SAVEPOINT {savepoint}"))?;
             match write_chapter(&writer, file, indexed_at, &mut next_id) {

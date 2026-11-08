@@ -148,8 +148,8 @@ pub fn dotted_module(relative: &str, skip: &[&str]) -> String {
 }
 
 /// The dotted module path of a file whose unit is the directory (Go packages,
-/// the fallback of a Java file with no `package` declaration).
-#[cfg(any(feature = "lang-go", feature = "lang-java"))]
+/// the fallback of a Java or C# file with no declaration that names it).
+#[cfg(any(feature = "lang-go", feature = "lang-java", feature = "lang-csharp"))]
 pub fn dotted_directories(relative: &str) -> String {
     let parts: Vec<&str> = relative
         .split('/')
@@ -163,8 +163,58 @@ pub fn dotted_directories(relative: &str) -> String {
     join_segments(directories)
 }
 
+/// The name a C/C++ declarator spells, through the wrappers the grammar puts
+/// around it: `int *open_store(char *path)` names `open_store` and
+/// `int DiagramStore::load()` names `load`.
+///
+/// It lives here and not in the two language modules because C++ is a superset
+/// of the declarator grammar of C and the two features are independent: the one
+/// implementation is compiled when either of them is on.
+#[cfg(any(feature = "lang-c", feature = "lang-cpp"))]
+pub fn declarator_name(node: &tree_sitter::Node, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "identifier" | "field_identifier" | "type_identifier" => text(node, source),
+        // A destructor or an operator declares its own spelling: `~Store`,
+        // `operator+`.
+        "destructor_name" | "operator_name" => text(node, source),
+        "qualified_identifier" | "template_function" | "template_type" => node
+            .child_by_field_name("name")
+            .and_then(|name| declarator_name(&name, source)),
+        // Wrappers without a `declarator` field: `(open_store)` and `&value`.
+        "parenthesized_declarator" | "reference_declarator" => node
+            .named_child(0)
+            .and_then(|inner| declarator_name(&inner, source)),
+        // `pointer_declarator`, `init_declarator`, `array_declarator`,
+        // `function_declarator`… all spell the wrapped declarator with a field.
+        _ => node
+            .child_by_field_name("declarator")
+            .and_then(|inner| declarator_name(&inner, source)),
+    }
+}
+
+/// Whether a node of a C/C++ tree has a descendant of that kind: it is how a
+/// `declaration` tells a function prototype from a variable (`function_declarator`
+/// is the difference).
+#[cfg(any(feature = "lang-c", feature = "lang-cpp"))]
+pub fn contains_kind(node: &tree_sitter::Node, kind: &str) -> bool {
+    if node.kind() == kind {
+        return true;
+    }
+    let mut cursor = node.walk();
+    let found = node
+        .named_children(&mut cursor)
+        .any(|child| contains_kind(&child, kind));
+    found
+}
+
 /// The last segment of a path spelled with `.` or `::`: the name a language
 /// uses to refer to something declared elsewhere.
+#[cfg(any(
+    feature = "lang-typescript",
+    feature = "lang-java",
+    feature = "lang-python",
+    feature = "lang-csharp"
+))]
 pub fn last_segment(text: &str) -> String {
     text.trim()
         .rsplit("::")
@@ -201,10 +251,17 @@ fn join_segments(segments: Vec<String>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{dotted_module, last_segment, prefix_of};
+    #[cfg(any(
+        feature = "lang-typescript",
+        feature = "lang-java",
+        feature = "lang-python",
+        feature = "lang-csharp"
+    ))]
+    use super::last_segment;
+    use super::{dotted_module, prefix_of};
     // `dotted_directories` only exists for the grammars whose unit is the
-    // directory (Go, Java): the slim build of T4/C3 does not compile it.
-    #[cfg(any(feature = "lang-go", feature = "lang-java"))]
+    // directory (Go, Java, C#): the slim build of T4/C3 does not compile it.
+    #[cfg(any(feature = "lang-go", feature = "lang-java", feature = "lang-csharp"))]
     use super::dotted_directories;
 
     /// The nesting of a `qname` is the language's: the helpers keep the
@@ -219,7 +276,7 @@ mod tests {
             dotted_module("src/pkg/__init__.py", &["__init__"]),
             "src.pkg"
         );
-        #[cfg(any(feature = "lang-go", feature = "lang-java"))]
+        #[cfg(any(feature = "lang-go", feature = "lang-java", feature = "lang-csharp"))]
         {
             assert_eq!(
                 dotted_directories("internal/store/store.go"),
@@ -227,9 +284,18 @@ mod tests {
             );
             assert_eq!(dotted_directories("main.go"), "");
         }
-        assert_eq!(last_segment("java.util.List"), "List");
-        assert_eq!(last_segment("crate::store::Store"), "Store");
-        // A Go package path is spelled with `/`: its grammar splits that one.
-        assert_eq!(last_segment("net/http"), "net/http");
+        #[cfg(any(
+            feature = "lang-typescript",
+            feature = "lang-java",
+            feature = "lang-python",
+            feature = "lang-csharp"
+        ))]
+        {
+            assert_eq!(last_segment("java.util.List"), "List");
+            assert_eq!(last_segment("crate::store::Store"), "Store");
+            // A Go package path is spelled with `/`: its grammar splits that
+            // one.
+            assert_eq!(last_segment("net/http"), "net/http");
+        }
     }
 }

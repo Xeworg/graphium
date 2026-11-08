@@ -24,6 +24,14 @@ tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
 tree-sitter-go = { workspace = true, optional = true }
 tree-sitter-java = { workspace = true, optional = true }
+# T3 Batch 1 (S2/S4): the grammars of the languages after the five of C2. The
+# versions are local to this manifest — the crate that owns the grammars owns
+# their versions — and every one of them is OFF by default: the default binary
+# keeps the five languages of C2 and does not grow (RNF1-quater).
+tree-sitter-javascript = { version = "0.25.0", optional = true }
+tree-sitter-c = { version = "0.24.2", optional = true }
+tree-sitter-cpp = { version = "0.23.4", optional = true }
+tree-sitter-c-sharp = { version = "0.23.5", optional = true }
 
 [features]
 # Default-on: the book ships the five languages of C2, so existing users see no
@@ -35,3 +43,9 @@ lang-typescript = ["dep:tree-sitter-typescript"]
 lang-python = ["dep:tree-sitter-python"]
 lang-go = ["dep:tree-sitter-go"]
 lang-java = ["dep:tree-sitter-java"]
+# T3 Batch 1: JavaScript/JSX, C, C++ and C#, all **off** by default. A build
+# that wants them asks: `--features "lang-javascript,lang-c,lang-cpp,lang-csharp"`.
+lang-javascript = ["dep:tree-sitter-javascript"]
+lang-c = ["dep:tree-sitter-c"]
+lang-cpp = ["dep:tree-sitter-cpp"]
+lang-csharp = ["dep:tree-sitter-c-sharp"]
