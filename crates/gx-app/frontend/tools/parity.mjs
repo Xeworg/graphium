@@ -122,18 +122,161 @@ function cloneEntry(extra = {}) {
   };
 }
 
-function svgMarkup(width = 320, height = 180, marker = "live") {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" class="graphium" data-marker="${marker}"><g><rect x="0" y="0" width="${width}" height="${height}" fill="#101820"/><text x="12" y="24">${marker}</text></g></svg>`;
+// A scene as the wire carries it since `f11-elementos.md` T3/C: the harness
+// speaks the elements contract, never the SVG string of the export (S1/S2).
+// One node, named by `marker` — the label is how a probe tells one mounted
+// drawing from another (the `data-marker` of the string era died with the
+// flip). The tokens are the frozen ones of `gx-core/src/tokens.rs`.
+function sceneFixture(marker, width = 320, height = 180) {
+  const box = { w: Math.min(200, width * 0.6), h: 48 };
+  return {
+    canvas: { x: 0, y: 0, w: width, h: height },
+    tokens: {
+      text_size: 14,
+      node_padding: 12,
+      corner_radius: 6,
+      border_width: 1,
+      line_height: 1.25,
+      regular_weight: 400,
+      semibold_weight: 600,
+      arrow_length: 10,
+      crow_foot: 22,
+      crow_foot_spread: 0.85,
+      badge_width: 26,
+      muted_opacity: 0.55,
+      lifeline_dash: [4, 4],
+      dash_pattern: [6, 4],
+      group_dash: [8, 5],
+    },
+    direction: "TB",
+    layout_hint: "graph",
+    palette: {
+      source: "css-vars",
+      theme: "dark",
+      bg: "var(--bg)",
+      node_fill: "var(--node-fill)",
+      node_stroke: "var(--node-stroke)",
+      node_text: "var(--node-text)",
+      edge_stroke: "var(--edge-stroke)",
+      edge_text: "var(--edge-text)",
+      accent: "var(--accent)",
+    },
+    nodes: [
+      {
+        id: `g-${marker}`,
+        label: marker,
+        shape: "box",
+        emphasis: "normal",
+        style: "solid",
+        center: { x: width / 2, y: height / 2 },
+        size: box,
+        rows: [],
+        meta: {},
+      },
+    ],
+    edges: [],
+    bands: [],
+    events: [],
+  };
 }
 
 const RENDER = {
   req_id: "r1",
   diagram_id: "d-1",
   session_id: "s1",
-  svg: svgMarkup(),
+  elements: sceneFixture("live"),
   placement: { x: 100, y: 100 },
   camera: { tx: 0, ty: 0, zoom: 1 },
 };
+
+/**
+ * A scene with two nodes, keyed `g-<first>` and `g-<second>`.
+ *
+ * Two nodes so a probe can tell the element that never changes between two
+ * versions from the one that does: the first keeps its DOM node across a step
+ * of the history (`f11-elementos.md`, T4/D), which is what "the components are
+ * keyed by the id of the drawing" means to the human.
+ */
+function twoNodeScene(first, second, width = 320, height = 180) {
+  const scene = sceneFixture(first, width, height);
+  scene.nodes.push({
+    id: `g-${second}`,
+    label: second,
+    shape: "box",
+    emphasis: "normal",
+    style: "solid",
+    center: { x: 80, y: 140 },
+    size: { w: 120, h: 40 },
+    rows: [],
+    meta: {},
+  });
+  return scene;
+}
+
+/** The two nodes of `twoNodeScene` joined by one routed edge. */
+function edgeScene() {
+  const scene = twoNodeScene("a", "b");
+  scene.edges.push({
+    id: "m-a-b",
+    from: "a",
+    to: "b",
+    emphasis: "normal",
+    style: "solid",
+    arrow: false,
+    cardinality: null,
+    points: [
+      { x: 100, y: 40 },
+      { x: 220, y: 130 },
+    ],
+    label_at: null,
+  });
+  return scene;
+}
+
+/**
+ * A timeline with one point in time and one event that lasts.
+ *
+ * The numbers are the ones of the golden document `timeline-roadmap` (a 118 ×
+ * 49.5 box at 300/30.25 and the bar `geometry::event_bar` decides for it), so
+ * the probe reads the very geometry the export writes (`f11-elementos.md`,
+ * T4/D).
+ */
+function timelineScene() {
+  const scene = sceneFixture("timeline", 500, 160);
+  scene.layout_hint = null;
+  scene.nodes = [];
+  scene.bands = [
+    {
+      id: "lane-q1",
+      label: "Q1",
+      bbox: { x: 0, y: 0, w: 500, h: 160 },
+      depth: 0,
+      members: ["event-0", "event-1"],
+      gutter: 150,
+    },
+  ];
+  scene.events = [
+    {
+      id: "g-event-0",
+      lane: "q1",
+      label: "spike",
+      order: 0,
+      center: { x: 209, y: 55 },
+      size: { w: 118, h: 49.5 },
+    },
+    {
+      id: "g-event-1",
+      lane: "q1",
+      label: "MVP",
+      order: 1,
+      span: { start: 1, end: 2 },
+      center: { x: 359, y: 55 },
+      size: { w: 118, h: 49.5 },
+      bar: { x: 301, y: 73.75, w: 116, h: 5 },
+    },
+  ];
+  return scene;
+}
 
 // --- scenarios -------------------------------------------------------------
 //
@@ -191,11 +334,14 @@ const scenarios = [
       },
       {
         id: ["C21"],
-        name: "no <svg> in payload -> ack ok:false, nothing mounts",
+        name: "no scene in payload -> ack ok:false, nothing mounts",
         js: `(async () => {
+          // A payload that only carries the SVG string of the export is the
+          // payload of the old contract: the window has nothing to mount.
           __t.rust('graphium://render', {
             req_id: 'r2', diagram_id: 'd-broken', session_id: 's1',
-            svg: '<div>no svg here</div>', placement: { x: 0, y: 0 },
+            svg: '<svg xmlns="http://www.w3.org/2000/svg" data-marker="string"><text>string</text></svg>',
+            placement: { x: 0, y: 0 },
           });
           await __t.wait(150);
           const acks = __t.emitted('render_ack');
@@ -204,6 +350,29 @@ const scenarios = [
           __t.expect(last.req_id === 'r2' && last.ok === false, 'the broken payload was accepted');
           __t.expect(__t.all('.diagram').length === 1, 'a broken payload mounted an object');
           return { acks: acks.map((entry) => entry.ok) };
+        })()`,
+      },
+      {
+        id: ["C21"],
+        name: "a payload with both keys mounts the scene, never the string",
+        js: `(async () => {
+          // The flip of f11-elementos.md T3/C: the html branch is dead. A
+          // payload that still carries a string beside the scene paints the
+          // scene.
+          __t.rust('graphium://render', {
+            req_id: 'r-string', diagram_id: 'd-string', session_id: 's1',
+            svg: '<svg xmlns="http://www.w3.org/2000/svg" data-marker="string"><text>string</text></svg>',
+            elements: ${JSON.stringify(sceneFixture("scene", 200, 120))},
+            placement: { x: 0, y: 0 },
+          });
+          await __t.wait(150);
+          const object = __t.byId('d-string');
+          __t.expect(object !== null, 'the object did not mount');
+          __t.expect(object.querySelector('.content [data-marker]') === null,
+            'the string branch is still painting {@html}');
+          const marker = __t.markerOf(object.querySelector('.content'));
+          __t.expect(marker === 'scene', 'the scene did not mount: ' + marker);
+          return { marker };
         })()`,
       },
     ],
@@ -382,7 +551,7 @@ const scenarios = [
         js: `(async () => {
           __t.rust('graphium://render', {
             req_id: 'r-intent', diagram_id: 'd-intent', session_id: 's2',
-            svg: ${JSON.stringify(svgMarkup(200, 120, "intent"))},
+            elements: ${JSON.stringify(sceneFixture("intent", 200, 120))},
             placement: { x: 900, y: 500 },
             camera: { tx: 50, ty: 60, zoom: 2 },
           });
@@ -404,7 +573,7 @@ const scenarios = [
           const from = __t.cam();
           __t.rust('graphium://render', {
             req_id: 'r-pan', diagram_id: 'd-pan', session_id: 's2',
-            svg: ${JSON.stringify(svgMarkup(240, 140, "pan"))},
+            elements: ${JSON.stringify(sceneFixture("pan", 240, 140))},
             placement: { x: 1200, y: 900 },
           });
           await __t.wait(60);
@@ -632,11 +801,11 @@ const scenarios = [
           __t.expect(events[0].diagram_id === 'd-1' && events[0].version === 6, 'payload ' + JSON.stringify(events[0]));
           const label = __t.all('#panel-list .panel-item')[0].querySelector('.panel-item-version-label').textContent.trim();
           __t.expect(label === 'v6/7', 'the indicator did not follow the view: ' + label);
-          __t.rust('graphium://version-paint', { diagram_id: 'd-1', version: 6, svg: ${JSON.stringify(svgMarkup(200, 120, "preview"))} });
+          __t.rust('graphium://version-paint', { diagram_id: 'd-1', version: 6, elements: ${JSON.stringify(sceneFixture("preview", 200, 120))} });
           await __t.settle();
-          const preview = __t.byId("d-1").querySelector('.content [data-marker="preview"]');
-          __t.expect(preview !== null, 'the preview did not mount');
-          __t.expect(__t.byId("d-1").querySelector('.content [data-marker="live"]') === null, 'the live drawing is still mounted');
+          const preview = __t.markerOf(__t.byId("d-1").querySelector('.content'));
+          __t.expect(preview === 'preview', 'the preview did not mount: ' + preview);
+          __t.expect(preview !== 'live', 'the live drawing is still mounted');
           const box = __t.byId("d-1").querySelector('.diagram-box');
           __t.expect(parseFloat(box.style.width) === 368 && parseFloat(box.style.left) === 100, 'the object rectangle moved');
           return { events, label, widthBefore };
@@ -654,15 +823,15 @@ const scenarios = [
           __t.expect(events.length === 1, 'walking forward emitted an event');
           const label = __t.all('#panel-list .panel-item')[0].querySelector('.panel-item-version-label').textContent.trim();
           __t.expect(label === 'v7/7', 'the indicator did not return: ' + label);
-          const live = __t.byId("d-1").querySelector('.content [data-marker="live"]');
-          const preview = __t.byId("d-1").querySelector('.content [data-marker="preview"]');
-          __t.expect(live !== null && preview === null, 'the live drawing did not come back');
+          const live = __t.markerOf(__t.byId("d-1").querySelector('.content'));
+          __t.expect(live === 'live', 'the live drawing did not come back: ' + live);
           // A re-render of the same id replaces the object and drops a preview.
-          __t.rust('graphium://render', ${JSON.stringify({ ...RENDER, req_id: "r-again", svg: svgMarkup(320, 180, "second") })});
+          __t.rust('graphium://render', ${JSON.stringify({ ...RENDER, req_id: "r-again", elements: sceneFixture("second") })});
           await __t.wait(200);
           const objects = __t.all('.diagram').filter((element) => (element.dataset.id || element.diagramId) === 'd-1');
           __t.expect(objects.length === 1, 'a re-render left ' + objects.length + ' objects');
-          __t.expect(__t.byId("d-1").querySelector('.content [data-marker="second"]') !== null, 'the second drawing did not replace the first');
+          __t.expect(__t.markerOf(__t.byId("d-1").querySelector('.content')) === 'second',
+            'the second drawing did not replace the first');
           return { events: events.length, objects: objects.length };
         })()`,
       },
@@ -700,6 +869,233 @@ const scenarios = [
     ],
   },
   {
+    // The history of versions walks the drawing already on the plan
+    // (`f11-elementos.md`, T4/D): a version the page already drew is kept and
+    // paints from the cache, so `←`/`→` morph the mounted scene instead of
+    // asking Rust again. The record holds the cache; it dies with the object
+    // and it is emptied when the live drawing comes back.
+    name: "morph",
+    bridge: "global",
+    setup: `(async () => {
+      __t.rust('graphium://settings', ${JSON.stringify(SETTINGS)});
+      __t.rust('graphium://state', ${JSON.stringify({
+        diagrams: [diagram("d-1")],
+        sessions: SESSIONS,
+        clones: [],
+      })});
+      await __t.settle();
+      __t.rust('graphium://render', ${JSON.stringify({
+        ...RENDER,
+        elements: twoNodeScene("live", "estable"),
+      })});
+      await __t.wait(220);
+    })()`,
+    steps: [
+      {
+        id: ["C44"],
+        name: "a version already visited paints from the cache and is not asked again",
+        js: `(async () => {
+          const steps = () => {
+            const row = __t.all('#panel-list .panel-item')
+              .find((item) => item.querySelector('.panel-item-title').textContent.trim() === 'schema d-1');
+            return row.querySelectorAll('.panel-item-version-step');
+          };
+          const content = () => __t.byId('d-1').querySelector('.content');
+          // The element of the node that no version changes: the id of the
+          // drawing is the key, so a step must keep its DOM node.
+          const rootBefore = content().querySelector('svg.graphium');
+          const stableBefore = content().querySelector('[id="g-estable"]');
+          // v6, then v5: the page asks Rust for each one once.
+          __t.click(steps()[0]);
+          await __t.settle();
+          __t.rust('graphium://version-paint', { diagram_id: 'd-1', version: 6, elements: ${JSON.stringify(
+            twoNodeScene("v6", "estable"),
+          )} });
+          await __t.settle();
+          const markerAt6 = __t.markerOf(content());
+          __t.click(steps()[0]);
+          await __t.settle();
+          __t.rust('graphium://version-paint', { diagram_id: 'd-1', version: 5, elements: ${JSON.stringify(
+            twoNodeScene("v5", "estable"),
+          )} });
+          await __t.settle();
+          const markerAt5 = __t.markerOf(content());
+          const asked = __t.count('graphium://version-view');
+          // ▶ back to v6: the page already has it.
+          __t.click(steps()[1]);
+          await __t.settle();
+          const after = __t.count('graphium://version-view');
+          const markerBack = __t.markerOf(content());
+          const rootAfter = content().querySelector('svg.graphium');
+          const stableAfter = content().querySelector('[id="g-estable"]');
+          __t.expect(asked === 2, 'the history did not ask twice: ' + asked);
+          __t.expect(after === 2, 'a version already visited asked Rust again: ' + after);
+          __t.expect(markerAt6 === 'v6' && markerAt5 === 'v5', 'the previews did not mount: ' + markerAt6 + '/' + markerAt5);
+          __t.expect(markerBack === 'v6', 'the cached version did not paint: ' + markerBack);
+          __t.expect(rootAfter === rootBefore, 'the scene was torn down and rebuilt');
+          __t.expect(stableAfter === stableBefore, 'the node that no version changes was rebuilt');
+          return { asked, after, markerAt6, markerAt5, markerBack, sameRoot: true, sameNode: true };
+        })()`,
+      },
+      {
+        id: ["C44", "C26"],
+        name: "walking to the live drawing empties the cache: the step back asks again",
+        js: `(async () => {
+          const steps = () => {
+            const row = __t.all('#panel-list .panel-item')
+              .find((item) => item.querySelector('.panel-item-title').textContent.trim() === 'schema d-1');
+            return row.querySelectorAll('.panel-item-version-step');
+          };
+          const content = () => __t.byId('d-1').querySelector('.content');
+          // ▶ at the newest: the live drawing, with no event at all (C26).
+          __t.click(steps()[1]);
+          await __t.settle();
+          const afterLive = __t.count('graphium://version-view');
+          const live = __t.markerOf(content());
+          // ◀ to v6 again: the cache left with the preview.
+          __t.click(steps()[0]);
+          await __t.settle();
+          const afterBack = __t.count('graphium://version-view');
+          __t.expect(afterLive === 2, 'walking to the live drawing emitted: ' + afterLive);
+          __t.expect(live === 'live', 'the live drawing did not come back: ' + live);
+          __t.expect(afterBack === 3, 'the cache survived the live drawing: ' + afterBack);
+          return { afterLive, live, afterBack };
+        })()`,
+      },
+      {
+        id: ["C44", "C19"],
+        name: "a re-render replaces the object and its cache with it",
+        js: `(async () => {
+          const steps = () => {
+            const row = __t.all('#panel-list .panel-item')
+              .find((item) => item.querySelector('.panel-item-title').textContent.trim() === 'schema d-1');
+            return row.querySelectorAll('.panel-item-version-step');
+          };
+          const content = () => __t.byId('d-1').querySelector('.content');
+          __t.rust('graphium://render', ${JSON.stringify({
+            ...RENDER,
+            req_id: "r-morph",
+            elements: twoNodeScene("nuevo", "estable"),
+          })});
+          await __t.wait(220);
+          const marker = __t.markerOf(content());
+          const before = __t.count('graphium://version-view');
+          __t.click(steps()[0]);
+          await __t.settle();
+          const after = __t.count('graphium://version-view');
+          __t.expect(marker === 'nuevo', 'the second drawing did not replace the first: ' + marker);
+          __t.expect(after === before + 1, 'the new object kept the versions of the old one: ' + before + '->' + after);
+          return { marker, before, after };
+        })()`,
+      },
+    ],
+  },
+  {
+    // The elements of the drawing are their own elements of the DOM
+    // (`f11-elementos.md`, T4/D): hover, focus and click per element, with
+    // callback props up to `App.svelte`, and the bar of an event that lasts.
+    name: "elements",
+    bridge: "global",
+    setup: `(async () => {
+      __t.rust('graphium://settings', ${JSON.stringify(SETTINGS)});
+      __t.rust('graphium://state', ${JSON.stringify({
+        diagrams: [diagram("d-1")],
+        sessions: SESSIONS,
+        clones: [],
+      })});
+      await __t.settle();
+      __t.rust('graphium://render', ${JSON.stringify({
+        req_id: "r-elem",
+        diagram_id: "d-1",
+        session_id: "s1",
+        elements: edgeScene(),
+        placement: { x: 100, y: 100 },
+        camera: { tx: 0, ty: 0, zoom: 1 },
+      })});
+      await __t.wait(220);
+    })()`,
+    steps: [
+      {
+        id: ["C45"],
+        name: "the pointer over a node highlights it with the class of the drawing",
+        js: `(async () => {
+          const content = __t.byId('d-1').querySelector('.content');
+          const node = content.querySelector('[data-element="g-a"]');
+          __t.expect(node !== null, 'the node is not an element of its own');
+          __t.expect(node.getAttribute('role') === 'button', 'the element is not a button: ' + node.getAttribute('role'));
+          __t.expect(node.getAttribute('tabindex') === '0', 'the element is not reachable with the keyboard');
+          __t.expect(node.getAttribute('aria-label') === 'a', 'the element has no name: ' + node.getAttribute('aria-label'));
+          const plain = node.getAttribute('class');
+          __t.expect(plain.indexOf('emphasis-highlight') === -1, 'the element was hot before the pointer: ' + plain);
+          node.dispatchEvent(new PointerEvent('pointerenter'));
+          await __t.settle();
+          const hot = node.getAttribute('class');
+          const label = content.querySelector('text').getAttribute('class');
+          __t.expect(hot.indexOf('emphasis-highlight') !== -1, 'no highlight under the pointer: ' + hot);
+          __t.expect(label.indexOf('emphasis-highlight-text') !== -1, 'the label did not follow the highlight: ' + label);
+          node.dispatchEvent(new PointerEvent('pointerleave'));
+          await __t.settle();
+          const after = node.getAttribute('class');
+          __t.expect(after === plain, 'the highlight survived the pointer: ' + after);
+          return { role: node.getAttribute('role'), tabindex: node.getAttribute('tabindex'), plain, hot };
+        })()`,
+      },
+      {
+        id: ["C45"],
+        name: "a click selects one element at a time; the focus highlights and Enter selects",
+        js: `(async () => {
+          const content = () => __t.byId('d-1').querySelector('.content');
+          const node = () => content().querySelector('[data-element="g-a"]');
+          const edge = () => content().querySelector('[data-element="m-a-b"]');
+          const other = () => content().querySelector('[data-element="g-b"]');
+          const classes = (element) => element.getAttribute('class');
+          __t.click(node());
+          await __t.settle();
+          __t.expect(node().getAttribute('aria-pressed') === 'true', 'the click did not select the node');
+          __t.expect(classes(node()).indexOf('emphasis-highlight') !== -1, 'the selection is not painted');
+          __t.click(edge());
+          await __t.settle();
+          __t.expect(edge().getAttribute('aria-pressed') === 'true', 'the edge of the drawing was not selected');
+          __t.expect(node().getAttribute('aria-pressed') === 'false', 'two elements are selected at once');
+          other().focus();
+          await __t.settle();
+          __t.expect(classes(other()).indexOf('emphasis-highlight') !== -1, 'the focus does not highlight: ' + classes(other()));
+          const consumed = __t.key('Enter', other());
+          await __t.settle();
+          __t.expect(other().getAttribute('aria-pressed') === 'true', 'Enter did not select the element');
+          __t.expect(edge().getAttribute('aria-pressed') === 'false', 'the previous selection survived the keyboard');
+          return { node: node().getAttribute('aria-pressed'), edge: edge().getAttribute('aria-pressed'), other: other().getAttribute('aria-pressed'), consumed };
+        })()`,
+      },
+      {
+        id: ["C46"],
+        name: "a spanned event yields a bar with the numbers of the scene",
+        js: `(async () => {
+          __t.rust('graphium://render', ${JSON.stringify({
+            req_id: "r-bar",
+            diagram_id: "d-bar",
+            session_id: "s1",
+            elements: timelineScene(),
+            placement: { x: 100, y: 100 },
+            camera: { tx: 0, ty: 0, zoom: 1 },
+          })});
+          await __t.wait(220);
+          const object = __t.byId('d-bar');
+          __t.expect(object !== null, 'the timeline did not mount');
+          const content = object.querySelector('.content');
+          const bars = content.querySelectorAll('rect.accent');
+          __t.expect(bars.length === 1, 'bars mounted: ' + bars.length);
+          const numbers = ['x', 'y', 'width', 'height'].map((name) => Number(bars[0].getAttribute(name)));
+          __t.expect(numbers.join(',') === '301,73.75,116,5', 'the bar is not the geometry of the scene: ' + numbers.join(','));
+          const point = content.querySelector('[data-element="g-event-0"]');
+          __t.expect(point !== null, 'the point in time did not mount');
+          __t.expect(point.nextElementSibling === null || point.nextElementSibling.getAttribute('class') !== 'accent', 'a point in time carries a bar');
+          return { bars: bars.length, numbers };
+        })()`,
+      },
+    ],
+  },
+  {
     name: "culling",
     bridge: "global",
     setup: `(async () => {
@@ -710,7 +1106,14 @@ const scenarios = [
         clones: [],
       })});
       await __t.settle();
-      const svg = (marker, width, height) => '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" data-marker="' + marker + '"></svg>';
+      // The fixture of one culling render: the same scene with the node the
+      // probe calls by name.
+      const scene = (marker) => {
+        const value = ${JSON.stringify(sceneFixture("a", 200, 120))};
+        value.nodes[0].id = 'g-' + marker;
+        value.nodes[0].label = marker;
+        return value;
+      };
       const placements = [
         ['d-1', 300, 300, 'a'], ['d-2', 340, 320, 'b'], ['d-3', 380, 340, 'c'],
         ['d-4', 900, 600, 'd'], ['d-5', 2000, 1500, 'e'],
@@ -718,7 +1121,8 @@ const scenarios = [
       for (const [id, x, y, marker] of placements) {
         __t.rust('graphium://render', {
           req_id: 'r-' + id, diagram_id: id, session_id: 's1',
-          svg: svg(marker, 200, 120), placement: { x, y },
+          elements: scene(marker),
+          placement: { x, y },
           camera: id === 'd-1' ? { tx: 0, ty: 0, zoom: 1 } : undefined,
         });
         await __t.wait(30);
@@ -728,21 +1132,21 @@ const scenarios = [
     steps: [
       {
         id: ["C14"],
-        name: "at most three live SVGs, the closest to the view centre",
+        name: "at most three live scenes, the closest to the view centre",
         js: `(async () => {
           // The renders pan the camera; the focus intent puts it back on the
           // origin so the culling is judged against a known window.
           __t.rust('graphium://render', {
             req_id: 'r-reset', diagram_id: 'd-1', session_id: 's1',
-            svg: ${JSON.stringify(svgMarkup(200, 120, "a"))}, placement: { x: 300, y: 300 },
+            elements: ${JSON.stringify(sceneFixture("a", 200, 120))}, placement: { x: 300, y: 300 },
             camera: { tx: 0, ty: 0, zoom: 1 }, focus: { x: 0, y: 0, w: 1, h: 1 },
           });
           await __t.wait(200);
-          const live = __t.all('.diagram:not(.plan-hidden) .content svg');
-          __t.expect(live.length === 3, 'live SVGs: ' + live.length);
+          const live = __t.all('.diagram:not(.plan-hidden) .content svg.graphium');
+          __t.expect(live.length === 3, 'live scenes: ' + live.length);
           const boxes = __t.all('.diagram:not(.plan-hidden) .diagram-box:not(.hidden)');
           __t.expect(boxes.length === 2, 'painted boxes: ' + boxes.length);
-          const markers = live.map((svg) => svg.dataset.marker).sort();
+          const markers = __t.all('.diagram:not(.plan-hidden) .content svg.graphium').map(__t.markerOf).sort();
           __t.expect(JSON.stringify(markers) === JSON.stringify(['a', 'b', 'c']),
             'the tie-break kept the wrong objects: ' + markers.join(','));
           return { live: live.length, boxes: boxes.length, markers };
@@ -770,8 +1174,8 @@ const scenarios = [
         js: `(async () => {
           await __t.wait(150);
           __t.expect(__t.cam().zoom < 0.4, 'zoom ' + __t.cam().zoom);
-          const live = __t.all('.diagram:not(.plan-hidden) .content svg');
-          __t.expect(live.length === 0, 'live SVGs at zoom ' + __t.cam().zoom + ': ' + live.length);
+          const live = __t.all('.diagram:not(.plan-hidden) .content svg.graphium');
+          __t.expect(live.length === 0, 'live scenes at zoom ' + __t.cam().zoom + ': ' + live.length);
           return { zoom: __t.cam().zoom, live: live.length };
         })()`,
       },
@@ -783,13 +1187,13 @@ const scenarios = [
           // through a render, the state only reconciles them.
           __t.rust('graphium://render', {
             req_id: 'r-reset', diagram_id: 'd-1', session_id: 's1',
-            svg: ${JSON.stringify(svgMarkup(200, 120, "a"))}, placement: { x: 300, y: 300 },
+            elements: ${JSON.stringify(sceneFixture("a", 200, 120))}, placement: { x: 300, y: 300 },
             camera: { tx: 0, ty: 0, zoom: 1 }, focus: { x: 0, y: 0, w: 1, h: 1 },
           });
           await __t.wait(120);
           __t.rust('graphium://render', {
             req_id: 'r-nine', diagram_id: 'd-9', session_id: 's2',
-            svg: ${JSON.stringify(svgMarkup(200, 120, "nine"))}, placement: { x: 700, y: 700 },
+            elements: ${JSON.stringify(sceneFixture("nine", 200, 120))}, placement: { x: 700, y: 700 },
             camera: { tx: 100, ty: 100, zoom: 1 },
           });
           await __t.wait(200);
@@ -936,7 +1340,7 @@ const scenarios = [
       __t.rust('graphium://clone-paint', ${JSON.stringify({
         ...cloneEntry(),
         version: 7,
-        svg: svgMarkup(320, 180, "clone"),
+        elements: sceneFixture("clone"),
         bring: true,
       })});
       await __t.wait(500);
@@ -968,7 +1372,7 @@ const scenarios = [
           __t.expect(clone.classList.contains('plan-hidden') === false, 'the user plan did not come on screen');
           __t.expect(__t.byId("d-1").classList.contains('plan-hidden'), 'the session object is still painted');
           __t.expect(__t.shown('#empty-user') === false, 'the user empty state still paints with a clone');
-          __t.expect(__t.q('.diagram.clone .content [data-marker="clone"]') !== null, 'the clone drawing did not mount');
+          __t.expect(__t.markerOf(__t.q('.diagram.clone .content')) === 'clone', 'the clone drawing did not mount');
           return { clone: true, drawing: true, point: window.__point };
         }`,
       },
@@ -1085,7 +1489,7 @@ const scenarios = [
           __t.rust('graphium://clone-paint', ${JSON.stringify({
             ...cloneEntry(),
             version: 3,
-            svg: svgMarkup(320, 180, "old"),
+            elements: sceneFixture("old"),
             bring: false,
           })});
           await __t.wait(80);
@@ -1094,13 +1498,13 @@ const scenarios = [
           __t.rust('graphium://clone-paint', ${JSON.stringify({
             ...cloneEntry(),
             version: 5,
-            svg: svgMarkup(320, 180, "photo"),
+            elements: sceneFixture("photo"),
             bring: false,
           })});
           await __t.wait(80);
           const ended = __t.q('.diagram.clone .panel-item-version-label').textContent.trim();
           __t.expect(ended === '5/7', 'the photo did not end the browsing: ' + ended);
-          __t.expect(__t.q('.diagram.clone .content [data-marker="photo"]') !== null, 'the photo did not mount');
+          __t.expect(__t.markerOf(__t.q('.diagram.clone .content')) === 'photo', 'the photo did not mount');
           return { browsing, ended };
         })()`,
       },
@@ -1470,7 +1874,7 @@ async function runBuild(browser, name, root, port) {
                   rect: [Math.round(element.getBoundingClientRect().x), Math.round(element.getBoundingClientRect().y), Math.round(element.getBoundingClientRect().width), Math.round(element.getBoundingClientRect().height)],
                   content: element.querySelector('.content') ? [element.querySelector('.content').style.left, element.querySelector('.content').style.top, element.querySelector('.content').style.width, element.querySelector('.content').style.height] : null,
                 })) : [],
-                markers: window.__t ? __t.all('.content svg').map((node) => node.dataset.marker) : [],
+                markers: window.__t ? __t.all('.content').map((node) => __t.markerOf(node)) : [],
                 pill: window.__t && __t.q('.diagram-clone-tools') ? __t.q('.diagram-clone-tools').textContent.replace(/\\s+/g, ' ').trim() : null,
                 emitted: window.__h ? __h.emitted.map((entry) => entry.name) : [],
                 at700: document.elementFromPoint(700, 500) ? document.elementFromPoint(700, 500).className : null,

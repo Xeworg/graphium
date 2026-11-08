@@ -5,7 +5,8 @@
   // What this component owns: the camera (wheel zoom anchored at the cursor,
   // the pinch of two fingers, drag pan, the animated pan, the camera intents of
   // the renders), the objects with their `×`, their box and the culling (≤ 3
-  // live SVGs), the wholesale reconciliation from `graphium://state`, the
+  // live drawings — scenes since `f11-elementos.md` T2/B, strings on the
+  // legacy branch), the wholesale reconciliation from `graphium://state`, the
   // clones of the user plan (their move by drag, their tools pill) and every
   // remaining piece of chrome of the vanilla page: the panel of open diagrams,
   // the history of versions, the switcher of plans, the settings panel, the
@@ -44,7 +45,9 @@
     zoomAtPoint,
   } from "./lib/plane.js";
   import { boxText, sessionEndedNotice } from "./lib/labels.js";
+  import { sceneFromPayload } from "./lib/scene/scene.js";
   import CloneTools from "./lib/CloneTools.svelte";
+  import DiagramScene from "./lib/scene/DiagramScene.svelte";
   import PlanPanel from "./lib/PlanPanel.svelte";
   import SessionsPanel from "./lib/SessionsPanel.svelte";
   import SettingsPanel from "./lib/SettingsPanel.svelte";
@@ -87,6 +90,19 @@
   // they are hidden (C35, C36).
   let banner = $state(null);
   let ghost = $state(null);
+  // The element of a drawing the pointer is over and the one that holds the
+  // keyboard focus (`f11-elementos.md`, T4/D): `{ recId, id }` or `null`, one
+  // for the whole plan — a pointer is one and the focus is one. The selection
+  // is per drawing and lives on the record (`rec.selectedElement`), because a
+  // drawing that leaves the plan takes its selection with it.
+  let hoveredElement = $state(null);
+  let focusedElement = $state(null);
+
+  // How many versions of the history the page keeps for one object (T4/D).
+  // The cache is what makes a step of `←`/`→` a morph instead of a round trip:
+  // a version already seen paints from here, and the bound keeps a plan that
+  // walks a long history from growing without end.
+  const VERSION_CACHE_LIMIT = 8;
 
   // --- machinery outside reactivity ----------------------------------------
 
@@ -218,15 +234,23 @@
       // Whether the drawing is out of the DOM (RNF1-ter). Born culled.
       culled: true,
       hidden: false,
-      // The drawing as the owner delivered it — the markup string, never a
-      // parsed DOM node inside reactive state (T2): `{@html}` parses it on
-      // each mount, and the measured cost of one re-parse of the 300-node
-      // fixture (1.47 ms, `tools/measure-html.mjs`) is under the agreed
-      // ~3 ms threshold.
-      svg: null,
-      // The markup of the version the human is browsing, while it lasts
-      // (C27). The culling re-parses this one, not the live drawing under it.
-      previewSvg: null,
+      // The drawing, as the scene the painter mounts (`f11-elementos.md`
+      // T2/B, T3/C): the elements of the wire, never a markup string. The
+      // string of the export left the runtime with the flip of T3/C (S1).
+      scene: null,
+      // The scene of the version the human is browsing, while it lasts
+      // (C27): the painter mounts this one, not the live drawing under it.
+      previewScene: null,
+      // The element of the drawing the human chose (`f11-elementos.md`, T4/D):
+      // `g-<id>` / `m-<from>-<to>`, or `null`. It is what the highlight paints
+      // and what dies with the object.
+      selectedElement: null,
+      // The versions of the history this object already drew, by version
+      // number (T4/D). A plain `Map` on purpose: it is written and read from
+      // the handlers of the history, never from the template, so it needs no
+      // reactivity; it is cleared when the live drawing comes back and it is
+      // dropped with the record when the object leaves the plan.
+      versions: new Map(),
       // The entry of the clone this object is, as the owner states it (B1;
       // plan.js:1690): the tools pill reads its counts from here.
       cloneState: null,
@@ -241,6 +265,14 @@
     const index = plane.findIndex((rec) => rec.id === id);
     if (index !== -1) {
       plane.splice(index, 1);
+    }
+    // The pointer and the focus of a drawing that left are gone with it
+    // (`f11-elementos.md`, T4/D): nothing remembers an element nobody paints.
+    if (hoveredElement !== null && hoveredElement.recId === id) {
+      hoveredElement = null;
+    }
+    if (focusedElement !== null && focusedElement.recId === id) {
+      focusedElement = null;
     }
   }
 
@@ -664,12 +696,31 @@
    *
    * An object the decision keeps alive whose drawing has not arrived yet (a
    * clone waiting for its paint) keeps its box: there is nothing to mount.
+   *
+   * `f11-elementos.md` S7 redefines the invariant without touching the
+   * decision: what mounts is the scene of the painter, and the funnel — same
+   * flag, same ceiling, same re-decide — is the one it always was.
    */
   function applyCulling() {
     const alive = cullDecide(plane, camera, viewport);
     for (const rec of plane) {
-      rec.culled = !alive.has(rec.id) || !(rec.previewSvg || rec.svg);
+      rec.culled = !alive.has(rec.id) || !(rec.previewScene || rec.scene);
     }
+  }
+
+  /**
+   * What the culling keeps inside the `.content` of an object: the preview of
+   * a version first (C27), then the live drawing. The drawing is always a
+   * scene, mounted as components (`DiagramScene`) — the markup string of the
+   * export left the runtime with the flip of `f11-elementos.md` T3/C, so
+   * there is one shape to paint and the box, the `×`, the tools and the
+   * culling never ask which one it is (S7).
+   */
+  function drawingInView(rec) {
+    if (rec.culled) {
+      return null;
+    }
+    return rec.previewScene || rec.scene || null;
   }
 
   // --- plans (plan.js:1204-1400) ----------------------------------------------
@@ -841,6 +892,11 @@
   /**
    * Mounts a render as an object of the plan (C19, C20; the wire behaviour
    * of `insertDiagram`, `plan.js:1889-2053`).
+   *
+   * The drawing arrives as the scene the painter mounts (`elements`); the SVG
+   * string of the export is not part of the wire (`f11-elementos.md` T3/C).
+   * A payload without a usable scene is a payload that cannot be drawn, and
+   * the object it would have landed on is never created (S7).
    */
   function insertDiagram(payload) {
     const p = payload || {};
@@ -851,24 +907,23 @@
       removeRecord(p.diagram_id);
       delete viewedVersion[p.diagram_id];
     }
-    const holder = document.createElement("div");
-    holder.innerHTML = p.svg || "";
-    // One parse here, at arrival: it validates the payload and reads the
-    // width/height the rectangle needs. The record keeps the STRING — the
-    // template's `{@html}` parses on each mount (T2).
-    const svg = holder.querySelector("svg");
-    if (!svg) {
+    const scene = sceneFromPayload(p);
+    if (scene === null) {
+      // There is nothing the painter can mount: the render is answered as
+      // not painted and the plan is left exactly as it was.
       emit(EVENTS.renderAck, { req_id: p.req_id, ok: false });
       return;
     }
+    // The canvas of the scene is the rectangle of the drawing: no parse, no
+    // measuring, the size the layout already measured (S4).
+    const width = scene.canvas.w;
+    const height = scene.canvas.h;
     // The render names the plan it belongs to (A2): that plan comes on
     // screen, so the human always sees what the agent just drew.
     const sessionId = typeof p.session_id === "string" ? p.session_id : "";
     if (sessionId !== "") {
       showPlan(planOf(sessionId));
     }
-    const width = Number.parseFloat(svg.getAttribute("width") || "0");
-    const height = Number.parseFloat(svg.getAttribute("height") || "0");
     // `placement` is the corner of the **object**: the SVG sits one padding
     // inside it. Without it the object lands on the centre of the view.
     const placement = p.placement;
@@ -886,7 +941,7 @@
       w: width,
       h: height,
     };
-    rec.svg = p.svg || "";
+    rec.scene = scene;
     rec.rect = {
       x: center.x - width / 2 - OBJECT_PADDING,
       y: center.y - height / 2 - OBJECT_PADDING,
@@ -937,26 +992,71 @@
   // --- history of versions (plan.js:1008-1150) --------------------------------
 
   /**
+   * The element of a drawing the pointer walked into, or `null` when it left
+   * one (`f11-elementos.md`, T4/D).
+   *
+   * One function for the whole page on purpose: the scene components receive
+   * it as a prop and a stable function is a prop that never changes, so a
+   * pointer moving over a drawing updates the two elements that lost and won
+   * the highlight and nothing else. The owner id comes first because a clone
+   * and its original draw the same element ids.
+   */
+  function elementHovered(ownerId, id) {
+    hoveredElement = id === null ? null : { recId: ownerId, id };
+  }
+
+  /** The element of a drawing that took the keyboard focus (`f11-elementos.md`, T4/D). */
+  function elementFocused(ownerId, id) {
+    focusedElement = id === null ? null : { recId: ownerId, id };
+  }
+
+  /** The element of a drawing the human clicked or chose with Enter (`f11-elementos.md`, T4/D). */
+  function elementSelected(ownerId, id) {
+    const rec = findRecord(ownerId);
+    if (rec !== null) {
+      rec.selectedElement = id;
+    }
+  }
+
+  /**
    * Asks Rust to draw one version of the history on the plan (RF14, L5).
    * Read-only on purpose: the object never moves, and walking back to the
    * newest version restores the live drawing the page already holds — without
    * a render at all (C26).
+   *
+   * A version the page already drew does not ask Rust again (`f11-elementos.md`,
+   * T4/D): the scene is in the cache of the object and the painter mounts it,
+   * so a step back to a visited version is a morph of the drawing already on
+   * screen — the components are keyed by the id of the drawing and only what
+   * changed changes. Walking to the live version empties the cache: the live
+   * drawing is the truth again, and the versions are asked for again if the
+   * human goes back.
    */
   function viewVersion(diagram, version) {
     const target = Math.min(
       diagram.current_version,
       Math.max(diagram.oldest_version, version),
     );
+    const rec = findRecord(diagram.diagram_id);
     if (target === diagram.current_version) {
       delete viewedVersion[diagram.diagram_id];
-      restoreLive(findRecord(diagram.diagram_id));
-    } else {
-      viewedVersion[diagram.diagram_id] = target;
-      emit(EVENTS.versionView, {
-        diagram_id: diagram.diagram_id,
-        version: target,
-      });
+      if (rec) {
+        rec.versions.clear();
+      }
+      restoreLive(rec);
+      return;
     }
+    viewedVersion[diagram.diagram_id] = target;
+    const cached = rec === null ? undefined : rec.versions.get(target);
+    if (cached !== undefined) {
+      // A version already visited: no `versionView`, no render in Rust.
+      paintPreview(rec, cached);
+      return;
+    }
+    emit(EVENTS.versionView, {
+      diagram_id: diagram.diagram_id,
+      version: target,
+    });
   }
 
   /** One step of the history, from the version in view (plan.js:1024-1028). */
@@ -972,7 +1072,13 @@
    * changes shape because of the history. The live drawing stays reachable on
    * the record for the restore.
    */
-  function paintPreview(rec, svgMarkup, width, height) {
+  function paintPreview(rec, scene) {
+    centerContent(rec, scene.canvas.w, scene.canvas.h);
+    rec.previewScene = scene;
+  }
+
+  /** The drawing centered on its object, whatever shape it arrives in. */
+  function centerContent(rec, width, height) {
     const center = {
       x: rec.rect.x + rec.rect.w / 2,
       y: rec.rect.y + rec.rect.h / 2,
@@ -983,15 +1089,14 @@
       w: width,
       h: height,
     };
-    rec.previewSvg = svgMarkup;
   }
 
   /** Brings the live drawing back: the preview leaves the plan (C26). */
   function restoreLive(rec) {
-    if (!rec || !rec.previewSvg) {
+    if (!rec || !rec.previewScene) {
       return;
     }
-    rec.previewSvg = null;
+    rec.previewScene = null;
     // The styles of the live drawing come from the rectangle Rust placed: the
     // SVG sits one padding inside the object, as at insert time.
     rec.content = {
@@ -1009,19 +1114,45 @@
       // The diagram closed while the render of the preview ran.
       return;
     }
+    // The version of the history arrives as the drawing of its day: the same
+    // scene the live render carries (`f11-elementos.md` T3/C relays it), and a
+    // payload the painter cannot mount leaves the object as it is.
+    const scene = sceneFromPayload(payload);
+    if (scene === null) {
+      return;
+    }
+    // The answer is kept even when the human has already walked past it: the
+    // version he stepped through is exactly the one he may step back to, and
+    // the cache is what makes that step free (T4/D).
+    rememberVersion(rec, Number(payload.version), scene);
     // Only the version the human still asked for paints: walking fast through
     // the history must not leave an older answer under a newer one.
     const viewed = viewedVersion[payload.diagram_id];
     if (viewed === undefined || viewed !== Number(payload.version)) {
       return;
     }
-    const holder = document.createElement("div");
-    holder.innerHTML = payload.svg || "";
-    const svg = holder.querySelector("svg");
-    if (!svg) {
+    paintPreview(rec, scene);
+  }
+
+  /**
+   * Keeps the scene of a version of the history, newest last and bounded
+   * (`f11-elementos.md`, T4/D): a plan that walks a long history keeps the
+   * `VERSION_CACHE_LIMIT` versions it visited most recently and asks Rust for
+   * the rest, so the cache can never grow with the history of a document.
+   */
+  function rememberVersion(rec, version, scene) {
+    if (!Number.isFinite(version) || version <= 0) {
       return;
     }
-    paintPreview(rec, payload.svg || "", Number.parseFloat(svg.getAttribute("width") || "0"), Number.parseFloat(svg.getAttribute("height") || "0"));
+    const cache = rec.versions;
+    // Re-inserted, so the map is ordered by how recently a version was asked
+    // for: the first key is the one that leaves when the bound is crossed.
+    cache.delete(version);
+    cache.set(version, scene);
+    while (cache.size > VERSION_CACHE_LIMIT) {
+      const oldest = cache.keys().next().value;
+      cache.delete(oldest);
+    }
   }
 
   // --- clones of the user plan (plan.js:1510-1877) ----------------------------
@@ -1087,17 +1218,17 @@
   }
 
   /** Mounts the drawing the owner rendered for a clone (B1, B2). */
-  function mountCloneDrawing(rec, payloadSvg) {
-    const holder = document.createElement("div");
-    holder.innerHTML = payloadSvg || "";
-    // The parse validates; the record keeps the string (T2).
-    if (!holder.querySelector("svg")) {
+  function mountCloneDrawing(rec, paint) {
+    // The clone paint relays the same scene the render does
+    // (`f11-elementos.md` T3/C); a payload without one has nothing to mount.
+    const scene = sceneFromPayload(paint);
+    if (scene === null) {
       return;
     }
-    // A **new** drawing, not the one that left the page: `{@html}` swaps the
-    // tree and the culling re-decides right after.
-    rec.svg = payloadSvg || "";
-    rec.previewSvg = null;
+    // A **new** drawing, not the one that left the page: the culling
+    // re-decides right after.
+    rec.scene = scene;
+    rec.previewScene = null;
     rec.culled = false;
   }
 
@@ -1113,8 +1244,8 @@
     // A paint without a drawing is an answer with nothing new to draw: the
     // clone the human asked for already exists (L6) or its photo is the only
     // drawing left (S4), so the page keeps what it shows.
-    if (p.svg) {
-      mountCloneDrawing(rec, p.svg);
+    if (p.elements) {
+      mountCloneDrawing(rec, p);
       // The truth about what the clone shows is the owner's: the snapshot ends
       // the browsing, an older version is a preview of the history (C33).
       const version = Number(p.version || p.snapshot_version);
@@ -1226,11 +1357,11 @@
     }
     for (const clone of state.clones) {
       const rec = upsertClone(clone);
-      // The state carries no SVG: a clone the page never drew — a window
+      // The state carries no drawing: a clone the page never drew — a window
       // that came back to life — asks the owner for the version it keeps.
       // A clone whose original closed has nothing to ask (`updatable` is
       // false), so the object keeps its box.
-      if (!rec.svg && clone.updatable) {
+      if (!rec.scene && clone.updatable) {
         emit(EVENTS.cloneView, {
           clone_id: clone.clone_id,
           version: clone.snapshot_version,
@@ -1493,6 +1624,7 @@
        reading `--tx`/`--ty`/`--zoom` (T2). -->
   <div class="diagrams">
     {#each plane as rec (rec.id)}
+      {@const drawing = drawingInView(rec)}
       <!-- The object keeps the keyboard (T3 of `odd/tasks/mejoras-frontend.md`):
            `tabindex` on a `group` is what the linter flags, and the trade is
            deliberate — the focus is what chooses the object and what makes the
@@ -1529,11 +1661,30 @@
           style:height="{rec.content.h}px"
         >
           <!-- The drawing, before the tools so the `×` of a diagram keeps
-               painting above it (the prepend order the action kept). It is
-               `{@html}` since T2: one re-parse per mount, measured at
-               1.47 ms over the 300-node fixture — under the agreed ~3 ms. -->
-          {#if !rec.culled && (rec.previewSvg || rec.svg)}
-            {@html rec.previewSvg || rec.svg}
+               painting above it (the prepend order the action kept). The scene
+               of the drawing (`f11-elementos.md` T2) mounts as keyed elements,
+               and it is the only shape: the `{@html}` branch of the string era
+               died with the flip of T3/C. It lives on the culling flag of
+               `drawingInView`. The interaction of T4/D rides on the same
+               block: the selection is the record's (a drawing takes its
+               element with it when it leaves), the hover and the focus are the
+               page's — a pointer is one and the focus is one —, and the three
+               callbacks are the same functions for every drawing. -->
+          {#if drawing !== null}
+            <DiagramScene
+              scene={drawing}
+              owner={rec.id}
+              selected={rec.selectedElement}
+              hovered={hoveredElement !== null && hoveredElement.recId === rec.id
+                ? hoveredElement.id
+                : null}
+              focused={focusedElement !== null && focusedElement.recId === rec.id
+                ? focusedElement.id
+                : null}
+              onhover={elementHovered}
+              onfocus={elementFocused}
+              onselect={elementSelected}
+            />
           {/if}
           {#if rec.kind === "diagram"}
             <!-- The `×` of the object (PRD §7 RF28): it shows up when the

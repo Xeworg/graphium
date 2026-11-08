@@ -121,13 +121,24 @@ fn cloning_a_diagram_puts_a_view_instance_on_the_user_plan() {
     let clone = wire(&paint);
 
     // El dibujo es el documento del momento, dibujado por el camino de solo
-    // lectura: no hay hook, no hay versión nueva.
-    assert!(
-        clone["svg"]
-            .as_str()
+    // lectura: no hay hook, no hay versión nueva. Viaja como la escena que el
+    // pintor monta (`f11-elementos.md` T3/C), no como la cadena de la
+    // exportación.
+    let labels = |paint: &Value| -> Vec<String> {
+        paint["elements"]["nodes"]
+            .as_array()
             .expect("el clon trae su dibujo")
-            .contains("read file"),
+            .iter()
+            .map(|node| node["label"].as_str().unwrap_or_default().to_string())
+            .collect()
+    };
+    assert!(
+        labels(&clone).iter().any(|label| label == "read file"),
         "el clon congela el documento del momento: {clone}"
+    );
+    assert!(
+        clone.get("svg").is_none(),
+        "la cadena de la exportación no viaja al clon (S1/S2): {clone}"
     );
     assert_eq!(clone["origin_diagram_id"], origin.as_str());
     assert_eq!(clone["origin_session_id"], session);
@@ -318,11 +329,19 @@ fn refreshing_a_clone_pulls_the_current_version_and_keeps_its_place() {
     assert_eq!(refreshed["snapshot_version"], 2);
     assert_eq!(refreshed["current_version"], 2);
     assert_eq!(refreshed["version_count"], 2);
-    let svg = refreshed["svg"].as_str().expect("el dibujo");
-    assert!(svg.contains("read config"), "el dibujo es la v2: {svg}");
+    let labels: Vec<&str> = refreshed["elements"]["nodes"]
+        .as_array()
+        .expect("el dibujo")
+        .iter()
+        .map(|node| node["label"].as_str().unwrap_or_default())
+        .collect();
     assert!(
-        !svg.contains("read file"),
-        "la v1 no queda bajo la v2: {svg}"
+        labels.contains(&"read config"),
+        "el dibujo es la v2: {labels:?}"
+    );
+    assert!(
+        !labels.contains(&"read file"),
+        "la v1 no queda bajo la v2: {labels:?}"
     );
     assert_eq!(
         refreshed["pos"]["x"], place.x,
@@ -592,7 +611,7 @@ fn cloning_the_same_diagram_again_answers_the_clone_that_already_exists() {
         "la página trae a la pantalla el clon que ya existía: {again}"
     );
     assert!(
-        again.get("svg").is_none(),
+        again.get("elements").is_none(),
         "no hay nada nuevo que dibujar: la página conserva el dibujo que tiene: {again}"
     );
     assert_eq!(
@@ -620,7 +639,7 @@ fn cloning_the_same_diagram_again_answers_the_clone_that_already_exists() {
         Value::Bool(false),
         "la foto no se refresca (S4): {photo}"
     );
-    assert!(photo.get("svg").is_none(), "{photo}");
+    assert!(photo.get("elements").is_none(), "{photo}");
     assert_eq!(state.clones().len(), 1, "la foto tampoco se duplica");
 }
 

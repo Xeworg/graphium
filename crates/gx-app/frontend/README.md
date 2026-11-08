@@ -98,6 +98,10 @@ are unchanged: `svelte`, `@sveltejs/vite-plugin-svelte`, `vite`).
 # The §8 checklist on the built bundle (exit 0 = every probe passed).
 node tools/parity.mjs [--chromium /path/to/chrome] [--json=/tmp/parity.json]
 
+# The S8 equivalence gate (`f11-elementos.md` T3/C): the mounted scene,
+# serialized, against the golden export, element by element, 15 documents.
+node tools/equivalence.mjs
+
 # Asset weight, LOC, and the headless half of the timings.
 node tools/bench.mjs --assets
 node tools/bench.mjs --repeats=5 --json=/tmp/bench.json

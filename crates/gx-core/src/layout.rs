@@ -42,6 +42,19 @@ pub struct LayoutGroup {
     /// up behind the inner one.
     #[serde(default)]
     pub depth: usize,
+    /// The ids the group owns, in the order of the document: nodes or other
+    /// groups for a container, the events of the lane for a lane
+    /// (`IrGroup.members` and `IrLane`, `f11-elementos.md` T1). The layout used
+    /// to drop them after computing the box; the scene ships them so the
+    /// painter knows what belongs to what.
+    #[serde(default)]
+    pub members: Vec<String>,
+    /// The left gutter the layout reserved for the names of the lanes, in plan
+    /// units (`f11-elementos.md` T1). `None` for a container, which has no
+    /// gutter: the space is a decision of the lanes layout, never of the JS
+    /// (S4).
+    #[serde(default)]
+    pub gutter: Option<f64>,
 }
 
 /// The result of a layout run.
@@ -115,6 +128,15 @@ pub trait LayoutEngine: Send + Sync {
                         lane_height,
                     ),
                     depth: 0,
+                    members: timeline
+                        .events
+                        .iter()
+                        .filter(|event| event.lane == lane.id)
+                        .map(|event| event.id.clone())
+                        .collect(),
+                    // No gutter here: this default stacks the lanes from the
+                    // left edge, so it reserves no space for the names.
+                    gutter: Some(0.0),
                 })
                 .collect(),
             bbox,

@@ -336,6 +336,31 @@
   stroke-width: 1px;
 }
 
+/* Interaction of an element of the drawing (`f11-elementos.md`, T4/D).
+ *
+ * Every element of a scene is one hit target: its shape (or its route) carries
+ * the handlers and the tab stop, and everything painted over it is
+ * decoration. The labels and the two glyph paths that only draw a rim or a
+ * fold are transparent to the pointer, so walking the cursor over the text of
+ * a node never clears its highlight and the whole box is the target. The
+ * highlight of the hover, the focus and the selection is the class the drawing
+ * already has (`emphasis-highlight`), so it costs no rule; the ring of a
+ * keyboard focus is drawn outside the shape in the accent of the drawing, and
+ * `:focus-visible` keeps it away from a plain mouse click. */
+.graphium text,
+.graphium path[fill="none"] {
+  pointer-events: none;
+}
+
+.graphium [role="button"] {
+  cursor: pointer;
+}
+
+.graphium [role="button"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 * {
   box-sizing: border-box;
 }

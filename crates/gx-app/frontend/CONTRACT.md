@@ -82,9 +82,11 @@ Notes that the port must keep:
   `graphium://` prefix (`app.rs:727`, `app.rs:732`, `app.rs:921`): a renamed
   event is a silent timeout, not an error.
 - `render_ack` is emitted after **two** animation frames
-  (`plan.js:2039-2044`): "the SVG is painted" (PRD §8.6.1 step 4).
-- `render_ack ok:false` is only for a payload whose `svg` does not contain an
-  `<svg>` element (`plan.js:1904-1912`).
+  (`plan.js:2039-2044`): "the drawing is painted" (PRD §8.6.1 step 4).
+- `render_ack ok:false` is only for a payload that carries no mountable scene
+  (`sceneFromPayload` is `null`, `src/lib/scene/scene.js`): since
+  `f11-elementos.md` T3/C the drawing is elements, and the SVG string of the
+  export is not part of the wire.
 - `camera-changed` is throttled to one event per `CAMERA_THROTTLE_MS`
   (100 ms, `plan.js:13`): the first call schedules, later calls inside the
   window return (`plan.js:404-412`).
@@ -106,7 +108,7 @@ Notes that the port must keep:
 | R1 | `graphium://settings` | `Settings` | `app.rs:805` (on ready), `app.rs:945` (after a save) | `plan.js:2435-2444` |
 | R2 | `graphium://state` | `PlanPayload` | `app.rs:809` (on ready), `app.rs:762` (close), `app.rs:840` (clone), `app.rs:863` (clone-view), `app.rs:896` (clone-move), `app.rs:916` (clone-remove), `app.rs:1172` (after a painted render) | `plan.js:2371-2388` |
 | R3 | `graphium://render` | `RenderEvent` | `app.rs:1158` (the render hook) | `plan.js:2367-2370` |
-| R4 | `graphium://version-paint` | `{diagram_id, version, svg}` | `app.rs:783-790` | `plan.js:2332-2358` |
+| R4 | `graphium://version-paint` | `{diagram_id, version, elements}` | `app.rs:783-790` | `plan.js:2332-2358` |
 | R5 | `graphium://clone-paint` | `ClonePaint` | `app.rs:839` (clone), `app.rs:864` (clone-view) | `plan.js:2360-2362` |
 | R6 | `graphium://error` | `ErrorPayload` | `app.rs:796` (version-view), `app.rs:843` (clone), `app.rs:867` (clone-view) | `plan.js:2393-2396` |
 | R7 | `graphium://closed` | `{diagram_id}` | `app.rs:758-761` | **not listened**: the page rebuilds from `graphium://state` |
@@ -151,7 +153,7 @@ branches on them, so the port cannot change which one a failure produces.
 | `req_id` | string | echoed in `render_ack` |
 | `diagram_id` | string | `d-…` |
 | `session_id` | string | the plan the object belongs to |
-| `svg` | string | the root `<svg>` with `width`/`height` |
+| `elements` | `Scene` | the drawing as the elements the window mounts (`crates/gx-core/src/scene.rs`): canvas, tokens, palette by CSS vars, nodes `g-…`, edges `m-…`, bands `cluster-…`/`lane-…`, events. There is no SVG string on the wire: the painter parses nothing (`f11-elementos.md` S1, T3/C) |
 | `placement` | `{x,y}` optional | top-left of the **object** (SVG + 24 px padding); absent when the window cannot tell its size |
 | `camera` | `{tx,ty,zoom}` optional | the fit intent (PRD §7.2) |
 | `focus` | `{x,y,w,h}` optional | box in plan units from `opts.focus` |
@@ -180,8 +182,9 @@ they are never sent as zero (`app.rs:630-662`, unit test `app.rs:1215-1237`).
 `snapshot_version`, `current_version`, `oldest_version`, `version_count`,
 `updatable` (false once the original closed), `pos{x,y}`, `bbox{w,h}`
 (padding included). `ClonePaint` flattens the entry and adds `version`,
-`svg?` (absent = nothing new to draw) and `bring` (whether the page travels to
-the clone). A clone carries **no** `diagram_id` (`app.rs:1515-1519` asserts it).
+`elements?` (the same `Scene` the render carries; absent = nothing new to draw)
+and `bring` (whether the page travels to the clone). A clone carries **no**
+`diagram_id` (`app.rs:1515-1519` asserts it).
 
 ### 5.6 `Settings` (`crates/gx-app/src/settings.rs:51-82`)
 
@@ -202,7 +205,9 @@ the finding.
 ### 5.8 Other small payloads
 
 `graphium://closed`: `{diagram_id}` (`app.rs:758-761`) — unlistened.
-`graphium://version-paint`: `{diagram_id, version, svg}` (`app.rs:783-790`).
+`graphium://version-paint`: `{diagram_id, version, elements}` (`app.rs:783-790`),
+where `elements` is the `Scene` of the version's document — the same paint
+payload as `graphium://render`.
 `CameraPayload`: `{tx,ty,zoom}` (`app.rs:614-619`). `AckPayload`:
 `{req_id, ok}` (`app.rs:621-625`).
 
@@ -224,7 +229,7 @@ pin the rest.
 | settings throttle | 100 ms | `plan.js:14` | — |
 | pan | 250 ms, cubic ease-out | `plan.js:17`, `plan.js:605-623` | — |
 | object padding | 24 | `plan.js:21` | `OBJECT_PADDING` (`camera.rs:18`) |
-| culling ceiling | 3 live SVGs | `plan.js:28` | — |
+| culling ceiling | 3 live scenes (was "live SVGs" before `f11-elementos.md` S7) | `plan.js:28` | — |
 | culling zoom | 0.4 | `plan.js:29` | — |
 | fit margin | — | `plan.js` (none) | `FIT_MARGIN 32.0` (`camera.rs:11`) |
 | cascade | 8 steps of 48 | `plan.js` (none: placement comes in the event) | `camera.rs:20-22` |
@@ -347,9 +352,10 @@ document.
       time; the portable half of the gate is the smoke run (`ready` else
       `ui_error`).
 - [x] C4 `render_ack ok:true` is emitted after two `requestAnimationFrame`, and
-      `ok:false` only when the payload has no `<svg>`. — **T4 ✓** `parity:
-      render_ack`: one ack for the render (r1, ok:true) emitted 2 frames after
-      the dispatch; C21's broken payload gets ok:false and mounts nothing.
+      `ok:false` only when the payload carries no mountable scene. — **T4 ✓**
+      `parity: render_ack`: one ack for the render (r1, ok:true) emitted 2
+      frames after the dispatch; C21's broken payload gets ok:false and mounts
+      nothing.
 - [x] C5 `camera-changed` is throttled to 100 ms and carries `{tx,ty,zoom}`. — **T4 ✓**
       `parity: camera-changed`: a burst of three wheels produced exactly one
       event, keys `tx,ty,zoom`, value equal to the live camera.
@@ -392,11 +398,13 @@ document.
 - [x] C13 A window resize keeps the world point under the centre (no refit). — **T4 ✓**
       `parity: resize` (viewport 1280×800 → 1100×720: the centre world point
       moves < 0.5 plan units, zoom unchanged).
-- [x] C14 Culling keeps at most 3 live SVGs, culls out-of-view objects and any
-      zoom below 0.4, breaks ties by distance to the view centre, and every
-      `applyCamera` re-decides. — **T4 ✓** `parity: culling` (5 objects → 3 live
-      SVGs `a,b,c` = the closest, 2 boxes), `parity: culling zoom` (0 live at
-      zoom 0.263), and the same probe after a focus intent (re-decided).
+- [x] C14 Culling keeps at most 3 live **scenes** (the invariant S7 of
+      `f11-elementos.md` redefines: same decision, same ceiling), culls
+      out-of-view objects and any zoom below 0.4, breaks ties by distance to the
+      view centre, and every `applyCamera` re-decides. — **T4 ✓**
+      `parity: culling` (5 objects → 3 live scenes `a,b,c` = the closest, 2
+      boxes), `parity: culling zoom` (0 live at zoom 0.263), and the same probe
+      after a focus intent (re-decided).
 - [x] C15 A culled object becomes a box reading `<title> — <w> × <h>` in plan
       units, with the title falling back to the `diagram_id`. — **T4 ✓**
       `parity: box text`: `d-4 — 248 × 168` (no state title yet → the id is the
@@ -419,13 +427,17 @@ document.
       and `renombrado` arrives in the panel.
 - [x] C19 A render of a `diagram_id` already on the plan replaces the object (and
       drops its preview). — **T4 ✓** `parity: re-render`: one object for `d-1`
-      after two renders, the second drawing (`data-marker="second"`) mounted.
+      after two renders, the second drawing mounted (the label of its scene
+      node answers `second`).
 - [x] C20 `placement` is the object corner: the SVG sits `OBJECT_PADDING` inside. — **T4 ✓**
       `parity: placement`: content at 124/124 (= placement 100 + 24), box at
       100/100 with 368×228.
-- [x] C21 A render payload whose `svg` holds no `<svg>` gets `render_ack ok:false`
-      and mounts nothing. — **T4 ✓** `parity: no <svg>`: ack `r2/ok:false`, the
-      object count unchanged.
+- [x] C21 A render payload whose `elements` is not a mountable scene gets
+      `render_ack ok:false` and mounts nothing; a payload that still carries an
+      SVG string beside a scene paints the scene and never the string. — **T4 ✓**
+      `parity: no scene` (a string-only payload: ack `r2/ok:false`, the object
+      count unchanged) and `parity: both keys` (the `{@html}` branch of the
+      string era is dead: no `data-marker` mounts, the scene does).
 - [x] C22 Rust's `graphium://state` after the ack is the only source of the panel. — **T4 ✓**
       `parity: panel rows`: two rows appear only after the state, with the
       fields the state carries.
@@ -554,6 +566,37 @@ document.
       either served HTML; the grid/palette variables are observed in the page as
       `style.setProperty` values (C7/C39).
 
+**The closing task of `f11-elementos.md`**
+
+- [x] C44 The history of versions morphs the mounted scene instead of asking
+      Rust for it again: a version the page already drew is kept on the object
+      in a bounded cache (`VERSION_CACHE_LIMIT`), the step back paints it with
+      no `graphium://version-view`, the components stay mounted (the scene root
+      and the elements whose ids did not change are the same DOM nodes), and
+      the cache is emptied when the live drawing comes back and dies with the
+      object. — **T4/D ✓** `parity: morph`: v6 and v5 asked once each (2
+      events), the revisit to v6 with the count still 2, the same
+      `svg.graphium` and the same `g-estable` node held across the step, the
+      live restore and a re-render each making the next step ask again.
+- [x] C45 Every element of a drawing is an element of the page: `role="button"`
+      in the tab order with a name, the pointer over it and the focus on it
+      highlight it with the classes of the drawing (`emphasis-highlight` /
+      `emphasis-highlight-text`), a click or Enter/Space selects exactly one
+      element per drawing and `aria-pressed` says which, and the state lives in
+      `App.svelte` behind callback props — no dispatcher, no slots. — **T4/D ✓**
+      `parity: elements`: `role`/`tabindex`/`aria-label` on the shape, the
+      highlight of the hover (and of its label) cleared on the way out, one
+      selection across a node and an edge, the focus highlighting and Enter
+      selecting.
+- [x] C46 An event that lasts is a bar (`IrEvent.span`): the layout already
+      sizes the box from the span and `geometry::event_bar` decides the
+      rectangle, which is the same number in the exported markup and in the
+      scene, drawn by the painter from the payload. A point in time has no bar.
+      — **T4/D ✓** `parity: bar`: one `rect.accent` at 301/73.75/116×5 for the
+      spanned event of the timeline fixture and none for the point, plus the
+      S8 equivalence on `timeline-roadmap`, whose regenerated golden carries
+      the two bars of the roadmap.
+
 ## 9. What the tasks delivered
 
 `crates/gx-app/frontend/`:
@@ -577,6 +620,10 @@ document.
 | `src/lib/SessionsPanel.svelte` | the switcher of plans («Mi plano» + one row per session + notice) |
 | `src/lib/SettingsPanel.svelte` | the settings dialog: the 12 controls, the 7 theme chips, Escape/focus |
 | `src/lib/CloneTools.svelte` | the pill of a clone: history, `↻` and the `×` that removes the view |
+| `src/lib/scene/scene.js` | the door from the wire to the painter: `sceneFromPayload` → the `Scene` the plan mounts, or `null` when the payload carries none |
+| `src/lib/scene/glyph.js` | the arithmetic of `gx-render-svg/src/geometry.rs` in JS (labels, boxes, crow's foot, rim, fold, diamond, markers, lifelines) and the one paint plan of a scene (`diagramPaint`) |
+| `src/lib/scene/DiagramScene.svelte` | the mounted `<svg class="graphium">`: the layer order of the emitter, the markers of `<defs>` and the scene, keyed by the id of the drawing |
+| `src/lib/scene/SceneNode.svelte`, `SceneEdge.svelte`, `SceneBand.svelte`, `SceneText.svelte` | one node (or table), one routed edge with its glyphs, one container/lane and one text, each in the SVG namespace |
 | `.gitignore` | `dist/`, `node_modules/` |
 
 **What T1 delivered:** the bridge, the `graphium://ready` handshake, the paint
@@ -651,6 +698,47 @@ pending` has no emitter, so the ghost is unreachable from Rust today (C36);
 (C2); (5) T3's «byte for byte» for `src/app.css` meant *the rules*, not the prose
 — the header comment differs (C42). The scaffold diagnostic chip and its
 `.scaffold` CSS are gone with T3.
+
+**What `f11-elementos.md` T3/C delivered (the flip):** the scene is the only
+shape of the runtime drawing. `svg` left `RenderHookPayload`, `RenderEvent`,
+`ClonePaint` and `graphium://version-paint`; every one of them relays
+`elements` (a `Scene`) instead, and `src/App.svelte` lost its `{@html}` branch,
+its `svg`/`previewSvg` record fields and its string parses. The export is
+untouched (S2): `gx-render-svg` keeps emitting the bytes that
+`crates/gx-app/tests/golden_svg.rs` pins, and the window never sees them. The
+S8 gate is committed: `tools/equivalence.mjs` mounts the scene of each of the
+15 golden documents through the real bundle (payload with `elements` only) and
+compares the serialized DOM with `crates/gx-app/tests/golden/<name>.svg` modulo
+formatting, with the four documented decisions (empty layer containers, the
+filtered `<defs>` marker set, one-point edges, the painter-only interaction
+attributes) written in its header. The
+scenes are committed at `crates/gx-app/tests/golden-scenes/` and the golden
+suite keeps them fresh (`UPDATE_SCENES=1`). `tools/parity.mjs` speaks the same
+contract: every probe dispatches `elements`, and the `{@html}` branch is
+guarded by a payload that carries both keys.
+
+**What `f11-elementos.md` T4/D delivered (the closing task):** the drawing on
+the plan is not a picture any more, it is a set of elements. (1) **Interaction
+per element**: every node, event and edge is `role="button"` with a name, in the
+tab order, and surfaces its pointer hover, its focus and its click/tap through
+callback props; `src/App.svelte` holds the hover, the focus and a selection per
+drawing, and the visual answer is the `emphasis-highlight` class the drawing
+already has (`src/app.css` adds only `cursor`, the `:focus-visible` ring and the
+`pointer-events: none` of the labels and the two decoration paths). No wire
+message, no panel, no slot: the elements talk to the page, the page keeps the
+state. (2) **The version step morphs**: `←`/`→` paint a visited version from a
+bounded per-object cache with no `graphium://version-view`, and the keyed
+components move the drawing that changed instead of rebuilding it; the cache is
+emptied when the live drawing comes back and it dies with the object (C44).
+(3) **Gantt bars**: `IrEvent.span` reaches the paint as a bar — the rectangle
+is decided once in `gx-render-svg/src/geometry.rs`, written by the SVG emitter,
+carried as numbers in `SceneEvent.bar` and drawn by the painter (C46). The
+goldens of `timeline-roadmap` were regenerated on purpose for it (the only
+document of the 15 with a span: two 116 × 5 bars), and so was its committed
+scene. `tools/equivalence.mjs` gained the fourth decision of the header — the
+painter-only interaction attributes — and still ends 15/15; `tools/parity.mjs`
+grew from 58 to 64 probes (morph and elements scenarios) with the 58 existing
+ones untouched and green.
 
 ## 10. The A/B switch, RETIRED — and where the retired guards live
 

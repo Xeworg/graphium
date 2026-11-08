@@ -342,6 +342,11 @@ fn golden_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden")
 }
 
+/// Where the scenes the equivalence probe mounts live (`f11-elementos.md` S8).
+fn scenes_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden-scenes")
+}
+
 /// A stable digest of the SVG, so the CI log shows what changed without
 /// needing the diff: FNV-1a 64, no dependency.
 fn digest(text: &str) -> String {
@@ -412,6 +417,56 @@ fn the_drawings_stay_inside_the_byte_budget() {
             outcome.metrics.svg_bytes,
             outcome.metrics.nodes,
             outcome.metrics.edges
+        );
+    }
+}
+
+/// The scenes the equivalence probe of `f11-elementos.md` S8 mounts.
+///
+/// `frontend/tools/equivalence.mjs` dispatches each of these scenes through
+/// the real bundle and compares the mounted DOM with the golden SVG of the
+/// same document, so the scene the window paints and the file the export
+/// writes are the same drawing. The fixtures are committed (one JSON per
+/// document, the `elements` of the render) and this test is their freshness
+/// gate: a drawing that changed without regenerating them fails here, not in
+/// the probe.
+///
+/// Regenerate with `UPDATE_SCENES=1 cargo test -p gx-app --test golden_svg`.
+#[test]
+fn the_committed_scenes_match_the_drawing() {
+    install_engines();
+    let update = std::env::var_os("UPDATE_SCENES").is_some();
+    let dir = scenes_dir();
+    std::fs::create_dir_all(&dir).expect("the scenes directory exists");
+
+    for (name, document) in CASES {
+        let outcome = render_json(document, &RenderOpts::default())
+            .unwrap_or_else(|errors| panic!("{name} does not render: {errors:?}"));
+        let scene = outcome
+            .elements
+            .as_ref()
+            .unwrap_or_else(|| panic!("{name}: the paint path builds a scene"));
+        let json = format!(
+            "{}\n",
+            serde_json::to_string_pretty(scene).expect("the scene serialises")
+        );
+        let path = dir.join(format!("{name}.json"));
+
+        if update {
+            std::fs::write(&path, &json).expect("the scene fixture is written");
+            continue;
+        }
+
+        let expected = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "{name}: the scene fixture is missing ({error}); \
+                 regenerate it with UPDATE_SCENES=1"
+            )
+        });
+        assert_eq!(
+            json, expected,
+            "{name}: the scene changed; if the change is intended, regenerate with \
+             UPDATE_SCENES=1 and review the diff"
         );
     }
 }
