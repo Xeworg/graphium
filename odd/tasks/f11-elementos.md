@@ -157,3 +157,129 @@ plus the owner directive of 2026-11-08.
   `elements: payload.elements.clone()` in its construction; they land when
   that surface is authorised, or with T2/B, which is the task that consumes
   it.
+
+- L5 (2026-11-09, worker/T2-B): the scene is painted, and the plan mounts it.
+
+  **What changed.** `src/lib/scene/scene.js` is the door (`sceneFromPayload(p)`
+  → scene or `null`; `null` is what keeps the legacy `{@html}` branch alive
+  until C). It is pure, it never throws, and it separates two kinds of odd: a
+  **structural** one (no canvas, no tokens, no measured box, an id that is not
+  an id) is `null` for the whole scene, while an unknown `shape`/`emphasis`/
+  `style` falls back to the neutral word (`box`, `normal`, `solid`) instead of
+  blanking the plan over a value the frontend does not know yet. An edge whose
+  route has fewer than two points is dropped, exactly as the emitter draws no
+  line for it. `src/lib/scene/glyph.js` is the arithmetic of
+  `gx-render-svg/src/geometry.rs` in JS — label lines and baselines, the box of
+  a node, the table of a node with rows, the crow's foot, the cylinder rim, the
+  note fold, the diamond, the lifeline, the marker ids, the classes — and it is
+  where the paint plan of a whole scene is built (`diagramPaint`).
+  `DiagramScene.svelte` mounts a real `<svg class="graphium">` with the layer
+  order of `renderer.rs` (groups, lanes, lifelines, edges, nodes-and-events) and
+  the children `SceneNode`/`SceneEdge`/`SceneBand`/`SceneText`, each keyed by
+  the id of the drawing and each declared
+  `<svelte:options namespace="svg" />` (a component whose root is a `<rect>`
+  is created in the HTML namespace without it — the probes caught the whole
+  scene painting nothing). The classes are the classes of the emitter, so
+  `src/app.css` paints the mounted scene with the same rules and the same CSS
+  custom properties: **zero colour literals and zero style strings in the
+  scene**, geometry always in attributes (`x/y/width/points/d`).
+
+  `App.svelte` gained the switch and nothing else: the record holds `scene`
+  beside `svg` (and `previewScene` beside `previewSvg`), `insertDiagram`,
+  `applyVersionPaint` and `applyClonePaint` store the scene when the payload
+  carries one, and `drawingInView(rec)` picks what the culling keeps mounted
+  (preview scene first, then preview string, then live scene, then live
+  string). The culling itself is untouched — same `MAX_LIVE_SVGS` funnel, same
+  re-decide on every camera write — which is all S7 asks: the invariant is now
+  "≤ 3 live **drawings**, scenes on the new path", and a scene-painted object
+  and a string-painted one are indistinguishable to the box, the `×`, the tools
+  and the pan.
+
+  **Why one paint plan and not one `$derived` per component.** The first cut
+  gave every component its own derivations (rect, classes, table, paths): ~900
+  components × 5-8 signals, and the 300-node mount cost **30.0 ms**. With the
+  plan computed once per scene and handed down as one prop, the same mount
+  costs **25.2 ms** (same page, same fixture, 9 samples). The components stayed
+  components and the math stayed in one pure module; the difference is only
+  where the numbers are computed.
+
+  **Evidence, RED then GREEN, in a throwaway harness** (`/tmp/f11-probe`,
+  reusing `tools/lib/harness.mjs`; the payloads are the real scenes of
+  `er`, `component`, `timeline`, `sequence` and `chain(300)`, dumped from the
+  workspace crates):
+
+  - the pure probes (`scene.test.mjs`: the door, the ids, the classes, the
+    glyph numbers against the ones `geometry.rs` asserts, the static rules) went
+    from **0/30** (the modules did not exist) to **29/29**;
+  - the browser probes (`browser.probe.mjs`, the real built bundle in headless
+    Chromium with the faked bridge) went from **14/33** to **35/35**. The red
+    ones were the ones this task exists for: a payload with `elements` mounted
+    the *string* (`styles=1`), and a scene payload without `svg` was answered
+    `render_ack ok:false` with no object at all. The green ones now include the
+    crow's foot (`d="M 259.84 55.75 L 281.84 55.75 M 259.84 55.75 L 281.84
+    69.39 M 259.84 55.75 L 281.84 42.11"`, the circle at `249.94 r 6.29` and
+    the single stroke at `165.04,28.30 → 165.04,65.70` — the very numbers the
+    emitter writes for that document), the `PK`/`FK` badges and the row rule,
+    the four lifelines of the sequence, the four lanes and four events of the
+    timeline, the containers as their own layer, ≤ 3 live scenes with their
+    boxes, and the version preview and the clone paint landing as scenes when
+    the payload carries elements and as strings when it does not.
+
+  `node tools/parity.mjs` → `57/57` on the new bundle, untouched; `npm run
+  build` exit 0; `DISPLAY=:0 scripts/smoke.sh` → `rendered=true reason=none`
+  (the 300-node diagram of the bench paints through the scene inside the real
+  shell); `cargo fmt --check`, `cargo clippy --workspace` and `cargo test
+  --workspace` all exit 0 (nothing on the Rust side changed: the relay was
+  already in 4b95581).
+
+  **The measurement** (`tools/measure-html.mjs`, new: `--mode=both|html|scene`,
+  `--payload` for a real `{svg, elements}`, `--nodes` for the synthetic chain).
+  One sample = `graphium://render` dispatched into the real bundle → the
+  drawing is a child of `.content` → `#plan.getBoundingClientRect()` (style +
+  layout), in headless Chromium, 2 warm-ups and 9 measured mounts per path,
+  each one after emptying the plane so it is a mount and never a re-mount. The
+  `render_ack` is excluded on purpose: it waits two frames (C4) and hides every
+  difference inside the 4-32 ms pacing noise.
+
+  | Path | chain(300) real payload, median | min … max | chain(300) synthetic | chain(12) synthetic |
+  | --- | ---: | ---: | ---: | ---: |
+  | string (`html`) | **8.9 ms** | 7.4 … 14.8 | 9.1 ms | 2.0 ms |
+  | scene (`scene`) | **25.2 ms** | 20.6 … 28.1 | 27.9 ms | 5.8 ms |
+
+  The payload measured is the real one: `svg` 126 561 B and `elements`
+  114 625 B (serde; 114 585 B once the tool re-serialises the same object, the
+  40 B being `0.0` → `0`), the two numbers of L4. **The scene mount loses to
+  the string**: 2.8× on 300 nodes, 2.9× on 12. The 1.466 ms/mount baseline of
+  this file is not reproduced by any instrument here — the raw floor of the
+  same 900-element tree in the same page is 4.1-4.6 ms (`innerHTML` and
+  `createElementNS` both, insert + layout included) and the string path through
+  the real app is 8.9 ms — but the ranking does not depend on which of those is
+  the baseline: building 900 elements through ~900 component instances costs
+  more than parsing one string. That is the trade the owner accepted in S1 and
+  the reason T3/C is not blocked by it: the scene pays once per render, and it
+  buys the incremental update the string cannot do at all (T4/D morphs a
+  version step in place; the string has to be re-parsed in full). If T3/C wants
+  the cold mount back, the levers are measured and known: fewer component
+  instances per element and one plan per scene are already in; the next one is
+  skipping the `SceneText` instance for a node label.
+
+  **Steady state memory: not established.** `tools/bench-live.sh` ran against
+  the rebuilt binary with the 300-node diagram on screen and reports `pss
+  354 433 kB` over **one** process: in this environment the owner's
+  `WebKitWebProcess` is not a child of it, so the script's tree walk misses the
+  web process (and other owners' webviews are running on the machine). The
+  number is therefore not comparable with the ± 5 MB band of
+  `svelte-ui-t5-bench.md` §4 and this task does not claim it; the check stays
+  open for T3/C, where the string dies and the comparison becomes possible
+  without the ambiguity.
+
+  **Specs.** S3 (same schema, same ids `g-`/`m-`/`cluster-`/`lane-`, palette by
+  CSS custom properties, no colour literal), S4 (no measuring anywhere in the
+  painter: the boxes are `NodeBox`, the labels arrive broken), S5 (crow's foot,
+  cylinder rim, note fold, diamond, markers and lifelines drawn from the tokens
+  and the frozen constants — the payload carries numbers, not paths) and S7
+  (the culling inherited unchanged; the invariant now counts scenes). S1 and S2
+  are untouched by construction: the string still travels beside the scene and
+  the export never changed. The equivalence gate S8 is T3/C, on all 15 golden
+  documents, and the browser probes here are its small preview (the scene DOM
+  reproduces the emitter's numbers for the er document, element by element).
