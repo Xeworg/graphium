@@ -325,3 +325,44 @@ plus the owner directive of 2026-11-08.
   artifact is untouched. S1–S8 keep their meaning: the string still travels
   beside the scene until T3/C, and the flip now happens on the improved
   base.
+- L7 (2026-11-09, owner + Judgment Day): the owner requested a dual judgment
+  over the changes of both stacked branches and their logic (`f15c1c2..HEAD`,
+  35 files, +5498/−530). Two blind judges (A/B) swept the tree once; the
+  controller canonicalized and froze 14 rows. One severe finding survived and
+  was fixed in the one authorized round (owner-approved):
+
+  - **JD-A-001** (canonicalized CRITICAL; controller-verified before the
+    batch): SceneEdge ids were `edge_id(from, to)` with no disambiguation and
+    no upstream uniqueness validation, so two IR edges between the same node
+    pair yielded duplicate keys in `DiagramScene`'s keyed each
+    (`DiagramScene.svelte:85`); Svelte throws `each_key_duplicate` in dev and
+    prod, and a schema-valid document with two edges between the same nodes
+    refused to mount — a regression against the string branch, which drew
+    both. Fix (round 1 of 2, `jd-fix-agent`, surfaces `scene.rs` +
+    `scene/tests.rs`): `scene_edge_id` — the first edge of a pair keeps
+    exactly `m-<from>-<to>`, later twins get `-2`, `-3`, … in paint order;
+    `edge_id`, shared with the export emitter, untouched. Two focused tests
+    pin the no-twin and the twins cases. Re-judged `verified` by judge B;
+    final verification by the controller: `cargo test -p gx-render-svg` 0
+    failed (12 scene tests), `cargo test -p gx-app --test golden_svg` green
+    (byte-exact, un-regenerated), `cargo fmt --check` and `cargo clippy`
+    clean. **JUDGMENT: APPROVED.** Fix commit: `18b276d`.
+
+  **Informational rows (14-row ledger; no fix scheduled), disposition:**
+  (a) the painter ships zero committed coverage and parity only exercises the
+  string branch (A-002 + B-002) — remediation is T3/C's committed equivalence
+  gates (S8); (b) version previews and clone paints still carry only `svg`, so
+  the scene branches of `applyVersionPaint`/`mountCloneDrawing` are unreachable
+  until T3/C relays elements there (A-003 + B-003); (c) the IPC ships both
+  payloads and the scene mount is 2.8× the string on 300 nodes — the trade L5
+  documents and the owner accepted, payoff T4/D (A-004 + B-004); (d) the scene
+  lives proxied inside the deep-`$state` `plane`, cost unmeasured — feeds the
+  steady-state check already open for T3/C (B-005); (e) the switcher notice is
+  visually-hidden **by the approved spec** of mejoras T3, but the parity
+  assertion guarding it is vacuous (`shown()` checks only the `hidden` class)
+  (A-005 + B-001); (f) S8 equivalence needs explicit modulo-formatting
+  decisions on three axes — empty layer containers, the source of the `defs`
+  markers (filtered vs unfiltered edges), one-point edges (B-006); (g)
+  CONTRACT.md §9 inventory and the measure tool's deleted action baseline
+  (A-007 + A-008). Items a, b, d, f, g are T3/C scope; e's probe belongs to the
+  parity harness; c needs no action.
