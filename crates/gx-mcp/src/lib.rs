@@ -953,6 +953,101 @@ pub mod book {
         }
     }
 
+    /// Runs `code_er` for the session with the configuration of the owner (f13).
+    pub fn code_er(session_id: &str, path: &str) -> Value {
+        let config = gx_index::BooksConfig::from_env();
+        code_er_query_with(&config, project_of(session_id).as_deref(), path)
+    }
+
+    /// The `er` document of one `.sql` file of the project (f13, S1/S2).
+    ///
+    /// The answer is a **document**, not a paint: the agent sends `diagram` to
+    /// `render_diagram` (or to `validate_diagram` first) unchanged, the same
+    /// contract `code_diagram` keeps. The mapping is the bridge's own
+    /// `gx_index::lang::sql::er_bridge::chapter_document` — the chapter's parse
+    /// plus `document_json`, never a second mapping that could drift from it —
+    /// and the source is read **live** from the file the path names, because
+    /// the schema keeps no row for a column. `path` is relative to the root of
+    /// the project, the same shape the book stores, and a path that leaves the
+    /// project is refused before anything is opened (S3).
+    pub fn code_er_query_with(
+        config: &gx_index::BooksConfig,
+        project: Option<&str>,
+        path: &str,
+    ) -> Value {
+        let path = match text_argument(path, "path") {
+            Ok(path) => path,
+            Err(response) => return response,
+        };
+        // S3: the path stays inside the project. The guard reads path
+        // components, not strings, so `a/../../b` is refused the same as `..`
+        // and an absolute path, and nothing outside the project is opened.
+        let relative = std::path::Path::new(path);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return failure(
+                "path",
+                "invalid_value",
+                "the path has to be relative to the root of the project",
+                Some(
+                    "name the file the way the book stores it, with `/` separators — `db/schema.sql`, never an absolute path or a `..`",
+                ),
+            );
+        }
+        let opened = match open(config, project) {
+            Ok(opened) => opened,
+            Err(response) => return response,
+        };
+        let absolute = std::path::Path::new(&opened.project).join(path);
+        let source = match std::fs::read_to_string(&absolute) {
+            Ok(source) => source,
+            Err(error) => {
+                return failure(
+                    "path",
+                    "invalid_value",
+                    &format!("the file does not read: {error}"),
+                    Some("the path is relative to the root of the project the session declared"),
+                );
+            }
+        };
+        // The bridge exists only when the SQL grammar is compiled in; without
+        // the feature the tool answers the same refusal a file of another
+        // language gets, and the hint names the build as the cause (S4).
+        #[cfg(feature = "lang-sql")]
+        let document = gx_index::lang::sql::er_bridge::chapter_document(path, &source);
+        #[cfg(not(feature = "lang-sql"))]
+        let document: Option<String> = None;
+        let Some(document) = document else {
+            return failure(
+                "path",
+                "invalid_value",
+                "the file produces no `er` document",
+                Some(
+                    "a document only comes from a file whose grammar reads tables with columns: a `.sql` chapter with `CREATE TABLE` and column lists — a file of another language, a DDL with no column list, or a build without the SQL grammar all land here",
+                ),
+            );
+        };
+        let document: Value = match serde_json::from_str(&document) {
+            Ok(document) => document,
+            Err(error) => {
+                return failure(
+                    "book",
+                    UNAVAILABLE_CODE,
+                    &format!("the bridge produced an unreadable document: {error}"),
+                    None,
+                );
+            }
+        };
+        let mut base = base(&opened);
+        base["ok"] = json!(true);
+        base["file"] = json!(path);
+        base["diagram"] = document;
+        base
+    }
+
     /// The fields every answer of the book carries (S5/S7): the book that
     /// answered, the project it is the book of, and how far the first pass is.
     fn base(opened: &Opened) -> Value {
@@ -4271,6 +4366,168 @@ pub fn e() { a(); b(); c(); d(); }\n";
             crate::book::code_diagram_with(&scratch.config(), Some(&project), "build", None);
         assert_eq!(diagram["budget"]["max_nodes"], 300, "{diagram}");
         assert_eq!(diagram["budget"]["max_edges"], 600, "{diagram}");
+    }
+
+    // -----------------------------------------------------------------
+    // f13 — `code_er`: a `.sql` file in, the `er` document out
+    // -----------------------------------------------------------------
+
+    /// The DDL of the proof: two tables, one inline foreign key.
+    const CODE_ER_DDL: &str = "\
+CREATE TABLE users (\n\
+  id INTEGER PRIMARY KEY,\n\
+  name TEXT NOT NULL\n\
+);\n\
+CREATE TABLE posts (\n\
+  id INTEGER PRIMARY KEY,\n\
+  user_id INTEGER NOT NULL REFERENCES users(id),\n\
+  title TEXT\n\
+);\n";
+
+    /// S2: the tool answers the bridge's own document — the exact one
+    /// `chapter_document` builds, never a second mapping — with the book's
+    /// fields around it, and the relation anchors from the primary key to the
+    /// foreign key.
+    #[test]
+    fn code_er_answers_the_document_the_bridge_builds() {
+        let scratch = BookScratch::new("code-er");
+        scratch.write("db/schema.sql", CODE_ER_DDL);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let answer =
+            crate::book::code_er_query_with(&scratch.config(), Some(&project), "db/schema.sql");
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert_eq!(answer["file"], "db/schema.sql", "{answer}");
+        assert!(answer["book_key"].is_string(), "{answer}");
+
+        let document = &answer["diagram"];
+        assert_eq!(document["kind"], "er", "{answer}");
+        assert_eq!(document["version"], 1, "{answer}");
+        let tables = document["tables"].as_array().expect("the tables travel");
+        let names: Vec<&str> = tables
+            .iter()
+            .map(|table| table["name"].as_str().expect("a table has a name"))
+            .collect();
+        assert_eq!(names, ["users", "posts"], "{answer}");
+
+        let relations = document["relations"]
+            .as_array()
+            .expect("the relations travel");
+        assert_eq!(relations.len(), 1, "{answer}");
+        assert_eq!(relations[0]["from"]["table"], "users", "{answer}");
+        assert_eq!(relations[0]["from"]["column"], "id", "{answer}");
+        assert_eq!(relations[0]["to"]["table"], "posts", "{answer}");
+        assert_eq!(relations[0]["to"]["column"], "user_id", "{answer}");
+
+        // No second mapping: the document is the bridge's own output, the one
+        // the door already renders (f12 T3 proved the paint of this shape).
+        let source = std::fs::read_to_string(scratch.root().join("db/schema.sql")).expect("read");
+        let direct = gx_index::lang::sql::er_bridge::chapter_document("db/schema.sql", &source)
+            .expect("the bridge builds it");
+        assert_eq!(
+            document,
+            &serde_json::from_str::<serde_json::Value>(&direct).expect("the document parses"),
+            "the tool hands the bridge's document, not a copy of it"
+        );
+    }
+
+    /// S3: the path never leaves the project — absolute, `..`, an escape
+    /// through a nested directory and a decorating `.` are all refused before
+    /// anything is opened.
+    #[test]
+    fn code_er_refuses_paths_that_leave_the_project() {
+        let scratch = BookScratch::new("code-er-guard");
+        scratch.write("db/schema.sql", CODE_ER_DDL);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        for path in [
+            "/etc/passwd",
+            "../outside.sql",
+            "db/../../outside.sql",
+            "./db/schema.sql",
+        ] {
+            let answer = crate::book::code_er_query_with(&scratch.config(), Some(&project), path);
+            assert_eq!(answer["ok"], false, "{path}: {answer}");
+            assert_eq!(
+                answer["errors"][0]["code"], "invalid_value",
+                "{path}: {answer}"
+            );
+            assert_eq!(answer["errors"][0]["path"], "path", "{path}: {answer}");
+            assert_eq!(
+                answer["errors"][0]["message"],
+                "the path has to be relative to the root of the project",
+                "{path}: {answer}"
+            );
+            assert!(answer["errors"][0]["hint"].is_string(), "{path}: {answer}");
+        }
+    }
+
+    /// S4: the refusal names what a document needs — the three causes — and a
+    /// file that does not read is its own message, never an empty success.
+    #[test]
+    fn code_er_refuses_a_file_no_document_comes_from() {
+        let scratch = BookScratch::new("code-er-refuse");
+        scratch.write("src/main.rs", "pub fn main() {}\n");
+        scratch.write("db/bare.sql", "CREATE TABLE bare ();\n");
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let rust =
+            crate::book::code_er_query_with(&scratch.config(), Some(&project), "src/main.rs");
+        assert_eq!(rust["ok"], false, "{rust}");
+        assert_eq!(rust["errors"][0]["code"], "invalid_value", "{rust}");
+        assert!(
+            rust["errors"][0]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("no `er` document")),
+            "{rust}"
+        );
+        let hint = rust["errors"][0]["hint"]
+            .as_str()
+            .expect("the hint names the causes");
+        assert!(hint.contains("another language"), "{rust}");
+        assert!(hint.contains("SQL grammar"), "{rust}");
+
+        let bare =
+            crate::book::code_er_query_with(&scratch.config(), Some(&project), "db/bare.sql");
+        assert_eq!(bare["ok"], false, "{bare}");
+        assert!(
+            bare["errors"][0]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("no `er` document")),
+            "{bare}"
+        );
+
+        let missing =
+            crate::book::code_er_query_with(&scratch.config(), Some(&project), "db/nope.sql");
+        assert_eq!(missing["ok"], false, "{missing}");
+        assert!(
+            missing["errors"][0]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("does not read")),
+            "{missing}"
+        );
+    }
+
+    /// S4: the book's own switch governs the tool — `GRAPHIUM_BOOK=off` is
+    /// the owner's explicit opt-out, and the tool does not read around it.
+    #[test]
+    fn code_er_honours_the_book_switch() {
+        let scratch = BookScratch::new("code-er-switch");
+        scratch.write("db/schema.sql", CODE_ER_DDL);
+        let project = scratch.root().to_string_lossy().to_string();
+        let off =
+            gx_index::BooksConfig::from_parts(Some("off".into()), Some(scratch.base.join("books")));
+
+        let answer = crate::book::code_er_query_with(&off, Some(&project), "db/schema.sql");
+        assert_eq!(answer["ok"], false, "{answer}");
+        assert_eq!(
+            answer["errors"][0]["code"],
+            crate::book::DISABLED_CODE,
+            "{answer}"
+        );
     }
 
     /// T5/S7: every cut is an object with the reason, the numbers and the
