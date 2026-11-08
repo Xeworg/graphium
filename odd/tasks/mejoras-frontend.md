@@ -358,3 +358,11 @@ orquestador). Persisted in project memory: `analisis-frontend-*` and
   los números 59/45°/41.72/24/3/0.4/zoom 0.05-4.0, ninguna string C41, y los
   ≤3 SVG vivos con su culling re-decidido en cada escritura de cámara (el pinch
   entra por el mismo embudo `applyCulling`).
+- L8 (2026-11-08, orchestrator): corte CERRADO — T1-T4 completas (4045f2b,
+  a75c4d8, 6da1c2a, 829ab69). Gates de T4 verificados independientemente por
+  el orquestador: build, parity 57/57, smoke rendered=true, cargo test 0
+  failed, fmt/clippy. La decisión del wheel (L7 del worker, WebKitGTK real)
+  reemplaza la postura de T1: el listener pasa al template con
+  preventDefault. Siguiente corte: f11 (biblioteca de elementos Svelte,
+  decisión del dueño 2026-11-08: fin del string SVG en runtime, export como
+  artifact), sobre esta base limpia.
