@@ -87,14 +87,17 @@ jobs:
           fi
           exit "$fail"
 
-      # RNF1-quater: the binary budget of 15 MB, measured on the release build.
+      # RNF1-quater: the binary budget, measured on the release build. Since
+      # the single-binary decision (2026-11-07) the default build ships every
+      # book language, and the declared ceiling is 40 MB (interim: T6
+      # re-measures with the twenty grammars and tightens it).
       - name: Binary budget (RNF1-quater)
         run: |
           cargo build --release --bin graphium
           size=$(du -b target/release/graphium | cut -f1)
           echo "binary size: $size bytes"
-          if [ "$size" -gt 15700000 ]; then
-            echo "::error::the binary is over the 15.7 MB budget"
+          if [ "$size" -gt 41800000 ]; then
+            echo "::error::the binary is over the 41.8 MB budget"
             exit 1
           fi
 

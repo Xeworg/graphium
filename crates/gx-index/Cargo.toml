@@ -46,7 +46,27 @@ tree-sitter-bash = { version = "0.25.1", optional = true }
 # Default-on: the book ships the five languages of C2, so existing users see no
 # change (T4/C3). A slim build says which ones it wants:
 # `--no-default-features --features "lang-rust,lang-typescript"`.
-default = ["lang-rust", "lang-typescript", "lang-python", "lang-go", "lang-java"]
+# Single-binary decision (2026-11-07): the default build ships EVERY book
+# language, so the user never installs or compiles anything — unused
+# grammars are static pages the loader brings in lazily, and a project's
+# book only gets chapters for the files it actually has. The features
+# remain for slim opt-out builds:
+#   `--no-default-features --features "lang-rust,lang-typescript"`.
+default = [
+  "lang-rust",
+  "lang-typescript",
+  "lang-python",
+  "lang-go",
+  "lang-java",
+  "lang-javascript",
+  "lang-c",
+  "lang-cpp",
+  "lang-csharp",
+  "lang-php",
+  "lang-ruby",
+  "lang-sql",
+  "lang-shell",
+]
 lang-rust = ["dep:tree-sitter-rust"]
 lang-typescript = ["dep:tree-sitter-typescript"]
 lang-python = ["dep:tree-sitter-python"]
