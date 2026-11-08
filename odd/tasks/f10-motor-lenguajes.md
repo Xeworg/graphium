@@ -409,3 +409,25 @@ languages ride on it.
     which Batch 2 made false, so it now derives the unknown language from
     the registry (a later batch: kotlin/swift/dart/scala/zig) and keeps
     meaning under any feature set.
+- L9 (2026-11-07, orchestrator, user decision — single binary): the
+  DEFAULT build now ships every book language. The user never installs or
+  compiles anything; unused grammars are lazy static pages, and a
+  project's book only gets chapters for the files it actually has —
+  runtime selectivity comes from what the tree contains, not from build
+  flags. The cargo features remain for slim opt-out builds.
+  - `crates/gx-index/Cargo.toml`: `default` = all thirteen `lang-*`
+    features (comment records the decision).
+  - `.github/workflows/ci.yml`: RNF1-quater gate 15,700,000 → 41,800,000 B
+    (declared ceiling 40 MB, INTERIM — T6 re-measures with the twenty
+    grammars and tightens it; batch 3/4 may breach early and the ceiling
+    adjusts with the user).
+  - PRD rewritten in three places: RNF1 (<15 → <40 MB interim),
+    RNF1-quater (evolution note: F0's breakdown never included grammars),
+    and the features paragraph (all thirteen ON, measured numbers).
+  - Measured: default release **31,217,432 B** with thirteen grammars;
+    slim rust+typescript **13,241,496 B** (byte-identical to the batch-1
+    record — the engine refactor moved nothing). Gates: default build 0,
+    `cargo test --workspace` 0 (42 suites, 0 failed — every language in
+    the default run), slim build 0 + slim tests 0.
+  - Note: batch-2 worker had already measured all-13 at 31,217,432 B via
+    explicit features — both paths agree to the byte.
