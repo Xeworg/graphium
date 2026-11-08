@@ -48,6 +48,7 @@
     width={paint.rect.w}
     height={paint.rect.h}
     rx={paint.rect.radius ?? undefined}
+    ry={paint.rect.radius ?? undefined}
   />
 {/if}
 

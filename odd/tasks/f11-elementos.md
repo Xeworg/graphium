@@ -366,3 +366,134 @@ plus the owner directive of 2026-11-08.
   CONTRACT.md §9 inventory and the measure tool's deleted action baseline
   (A-007 + A-008). Items a, b, d, f, g are T3/C scope; e's probe belongs to the
   parity harness; c needs no action.
+- L8 (2026-11-09, worker/T3-C): the flip. The scene is the only shape of the
+  runtime drawing; the SVG string is now only the export artifact.
+
+  **The probe came first, and it bit.** `crates/gx-app/frontend/tools/equivalence.mjs`
+  (new, committed) mounts each of the 15 golden documents through the real built
+  bundle — `graphium://render` with `elements` and **no `svg` key at all** — reads
+  the `<svg class="graphium">` the painter produced, and compares it element by
+  element with `crates/gx-app/tests/golden/<name>.svg` (the export artifact
+  `golden_svg.rs` pins byte by byte). Both sides go through one canonicalizer:
+  tag, attributes (class lists sorted; numbers rounded to the two decimals the
+  drawing promises; `points`/`viewBox`/`d` compared as number lists), trimmed
+  text, children in paint order. `modulo formatting` also covers the two
+  emitter-only artifacts: the export's `<style>` block (the painter takes its
+  colours from `src/app.css`) and `xmlns`. The first RED run was **0/15**, and it
+  named real painter defects, not formatting: rounded boxes wrote `rx` without
+  `ry` (the emitter writes both), and table rows wrote `text-anchor="start"`
+  where the emitter omits the SVG default. Fixed in `SceneNode.svelte` and in
+  the paint plan (`textPaint.anchor: null` means "the default, omit it"), the
+  suite went **15/15** and the remaining differences were exactly the three the
+  Judgment Day flagged.
+
+  **The three decisions, written in the probe header (L7 item (f), B-006).**
+  (1) *Empty layer containers*: the emitter writes the layers its kind has —
+  `drawing.draws_clusters()` is "the document is a graph", so a graph with no
+  containers still gets `<g class="layer-groups"></g>` (11 of the 15 documents) —
+  and the painter only writes a layer with elements in it. Both sides' empty
+  `layer-*` groups are dropped; a layer empty on one side and not the other
+  still fails. (2) *The `<defs>` markers*: the emitter takes the set from the
+  **unfiltered** edge list (`write_defs`), the painter from the **filtered**
+  scene (`arrowMarkers`). The probe compares the markers each side actually
+  references (`marker-end="url(#…)"`), so a referenced marker is required on
+  both sides and an unreferenced definition is not evidence; the report counts
+  the ids it set aside. (3) *One-point edges*: the emitter writes the
+  `<polyline>` of a degenerate one-point route, the painter drops the edge
+  (`scene.js`, the emitter's own rule); the probe drops one-point polylines from
+  both sides and counts them. On the 15 documents axes 2 and 3 trigger **0**
+  times (every run reports `unreferenced markers 0/0, one-point edges 0/0`) and
+  axis 1 triggers on 11 graphs (1/0: the emitter's empty layer, which the
+  painter does not write) and on the two timelines (1/1: both sides write an
+  empty lane layer for the kind).
+
+  **Two runs, both green, both reported.** Run 1 and run 2 of
+  `node tools/equivalence.mjs` → `equivalence: 15/15 golden documents`, exit 0,
+  with the axis counters above on every document. The scenes are committed at
+  `crates/gx-app/tests/golden-scenes/<name>.json` (15 files, 92 KB, the
+  `elements` of each render) and `golden_svg.rs` gained
+  `the_committed_scenes_match_the_drawing`, the freshness gate: it re-renders
+  each document and compares the committed scene byte by byte
+  (`UPDATE_SCENES=1` regenerates). The probe reads the committed pair, so the
+  gate needs no cargo run and the drawing under test is still the one the
+  product's single door produced.
+
+  **The flip.** `svg` left `RenderHookPayload` (`elements: Scene`, required), the
+  window's `RenderEvent`, `ClonePaint` (`elements?`, absent = nothing new to
+  draw) and the `graphium://version-paint` payload; all three runtime paths the
+  Judgment Day named relay the scene instead (item (b), A-003 + B-003):
+  `graphium://render`, the version preview (`render_version_view` now returns
+  `Result<gx_core::Scene, ErrorPayload>`, the caller emits it) and the clone
+  paint (`create_clone`/`view_clone` use the scene). The `svg_size` string
+  archaeology of `app.rs` died with it: `drawing_size(&scene)` reads
+  `scene.canvas`, the bounding box the layout measured. A renderer that builds
+  no scene no longer paints (`ui_error`, documented in `gx-mcp`), and the
+  `gx-mcp` test double gained a scene so the paint path keeps its tests — that
+  is the one file touched outside the task's listed surfaces
+  (`crates/gx-mcp/src/test_support.rs`, test-only; see Risks below).
+
+  **The frontend lost the string, not the paint.** `App.svelte` dropped the
+  `svg`/`previewSvg` record fields, `drawingInView` returns the scene or
+  `null`, `insertDiagram` answers `render_ack ok:false` when the payload carries
+  no mountable scene (no parse, no `innerHTML`), `applyVersionPaint` and
+  `mountCloneDrawing` paint the scene only, `applyClonePaint` keys on
+  `p.elements`, and the template has one branch:
+  `{#if drawing !== null}<DiagramScene scene={drawing} />{/if}`. `scene.js` no
+  longer documents the `null` as "the legacy branch stays alive": the scene is
+  the wire.
+
+  **Parity speaks the same contract** (L7 item (a), A-002 + B-002: the painter
+  shipped zero committed coverage). `tools/parity.mjs` re-pointed every payload
+  from `svg` strings to a `sceneFixture(...)` scene (the frozen tokens; one node
+  named by the probe), reads mounted drawings by the scene's label instead of
+  the dead `data-marker`, and added a probe for the flip itself: a payload
+  carrying a string beside a scene paints the scene and no `data-marker` ever
+  mounts. `node tools/parity.mjs` → **58/58 probes passed** (57 + the new one),
+  exit 0, every probe through the scene path. `tools/lib/harness.mjs` gained
+  `__t.markerOf` for that, nothing else.
+
+  **Export untouched (S2).** `crates/gx-app/tests/golden/` is byte-identical and
+  un-regenerated (`git status` shows no change under it), `gx-render-svg` was
+  not touched, and `golden_svg.rs`'s byte-for-byte test passes inside the
+  workspace suite. The export emitter keeps its own path and its own scene-free
+  outcome (`the_export_does_not_build_a_scene` still asserts `elements == None`).
+
+  **Gates, all fresh, real exit codes.** `npm run build` (frontend) exit 0
+  (95.45 → 93.82 kB JS: the string branches left); `node tools/equivalence.mjs`
+  15/15 exit 0 (twice before the flip and once after); `node tools/parity.mjs`
+  58/58 exit 0; `touch crates/gx-app/build.rs && cargo build -p gx-app` exit 0;
+  `DISPLAY=:0 scripts/smoke.sh` → `diagram=d-0001 rendered=true reason=none`
+  exit 0 (the real WebKitGTK window mounts the scene of the flipped payload);
+  `cargo test --workspace` exit 0 — 38 suites, 729 passed, 0 failed, the
+  byte-exact goldens included; `cargo fmt --check` exit 0; `cargo clippy
+  --workspace` exit 0, no warning. `tools/bench-live.sh` on the flipped binary
+  (item (d)): `coldStartMs 496`, `render_diagram` 300 nodes `547/532 ms`,
+  `rendered true reason none`, `pssKb [282 248, 282 263]`, **`processes: 1`** —
+  the WebKitWebProcess is still not a child of the owner in this environment, so
+  the ±5 MB band of `svelte-ui-t5-bench.md` §4 remains unmeasurable and the
+  steady-state check stays open, as L5 recorded. (The bench's own teardown hung
+  after writing its JSON and the command was cut; its report is
+  `/tmp/bench-live-f11-t3c.json` and two scratch dirs under `/tmp/gx-bench-*`
+  were left for the parent to remove — `rm` is blocked in the worker.)
+
+  **CONTRACT.md** §5.1 (`RenderEvent.elements` replaces `svg`), §5.5
+  (`ClonePaint.elements?`), §5.8 (`version-paint`), §6 (the culling ceiling is
+  now "3 live scenes"), §8 (C4/C14/C19/C21 wording and probes) and **§9** were
+  updated: the inventory lists `scene.js`, `glyph.js` and the four components,
+  and a "what T3/C delivered" paragraph maps the flip and the S8 gate (item (g),
+  A-007). The other half of item (g) — the measure tool's 1.466 ms/mount
+  baseline, which cites the deleted vanilla action — is **not** touched: this
+  task's surfaces forbid editing `tools/measure-html.mjs`'s measurement claims.
+  It stays open for the parent, together with `README.md`'s harness list (no
+  equivalence line; `README.md` is outside the surfaces too).
+
+  **Specs.** Covers S1 (the string leaves the runtime path), S2 (export stays
+  bytes on disk; goldens untouched), S7 (the invariant counts scenes; the
+  culling decision and funnel are the ones inherited) and S8 (the equivalence
+  gate, 15/15, committed and fresh via the golden suite). S3/S4/S5 keep their
+  meaning from L4/L5 and the probes now prove them on all 15 documents: same ids
+  and classes, boxes from `NodeBox`, glyphs drawn by the painter from the
+  tokens. S6 (SQL columns out of scope) is untouched. Open after T3/C: T4/D
+  (per-element interaction, the version-step morph without a Rust round trip,
+  gantt bars), the steady-state memory check of item (d), and the two
+  documentation/measure leftovers of item (g) named above.

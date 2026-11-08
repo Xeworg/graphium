@@ -221,23 +221,13 @@
       // Whether the drawing is out of the DOM (RNF1-ter). Born culled.
       culled: true,
       hidden: false,
-      // The drawing, in the two shapes of `f11-elementos.md` T2/B: the scene
-      // the painter mounts as elements, or — until the flip of T3/C — the
-      // markup string the template parses. A payload carries one of the two,
-      // and `drawingInView` picks it.
+      // The drawing, as the scene the painter mounts (`f11-elementos.md`
+      // T2/B, T3/C): the elements of the wire, never a markup string. The
+      // string of the export left the runtime with the flip of T3/C (S1).
       scene: null,
-      // The drawing as the owner delivered it — the markup string, never a
-      // parsed DOM node inside reactive state (T2): `{@html}` parses it on
-      // each mount, and the measured cost of one re-parse of the 300-node
-      // fixture (1.47 ms, `tools/measure-html.mjs`) is under the agreed
-      // ~3 ms threshold.
-      svg: null,
       // The scene of the version the human is browsing, while it lasts
       // (C27): the painter mounts this one, not the live drawing under it.
       previewScene: null,
-      // The markup of the version the human is browsing, while it lasts
-      // (C27). The culling re-parses this one, not the live drawing under it.
-      previewSvg: null,
       // The entry of the clone this object is, as the owner states it (B1;
       // plan.js:1690): the tools pill reads its counts from here.
       cloneState: null,
@@ -677,40 +667,29 @@
    * clone waiting for its paint) keeps its box: there is nothing to mount.
    *
    * `f11-elementos.md` S7 redefines the invariant without touching the
-   * decision: what mounts is no longer necessarily a markup string but the
-   * scene of the painter, and the funnel — same flag, same ceiling, same
-   * re-decide — is the one it always was.
+   * decision: what mounts is the scene of the painter, and the funnel — same
+   * flag, same ceiling, same re-decide — is the one it always was.
    */
   function applyCulling() {
     const alive = cullDecide(plane, camera, viewport);
     for (const rec of plane) {
-      rec.culled =
-        !alive.has(rec.id) ||
-        !(rec.previewScene || rec.previewSvg || rec.scene || rec.svg);
+      rec.culled = !alive.has(rec.id) || !(rec.previewScene || rec.scene);
     }
   }
 
   /**
    * What the culling keeps inside the `.content` of an object: the preview of
-   * a version first (C27), then the live drawing. A scene mounts as components
-   * (`DiagramScene`) and a string mounts through `{@html}` — the two draw the
-   * same picture with the same classes, so the box, the `×`, the tools and the
-   * culling never know which one is on the plan (`f11-elementos.md` S7).
+   * a version first (C27), then the live drawing. The drawing is always a
+   * scene, mounted as components (`DiagramScene`) — the markup string of the
+   * export left the runtime with the flip of `f11-elementos.md` T3/C, so
+   * there is one shape to paint and the box, the `×`, the tools and the
+   * culling never ask which one it is (S7).
    */
   function drawingInView(rec) {
     if (rec.culled) {
       return null;
     }
-    if (rec.previewScene) {
-      return { scene: rec.previewScene };
-    }
-    if (rec.previewSvg) {
-      return { markup: rec.previewSvg };
-    }
-    if (rec.scene) {
-      return { scene: rec.scene };
-    }
-    return rec.svg ? { markup: rec.svg } : null;
+    return rec.previewScene || rec.scene || null;
   }
 
   // --- plans (plan.js:1204-1400) ----------------------------------------------
@@ -883,10 +862,10 @@
    * Mounts a render as an object of the plan (C19, C20; the wire behaviour
    * of `insertDiagram`, `plan.js:1889-2053`).
    *
-   * The payload carries the drawing twice while S1 is half done: as the scene
-   * the painter mounts (`elements`) and as the string of the export (`svg`).
-   * The scene wins when it is there; a payload without one keeps the legacy
-   * branch, and the object it lands on is the same object either way (S7).
+   * The drawing arrives as the scene the painter mounts (`elements`); the SVG
+   * string of the export is not part of the wire (`f11-elementos.md` T3/C).
+   * A payload without a usable scene is a payload that cannot be drawn, and
+   * the object it would have landed on is never created (S7).
    */
   function insertDiagram(payload) {
     const p = payload || {};
@@ -898,27 +877,16 @@
       delete viewedVersion[p.diagram_id];
     }
     const scene = sceneFromPayload(p);
-    let width = 0;
-    let height = 0;
-    if (scene !== null) {
-      // The canvas of the scene is the rectangle of the drawing: no parse, no
-      // measuring, the size the layout already measured (S4).
-      width = scene.canvas.w;
-      height = scene.canvas.h;
-    } else {
-      const holder = document.createElement("div");
-      holder.innerHTML = p.svg || "";
-      // One parse here, at arrival: it validates the payload and reads the
-      // width/height the rectangle needs. The record keeps the STRING — the
-      // template's `{@html}` parses on each mount (T2).
-      const svg = holder.querySelector("svg");
-      if (!svg) {
-        emit(EVENTS.renderAck, { req_id: p.req_id, ok: false });
-        return;
-      }
-      width = Number.parseFloat(svg.getAttribute("width") || "0");
-      height = Number.parseFloat(svg.getAttribute("height") || "0");
+    if (scene === null) {
+      // There is nothing the painter can mount: the render is answered as
+      // not painted and the plan is left exactly as it was.
+      emit(EVENTS.renderAck, { req_id: p.req_id, ok: false });
+      return;
     }
+    // The canvas of the scene is the rectangle of the drawing: no parse, no
+    // measuring, the size the layout already measured (S4).
+    const width = scene.canvas.w;
+    const height = scene.canvas.h;
     // The render names the plan it belongs to (A2): that plan comes on
     // screen, so the human always sees what the agent just drew.
     const sessionId = typeof p.session_id === "string" ? p.session_id : "";
@@ -942,7 +910,6 @@
       w: width,
       h: height,
     };
-    rec.svg = scene === null ? p.svg || "" : null;
     rec.scene = scene;
     rec.rect = {
       x: center.x - width / 2 - OBJECT_PADDING,
@@ -1029,16 +996,8 @@
    * changes shape because of the history. The live drawing stays reachable on
    * the record for the restore.
    */
-  function paintPreview(rec, svgMarkup, width, height) {
-    centerContent(rec, width, height);
-    rec.previewScene = null;
-    rec.previewSvg = svgMarkup;
-  }
-
-  /** The same preview, painted by the element library (`f11-elementos.md` T2). */
-  function paintPreviewScene(rec, scene) {
+  function paintPreview(rec, scene) {
     centerContent(rec, scene.canvas.w, scene.canvas.h);
-    rec.previewSvg = null;
     rec.previewScene = scene;
   }
 
@@ -1058,10 +1017,9 @@
 
   /** Brings the live drawing back: the preview leaves the plan (C26). */
   function restoreLive(rec) {
-    if (!rec || (!rec.previewSvg && !rec.previewScene)) {
+    if (!rec || !rec.previewScene) {
       return;
     }
-    rec.previewSvg = null;
     rec.previewScene = null;
     // The styles of the live drawing come from the rectangle Rust placed: the
     // SVG sits one padding inside the object, as at insert time.
@@ -1086,20 +1044,14 @@
     if (viewed === undefined || viewed !== Number(payload.version)) {
       return;
     }
-    // The version of the history arrives as the drawing of its day: elements
-    // once the preview carries them, the string of the export until then.
+    // The version of the history arrives as the drawing of its day: the same
+    // scene the live render carries (`f11-elementos.md` T3/C relays it), and a
+    // payload the painter cannot mount leaves the object as it is.
     const scene = sceneFromPayload(payload);
-    if (scene !== null) {
-      paintPreviewScene(rec, scene);
+    if (scene === null) {
       return;
     }
-    const holder = document.createElement("div");
-    holder.innerHTML = payload.svg || "";
-    const svg = holder.querySelector("svg");
-    if (!svg) {
-      return;
-    }
-    paintPreview(rec, payload.svg || "", Number.parseFloat(svg.getAttribute("width") || "0"), Number.parseFloat(svg.getAttribute("height") || "0"));
+    paintPreview(rec, scene);
   }
 
   // --- clones of the user plan (plan.js:1510-1877) ----------------------------
@@ -1166,31 +1118,16 @@
 
   /** Mounts the drawing the owner rendered for a clone (B1, B2). */
   function mountCloneDrawing(rec, paint) {
-    // The scene wins when the payload carries one (`f11-elementos.md` T2); the
-    // string of the export is the other branch of the same door.
+    // The clone paint relays the same scene the render does
+    // (`f11-elementos.md` T3/C); a payload without one has nothing to mount.
     const scene = sceneFromPayload(paint);
-    if (scene !== null) {
-      // A **new** drawing, not the one that left the page: the culling
-      // re-decides right after.
-      rec.scene = scene;
-      rec.svg = null;
-      rec.previewScene = null;
-      rec.previewSvg = null;
-      rec.culled = false;
+    if (scene === null) {
       return;
     }
-    const holder = document.createElement("div");
-    holder.innerHTML = paint.svg || "";
-    // The parse validates; the record keeps the string (T2).
-    if (!holder.querySelector("svg")) {
-      return;
-    }
-    // A **new** drawing, not the one that left the page: `{@html}` swaps the
-    // tree and the culling re-decides right after.
-    rec.scene = null;
-    rec.svg = paint.svg || "";
+    // A **new** drawing, not the one that left the page: the culling
+    // re-decides right after.
+    rec.scene = scene;
     rec.previewScene = null;
-    rec.previewSvg = null;
     rec.culled = false;
   }
 
@@ -1206,7 +1143,7 @@
     // A paint without a drawing is an answer with nothing new to draw: the
     // clone the human asked for already exists (L6) or its photo is the only
     // drawing left (S4), so the page keeps what it shows.
-    if (p.svg || p.elements) {
+    if (p.elements) {
       mountCloneDrawing(rec, p);
       // The truth about what the clone shows is the owner's: the snapshot ends
       // the browsing, an older version is a preview of the history (C33).
@@ -1323,7 +1260,7 @@
       // that came back to life — asks the owner for the version it keeps.
       // A clone whose original closed has nothing to ask (`updatable` is
       // false), so the object keeps its box.
-      if (!rec.svg && !rec.scene && clone.updatable) {
+      if (!rec.scene && clone.updatable) {
         emit(EVENTS.cloneView, {
           clone_id: clone.clone_id,
           version: clone.snapshot_version,
@@ -1624,14 +1561,12 @@
         >
           <!-- The drawing, before the tools so the `×` of a diagram keeps
                painting above it (the prepend order the action kept). The scene
-               of the drawing (`f11-elementos.md` T2) mounts as keyed elements;
-               the string branch stays `{@html}` — one re-parse per mount,
-               measured at 1.47 ms over the 300-node fixture, under the agreed
-               ~3 ms. Both live on the same culling flag (`drawingInView`). -->
-          {#if drawing !== null && drawing.scene}
-            <DiagramScene scene={drawing.scene} />
-          {:else if drawing !== null && drawing.markup}
-            {@html drawing.markup}
+               of the drawing (`f11-elementos.md` T2) mounts as keyed elements,
+               and it is the only shape: the `{@html}` branch of the string era
+               died with the flip of T3/C. It lives on the culling flag of
+               `drawingInView`. -->
+          {#if drawing !== null}
+            <DiagramScene scene={drawing} />
           {/if}
           {#if rec.kind === "diagram"}
             <!-- The `×` of the object (PRD §7 RF28): it shows up when the

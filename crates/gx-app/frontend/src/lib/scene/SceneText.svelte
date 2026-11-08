@@ -17,7 +17,7 @@
     x={paint.x}
     y={paint.baselines[0]}
     font-size={paint.size}
-    text-anchor={paint.anchor}
+    text-anchor={paint.anchor ?? undefined}
     dominant-baseline={paint.dominantBaseline}
     font-weight={paint.weight ?? undefined}>{paint.lines[0]}</text
   >
@@ -25,7 +25,7 @@
   <text
     class={paint.classes}
     font-size={paint.size}
-    text-anchor={paint.anchor}
+    text-anchor={paint.anchor ?? undefined}
     dominant-baseline={paint.dominantBaseline}
     font-weight={paint.weight ?? undefined}
   >

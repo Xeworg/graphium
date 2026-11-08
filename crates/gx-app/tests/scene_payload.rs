@@ -7,8 +7,9 @@
 //! - the scene mirrors the drawing (canvas, ids, boxes, orders, bands, events),
 //! - the size of a node is the one the layout measured (S4), never a number the
 //!   JS would have to compute,
-//! - the payload of the window carries it beside `svg`, and the export path
-//!   carries none (S2),
+//! - the payload of the window carries it and the export path carries none
+//!   (S2; after the flip of T3/C the string is not a runtime payload any
+//!   more),
 //! - the payload weighs what the feature doc says it weighs: the numbers of
 //!   `L4` come out of [`the_scene_of_three_hundred_nodes_weighs_less_than_the_svg`].
 
@@ -240,15 +241,14 @@ fn the_export_does_not_build_a_scene() {
     );
 }
 
-/// T1: the payload of the window carries the scene beside the SVG string, and
-/// nothing of the old payload moves.
+/// T3/C: the payload of the window carries the scene, and the SVG string of
+/// the export is not part of the runtime wire any more (S1).
 #[test]
-fn the_render_payload_carries_the_scene_beside_the_svg() {
+fn the_render_payload_carries_the_scene() {
     install_engines();
-    let painted: Arc<Mutex<Vec<Option<gx_core::Scene>>>> = Arc::new(Mutex::new(Vec::new()));
+    let painted: Arc<Mutex<Vec<gx_core::Scene>>> = Arc::new(Mutex::new(Vec::new()));
     let recorder = Arc::clone(&painted);
     let hook: RenderHook = Arc::new(move |payload: &RenderHookPayload| {
-        assert!(!payload.svg.is_empty(), "the string is still there");
         recorder
             .lock()
             .expect("the recorder is not poisoned")
@@ -270,11 +270,7 @@ fn the_render_payload_carries_the_scene_beside_the_svg() {
         .lock()
         .expect("the recorder is not poisoned")
         .clone();
-    let scene = scenes
-        .first()
-        .expect("the hook ran")
-        .clone()
-        .expect("the payload carries the scene");
+    let scene = scenes.first().expect("the hook ran").clone();
     assert_eq!(scene.nodes.len(), 5);
     assert_eq!(scene.edges.len(), 4);
     assert_eq!(scene.bands.len(), 2);

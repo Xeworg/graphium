@@ -415,10 +415,10 @@ pub struct RenderMetrics {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderOutcome {
     pub svg: String,
-    /// The structured drawing the window mounts, beside the SVG string
-    /// (`f11-elementos.md`, T1/S3). Additive and optional on purpose: the
-    /// export is a file and needs no scene (S2), and a renderer that does not
-    /// build one reports `None` instead of failing the render.
+    /// The structured drawing the window mounts, beside the SVG string of the
+    /// export (`f11-elementos.md`, T1/S3). Additive and optional on purpose:
+    /// the export is a file and needs no scene (S2), and a renderer that does
+    /// not build one reports `None` instead of failing the render.
     pub elements: Option<Scene>,
     pub layout: LayoutGraph,
     pub bbox: Rect,
@@ -429,13 +429,15 @@ pub struct RenderOutcome {
 pub trait SvgRenderer: Send + Sync {
     fn render(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> String;
 
-    /// The structured drawing, as data, beside the SVG string
-    /// (`f11-elementos.md`, T1/S3).
+    /// The structured drawing, as data (`f11-elementos.md`, T1/S3).
     ///
-    /// The default is `None`: a renderer that only knows how to write a string
-    /// keeps working, and the window falls back to the legacy `{@html}` branch
-    /// until task C. The real renderer builds it from the same math as its
-    /// emitter, so the two drawings cannot drift apart.
+    /// Since the flip of T3/C this is the drawing the window mounts: the SVG
+    /// string is the export artifact and never reaches the paint path. The
+    /// default is `None` for a renderer that only knows how to write a string;
+    /// such a renderer cannot paint, and the render reports it instead of
+    /// handing the window a payload it could not mount. The real renderer
+    /// builds the scene from the same math as its emitter, so the two drawings
+    /// cannot drift apart.
     fn scene(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> Option<Scene> {
         let _ = (ir, layout, palette);
         None

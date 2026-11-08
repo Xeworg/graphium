@@ -1,0 +1,266 @@
+{
+  "canvas": {
+    "x": 0.0,
+    "y": 0.0,
+    "w": 399.2236328125,
+    "h": 244.5
+  },
+  "tokens": {
+    "text_size": 14.0,
+    "node_padding": 12.0,
+    "corner_radius": 6.0,
+    "border_width": 1.0,
+    "line_height": 1.25,
+    "regular_weight": 400,
+    "semibold_weight": 600,
+    "arrow_length": 10.0,
+    "crow_foot": 22.0,
+    "crow_foot_spread": 0.85,
+    "badge_width": 26.0,
+    "muted_opacity": 0.55,
+    "lifeline_dash": [
+      4.0,
+      4.0
+    ],
+    "dash_pattern": [
+      6.0,
+      4.0
+    ],
+    "group_dash": [
+      8.0,
+      5.0
+    ]
+  },
+  "direction": "TB",
+  "layout_hint": "tree",
+  "palette": {
+    "source": "css-vars",
+    "theme": "dark",
+    "bg": "var(--bg)",
+    "node_fill": "var(--node-fill)",
+    "node_stroke": "var(--node-stroke)",
+    "node_text": "var(--node-text)",
+    "edge_stroke": "var(--edge-stroke)",
+    "edge_text": "var(--edge-text)",
+    "accent": "var(--accent)"
+  },
+  "nodes": [
+    {
+      "id": "g-Graphium",
+      "label": "Graphium",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 199.61181640625,
+        "y": 20.75
+      },
+      "size": {
+        "w": 90.103515625,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-Graphium/MCP",
+      "label": "MCP",
+      "shape": "rounded",
+      "emphasis": "highlight",
+      "style": "solid",
+      "center": {
+        "x": 87.86962890625,
+        "y": 122.25
+      },
+      "size": {
+        "w": 56.2587890625,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-Graphium/MCP/harness",
+      "label": "harness",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 136.47412109375,
+        "y": 223.75
+      },
+      "size": {
+        "w": 78.5302734375,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-Graphium/MCP/tools",
+      "label": "tools",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 28.6044921875,
+        "y": 223.75
+      },
+      "size": {
+        "w": 57.208984375,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-Graphium/Plano",
+      "label": "Plano",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 307.4814453125,
+        "y": 122.25
+      },
+      "size": {
+        "w": 61.8232421875,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-Graphium/Plano/culling",
+      "label": "culling",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 364.70263671875,
+        "y": 223.75
+      },
+      "size": {
+        "w": 69.0419921875,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-Graphium/Plano/cámara",
+      "label": "cámara",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 252.96044921875,
+        "y": 223.75
+      },
+      "size": {
+        "w": 74.4423828125,
+        "h": 41.5
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "m-Graphium-Graphium/MCP",
+      "from": "Graphium",
+      "to": "Graphium/MCP",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": false,
+      "points": [
+        {
+          "x": 199.61181640625,
+          "y": 41.5
+        },
+        {
+          "x": 87.86962890625,
+          "y": 101.5
+        }
+      ]
+    },
+    {
+      "id": "m-Graphium-Graphium/Plano",
+      "from": "Graphium",
+      "to": "Graphium/Plano",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": false,
+      "points": [
+        {
+          "x": 199.61181640625,
+          "y": 41.5
+        },
+        {
+          "x": 307.4814453125,
+          "y": 101.5
+        }
+      ]
+    },
+    {
+      "id": "m-Graphium/MCP-Graphium/MCP/harness",
+      "from": "Graphium/MCP",
+      "to": "Graphium/MCP/harness",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": false,
+      "points": [
+        {
+          "x": 87.86962890625,
+          "y": 143.0
+        },
+        {
+          "x": 136.47412109375,
+          "y": 203.0
+        }
+      ]
+    },
+    {
+      "id": "m-Graphium/MCP-Graphium/MCP/tools",
+      "from": "Graphium/MCP",
+      "to": "Graphium/MCP/tools",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": false,
+      "points": [
+        {
+          "x": 87.86962890625,
+          "y": 143.0
+        },
+        {
+          "x": 28.6044921875,
+          "y": 203.0
+        }
+      ]
+    },
+    {
+      "id": "m-Graphium/Plano-Graphium/Plano/culling",
+      "from": "Graphium/Plano",
+      "to": "Graphium/Plano/culling",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": false,
+      "points": [
+        {
+          "x": 307.4814453125,
+          "y": 143.0
+        },
+        {
+          "x": 364.70263671875,
+          "y": 203.0
+        }
+      ]
+    },
+    {
+      "id": "m-Graphium/Plano-Graphium/Plano/cámara",
+      "from": "Graphium/Plano",
+      "to": "Graphium/Plano/cámara",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": false,
+      "points": [
+        {
+          "x": 307.4814453125,
+          "y": 143.0
+        },
+        {
+          "x": 252.96044921875,
+          "y": 203.0
+        }
+      ]
+    }
+  ],
+  "bands": [],
+  "events": []
+}

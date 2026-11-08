@@ -424,6 +424,8 @@ export function textPaint({
   x = 0,
   classes = "",
   size = 14,
+  // `null` is the SVG default (`start`): the attribute is omitted, exactly as
+  // the emitter omits it on the rows of a table.
   anchor = "middle",
   weight = null,
   dominantBaseline = "central",
@@ -505,7 +507,7 @@ export function nodePaint(node, tokens) {
             x: table.badge_x,
             classes: "row-badge text",
             size: tokens.text_size * 0.85,
-            anchor: "start",
+            anchor: null,
           }),
           name: textPaint({
             lines: [row.text],
@@ -513,7 +515,7 @@ export function nodePaint(node, tokens) {
             x: table.name_x,
             classes: rowNameClasses(row),
             size: tokens.text_size,
-            anchor: "start",
+            anchor: null,
           }),
           note:
             row.note === null

@@ -4,11 +4,13 @@
 //! ([`gx_core::engine::render_json`]): resolve the kind, validate against its
 //! schema, build the IR, lay out and render. There is no second pipeline here.
 //!
-//! The finished SVG is handed to the window through the render hook that
+//! The finished drawing is handed to the window through the render hook that
 //! `gx-app` installs (PRD §8.6.1 step 3): the hook emits
-//! `graphium://render { req_id, diagram_id, svg, place }` and answers whether
-//! the frontend confirmed the paint after two animation frames. Without a hook
-//! the diagram is rendered and stored but not painted.
+//! `graphium://render { req_id, diagram_id, elements, place }` and answers
+//! whether the frontend confirmed the paint after two animation frames. The
+//! drawing travels as a structured scene (`f11-elementos.md`, T3/C), never as
+//! the SVG string of the export. Without a hook the diagram is rendered and
+//! stored but not painted.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -174,14 +176,14 @@ pub use crate::contract::Warning;
 pub struct RenderHookPayload {
     pub diagram_id: String,
     pub kind: String,
-    pub svg: String,
-    /// The structured drawing beside the SVG string (`f11-elementos.md`, T1/S3).
+    /// The drawing, as the elements the window mounts (`f11-elementos.md`
+    /// T3/C).
     ///
-    /// Additive and strictly optional: the window mounts a scene when it is
-    /// there and keeps the legacy `{@html}` branch of `svg` when it is not, and
-    /// the export path never builds one (S2). No key of this payload is
-    /// rejected for being unknown, so the field breaks no consumer.
-    pub elements: Option<gx_core::Scene>,
+    /// The SVG string left this payload with the flip: it is the export
+    /// artifact (S2) and the window never parses it. A renderer that builds no
+    /// scene cannot paint, so the render reports it instead of sending a
+    /// payload the page could not mount.
+    pub elements: gx_core::Scene,
     /// Width of the diagram in plan units, from the layout bounding box.
     pub width: f64,
     /// Height of the diagram in plan units, from the layout bounding box.
@@ -791,23 +793,33 @@ fn render_inner(request: &RenderRequest, opts: &RenderOptions) -> RenderResponse
         }
     };
 
-    let status = match installed_hook() {
-        Some(hook) => hook(&RenderHookPayload {
+    let status = match (installed_hook(), outcome.elements) {
+        (Some(hook), Some(elements)) => hook(&RenderHookPayload {
             diagram_id: diagram_id.clone(),
             kind: kind.clone(),
-            svg: outcome.svg,
-            elements: outcome.elements,
+            elements,
             width,
             height,
             focus,
             metrics,
         }),
-        None => {
+        (None, _) => {
             warnings.push(Warning::new(
                 "no_window",
                 "the diagram was rendered and stored but not painted: no window hook is installed",
             ));
             RenderStatus::NoWindow
+        }
+        // The export is the only render that builds no scene (S2), and it
+        // never asks for the window. A renderer that reaches here without one
+        // has nothing the page could mount: the render is stored and reported
+        // as not painted, with the stable reason of a failed paint.
+        (Some(_), None) => {
+            warnings.push(Warning::new(
+                "ui_error",
+                "the renderer built no scene: there is no drawing for the window to mount",
+            ));
+            RenderStatus::Error
         }
     };
     if !status.painted() {
@@ -1241,7 +1253,11 @@ pub fn render_diagram_from_json(
 /// `unknown_diagram` like every tool that names an id that is not on the
 /// plan, and a version outside the saved range answers the same error as
 /// `get_diagram_version`.
-pub fn render_version_view(diagram_id: &str, version: u64) -> Result<String, ErrorPayload> {
+///
+/// The drawing comes back as the scene the window mounts (`f11-elementos.md`,
+/// T3/C): a version preview is one more render of the paint path, never a
+/// string the page parses (S2).
+pub fn render_version_view(diagram_id: &str, version: u64) -> Result<gx_core::Scene, ErrorPayload> {
     crate::bootstrap();
     let store = diagram_store();
 
@@ -1268,7 +1284,12 @@ pub fn render_version_view(diagram_id: &str, version: u64) -> Result<String, Err
             .map(ErrorPayload::from)
             .expect("a rejected document carries at least one error")
     })?;
-    Ok(outcome.svg)
+    outcome.elements.ok_or_else(|| ErrorPayload {
+        path: "diagram".to_string(),
+        code: ErrorCode::EngineUnavailable.as_str().to_string(),
+        message: "el motor de dibujo no produjo la escena que la ventana monta".to_string(),
+        hint: Some("instalá el motor de dibujo del producto".to_string()),
+    })
 }
 
 #[cfg(test)]
@@ -1649,11 +1670,16 @@ mod tests {
             .clone();
 
         let first = render_version_view(&diagram_id, 1).expect("la versión 1 existe");
-        assert!(first.contains("<svg"), "el preview es un SVG: {first:?}");
-        assert!(first.contains("read file"), "la v1 es el primer documento");
+        let labels = |scene: &gx_core::Scene| -> Vec<String> {
+            scene.nodes.iter().map(|node| node.label.clone()).collect()
+        };
+        assert_eq!(
+            labels(&first),
+            vec!["Config", "read file"],
+            "la v1 es el primer documento (las escenas van en orden de id)"
+        );
         let second = render_version_view(&diagram_id, 2).expect("la versión 2 existe");
-        assert!(second.contains("<svg"));
-        assert!(!second.contains("read file"), "la v2 es el reemplazo");
+        assert_eq!(labels(&second), vec!["A", "B"], "la v2 es el reemplazo");
 
         let after = diagram_store()
             .record(&diagram_id)
@@ -1861,10 +1887,11 @@ mod tests {
     fn a_big_diagram_is_degraded_and_the_warning_names_the_step() {
         let _guard = lock_renders_blocking();
 
-        let painted = Arc::new(Mutex::new(String::new()));
+        let painted = Arc::new(Mutex::new(None::<gx_core::Scene>));
         let recorder = Arc::clone(&painted);
         set_render_hook(Some(Arc::new(move |payload| {
-            *recorder.lock().expect("the recorder is not poisoned") = payload.svg.clone();
+            *recorder.lock().expect("the recorder is not poisoned") =
+                Some(payload.elements.clone());
             RenderStatus::Painted
         })));
 
@@ -1881,13 +1908,15 @@ mod tests {
             "the warning names the step: {}",
             degraded.message
         );
-        let svg = painted
+        let scene = painted
             .lock()
             .expect("the recorder is not poisoned")
-            .clone();
+            .clone()
+            .expect("the hook painted the chain");
         assert!(
-            !svg.contains("sigue"),
-            "step 1 omits the edge labels: {svg}"
+            scene.edges.iter().all(|edge| edge.label.is_none()),
+            "step 1 omits the edge labels: {:?}",
+            scene.edges.first()
         );
 
         set_render_hook(None);
@@ -2071,7 +2100,7 @@ mod tests {
                 .push((
                     payload.diagram_id.clone(),
                     payload.kind.clone(),
-                    payload.svg.clone(),
+                    payload.elements.nodes.len(),
                     payload.width,
                     payload.height,
                 ));
@@ -2089,40 +2118,12 @@ mod tests {
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].0, "d-0001");
         assert_eq!(seen[0].1, "graph");
-        assert!(seen[0].2.starts_with("<svg"), "{}", seen[0].2);
+        assert_eq!(
+            seen[0].2, 2,
+            "the payload carries the two nodes of the scene"
+        );
         assert!(seen[0].3 > 0.0);
         assert!(seen[0].4 > 0.0);
-
-        set_render_hook(None);
-    }
-
-    #[test]
-    fn a_renderer_without_a_scene_leaves_the_payload_as_it_was() {
-        let _guard = lock_renders_blocking();
-
-        // `f11-elementos.md` T1: the scene beside the SVG string is strictly
-        // optional. A renderer that builds none — this stub, or any third
-        // party one — leaves the field empty and the render works exactly as
-        // it did before the field existed.
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let recorder = Arc::clone(&seen);
-        let hook: RenderHook = Arc::new(move |payload| {
-            recorder
-                .lock()
-                .expect("the recorder is not poisoned")
-                .push(payload.elements.clone());
-            RenderStatus::Painted
-        });
-        set_render_hook(Some(hook));
-
-        let response = render(MINIMAL);
-
-        assert!(response.ok, "{response:?}");
-        assert!(response.rendered);
-        assert!(response.warnings.is_empty(), "{:?}", response.warnings);
-        let seen = seen.lock().expect("the recorder is not poisoned");
-        assert_eq!(seen.len(), 1, "the hook ran once");
-        assert_eq!(seen[0], None, "the stub renderer ships no scene");
 
         set_render_hook(None);
     }
@@ -2173,10 +2174,11 @@ mod tests {
     fn extract_renders_the_neighbourhood_and_names_the_parent() {
         let _guard = lock_renders_blocking();
 
-        let painted = Arc::new(Mutex::new(String::new()));
+        let painted = Arc::new(Mutex::new(None::<gx_core::Scene>));
         let recorder = Arc::clone(&painted);
         set_render_hook(Some(Arc::new(move |payload| {
-            *recorder.lock().expect("the recorder is not poisoned") = payload.svg.clone();
+            *recorder.lock().expect("the recorder is not poisoned") =
+                Some(payload.elements.clone());
             RenderStatus::Painted
         })));
 
@@ -2191,14 +2193,22 @@ mod tests {
         assert_eq!(metrics.nodes, 3, "the neighbourhood of n1 in a chain of 4");
         assert_eq!(metrics.edges, 2);
 
-        let svg = painted
+        let scene = painted
             .lock()
             .expect("the recorder is not poisoned")
-            .clone();
+            .clone()
+            .expect("the hook painted the subgraph");
+        let labels: Vec<&str> = scene.nodes.iter().map(|node| node.label.as_str()).collect();
         for inside in ["nodo 0", "nodo 1", "nodo 2"] {
-            assert!(svg.contains(inside), "the subgraph paints {inside}: {svg}");
+            assert!(
+                labels.contains(&inside),
+                "the subgraph paints {inside}: {labels:?}"
+            );
         }
-        assert!(!svg.contains("nodo 3"), "the far node stays out: {svg}");
+        assert!(
+            !labels.contains(&"nodo 3"),
+            "the far node stays out: {labels:?}"
+        );
 
         // Extract is a view, not an edit: the plane keeps the whole document.
         let stored = diagram_store()

@@ -212,12 +212,13 @@ pub struct ClonePaint {
     /// The version of the original the drawing shows: the current one after a
     /// refresh, an older one while the human browses the history.
     pub version: u64,
-    /// The drawing to mount, when the owner has a new one. Absent when there is
-    /// nothing new to draw — the clone the human asked for already exists and
-    /// the page keeps what it shows (L6), or its photo is the only drawing and
-    /// the original closed — so the page never blanks a clone (S4).
+    /// The drawing to mount, when the owner has a new one, as the elements the
+    /// painter mounts (`f11-elementos.md`, T3/C). Absent when there is nothing
+    /// new to draw — the clone the human asked for already exists and the page
+    /// keeps what it shows (L6), or its photo is the only drawing and the
+    /// original closed — so the page never blanks a clone (S4).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub svg: Option<String>,
+    pub elements: Option<gx_core::Scene>,
     /// Whether the page brings this clone on screen: the answer to a clone
     /// request — a new clone or the one that already exists — travels to it
     /// instead of leaving the human looking at another plan (L6). A version of
@@ -272,7 +273,7 @@ impl PlanState {
                 version: existing.snapshot_version,
                 // Nothing new to draw: the page keeps the drawing it has, and
                 // asks the owner for it again if it never had one.
-                svg: None,
+                elements: None,
                 bring: true,
             });
         }
@@ -285,14 +286,14 @@ impl PlanState {
             // store without one cannot be cloned.
             return Err(unknown_diagram(diagram_id, store));
         };
-        let svg = gx_mcp::tools::render_version_view(diagram_id, current)?;
+        let drawing = gx_mcp::tools::render_version_view(diagram_id, current)?;
 
         // A window that cannot tell its size places the clone against a view of
         // zero: the center of that view is the corner the camera looks at, and
         // the hand of the human moves it from there (B3).
         let occupied = self.clone_rects(None);
         let rect = camera::place_with_cascade(
-            svg_size(&svg),
+            drawing_size(&drawing),
             &self.camera(),
             viewport.unwrap_or_default(),
             &occupied,
@@ -315,7 +316,7 @@ impl PlanState {
         Ok(ClonePaint {
             entry,
             version: current,
-            svg: Some(svg),
+            elements: Some(drawing),
             bring: true,
         })
     }
@@ -355,13 +356,13 @@ impl PlanState {
         });
         // The read-only render also answers the error of an original that is
         // no longer on a plan: a photo cannot pull a version any more (S4).
-        let svg = gx_mcp::tools::render_version_view(&origin, target)?;
+        let drawing = gx_mcp::tools::render_version_view(&origin, target)?;
 
         let mut updated = found;
         if target > updated.snapshot_version {
             // The photo grew: recalculate its place inside the user plan, with
             // the places of the other clones as the only obstacles.
-            let size = camera::object_size(svg_size(&svg));
+            let size = camera::object_size(drawing_size(&drawing));
             let occupied = self.clone_rects(Some(clone_id));
             let rect = place_with_cascade_from(updated.pos, size, &occupied);
             updated.pos = Point::new(rect.x, rect.y);
@@ -389,7 +390,7 @@ impl PlanState {
         Ok(ClonePaint {
             entry,
             version: target,
-            svg: Some(svg),
+            elements: Some(drawing),
             // A version of the history never moves the camera: the human is
             // already looking at the clone (B2, B3).
             bring: false,
@@ -463,23 +464,14 @@ fn unknown_clone(clone_id: &str) -> gx_mcp::tools::ErrorPayload {
     }
 }
 
-/// The size of a drawing, in plan units: the `width`/`height` of its root
-/// `<svg>`, which the renderer always writes (PRD §7.2). A drawing without
-/// them contributes no size, the way a diagram without geometry contributes no
-/// rectangle.
-fn svg_size(svg: &str) -> Size {
-    let attribute = |name: &str| {
-        let needle = format!("{name}=\"");
-        svg.find(&needle).and_then(|at| {
-            let rest = &svg[at + needle.len()..];
-            let end = rest.find('"')?;
-            rest[..end].parse::<f64>().ok()
-        })
-    };
-    Size::new(
-        attribute("width").unwrap_or_default(),
-        attribute("height").unwrap_or_default(),
-    )
+/// The size of a drawing, in plan units: the canvas of the scene, which is
+/// the bounding box the layout measured (PRD §7.2).
+///
+/// The scene carries the rectangle, so the window never parses an SVG string
+/// to learn how big a clone is: `svg_size`, the string archaeology of the SVG
+/// era, died with the flip of `f11-elementos.md` T3/C.
+fn drawing_size(scene: &gx_core::Scene) -> Size {
+    Size::new(scene.canvas.w, scene.canvas.h)
 }
 
 /// Where a clone goes when its photo grew (S4): it keeps the place the human
@@ -540,12 +532,10 @@ struct RenderEvent {
     /// (`f8-planos.md`, A1/A2). The page brings that plan on screen; the
     /// state that names the session arrives only after the acknowledgement.
     session_id: String,
-    svg: String,
-    /// The structured scene (f11): the same drawing as elements. Strictly
-    /// optional and additive — the frontend reads `svg` until T2/B picks the
-    /// scene up.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    elements: Option<gx_core::Scene>,
+    /// The drawing as the elements the window mounts (`f11-elementos.md`,
+    /// T3/C). The SVG string of the export is not part of the runtime wire: the
+    /// page parses nothing (S1, S2).
+    elements: gx_core::Scene,
     /// Where the diagram goes in plan units: the center of the view it
     /// arrived in (PRD §7.2, `place`). Absent when the window size is
     /// unknown: the plan then places it at its own center.
@@ -784,13 +774,13 @@ pub fn build(keep_alive: bool, start_window: bool) -> (tauri::App<tauri::Wry>, A
             return;
         };
         match gx_mcp::tools::render_version_view(&payload.diagram_id, payload.version) {
-            Ok(svg) => {
+            Ok(elements) => {
                 let _ = version_handle.emit(
                     "graphium://version-paint",
                     serde_json::json!({
                         "diagram_id": payload.diagram_id,
                         "version": payload.version,
-                        "svg": svg,
+                        "elements": elements,
                     }),
                 );
             }
@@ -1152,7 +1142,6 @@ pub fn install_render_hook(handle: tauri::AppHandle, state: Arc<PlanState>) {
             req_id: req_id.clone(),
             diagram_id: payload.diagram_id.clone(),
             session_id,
-            svg: payload.svg.clone(),
             elements: payload.elements.clone(),
             placement: placement.map(|rect| Placement {
                 x: rect.x,
@@ -1445,14 +1434,16 @@ mod tests {
     /// A2: el evento del render nombra la sesión que lo dibujó. La página
     /// necesita esa clave para poner en pantalla el plano de esa sesión: el
     /// estado que la trae llega recién después del acuse.
+    ///
+    /// `f11-elementos.md` T3/C: el dibujo del evento es la escena, y la cadena
+    /// SVG de la exportación ya no viaja por el cable de la ventana.
     #[test]
     fn the_render_names_the_plan_of_the_diagram() {
         let event = RenderEvent {
             req_id: "req-1".to_string(),
             diagram_id: "d-0001".to_string(),
             session_id: "pi-1".to_string(),
-            svg: "<svg/>".to_string(),
-            elements: None,
+            elements: scene_for_the_tests(),
             placement: None,
             camera: None,
             focus: None,
@@ -1461,6 +1452,25 @@ mod tests {
         let json = serde_json::to_value(&event).expect("the render serializes");
 
         assert_eq!(json["session_id"], "pi-1");
+        assert!(
+            json["elements"]["canvas"]["w"].is_number(),
+            "the drawing travels as the scene: {json}"
+        );
+        assert!(
+            json.get("svg").is_none(),
+            "the SVG string is not a runtime payload any more (S1): {json}"
+        );
+    }
+
+    /// The scene of the little document of the user-plan tests, built by the
+    /// real engines: the same drawing the window would mount.
+    fn scene_for_the_tests() -> gx_core::Scene {
+        crate::install_engines().expect("the engines of the application are installed");
+        gx_mcp::bootstrap();
+        gx_core::engine::render_json(MINIMAL, &gx_core::render::RenderOpts::default())
+            .expect("the test document renders")
+            .elements
+            .expect("the paint path builds a scene")
     }
 
     /// Un documento chiquito para el plano del usuario: el dueño lo dibuja

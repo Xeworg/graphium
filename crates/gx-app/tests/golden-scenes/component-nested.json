@@ -1,0 +1,229 @@
+{
+  "canvas": {
+    "x": 0.0,
+    "y": 0.0,
+    "w": 310.05029296875,
+    "h": 444.5
+  },
+  "tokens": {
+    "text_size": 14.0,
+    "node_padding": 12.0,
+    "corner_radius": 6.0,
+    "border_width": 1.0,
+    "line_height": 1.25,
+    "regular_weight": 400,
+    "semibold_weight": 600,
+    "arrow_length": 10.0,
+    "crow_foot": 22.0,
+    "crow_foot_spread": 0.85,
+    "badge_width": 26.0,
+    "muted_opacity": 0.55,
+    "lifeline_dash": [
+      4.0,
+      4.0
+    ],
+    "dash_pattern": [
+      6.0,
+      4.0
+    ],
+    "group_dash": [
+      8.0,
+      5.0
+    ]
+  },
+  "direction": "TB",
+  "layout_hint": "layered",
+  "palette": {
+    "source": "css-vars",
+    "theme": "dark",
+    "bg": "var(--bg)",
+    "node_fill": "var(--node-fill)",
+    "node_stroke": "var(--node-stroke)",
+    "node_text": "var(--node-text)",
+    "edge_stroke": "var(--edge-stroke)",
+    "edge_text": "var(--edge-text)",
+    "accent": "var(--accent)"
+  },
+  "nodes": [
+    {
+      "id": "g-api",
+      "label": "API",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 181.8896484375,
+        "y": 232.75
+      },
+      "size": {
+        "w": 47.091796875,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-db",
+      "label": "Postgres",
+      "shape": "cylinder",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 216.08837890625,
+        "y": 371.75
+      },
+      "size": {
+        "w": 83.923828125,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-pagos",
+      "label": "Pagos",
+      "shape": "box",
+      "emphasis": "normal",
+      "style": "dashed",
+      "center": {
+        "x": 32.958984375,
+        "y": 371.75
+      },
+      "size": {
+        "w": 65.91796875,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-web",
+      "label": "Web",
+      "shape": "box",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 181.8896484375,
+        "y": 53.75
+      },
+      "size": {
+        "w": 54.5908203125,
+        "h": 41.5
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "m-api-db",
+      "from": "api",
+      "to": "db",
+      "label": "SQL",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 192.10006077169515,
+          "y": 253.5
+        },
+        {
+          "x": 216.08837890625,
+          "y": 302.25
+        },
+        {
+          "x": 216.08837890625,
+          "y": 351.0
+        }
+      ],
+      "label_at": {
+        "x": 239.89013671875,
+        "y": 302.25
+      }
+    },
+    {
+      "id": "m-api-pagos",
+      "from": "api",
+      "to": "pagos",
+      "label": "cobro",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 171.67923610330485,
+          "y": 253.5
+        },
+        {
+          "x": 147.69091796875,
+          "y": 302.25
+        },
+        {
+          "x": 65.91796875,
+          "y": 351.7847702482434
+        }
+      ],
+      "label_at": {
+        "x": 176.8896484375,
+        "y": 302.25
+      }
+    },
+    {
+      "id": "m-web-api",
+      "from": "web",
+      "to": "api",
+      "label": "HTTPS",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 181.8896484375,
+          "y": 74.5
+        },
+        {
+          "x": 181.8896484375,
+          "y": 123.25
+        },
+        {
+          "x": 181.8896484375,
+          "y": 172.0
+        },
+        {
+          "x": 181.8896484375,
+          "y": 212.0
+        }
+      ],
+      "label_at": {
+        "x": 215.0908203125,
+        "y": 123.25
+      }
+    }
+  ],
+  "bands": [
+    {
+      "id": "cluster-plataforma",
+      "label": "Plataforma",
+      "bbox": {
+        "x": 93.91796875,
+        "y": 0.0,
+        "w": 216.13232421875,
+        "h": 444.5
+      },
+      "depth": 0,
+      "members": [
+        "web",
+        "servicio"
+      ]
+    },
+    {
+      "id": "cluster-servicio",
+      "label": "Servicio",
+      "bbox": {
+        "x": 105.91796875,
+        "y": 172.0,
+        "w": 192.13232421875,
+        "h": 260.5
+      },
+      "depth": 1,
+      "members": [
+        "api",
+        "db"
+      ]
+    }
+  ],
+  "events": []
+}

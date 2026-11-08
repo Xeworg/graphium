@@ -1,0 +1,221 @@
+{
+  "canvas": {
+    "x": 0.0,
+    "y": 0.0,
+    "w": 129.62890625,
+    "h": 458.5
+  },
+  "tokens": {
+    "text_size": 14.0,
+    "node_padding": 12.0,
+    "corner_radius": 6.0,
+    "border_width": 1.0,
+    "line_height": 1.25,
+    "regular_weight": 400,
+    "semibold_weight": 600,
+    "arrow_length": 10.0,
+    "crow_foot": 22.0,
+    "crow_foot_spread": 0.85,
+    "badge_width": 26.0,
+    "muted_opacity": 0.55,
+    "lifeline_dash": [
+      4.0,
+      4.0
+    ],
+    "dash_pattern": [
+      6.0,
+      4.0
+    ],
+    "group_dash": [
+      8.0,
+      5.0
+    ]
+  },
+  "direction": "TB",
+  "layout_hint": "layered",
+  "palette": {
+    "source": "css-vars",
+    "theme": "dark",
+    "bg": "var(--bg)",
+    "node_fill": "var(--node-fill)",
+    "node_stroke": "var(--node-stroke)",
+    "node_text": "var(--node-text)",
+    "edge_stroke": "var(--edge-stroke)",
+    "edge_text": "var(--edge-text)",
+    "accent": "var(--accent)"
+  },
+  "nodes": [
+    {
+      "id": "g-cerrado",
+      "label": "cerrado",
+      "shape": "ellipse",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 64.814453125,
+        "y": 437.75
+      },
+      "size": {
+        "w": 76.85546875,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-enviado",
+      "label": "enviado",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 64.814453125,
+        "y": 298.75
+      },
+      "size": {
+        "w": 77.7919921875,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-nuevo",
+      "label": "nuevo",
+      "shape": "ellipse",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 64.814453125,
+        "y": 20.75
+      },
+      "size": {
+        "w": 65.6376953125,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-pago",
+      "label": "pago pendiente",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 64.814453125,
+        "y": 159.75
+      },
+      "size": {
+        "w": 129.62890625,
+        "h": 41.5
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "m-enviado-cerrado",
+      "from": "enviado",
+      "to": "cerrado",
+      "label": "entregar",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 64.814453125,
+          "y": 319.5
+        },
+        {
+          "x": 64.814453125,
+          "y": 368.25
+        },
+        {
+          "x": 64.814453125,
+          "y": 417.0
+        }
+      ],
+      "label_at": {
+        "x": 102.7802734375,
+        "y": 368.25
+      }
+    },
+    {
+      "id": "m-nuevo-pago",
+      "from": "nuevo",
+      "to": "pago",
+      "label": "crear",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 76.70456349763938,
+          "y": 41.5
+        },
+        {
+          "x": 104.63916015625,
+          "y": 90.25
+        },
+        {
+          "x": 76.70456349763938,
+          "y": 139.0
+        }
+      ],
+      "label_at": {
+        "x": 131.87255859375,
+        "y": 90.25
+      }
+    },
+    {
+      "id": "m-pago-enviado",
+      "from": "pago",
+      "to": "enviado",
+      "label": "pagar",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 64.814453125,
+          "y": 180.5
+        },
+        {
+          "x": 64.814453125,
+          "y": 229.25
+        },
+        {
+          "x": 64.814453125,
+          "y": 278.0
+        }
+      ],
+      "label_at": {
+        "x": 93.95849609375,
+        "y": 229.25
+      }
+    },
+    {
+      "id": "m-pago-nuevo",
+      "from": "pago",
+      "to": "nuevo",
+      "label": "timeout",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 52.924342752360616,
+          "y": 139.0
+        },
+        {
+          "x": 24.98974609375,
+          "y": 90.25
+        },
+        {
+          "x": 52.924342752360616,
+          "y": 41.5
+        }
+      ],
+      "label_at": {
+        "x": 59.814453125,
+        "y": 90.25
+      }
+    }
+  ],
+  "bands": [],
+  "events": []
+}

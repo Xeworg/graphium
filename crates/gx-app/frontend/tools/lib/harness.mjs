@@ -257,6 +257,16 @@ export function helperSource(mode) {
     const element = q(selector);
     return element === null ? null : !element.classList.contains('hidden');
   };
+  // The label of the single node of a scene fixture: how a probe names one
+  // mounted drawing since f11-elementos.md T3/C. The data-marker of the string
+  // era died with the flip: the drawing is elements now.
+  const markerOf = (element) => {
+    if (element === null || element === undefined) return null;
+    const svg = element.localName === 'svg' ? element : element.querySelector('svg.graphium');
+    if (svg === null) return null;
+    const text = svg.querySelector('text');
+    return text === null ? null : text.textContent.trim();
+  };
   const emitted = (name) => h.emitted.filter((entry) => entry.name === name).map((entry) => entry.payload);
   const count = (name) => h.emitted.filter((entry) => entry.name === name).length;
   const rust = (name, payload) => {
@@ -299,7 +309,7 @@ export function helperSource(mode) {
   };
   const timeout = q('#settings-panel');
   Object.assign(window.__t, {
-    wait, q, all, byId, text, attr, shown, emitted, count, rust, expect, cam, near, click, key, input,
+    wait, q, all, byId, text, attr, shown, markerOf, emitted, count, rust, expect, cam, near, click, key, input,
     ready: () => h.readySeen,
     settle: () => wait(40),
   });

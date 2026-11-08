@@ -1,0 +1,142 @@
+{
+  "canvas": {
+    "x": 0.0,
+    "y": 0.0,
+    "w": 376.990234375,
+    "h": 41.5
+  },
+  "tokens": {
+    "text_size": 14.0,
+    "node_padding": 12.0,
+    "corner_radius": 6.0,
+    "border_width": 1.0,
+    "line_height": 1.25,
+    "regular_weight": 400,
+    "semibold_weight": 600,
+    "arrow_length": 10.0,
+    "crow_foot": 22.0,
+    "crow_foot_spread": 0.85,
+    "badge_width": 26.0,
+    "muted_opacity": 0.55,
+    "lifeline_dash": [
+      4.0,
+      4.0
+    ],
+    "dash_pattern": [
+      6.0,
+      4.0
+    ],
+    "group_dash": [
+      8.0,
+      5.0
+    ]
+  },
+  "direction": "LR",
+  "layout_hint": "layered",
+  "palette": {
+    "source": "css-vars",
+    "theme": "dark",
+    "bg": "var(--bg)",
+    "node_fill": "var(--node-fill)",
+    "node_stroke": "var(--node-stroke)",
+    "node_text": "var(--node-text)",
+    "edge_stroke": "var(--edge-stroke)",
+    "edge_text": "var(--edge-text)",
+    "accent": "var(--accent)"
+  },
+  "nodes": [
+    {
+      "id": "g-core",
+      "label": "gx-core",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 194.5927734375,
+        "y": 20.75
+      },
+      "size": {
+        "w": 77.12890625,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-in",
+      "label": "entrada",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 38.01416015625,
+        "y": 20.75
+      },
+      "size": {
+        "w": 76.0283203125,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-out",
+      "label": "salida",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 345.07373046875,
+        "y": 20.75
+      },
+      "size": {
+        "w": 63.8330078125,
+        "h": 41.5
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "m-core-out",
+      "from": "core",
+      "to": "out",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 233.1572265625,
+          "y": 20.75
+        },
+        {
+          "x": 273.1572265625,
+          "y": 20.75
+        },
+        {
+          "x": 313.1572265625,
+          "y": 20.75
+        }
+      ]
+    },
+    {
+      "id": "m-in-core",
+      "from": "in",
+      "to": "core",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 76.0283203125,
+          "y": 20.75
+        },
+        {
+          "x": 116.0283203125,
+          "y": 20.75
+        },
+        {
+          "x": 156.0283203125,
+          "y": 20.75
+        }
+      ]
+    }
+  ],
+  "bands": [],
+  "events": []
+}

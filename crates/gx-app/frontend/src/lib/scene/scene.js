@@ -2,10 +2,10 @@
 //
 // `sceneFromPayload(payload)` takes a `graphium://render` payload and answers
 // the scene the plan mounts, or `null` when the payload carries no usable
-// scene — and `null` is the switch that keeps the legacy `{@html}` branch of
-// `App.svelte` alive until the flip of T3/C. Both paths live in the same
-// template on purpose: the window can be handed either wire during the
-// transition and it paints whichever one arrives.
+// scene. Since the flip of T3/C the scene is the only shape of the wire: the
+// `{@html}` branch of the string era is gone, so `null` means "there is
+// nothing this painter can mount" and the page answers the render as not
+// painted instead of painting a broken drawing.
 //
 // Three rules decide this module:
 //
@@ -383,9 +383,10 @@ export function sceneFromElements(raw) {
 /**
  * The scene a render payload carries, or `null`.
  *
- * `null` is the answer for every payload of the string era: it has no
- * `elements`, so the template paints `{@html}` exactly as it did before this
- * task (S1 is half done by construction until T3/C).
+ * `null` is the answer for a payload with no usable scene. Since the flip of
+ * T3/C every runtime payload carries one (`graphium://render`,
+ * `graphium://version-paint` and `graphium://clone-paint`), and a payload
+ * without it has nothing the plan could mount.
  */
 export function sceneFromPayload(payload) {
   if (!isRecord(payload)) {
