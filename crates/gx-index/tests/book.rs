@@ -991,13 +991,14 @@ fn the_book_refuses_a_chapter_of_a_language_the_registry_does_not_know() {
         panic!("a build without a grammar cannot open a book");
     };
     let valid = gx_index::lang::parse(&path, text.as_bytes(), 0).expect("a chapter of the build");
-    // A language no grammar of this build answers: one of a later batch, taken
-    // from the list and not hard-coded, so the test keeps meaning whichever
-    // features built the registry.
-    let unknown_lang = ["kotlin", "swift", "dart", "scala", "zig"]
+    // A language no grammar of this build answers: taken from the alternates of
+    // the approved list that no batch landed, and not hard-coded, so the test
+    // keeps meaning whichever features built the registry (T3 Batch 4 closed
+    // the list of twenty: every one of them is a grammar of the default build).
+    let unknown_lang = ["julia", "elixir", "ocaml", "objectivec"]
         .into_iter()
         .find(|lang| gx_index::lang::grammar(lang).is_none())
-        .expect("a language of a later batch is not in this build");
+        .expect("a language outside the approved list is not in this build");
     let unknown = ParsedFile {
         path: "src/one.kt".to_string(),
         lang: unknown_lang,

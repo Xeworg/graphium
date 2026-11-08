@@ -49,16 +49,22 @@ pub mod java;
 pub mod javascript;
 #[cfg(feature = "lang-kotlin")]
 pub mod kotlin;
+#[cfg(feature = "lang-lua")]
+pub mod lua;
 pub mod model;
 #[cfg(feature = "lang-php")]
 pub mod php;
 #[cfg(feature = "lang-python")]
 pub mod python;
+#[cfg(feature = "lang-r")]
+pub mod r;
 pub mod registry;
 #[cfg(feature = "lang-ruby")]
 pub mod ruby;
 #[cfg(feature = "lang-rust")]
 pub mod rust;
+#[cfg(feature = "lang-scala")]
+pub mod scala;
 #[cfg(feature = "lang-shell")]
 pub mod shell;
 #[cfg(feature = "lang-sql")]
@@ -67,6 +73,8 @@ pub mod sql;
 pub mod swift;
 #[cfg(feature = "lang-typescript")]
 pub mod typescript;
+#[cfg(feature = "lang-zig")]
+pub mod zig;
 
 pub use crate::relations::ParsedEdge;
 pub use engine::Grammar;
@@ -172,6 +180,20 @@ mod tests {
         }
         #[cfg(feature = "lang-dart")]
         expected.push(("src/main.dart", "dart"));
+        #[cfg(feature = "lang-scala")]
+        {
+            expected.push(("src/main.scala", "scala"));
+            expected.push(("src/main.sc", "scala"));
+        }
+        #[cfg(feature = "lang-r")]
+        {
+            expected.push(("src/main.r", "r"));
+            expected.push(("src/main.R", "r"));
+        }
+        #[cfg(feature = "lang-lua")]
+        expected.push(("src/main.lua", "lua"));
+        #[cfg(feature = "lang-zig")]
+        expected.push(("src/main.zig", "zig"));
 
         for (path, lang) in expected {
             assert_eq!(language_for(Path::new(path)), Some(lang), "`{path}`");
@@ -197,6 +219,10 @@ mod tests {
                 cfg!(feature = "lang-swift"),
                 cfg!(feature = "lang-kotlin"),
                 cfg!(feature = "lang-dart"),
+                cfg!(feature = "lang-scala"),
+                cfg!(feature = "lang-r"),
+                cfg!(feature = "lang-lua"),
+                cfg!(feature = "lang-zig"),
             ]
             .iter()
             .filter(|enabled| **enabled)
@@ -204,7 +230,9 @@ mod tests {
             "one grammar per enabled language"
         );
         assert_eq!(language_for(Path::new("src/notes.txt")), None);
-        assert!(grammar("scala").is_none());
+        // The archetype of a language no build ships is no language of the
+        // approved list (L6): all twenty are grammars of the default build now.
+        assert!(grammar("julia").is_none());
         #[cfg(feature = "lang-typescript")]
         {
             assert_eq!(

@@ -44,6 +44,10 @@ use super::engine::Grammar;
     feature = "lang-swift",
     feature = "lang-kotlin",
     feature = "lang-dart",
+    feature = "lang-scala",
+    feature = "lang-r",
+    feature = "lang-lua",
+    feature = "lang-zig",
 ))]
 use super::engine::{Anchor, ModuleSource, Rules, Walk};
 // The constructors are imports of their own: a slim build that compiles none
@@ -60,6 +64,7 @@ use super::engine::{Anchor, ModuleSource, Rules, Walk};
     feature = "lang-swift",
     feature = "lang-kotlin",
     feature = "lang-dart",
+    feature = "lang-scala",
 ))]
 use super::engine::container;
 #[cfg(any(
@@ -75,6 +80,7 @@ use super::engine::container;
     // Swift keeps leaves of its own; Kotlin and Dart name their declarations
     // with `leaf_in` and their hooks.
     feature = "lang-swift",
+    feature = "lang-scala",
 ))]
 use super::engine::leaf;
 #[cfg(any(
@@ -83,6 +89,8 @@ use super::engine::leaf;
     feature = "lang-ruby",
     feature = "lang-swift",
     feature = "lang-kotlin",
+    feature = "lang-scala",
+    feature = "lang-zig",
 ))]
 use super::engine::leaf_in;
 
@@ -102,14 +110,20 @@ use super::java;
 use super::javascript;
 #[cfg(feature = "lang-kotlin")]
 use super::kotlin;
+#[cfg(feature = "lang-lua")]
+use super::lua;
 #[cfg(feature = "lang-php")]
 use super::php;
 #[cfg(feature = "lang-python")]
 use super::python;
+#[cfg(feature = "lang-r")]
+use super::r;
 #[cfg(feature = "lang-ruby")]
 use super::ruby;
 #[cfg(feature = "lang-rust")]
 use super::rust;
+#[cfg(feature = "lang-scala")]
+use super::scala;
 #[cfg(feature = "lang-shell")]
 use super::shell;
 #[cfg(feature = "lang-sql")]
@@ -118,6 +132,8 @@ use super::sql;
 use super::swift;
 #[cfg(feature = "lang-typescript")]
 use super::typescript;
+#[cfg(feature = "lang-zig")]
+use super::zig;
 
 /// Rust: the declarations of a module, with the `impl` blocks named by the type
 /// they implement (a hook) and their methods under them.
@@ -708,14 +724,164 @@ pub const DART: Grammar = Grammar {
     relations: dart::relations,
 };
 
+/// Scala: the types of a file with their members, nested under the `package`
+/// the file declares — which is why the module path of a chapter comes from the
+/// tree (like Java, C#, PHP and Kotlin) and not from the path.
+///
+/// A `case class` is a class (the `case` modifier synthesises members the source
+/// never spells: Kotlin's data-class rule) and **an `object` is a class** — the
+/// language calls it a singleton object and the compiler emits a real class for
+/// it, so its members nest under it and it can extend a class or implement a
+/// trait, which a namespace cannot (see `scala.rs`). A `val`/`var` names its
+/// binding in the `pattern` field, so a root-level binding is a `const` by the
+/// one hook Scala needs; a `val` inside a type is a field and no declaration of
+/// the book. Every relation kind of the schema exists in Scala.
+#[cfg(feature = "lang-scala")]
+pub const SCALA: Grammar = Grammar {
+    lang: scala::LANGUAGE,
+    extensions: &["scala", "sc"],
+    language: scala::language,
+    module: ModuleSource::Tree(scala::module_path),
+    separator: ".",
+    anchor: Anchor::LastSegment,
+    walk: Walk::Table(&Rules {
+        transparent: &[
+            "template_body",
+            "enum_body",
+            "package_clause",
+            "package_object",
+        ],
+        containers: &[
+            container("class_definition", "class"),
+            // A singleton object is a class (see `scala.rs`).
+            container("object_definition", "class"),
+            container("trait_definition", "trait"),
+            container("enum_definition", "type"),
+        ],
+        leaves: &[
+            // A `def` of a type is a method; at the root of the file it is a
+            // `fn` (Scala 3 allows top-level definitions).
+            leaf_in(
+                "function_definition",
+                "fn",
+                &[("class", "method"), ("trait", "method"), ("type", "method")],
+            ),
+            leaf_in(
+                "function_declaration",
+                "fn",
+                &[("class", "method"), ("trait", "method"), ("type", "method")],
+            ),
+            leaf("type_definition", "type"),
+        ],
+        // A `val`/`var` is a `const` at the root of the file and a field
+        // everywhere else (scala::value).
+        hooks: &[
+            ("val_definition", scala::value),
+            ("var_definition", scala::value),
+        ],
+    }),
+    relations: scala::relations,
+};
+
+/// R: the functions a script binds with `<-` as `fn` and every other binding as
+/// `const`, with the file as the module (`R/store.R` → `R.store`).
+///
+/// R has no containers, no types and (as this grammar reads it) no `inherits`:
+/// the tables keep no leaf and no container, and the two declarations of the
+/// language come from the one hook on the assignment. Its relation kinds are
+/// `calls` and `imports` (see `r.rs`).
+#[cfg(feature = "lang-r")]
+pub const R: Grammar = Grammar {
+    // A script is spelled `.R` as often as `.r`, and both are R: an extension
+    // never depends on the case the author chose.
+    lang: r::LANGUAGE,
+    extensions: &["r", "R"],
+    language: r::language,
+    module: ModuleSource::Path(r::module_path),
+    separator: ".",
+    anchor: Anchor::LastSegment,
+    walk: Walk::Table(&Rules {
+        transparent: &[],
+        containers: &[],
+        leaves: &[],
+        // `parseConfig <- function(…)` and `LIMIT <- 3` are one hook: the name
+        // of the binding is an operand of the operator (r::assignment).
+        hooks: &[("binary_operator", r::assignment)],
+    }),
+    relations: r::relations,
+};
+
+/// Lua: the tables of a file as `module`s with their functions under them, and
+/// the other root bindings as `const`s, with the file as the module
+/// (`src/store.lua` → `src.store`; `init.lua` names its directory).
+///
+/// **A table is the module** (see `lua.rs`): `function M.open()` is a `fn` of
+/// `M` and `function M:load()` a `method` of it, and `M.load = function()` — the
+/// same declaration spelled the other way — is read as the same symbol. A field
+/// that is only data is not a declaration. Its relation kinds are `calls` and
+/// `imports` (`require`).
+#[cfg(feature = "lang-lua")]
+pub const LUA: Grammar = Grammar {
+    lang: lua::LANGUAGE,
+    extensions: &["lua"],
+    language: lua::language,
+    module: ModuleSource::Path(lua::module_path),
+    separator: ".",
+    anchor: Anchor::LastSegment,
+    walk: Walk::Table(&Rules {
+        transparent: &["variable_declaration"],
+        containers: &[],
+        leaves: &[],
+        hooks: &[
+            ("assignment_statement", lua::assignment),
+            ("function_declaration", lua::function),
+        ],
+    }),
+    relations: lua::relations,
+};
+
+/// Zig: the `const`s of a file, where a `const` that holds a `struct`, `union`,
+/// `enum` or `opaque` value is a `type` whose `fn`s are its methods, and the
+/// file is the module (`src/store.zig` → `src.store`).
+///
+/// The grammar spells `variable_declaration` with no field at all, so a
+/// declaration (and the type it holds) is the one hook of the chapter
+/// (`zig::declaration`). **The nesting of a const-held type is the type's body**:
+/// a `fn` at the root of the file is a `fn` and the same node inside such a
+/// `const` is a `method`. A `container_field` is a field, not a declaration; Zig
+/// has no `inherits`. Relation kinds: `calls`, `imports` (`@import`) and `uses`.
+#[cfg(feature = "lang-zig")]
+pub const ZIG: Grammar = Grammar {
+    lang: zig::LANGUAGE,
+    extensions: &["zig"],
+    language: zig::language,
+    module: ModuleSource::Path(zig::module_path),
+    separator: ".",
+    anchor: Anchor::LastSegment,
+    walk: Walk::Table(&Rules {
+        // The body of a type is the body of the `const` that holds it.
+        transparent: &[
+            "struct_declaration",
+            "union_declaration",
+            "enum_declaration",
+            "opaque_declaration",
+        ],
+        containers: &[],
+        leaves: &[leaf_in("function_declaration", "fn", &[("type", "method")])],
+        hooks: &[("variable_declaration", zig::declaration)],
+    }),
+    relations: zig::relations,
+};
+
 /// Every grammar this build ships, in the order the book lists them.
 ///
 /// The list is what the features left (T4/C3): the default build ships every
 /// language of the book (the single-binary decision of L9), fewer in a slim
 /// build, and never a grammar that is not compiled. Batch 1 of T3
-/// (JavaScript/JSX, C, C++, C#), Batch 2 (PHP, Ruby, SQL, Shell) and Batch 3
-/// (Swift, Kotlin, Dart) come after the original five, in the order they
-/// landed.
+/// (JavaScript/JSX, C, C++, C#), Batch 2 (PHP, Ruby, SQL, Shell), Batch 3
+/// (Swift, Kotlin, Dart) and Batch 4 (Scala, R, Lua, Zig) come after the
+/// original five, in the order they landed — and Batch 4 is the twentieth
+/// language of the approved list (L6).
 pub const GRAMMARS: &[Grammar] = &[
     #[cfg(feature = "lang-rust")]
     RUST,
@@ -749,6 +915,14 @@ pub const GRAMMARS: &[Grammar] = &[
     KOTLIN,
     #[cfg(feature = "lang-dart")]
     DART,
+    #[cfg(feature = "lang-scala")]
+    SCALA,
+    #[cfg(feature = "lang-r")]
+    R,
+    #[cfg(feature = "lang-lua")]
+    LUA,
+    #[cfg(feature = "lang-zig")]
+    ZIG,
 ];
 
 #[cfg(test)]

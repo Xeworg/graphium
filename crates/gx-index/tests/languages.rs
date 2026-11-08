@@ -2197,6 +2197,10 @@ fn the_registry_answers_the_four_new_languages() {
             cfg!(feature = "lang-swift"),
             cfg!(feature = "lang-kotlin"),
             cfg!(feature = "lang-dart"),
+            cfg!(feature = "lang-scala"),
+            cfg!(feature = "lang-r"),
+            cfg!(feature = "lang-lua"),
+            cfg!(feature = "lang-zig"),
         ]
         .iter()
         .filter(|enabled| **enabled)
@@ -2865,6 +2869,613 @@ fn the_resolution_rate_of_the_batch_three_languages_is_measured_on_their_fixture
     // measurement that falls under them fails the suite. They are **measured
     // on these fixtures**, never promises.
     for (lang, floor) in [("swift", 20.0), ("kotlin", 23.0), ("dart", 22.0)] {
+        let row = by_lang(lang);
+        assert!(
+            row.percent() >= floor,
+            "`{lang}` resolves {:.1} % of {} edges, under the published floor of {} %: {row:?}",
+            row.percent(),
+            row.edges,
+            floor
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scala (T3 Batch 4)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-scala")]
+const SCALA: &str = r#"
+package graphium.store
+
+import graphium.render.Renderer
+import graphium.paint.{Painter, Spray => Renamed}
+
+trait Loader {
+  def load(input: String): Int
+}
+
+case class Limits(max: Int) {
+  def doubled: Int = max * 2
+}
+
+enum Mode {
+  case Fast, Slow
+}
+
+class DiagramStore(renderer: Renderer) extends Base with Loader {
+  val limit: Int = 3
+
+  def load(input: String): Int = {
+    parseConfig(input)
+  }
+
+  def renderWith(other: DiagramStore): Int = other.load("x")
+}
+
+object Defaults extends Loader {
+  def load(input: String): Int = 3
+}
+
+object Store {
+  val Limit: Int = 3
+
+  def open(renderer: Renderer): DiagramStore = new DiagramStore(renderer)
+}
+
+type Alias = DiagramStore
+
+def parseConfig(input: String): DiagramStore = Store.open(Renderer())
+
+// A comment that mentions ignoredInComment() must not produce an edge.
+def quiet(): String = "alsoIgnoredInAString()"
+"#;
+
+/// T3/S2: the Scala chapter keeps a `class`, a `case class` as `class`, an
+/// `object` as `class` (a singleton object is a class with one instance), a
+/// `trait` as `trait` and an `enum` as `type`, nested under the `package` the
+/// file declares, with the `def`s of a type under it.
+#[cfg(feature = "lang-scala")]
+#[test]
+fn scala_declares_the_symbols_of_a_chapter_with_its_nesting() {
+    let parsed = parse("scala/store.scala", SCALA.as_bytes(), 0).expect("the Scala grammar");
+    assert_eq!(parsed.lang, "scala");
+    assert_symbols(
+        &parsed,
+        &[
+            ("trait", "Loader", "graphium.store.Loader"),
+            ("method", "load", "graphium.store.Loader.load"),
+            ("class", "Limits", "graphium.store.Limits"),
+            ("method", "doubled", "graphium.store.Limits.doubled"),
+            ("type", "Mode", "graphium.store.Mode"),
+            ("class", "DiagramStore", "graphium.store.DiagramStore"),
+            ("method", "load", "graphium.store.DiagramStore.load"),
+            (
+                "method",
+                "renderWith",
+                "graphium.store.DiagramStore.renderWith",
+            ),
+            ("class", "Defaults", "graphium.store.Defaults"),
+            ("method", "load", "graphium.store.Defaults.load"),
+            ("class", "Store", "graphium.store.Store"),
+            ("method", "open", "graphium.store.Store.open"),
+            ("type", "Alias", "graphium.store.Alias"),
+            ("fn", "parseConfig", "graphium.store.parseConfig"),
+            ("fn", "quiet", "graphium.store.quiet"),
+        ],
+    );
+
+    // A class parameter, a field, an enum case and a parameter of a `def` are
+    // not declarations of the book.
+    for hidden in ["max", "limit", "Fast", "Slow", "input", "renderer"] {
+        assert!(
+            !parsed.symbols.iter().any(|symbol| symbol.name == hidden),
+            "`{hidden}` is not a declaration: {:?}",
+            rows(&parsed)
+        );
+    }
+
+    // The containment tree: a method of an `object` hangs from the object,
+    // which the book keeps as the class it is.
+    let open = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.qname == "graphium.store.Store.open")
+        .expect("the method");
+    let parent = open.parent.expect("the method hangs from its object");
+    assert_eq!(parsed.symbols[parent].kind, "class");
+    assert_eq!(parsed.symbols[parent].name, "Store");
+}
+
+/// T3/S2: `imports` by the last segment (or the alias of a renamed import),
+/// every call by its name, `extends`/`with` as `inherits` and every type a
+/// declaration spells as `uses` — never an edge out of prose.
+#[cfg(feature = "lang-scala")]
+#[test]
+fn scala_relations_are_syntactic_and_never_prose() {
+    let parsed = parse("scala/store.scala", SCALA.as_bytes(), 0).expect("the grammar");
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+
+    assert_edge(&parsed, "imports", "Renderer");
+    assert_edge(&parsed, "imports", "Painter");
+    assert_edge(&parsed, "imports", "Renamed");
+
+    assert_edge(&parsed, "calls", "parseConfig");
+    assert_edge(&parsed, "calls", "load");
+    assert_edge(&parsed, "calls", "open");
+    assert_edge(&parsed, "calls", "Renderer");
+    assert_edge(&parsed, "calls", "DiagramStore");
+
+    assert_edge(&parsed, "inherits", "Base");
+    assert_edge(&parsed, "inherits", "Loader");
+
+    assert_edge(&parsed, "uses", "Renderer");
+    assert_edge(&parsed, "uses", "DiagramStore");
+    assert_edge(&parsed, "uses", "Int");
+
+    assert_edge_owned(
+        &parsed,
+        "calls",
+        "parseConfig",
+        "graphium.store.DiagramStore.load",
+    );
+    assert_edge_owned(
+        &parsed,
+        "calls",
+        "load",
+        "graphium.store.DiagramStore.renderWith",
+    );
+    assert_edge_owned(&parsed, "calls", "open", "graphium.store.parseConfig");
+    assert_edge_owned(&parsed, "inherits", "Loader", "graphium.store.DiagramStore");
+    assert_edge_owned(&parsed, "inherits", "Loader", "graphium.store.Defaults");
+}
+
+// ---------------------------------------------------------------------------
+// R (T3 Batch 4)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-r")]
+const R_SOURCE: &str = r#"
+# A comment that mentions ignoredInComment() must not produce an edge.
+LIMIT <- 3
+
+loadStore <- function(input) {
+  input
+}
+
+openStore <- function(path) {
+  loadStore(path)
+}
+
+parseConfig <- function(input) {
+  store <- openStore(input)
+  store$load(input)
+}
+
+render <- function(store) {
+  print(store)
+}
+
+source("R/render.R")
+library(stats)
+"#;
+
+/// T3/S2: an R script declares functions — `f <- function(…)` is a `fn` — and
+/// every other top-level binding is a `const`; a binding of a body is not a
+/// declaration of the chapter.
+#[cfg(feature = "lang-r")]
+#[test]
+fn r_declares_a_function_per_function_binding() {
+    let parsed = parse("R/store.R", R_SOURCE.as_bytes(), 0).expect("the R grammar");
+    assert_eq!(parsed.lang, "r");
+    assert_symbols(
+        &parsed,
+        &[
+            ("const", "LIMIT", "R.store.LIMIT"),
+            ("fn", "loadStore", "R.store.loadStore"),
+            ("fn", "openStore", "R.store.openStore"),
+            ("fn", "parseConfig", "R.store.parseConfig"),
+            ("fn", "render", "R.store.render"),
+        ],
+    );
+    // Parameters and the bindings of a body are not declarations of the book.
+    // (`store` appears as the `module` anchor of the chapter, which is not a
+    // declaration of the script.)
+    for hidden in ["input", "path", "store"] {
+        assert!(
+            !parsed
+                .symbols
+                .iter()
+                .any(|symbol| symbol.kind != "module" && symbol.name == hidden),
+            "`{hidden}` is not a declaration: {:?}",
+            rows(&parsed)
+        );
+    }
+}
+
+/// T3/S2: every call by the name the source writes (`store$load` calls `load`)
+/// and the file a `source()` reads or a `library()` loads as `imports`; R has no
+/// `inherits` and no `uses` (see `crates/gx-index/src/lang/r.rs`).
+#[cfg(feature = "lang-r")]
+#[test]
+fn r_relations_are_calls_and_the_files_a_script_reads() {
+    let parsed = parse("R/store.R", R_SOURCE.as_bytes(), 0).expect("the grammar");
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+
+    assert_edge(&parsed, "calls", "loadStore");
+    assert_edge(&parsed, "calls", "openStore");
+    assert_edge(&parsed, "calls", "print");
+    assert_edge(&parsed, "calls", "source");
+    assert_edge(&parsed, "calls", "library");
+    assert_edge(&parsed, "imports", "render");
+    assert_edge(&parsed, "imports", "stats");
+
+    assert_edge_owned(&parsed, "calls", "loadStore", "R.store.openStore");
+    assert_edge_owned(&parsed, "calls", "openStore", "R.store.parseConfig");
+    assert_edge_owned(&parsed, "calls", "load", "R.store.parseConfig");
+    assert_edge_owned(&parsed, "calls", "print", "R.store.render");
+
+    // R has no inheritance and no type annotations: the two kinds it never has
+    // are not invented for it.
+    for kind in ["inherits", "uses"] {
+        assert!(
+            !parsed.edges.iter().any(|edge| edge.kind == kind),
+            "R has no `{kind}`: {:?}",
+            parsed.edges
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lua (T3 Batch 4)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-lua")]
+const LUA: &str = r#"
+-- A comment that mentions ignoredInComment() must not produce an edge.
+local Store = {}
+
+local LIMIT = 3
+
+local function parse_config(input)
+  local text = "alsoIgnoredInAString()"
+  return input
+end
+
+function Store.load(input)
+  return parse_config(input)
+end
+
+function Store:render(input)
+  return self.load(input)
+end
+
+Store.new = function(path)
+  return { path = path }
+end
+
+function Store.open(path)
+  return Store.new(path)
+end
+
+local painter = require("render")
+"#;
+
+/// T3/S2: a table at the root of a Lua file is its `module` and the functions it
+/// declares nest under it — a `fn` for `M.f` and a `method` for `M:m`, the
+/// second spelling (`M.f = function`) included — and the other bindings are
+/// `const`s.
+#[cfg(feature = "lang-lua")]
+#[test]
+fn a_lua_table_is_the_module_of_its_functions() {
+    let parsed = parse("lua/store.lua", LUA.as_bytes(), 0).expect("the Lua grammar");
+    assert_eq!(parsed.lang, "lua");
+    assert_symbols(
+        &parsed,
+        &[
+            ("module", "Store", "lua.store.Store"),
+            ("const", "LIMIT", "lua.store.LIMIT"),
+            ("fn", "parse_config", "lua.store.parse_config"),
+            ("fn", "load", "lua.store.Store.load"),
+            ("method", "render", "lua.store.Store.render"),
+            ("fn", "new", "lua.store.Store.new"),
+            ("fn", "open", "lua.store.Store.open"),
+            ("const", "painter", "lua.store.painter"),
+        ],
+    );
+    // A parameter, a local of a body and a field of a table are not
+    // declarations of the book.
+    for hidden in ["input", "path", "text"] {
+        assert!(
+            !parsed.symbols.iter().any(|symbol| symbol.name == hidden),
+            "`{hidden}` is not a declaration: {:?}",
+            rows(&parsed)
+        );
+    }
+
+    let open = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.qname == "lua.store.Store.open")
+        .expect("the fn");
+    let parent = open.parent.expect("the fn hangs from its table");
+    assert_eq!(parsed.symbols[parent].kind, "module");
+    assert_eq!(parsed.symbols[parent].name, "Store");
+}
+
+/// T3/S2: every call by the name the source writes (`self.load` calls `load`)
+/// and `require` by the module it names; Lua has no `inherits` and no `uses`.
+#[cfg(feature = "lang-lua")]
+#[test]
+fn lua_relations_are_calls_and_the_modules_a_file_requires() {
+    let parsed = parse("lua/store.lua", LUA.as_bytes(), 0).expect("the grammar");
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+
+    assert_edge(&parsed, "calls", "parse_config");
+    assert_edge(&parsed, "calls", "load");
+    assert_edge(&parsed, "calls", "new");
+    assert_edge(&parsed, "calls", "require");
+    assert_edge(&parsed, "imports", "render");
+
+    assert_edge_owned(&parsed, "calls", "parse_config", "lua.store.Store.load");
+    assert_edge_owned(&parsed, "calls", "load", "lua.store.Store.render");
+    assert_edge_owned(&parsed, "calls", "new", "lua.store.Store.open");
+    assert_edge_owned(&parsed, "imports", "render", "lua.store.painter");
+
+    for kind in ["inherits", "uses"] {
+        assert!(
+            !parsed.edges.iter().any(|edge| edge.kind == kind),
+            "Lua has no `{kind}`: {:?}",
+            parsed.edges
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Zig (T3 Batch 4)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-zig")]
+const ZIG: &str = r#"
+const std = @import("std");
+const Painter = @import("render.zig");
+
+const LIMIT: usize = 3;
+
+pub const DiagramStore = struct {
+    path: []const u8,
+
+    pub fn init(path: []const u8) DiagramStore {
+        return .{ .path = path };
+    }
+
+    pub fn load(self: *DiagramStore, input: []const u8) usize {
+        return parseConfig(input, self.path);
+    }
+};
+
+pub const Mode = enum { fast, slow };
+
+pub fn parseConfig(input: []const u8, path: []const u8) usize {
+    _ = path;
+    return input.len;
+}
+
+pub fn openStore(path: []const u8) DiagramStore {
+    return DiagramStore.init(path);
+}
+
+// A comment that mentions ignoredInComment() must not produce an edge.
+pub fn quiet(painter: Painter) []const u8 {
+    std.debug.print("{s}", .{painter.title});
+    return "alsoIgnoredInAString()";
+}
+"#;
+
+/// T3/S2: a Zig `const` that holds a type of the language is a `type` whose
+/// `fn`s are its methods, and any other `const` is a `const` of the file.
+#[cfg(feature = "lang-zig")]
+#[test]
+fn a_zig_const_that_holds_a_type_declares_the_members_of_that_type() {
+    let parsed = parse("src/store.zig", ZIG.as_bytes(), 0).expect("the Zig grammar");
+    assert_eq!(parsed.lang, "zig");
+    assert_symbols(
+        &parsed,
+        &[
+            ("const", "std", "src.store.std"),
+            ("const", "Painter", "src.store.Painter"),
+            ("const", "LIMIT", "src.store.LIMIT"),
+            ("type", "DiagramStore", "src.store.DiagramStore"),
+            ("method", "init", "src.store.DiagramStore.init"),
+            ("method", "load", "src.store.DiagramStore.load"),
+            ("type", "Mode", "src.store.Mode"),
+            ("fn", "parseConfig", "src.store.parseConfig"),
+            ("fn", "openStore", "src.store.openStore"),
+            ("fn", "quiet", "src.store.quiet"),
+        ],
+    );
+    // A field of a struct, an enum member and a parameter are not declarations.
+    for hidden in ["path", "fast", "slow", "input", "painter"] {
+        assert!(
+            !parsed.symbols.iter().any(|symbol| symbol.name == hidden),
+            "`{hidden}` is not a declaration: {:?}",
+            rows(&parsed)
+        );
+    }
+
+    let load = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.qname == "src.store.DiagramStore.load")
+        .expect("the method");
+    let parent = load.parent.expect("the method hangs from its type");
+    assert_eq!(parsed.symbols[parent].kind, "type");
+    assert_eq!(parsed.symbols[parent].name, "DiagramStore");
+}
+
+/// T3/S2: every call by its name, `@import` by the stem of the file it names and
+/// every type a declaration spells as `uses`; Zig has no `inherits`.
+#[cfg(feature = "lang-zig")]
+#[test]
+fn zig_relations_are_calls_imports_and_types() {
+    let parsed = parse("src/store.zig", ZIG.as_bytes(), 0).expect("the grammar");
+    assert_edges_are_anchored(&parsed);
+    assert_no_prose_edges(&parsed);
+
+    assert_edge(&parsed, "calls", "parseConfig");
+    assert_edge(&parsed, "calls", "init");
+    assert_edge(&parsed, "calls", "print");
+    assert_edge(&parsed, "imports", "render");
+    assert_edge(&parsed, "uses", "DiagramStore");
+    assert_edge(&parsed, "uses", "Painter");
+
+    assert_edge_owned(
+        &parsed,
+        "calls",
+        "parseConfig",
+        "src.store.DiagramStore.load",
+    );
+    assert_edge_owned(&parsed, "calls", "init", "src.store.openStore");
+    assert_edge_owned(&parsed, "calls", "print", "src.store.quiet");
+    assert_edge_owned(
+        &parsed,
+        "uses",
+        "DiagramStore",
+        "src.store.DiagramStore.load",
+    );
+
+    // Zig is not an object-oriented language: the kind is not invented for it.
+    assert!(
+        !parsed.edges.iter().any(|edge| edge.kind == "inherits"),
+        "Zig has no `inherits`: {:?}",
+        parsed.edges
+    );
+}
+
+/// The chapter a Scala file imports: a real tree has one, and D3 is measured on
+/// a tree, so the types the store names are declarations of the book here.
+#[cfg(all(
+    feature = "lang-scala",
+    feature = "lang-r",
+    feature = "lang-lua",
+    feature = "lang-zig"
+))]
+const SCALA_RENDER: &str = r#"
+package graphium.render
+
+trait Painter {
+  def spray(input: Int): Int
+}
+
+class Renderer extends Painter {
+  def spray(input: Int): Int = input
+}
+"#;
+
+/// The script an R file reads: `source("R/render.R")` names its stem.
+#[cfg(all(
+    feature = "lang-scala",
+    feature = "lang-r",
+    feature = "lang-lua",
+    feature = "lang-zig"
+))]
+const R_RENDER: &str = r#"
+render <- function(store) {
+  store
+}
+"#;
+
+/// The module a Lua file requires.
+#[cfg(all(
+    feature = "lang-scala",
+    feature = "lang-r",
+    feature = "lang-lua",
+    feature = "lang-zig"
+))]
+const LUA_RENDER: &str = r#"
+local render = {}
+
+function render.title(store)
+  return store.name
+end
+"#;
+
+// ---------------------------------------------------------------------------
+// D3 for T3 Batch 4: the four new languages, measured on their own tree
+// ---------------------------------------------------------------------------
+
+/// D3/S4: the four languages of T3 Batch 4 measure their resolution on a book
+/// that holds only their fixtures, with the same rule and the same report as the
+/// five of C2 and the four of each earlier batch (`Book::resolution()`,
+/// `name_norm`, ≤5 definers). They are a separate tree on purpose: the published
+/// numbers of the other languages are measured on their own fixtures, and adding
+/// chapters with the same common names would move their fanout. This is the last
+/// batch of the approved list: the twenty languages of L6 are all here.
+#[cfg(all(
+    feature = "lang-scala",
+    feature = "lang-r",
+    feature = "lang-lua",
+    feature = "lang-zig"
+))]
+#[test]
+fn the_resolution_rate_of_the_batch_four_languages_is_measured_on_their_fixtures() {
+    let scratch = Scratch::new("batch-four-resolution");
+    scratch.write("scala/store.scala", SCALA);
+    scratch.write("scala/render.scala", SCALA_RENDER);
+    scratch.write("R/store.R", R_SOURCE);
+    scratch.write("R/render.R", R_RENDER);
+    scratch.write("lua/store.lua", LUA);
+    scratch.write("lua/render.lua", LUA_RENDER);
+    scratch.write("src/store.zig", ZIG);
+    let book = Arc::new(scratch.open());
+    scratch.indexer(&book).run_full().expect("the index");
+
+    let report = book.resolution().expect("the honesty report");
+    let by_lang = |lang: &str| {
+        report
+            .iter()
+            .find(|row| row.lang == lang)
+            .unwrap_or_else(|| panic!("the report has no `{lang}` row: {report:?}"))
+            .clone()
+    };
+
+    for lang in ["scala", "r", "lua", "zig"] {
+        let row = by_lang(lang);
+        assert!(row.files >= 1, "`{lang}` has a chapter: {row:?}");
+        assert!(row.symbols >= 1, "`{lang}` declares something: {row:?}");
+        // R and Lua have two relation kinds by decision (no types, no
+        // supertypes), so the floor of edges is the one of a language with two.
+        assert!(row.edges >= 4, "`{lang}` declares relations: {row:?}");
+        assert!(
+            row.resolved <= row.edges,
+            "a rate is never over 100 %: {row:?}"
+        );
+    }
+
+    println!(
+        "D3 resolutions (T3 Batch 4): {}",
+        report
+            .iter()
+            .map(|row| format!(
+                "{} {}/{} = {:.1} % ({} files, {} symbols)",
+                row.lang,
+                row.resolved,
+                row.edges,
+                row.percent(),
+                row.files,
+                row.symbols
+            ))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+
+    // The floors are the published numbers of `docs/PRD.md`, rounded down: a
+    // measurement that falls under them fails the suite. They are **measured
+    // on these fixtures**, never promises.
+    for (lang, floor) in [("scala", 45.0), ("r", 46.0), ("lua", 76.0), ("zig", 83.0)] {
         let row = by_lang(lang);
         assert!(
             row.percent() >= floor,
