@@ -97,12 +97,12 @@ fn the_plan_keeps_the_world_point_under_the_center_when_the_window_resizes() {
     // and refitting on resize would throw away the human's view (PRD §7.2,
     // S23). The handler has to preserve the world point under the center of
     // the viewport instead of framing the diagram again.
-    let script = include_str!("../frontend/plan.js");
+    let script = include_str!("../frontend/src/App.svelte");
     let start = script
-        .find("addEventListener(\"resize\"")
+        .find("function onResize() {")
         .expect("the plan must react to a window resize");
     let rest = &script[start..];
-    let end = rest.find("\n});").expect("the resize handler is closed");
+    let end = rest.find("\n  }").expect("the resize handler is closed");
     let handler = &rest[..end];
     assert!(
         handler.contains("(next.w - viewport.w) / 2")
@@ -112,7 +112,7 @@ fn the_plan_keeps_the_world_point_under_the_center_when_the_window_resizes() {
          {handler}"
     );
     assert!(
-        !handler.contains("fit"),
+        !handler.contains("fit("),
         "the resize must not refit the diagram: {handler}"
     );
 }

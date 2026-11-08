@@ -11,8 +11,13 @@
 // `bench-live.sh`, which reports the same scenarios against the real binary.
 //
 // Usage:
-//   node tools/bench.mjs --build=svelte --run=1 --json=/tmp/bench-svelte-1.json
-//   node tools/bench.mjs --build=vanilla --run=2
+//
+// This measures the one frontend of the tree. The A/B bench recorded in
+// `odd/tasks/svelte-ui-t5-bench.md` measured the Svelte build against the
+// vanilla page; that page retired with the switch (CONTRACT.md §10), so the
+// numbers below are the Svelte side only.
+//
+//   node tools/bench.mjs --run=1 --json=/tmp/bench-1.json
 //   node tools/bench.mjs --assets          # only the asset/LOC table
 //
 // Exit code 0 when every measurement completed.
@@ -27,24 +32,19 @@ import zlib from "node:zlib";
 import { evaluate, launch, openPage, serve } from "./lib/harness.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const APP = path.resolve(HERE, ".."); // crates/gx-app/frontend-svelte
-const VANILLA_DIR = path.resolve(APP, "..", "frontend");
-const SVELTE_DIR = path.resolve(APP, "dist");
+const APP = path.resolve(HERE, ".."); // crates/gx-app/frontend
+const DIST = path.resolve(APP, "dist");
 
 const argv = process.argv.slice(2);
 const option = (name, fallback = null) => {
   const hit = argv.find((argument) => argument.startsWith(`--${name}=`));
   return hit === undefined ? fallback : hit.slice(name.length + 3);
 };
-const BUILD = option("build", "svelte");
 const RUN = option("run", "1");
 const JSON_OUT = option("json", null);
+const REPEATS = Number(option("repeats", "1"));
+const CHROMIUM = option("chromium", process.env.CHROMIUM || "chromium-browser");
 const ASSETS_ONLY = argv.includes("--assets");
-// `--both` is the fair A/B: both bundles are served from the same browser, and
-// the pages are opened alternately (svelte, vanilla, svelte, …) so a machine
-// that gets slower halfway through does not land on one side only.
-const BOTH = argv.includes("--both");
-const REPEATS = Number(option("repeats", BOTH ? "5" : "1"));
 
 // --- the fixtures ----------------------------------------------------------
 
@@ -117,11 +117,6 @@ async function gzipSize(file) {
 }
 
 async function assets() {
-  const vanillaFiles = ["index.html", "plan.js", "style.css"];
-  const vanilla = {};
-  for (const name of vanillaFiles) {
-    vanilla[name] = await gzipSize(path.join(VANILLA_DIR, name));
-  }
   const distFiles = [];
   const walk = async (directory) => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -130,35 +125,21 @@ async function assets() {
       else distFiles.push(file);
     }
   };
-  await walk(SVELTE_DIR);
-  const svelte = { files: {} };
+  await walk(DIST);
+  const files = {};
   for (const file of distFiles.sort()) {
-    const relative = path.relative(SVELTE_DIR, file);
-    svelte.files[relative] = await gzipSize(file);
+    files[path.relative(DIST, file)] = await gzipSize(file);
   }
   const total = (entries) =>
     Object.values(entries).reduce((sum, entry) => ({ bytes: sum.bytes + entry.bytes, gzip: sum.gzip + entry.gzip }), { bytes: 0, gzip: 0 });
   const byExtension = (entries, extension) =>
     total(Object.fromEntries(Object.entries(entries).filter(([name]) => name.endsWith(extension))));
-  const vanillaTotal = total(vanilla);
-  const svelteTotal = total(svelte.files);
   return {
-    vanilla: {
-      files: vanilla,
-      total: vanillaTotal,
-      js: vanilla["plan.js"],
-      css: vanilla["style.css"],
-      html: vanilla["index.html"],
-    },
-    svelte: {
-      files: svelte.files,
-      total: svelteTotal,
-      js: byExtension(svelte.files, ".js"),
-      css: byExtension(svelte.files, ".css"),
-      html: byExtension(svelte.files, ".html"),
-    },
-    deltaBytes: svelteTotal.bytes - vanillaTotal.bytes,
-    deltaGzip: svelteTotal.gzip - vanillaTotal.gzip,
+    files,
+    total: total(files),
+    js: byExtension(files, ".js"),
+    css: byExtension(files, ".css"),
+    html: byExtension(files, ".html"),
   };
 }
 
@@ -169,30 +150,21 @@ function lineCount(text) {
 }
 
 async function linesOfCode() {
-  const vanillaNames = ["index.html", "plan.js", "style.css"];
-  const vanilla = {};
-  for (const name of vanillaNames) {
-    vanilla[name] = lineCount(await readFile(path.join(VANILLA_DIR, name), "utf8"));
-  }
-  // The Svelte frontend is everything the port authored: `src/` only (`dist/`
-  // is generated, `tools/` is the harness, not the UI).
-  const svelteFiles = {};
+  // The frontend is everything the app authored: `src/` only (`dist/` is
+  // generated, `tools/` is the harness, not the UI).
+  const files = {};
   const walk = async (directory) => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const file = path.join(directory, entry.name);
       if (entry.isDirectory()) await walk(file);
       else if (/\.(svelte|js|css)$/.test(file)) {
-        svelteFiles[path.relative(APP, file)] = lineCount(await readFile(file, "utf8"));
+        files[path.relative(APP, file)] = lineCount(await readFile(file, "utf8"));
       }
     }
   };
   await walk(path.join(APP, "src"));
   const sum = (entries) => Object.values(entries).reduce((total, value) => total + value, 0);
-  return {
-    vanilla: { files: vanilla, total: sum(vanilla) },
-    svelte: { files: svelteFiles, total: sum(svelteFiles) },
-    delta: sum(svelteFiles) - sum(vanilla),
-  };
+  return { files, total: sum(files) };
 }
 
 // --- the headless measurement ---------------------------------------------
@@ -285,46 +257,33 @@ async function main() {
     return;
   }
 
-  const chromium = execFileSync("chromium-browser", ["--version"], { encoding: "utf8" }).trim();
-  const builds = BOTH
-    ? [
-        ["svelte", SVELTE_DIR],
-        ["vanilla", VANILLA_DIR],
-      ]
-    : [[BUILD, BUILD === "svelte" ? SVELTE_DIR : VANILLA_DIR]];
-  for (const [name, root] of builds) {
-    if (!existsSync(path.join(root, "index.html"))) {
-      console.error(`bench: no bundle at ${root} (build it first)`);
-      process.exit(2);
-    }
+  const chromium = execFileSync(CHROMIUM, ["--version"], { encoding: "utf8" }).trim();
+  if (!existsSync(path.join(DIST, "index.html"))) {
+    console.error(`bench: no bundle at ${DIST} (run scripts/build.sh first)`);
+    process.exit(2);
   }
 
-  const servers = {};
-  for (const [name, root] of builds) servers[name] = await serve(root);
-  const browser = await launch();
-  const samples = Object.fromEntries(builds.map(([name]) => [name, { ready: [], runs: [] }]));
+  const server = await serve(DIST);
+  const browser = await launch(CHROMIUM);
+  const samples = { ready: [], runs: [] };
   try {
     for (let repeat = 0; repeat < REPEATS; repeat += 1) {
-      for (const [name] of builds) {
-        const timings = await measure(browser, servers[name].url);
-        samples[name].ready.push(timings.ready);
-        samples[name].runs.push(...timings.runs);
-      }
+      const timings = await measure(browser, server.url);
+      samples.ready.push(timings.ready);
+      samples.runs.push(...timings.runs);
     }
   } finally {
     await browser.close();
-    for (const name of Object.keys(servers)) await servers[name].close();
+    await server.close();
   }
 
   const report = {
-    mode: BOTH ? "both" : "single",
-    build: BOTH ? null : BUILD,
     run: RUN,
     repeats: REPEATS,
     chromium,
     assets: assetTable,
     loc,
-    builds: samples,
+    build: samples,
   };
   console.log(JSON.stringify(report, null, 2));
   if (JSON_OUT !== null) await writeFile(JSON_OUT, `${JSON.stringify(report, null, 2)}\n`);

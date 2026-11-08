@@ -138,6 +138,37 @@ require_rust_toolchain() {
   fi
 }
 
+# El plano es una app Svelte y el binario embebe su bundle: compilar desde el
+# repositorio necesita Node y npm antes de cargo (frontend-consolidacion, L3).
+require_node_toolchain() {
+  local missing=0
+  if ! command -v node >/dev/null 2>&1; then
+    error "node no fue encontrado en el PATH."
+    missing=1
+  fi
+  if ! command -v npm >/dev/null 2>&1; then
+    error "npm no fue encontrado en el PATH."
+    missing=1
+  fi
+  if ((missing != 0)); then
+    error "Graphium compila el plano (Svelte + Vite) antes del binario: instalá"
+    error "Node 22 o superior (https://nodejs.org, nvm o el gestor de tu distribución)"
+    error "y volvé a correr ./install.sh. Alternativa sin compilar: el instalador de"
+    error "un release publicado, que ya trae el bundle adentro del binario."
+    exit 1
+  fi
+}
+
+# `tauri::generate_context!()` embebe `crates/gx-app/frontend/dist` al compilar:
+# el bundle de Vite tiene que existir cuando cargo empieza.
+build_frontend_bundle() {
+  printf 'Compilando el plano (npm ci + npm run build)...\n'
+  (cd -- "$SCRIPT_DIR/crates/gx-app/frontend" &&
+    npm ci --no-fund --no-audit &&
+    npm run build) ||
+    die "el build del plano falló: sin crates/gx-app/frontend/dist el binario no compila"
+}
+
 # Cargo resuelve un CARGO_TARGET_DIR relativo contra su directorio de trabajo,
 # que acá es la raíz del repositorio.
 cargo_target_dir() {
@@ -291,6 +322,8 @@ warn_runtime_deps() {
 # Instalación del binario desde el repositorio: compila y copia.
 install_binary_from_source_repo() {
   require_rust_toolchain
+  require_node_toolchain
+  build_frontend_bundle
   printf 'Compilando (cargo build --release)...\n'
   (cd -- "$SCRIPT_DIR" && cargo build --release)
   local binary

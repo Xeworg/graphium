@@ -1,9 +1,9 @@
 {
-  "name": "graphium-frontend-svelte",
+  "name": "graphium-frontend",
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Graphium plan as a Svelte app (experimental, branch feature/svelte-ui; see CONTRACT.md)",
+  "description": "Graphium plan as a Svelte app: the only frontend of the tree (see README.md and CONTRACT.md)",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

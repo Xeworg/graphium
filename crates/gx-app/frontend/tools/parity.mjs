@@ -1,7 +1,13 @@
 #!/usr/bin/env node
-// The T4 parity harness: it runs the **real built bundle** of one of the two
-// frontends of this branch against a faked Tauri bridge, in headless Chromium
-// over HTTP, and checks the `CONTRACT.md` §8 checklist item by item.
+// The parity harness: it runs the **real built bundle** of the plan against a
+// faked Tauri bridge, in headless Chromium over HTTP, and checks the
+// `CONTRACT.md` §8 checklist item by item.
+//
+// It used to be differential: every probe ran against the Svelte build and
+// against the vanilla page, and an `equal` probe failed when the two differed.
+// The vanilla page retired with the switch (CONTRACT.md §10), so each probe
+// now asserts its own expectation on the one bundle; `equal`/`report` survive
+// as checklist labels, but there is no second build to compare against.
 //
 // Why a browser and not the real window (the discovery T3 left in memory):
 // WebKitGTK cannot be screenshot from the outside (`import -window` fails on
@@ -10,7 +16,7 @@
 // same DOM, the same CSS and the same bridge protocol, so every rule of §8
 // that is observable in the DOM is checked here; the in-shell half (the real
 // `graphium://ready` + `render_ack` round trip through WebKitGTK) is covered by
-// `scripts/svelte-smoke.sh` and recorded in the same checklist.
+// `scripts/smoke.sh` and recorded in the same checklist.
 //
 // How the bridge is faked: the script below is injected with
 // `Page.addScriptToEvaluateOnNewDocument`, so it exists **before** the bundle
@@ -19,18 +25,21 @@
 // emits, keeps the listeners Rust would call, and stamps each emission with the
 // `requestAnimationFrame` counter (which is how C4's "two frames" is observed).
 //
-// The harness is differential on purpose: each probe runs against the Svelte
-// build and against the vanilla page, and an `equal` probe fails when the two
-// observed values differ. That is what "parity" means in this branch; a probe
-// marked `report` is one where a documented difference exists (C31).
+// The harness used to be differential on purpose: each probe ran against the
+// Svelte build and against the vanilla page, and an `equal` probe failed when
+// the two observed values differed. That is what "parity" meant in the A/B
+// branch; with the vanilla page retired each probe is checked on its own.
 //
-// Usage (from the repository root, after `scripts/svelte-build.sh`):
+// Usage (run from `crates/gx-app/frontend`, after `npm run build` or
+// `scripts/build.sh`):
 //
-//   node crates/gx-app/frontend-svelte/tools/parity.mjs
-//   node crates/gx-app/frontend-svelte/tools/parity.mjs --build=svelte
-//   node crates/gx-app/frontend-svelte/tools/parity.mjs --json /tmp/parity.json
+//   node tools/parity.mjs
+//   node tools/parity.mjs --json /tmp/parity.json
 //
-// Exit code: 0 when every probe passed and every `equal` probe matched.
+// `--chromium <path>` (or `CHROMIUM` in the environment) picks the browser;
+// the default is `chromium-browser`.
+//
+// Exit code: 0 when every probe passed.
 
 import { readFile, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -40,9 +49,7 @@ import { fileURLToPath } from "node:url";
 import { evaluate, launch, openPage, serve } from "./lib/harness.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const APP = path.resolve(HERE, ".."); // crates/gx-app/frontend-svelte
-const REPO = path.resolve(APP, "..", "..", "..");
-const VANILLA_DIR = path.resolve(APP, "..", "frontend"); // crates/gx-app/frontend
+const APP = path.resolve(HERE, ".."); // crates/gx-app/frontend
 const SVELTE_DIR = path.resolve(APP, "dist");
 
 const argv = process.argv.slice(2);
@@ -50,7 +57,6 @@ const option = (name, fallback = null) => {
   const hit = argv.find((argument) => argument.startsWith(`--${name}=`));
   return hit === undefined ? fallback : hit.slice(name.length + 3);
 };
-const BUILD = option("build", "both");
 const JSON_OUT = option("json", null);
 const CHROMIUM = option("chromium", process.env.CHROMIUM || "chromium-browser");
 
@@ -212,7 +218,7 @@ const scenarios = [
     steps: [
       {
         id: ["C7", "C9"],
-        name: "the eight grid variables from the vanilla formulas",
+        name: "the eight grid variables from the contract formulas",
         js: `{
           const plan = document.getElementById('plan');
           const names = ['--grid-angle', '--grid-sin', '--grid-cos', '--grid-tan',
@@ -1555,66 +1561,30 @@ async function staticChecks() {
   const perp = (59 * Math.sin((45 * Math.PI) / 180)).toFixed(2);
   push(
     ["C40"],
-    "every §6 number once, with the vanilla value, in src/lib/contract.js",
+    "every §6 number once, with the contract value, in src/lib/contract.js",
     Object.values(numbers).every(Boolean),
     { ...numbers, perpendicularStep: perp },
   );
 
-  // C42: app.css carries every rule and declaration of the vanilla
-  // stylesheet. The claim is about rules, not about prose: the Svelte file has
-  // its own header comment and the `#app` mount rule the Svelte mount needs.
-  const vanillaCss = await readFile(path.join(VANILLA_DIR, "style.css"), "utf8");
+  // C42 (the stylesheet carrying every rule of the vanilla style.css) retired
+  // with the vanilla page: there is no second stylesheet to compare against.
+  // CONTRACT.md §10 keeps the coverage map of the retired checks.
   const svelteCss = await readFile(path.join(APP, "src/app.css"), "utf8");
-  const stripComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, "");
-  const mountRule = /\n#app\s*\{[^}]*\}\n/;
-  const normalise = (text) => stripComments(text).replace(mountRule, "\n").replace(/\s+/g, " ").trim();
-  const identical = normalise(svelteCss) === normalise(vanillaCss);
-  let firstDifference = null;
-  if (!identical) {
-    const left = normalise(svelteCss).split(" ");
-    const right = normalise(vanillaCss).split(" ");
-    const at = left.findIndex((token, index) => token !== right[index]);
-    firstDifference = { at, svelte: left.slice(Math.max(0, at - 3), at + 4).join(" "), vanilla: right.slice(Math.max(0, at - 3), at + 4).join(" ") };
-  }
-  const rulesOf = (text) => (stripComments(text).match(/\{/g) || []).length;
-  push(
-    ["C42"],
-    "src/app.css carries every rule and declaration of the vanilla style.css",
-    identical,
-    {
-      identical,
-      rules: { svelte: rulesOf(svelteCss), vanilla: rulesOf(vanillaCss) },
-      svelteBytes: Buffer.byteLength(svelteCss),
-      vanillaBytes: Buffer.byteLength(vanillaCss),
-      mountRule: mountRule.test(svelteCss),
-      headerCommentDiffers: true,
-      firstDifference,
-    },
-    identical ? null : "a declaration differs outside the header comment and the #app rule",
-  );
 
   // C9: the stylesheet declares the grid tokens the tests pin, and the tile.
   const declarations = {
-    angle: /--grid-angle:\s*45deg/.test(vanillaCss),
-    diagonal: /--grid-diagonal:\s*59px/.test(vanillaCss),
-    step: /--grid-step:\s*41\.72px/.test(vanillaCss),
-    tileWidth: /calc\(var\(--grid-diagonal\)\s*\*\s*var\(--grid-tan\)\s*\*\s*var\(--zoom\)\)/.test(vanillaCss),
-    tileHeight: /calc\(var\(--grid-diagonal\)\s*\*\s*var\(--zoom\)\)/.test(vanillaCss),
-    phaseA: /--shift-a/.test(vanillaCss),
-    phaseB: /--shift-b/.test(vanillaCss),
-    inSvelte: /--grid-step:\s*41\.72px/.test(svelteCss),
+    angle: /--grid-angle:\s*45deg/.test(svelteCss),
+    diagonal: /--grid-diagonal:\s*59px/.test(svelteCss),
+    step: /--grid-step:\s*41\.72px/.test(svelteCss),
+    tileWidth: /calc\(var\(--grid-diagonal\)\s*\*\s*var\(--grid-tan\)\s*\*\s*var\(--zoom\)\)/.test(svelteCss),
+    tileHeight: /calc\(var\(--grid-diagonal\)\s*\*\s*var\(--zoom\)\)/.test(svelteCss),
+    phaseA: /--shift-a/.test(svelteCss),
+    phaseB: /--shift-b/.test(svelteCss),
   };
   push(["C9"], "the grid token declarations and the tile formula", Object.values(declarations).every(Boolean), declarations);
 
-  // C43: no inline style attribute in the markup of either frontend's source,
-  // and none in the HTML the browser is served.
-  const sources = [];
-  for (const file of await readdir(path.join(APP, "src"), { recursive: true })) {
-    if (!file.endsWith(".svelte") && !file.endsWith(".js")) continue;
-    if (file.startsWith("lib") || !file.includes(path.sep)) {
-      sources.push(path.join("src", file));
-    }
-  }
+  // C43: no inline style attribute in the markup of the app's source, and none
+  // in the HTML the browser is served.
   const svelteFiles = (await readdir(path.join(APP, "src"), { recursive: true })).filter((file) =>
     file.endsWith(".svelte"),
   );
@@ -1626,16 +1596,16 @@ async function staticChecks() {
     if (/<style/.test(text)) offenders.push(`${file} (style block)`);
   }
   const svelteHtml = await readFile(path.join(APP, "index.html"), "utf8");
-  const vanillaHtml = await readFile(path.join(VANILLA_DIR, "index.html"), "utf8");
-  const htmlOffenders = [svelteHtml, vanillaHtml].filter((html) => /\sstyle\s*=/.test(html)).length;
+  const htmlWithInlineStyle = /\sstyle\s*=/.test(svelteHtml);
   push(
     ["C43"],
     "no inline style attribute in the markup or in the served HTML",
-    offenders.length === 0 && htmlOffenders === 0,
-    { svelteFiles: svelteFiles.length, offenders, htmlWithInlineStyle: htmlOffenders },
+    offenders.length === 0 && !htmlWithInlineStyle,
+    { svelteFiles: svelteFiles.length, offenders, htmlWithInlineStyle },
   );
 
-  // C41: the built strings are the vanilla ones (the list §8 C41 names).
+  // C41: the built strings the list of §8 C41 names are in the source,
+  // verbatim (they were the vanilla ones; the port keeps them).
   const labels = await readFile(path.join(APP, "src/lib/labels.js"), "utf8");
   const appSource = await readFile(path.join(APP, "src/App.svelte"), "utf8");
   const components = (
@@ -1646,9 +1616,6 @@ async function staticChecks() {
     )
   ).join("\n");
   const svelteSources = `${labels}\n${components}\n${appSource}`;
-  const plan = await readFile(path.join(VANILLA_DIR, "plan.js"), "utf8");
-  const index = await readFile(path.join(VANILLA_DIR, "index.html"), "utf8");
-  const vanillaSources = `${plan}\n${index}`;
   const strings = [
     "esperando al agente…",
     "sin diagramas abiertos",
@@ -1658,15 +1625,12 @@ async function staticChecks() {
     "tu plano está vacío",
     "calculando layout…",
   ];
-  const found = Object.fromEntries(
-    strings.map((text) => [text, { svelte: svelteSources.includes(text), vanilla: vanillaSources.includes(text) }]),
-  );
-  const missing = strings.filter((text) => !(found[text].svelte && found[text].vanilla));
+  const missing = strings.filter((text) => !svelteSources.includes(text));
   push(
     ["C41"],
-    "the built strings of the vanilla page are in the Svelte source verbatim",
+    "the built strings of the plan are in the source verbatim",
     missing.length === 0,
-    { strings: strings.length, missing, found },
+    { strings: strings.length, missing },
     missing.length === 0 ? null : `missing: ${missing.join(" | ")}`,
   );
 
@@ -1677,14 +1641,12 @@ async function staticChecks() {
 
 async function main() {
   if (!existsSync(path.join(SVELTE_DIR, "index.html"))) {
-    console.error("parity: no Svelte dist — run scripts/svelte-build.sh first");
+    console.error("parity: no bundle at dist/ — run scripts/build.sh (or `npm run build`) first");
     process.exit(2);
   }
-  const builds = [];
-  if (BUILD !== "vanilla") builds.push(["svelte", SVELTE_DIR]);
-  if (BUILD !== "svelte") builds.push(["vanilla", VANILLA_DIR]);
+  const builds = [["svelte", SVELTE_DIR]];
 
-  const browser = await launch();
+  const browser = await launch(CHROMIUM);
   const all = [];
   try {
     for (const [name, root] of builds) {

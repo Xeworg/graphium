@@ -1,7 +1,8 @@
 // The contract with Rust, in one place: event names, contract numbers and the
-// keys of `Settings`. Every value here is a copy of the vanilla page
-// (`crates/gx-app/frontend/plan.js`) and of the Rust side
-// (`crates/gx-app/src/app.rs`); CONTRACT.md maps each one to its line.
+// keys of `Settings`. Every value here is a copy of the vanilla page this port
+// replaced (removed in `odd/tasks/frontend-consolidacion.md`, which keeps the
+// map in CONTRACT.md §10) and of the Rust side (`crates/gx-app/src/app.rs`);
+// CONTRACT.md maps each one to its line.
 //
 // Nothing in this file decides anything: it only makes the numbers the
 // vanilla page keeps in module scope discoverable to the Svelte port, which
