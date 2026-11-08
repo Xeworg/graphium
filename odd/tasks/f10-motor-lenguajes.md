@@ -268,3 +268,144 @@ languages ride on it.
     is outside the three surfaces this task listed. The dependencies
     cannot be added without it; the work unit has to include it (the
     alternative is dropping the batch).
+- L8 (2026-11-07, worker, T3 Batch 2: S2 S4): PHP, Ruby, SQL and Shell
+  landed. **The schema needed nothing**: no `SCHEMA_VERSION` bump, no
+  `CHECK`, no migration — `lang` is the registry of the build and the
+  insert path is the only gate (L7's contract held for four more
+  languages without one line of `schema.rs`).
+  - **Grammar provider — one loud deviation.** The `tree-sitter-sql` crate
+    is **unviable**: crates.io has only 0.0.1/0.0.2 (2021), built against
+    tree-sitter 0.19, with no `tree-sitter-language` `LANGUAGE` fn, so the
+    engine cannot load it. SQL landed on **`tree-sitter-sequel` 0.3.11**,
+    the maintained SQL grammar at the ABI of the engine (`tree-sitter-language`
+    0.1, dev-dep tree-sitter ~0.25). The feature is `lang-sql` — it names
+    the language, not the crate. The other three are the plain crates:
+    `tree-sitter-php` 0.25.1, `tree-sitter-ruby` 0.23.1 and
+    `tree-sitter-bash` 0.25.1. No language was swapped, so no human
+    checkpoint was needed for this; the crate substitution is recorded
+    here, in `crates/gx-index/Cargo.toml` and in `docs/PRD.md`.
+  - **The four languages (Batch 2, features DEFAULT OFF)** — the registry
+    entry of each is the whole of what the engine knows:
+    - `lang-php` (`.php`, the full PHP grammar, the one that reads the HTML
+      around `<?php`): classes, interfaces, traits and enums as
+      class/trait/trait/type with their methods, `function`s as `fn`, and a
+      `const` group as one `const` per `const_element` (the one hook). A
+      property and an enum case are not declarations of the book (a field
+      is not one in Java, C# or C++ either). **Module from the `namespace`
+      the file declares** (like Java's `package` and C#'s `namespace`), with
+      `\` as the `qname` separator — the language's — and the anchor named
+      by the last segment of that namespace (`chapter_anchor_name` now
+      splits on `\` too; no other grammar of the book spells a module path
+      with a backslash and the nine published D3 numbers stayed
+      byte-identical). Relations: `calls` (the three call forms and `new`),
+      `imports` (the last segment of every `use`, group clauses included),
+      `inherits` (`extends`, every `implements`, and `use TraitName` — a
+      PHP trait is a mixin), `uses` (parameter, return and property types;
+      a primitive is not a declaration and does not resolve).
+    - `lang-ruby` (`.rb`): classes and modules as containers (a Ruby
+      `module` nests its methods like a class does), a `def` inside them as
+      `method` and at the root as `fn`, `def self.x` as `method`, and
+      `LIMIT = 3` as `const` (the one hook: an `assignment` whose left is a
+      `constant`). Module from the path (`lib.store`), `::` as the `qname`
+      separator (the language's). **The metaprogramming decision**: an
+      `attr_accessor :name`, a `define_method` or a `class_eval` stays a
+      call — a symbol synthesised from a call is a semantic pass, and the
+      book publishes only what the syntax tree spells — so an accessor is
+      one call and not two declarations. Relations: `calls` (every send by
+      its method name; `DiagramStore.new` is a call to the class its
+      receiver names), `imports` (`require`/`require_relative`/`load`
+      **without a receiver**, by the stem of the path they name), `inherits`
+      (the superclass and every `include`/`extend`/`prepend`). No `uses`:
+      Ruby has no type annotations (JavaScript's case).
+    - `lang-sql` (`.sql`, grammar `tree-sitter-sequel`; the file is the
+      module): tables, views (materialized included) and types as `type`,
+      functions and triggers as `fn`. Every declaration is a hook: a
+      `CREATE` of this grammar has no `name` field and names its object in
+      an `object_reference` child. A column is not a declaration, and an
+      **index is not one either** — it has no body and no name the language
+      refers to; what matters is the table it reads. **The relation
+      decision (SQL)**: SQL has no `calls` and no `imports` in the sense the
+      other grammars read them — the tree of a statement names objects, not
+      call targets or modules — so its only kind is **`uses`**: the tables a
+      query reads (`FROM`/`JOIN`, which is how a view reads its sources),
+      the table an index is built on (`ON`) and the table a foreign key
+      points to (`REFERENCES`). `calls`, `imports` and `inherits` are not
+      invented for it, and the fixture measures four edges, not twenty.
+      Honest limit of the grammar: a *named* constraint
+      (`CONSTRAINT fk FOREIGN KEY …`) is not in its rules and parses as an
+      error node, so it yields no relation (the fixture writes the inline
+      `REFERENCES` form).
+    - `lang-shell` (`.sh`, `.bash`; grammar `tree-sitter-bash`; the file is
+      the module): the functions of the script and the variables assigned at
+      its root as `const`. No hook at all — `function_definition` and
+      `variable_assignment` both spell their name in a field. A `local` of a
+      function body is not a declaration (a function is a leaf, its body is
+      not walked). Relations: `calls` (every command by the name it writes —
+      a shell does not distinguish a function of the script from a system
+      program, so the book records the name and D3 reports honestly how many
+      of them the worktree answers) and `imports` (`source`/`.` by the stem
+      of the path). No `uses` and no `inherits`: a shell has no types.
+  - **Language N+1 after this cut**: still one module + one registry entry
+    + dependency/feature + fixture/floor + PRD row + re-measure, and still
+    **no schema change**. Batch 2 needed no new kind of engine work: four
+    table walks, one `Walk::Custom`-free batch, and hooks only where the
+    grammar names a declaration in a shape the tables cannot (PHP's `const`
+    group, Ruby's constant, SQL's `object_reference`).
+  - **D3** (`-- --nocapture`, batch features on). Batch 2, on **its own**
+    fixture tree (the rule of L7: a batch is measured on its own chapters,
+    never on a pool one batch can move): **PHP 95,0 % (19/20), Ruby 66,7 %
+    (6/9), SQL 100 % (4/4), Shell 37,5 % (3/8)**. Floors pinned at
+    **91 / 63 / 96 / 34 %** (measured minus 3,7–4 points, never inflated).
+    SQL's 4/4 is four edges by decision, not by omission; Shell's 37,5 % is
+    the honest number of a language whose calls are mostly system programs
+    (`printf`, `echo`) with no declaration in the book. The nine existing
+    languages, same tests, same `--nocapture`: **byte-identical** table —
+    TypeScript 48,0 % (12/25), Rust 36,4 % (4/11), Java 29,6 % (8/27),
+    Go 17,2 % (5/29), Python 14,8 % (4/27), JavaScript 66,7 % (8/12),
+    C 81,8 % (9/11), C++ 71,4 % (10/14), C# 66,7 % (10/15).
+  - **Binary** (release, opt-level=z, lto, strip): default `graphium`
+    **14.363.032 B — byte-identical to L7's after** (the four grammars
+    compile to nothing in the default build), 91,5 % of RNF1-quater. The
+    same tree with **all thirteen** features on (built from a temp copy
+    because `gx-mcp`/`gx-app` do not forward the Batch 1/2 flags and are
+    outside this cut's surfaces): **31.217.432 B** (198,8 % of the ceiling,
+    +16.854.400 B over the default) — the measurement that keeps the eight
+    new grammars off by default.
+  - **Gates (exit codes without pipes)**: `cargo test --workspace` **0**
+    (42 suites ok, the default build unchanged); `cargo fmt --check` **0**;
+    `cargo clippy --workspace --all-targets` **0** (0 warnings);
+    `cargo clippy -p gx-index --all-targets --features
+    "lang-php,lang-ruby,lang-sql,lang-shell"` **0**; the four gx-index
+    integration suites with the batch features **0** (book 22, languages
+    21, relations 7, end_to_end 3); each new feature alone compiles
+    (`--no-default-features --features lang-X`; the PHP-only slim build
+    warns about `dotted_module`, the pre-existing pattern of L7's slim
+    builds).
+  - **Open blocker (the one line of this cut the worker may not touch)**:
+    `cargo test -p gx-index --features "lang-php,lang-ruby,lang-sql,lang-shell"`
+    exits **101** on **one stale unit test inside
+    `crates/gx-index/src/schema.rs`** — a surface this task forbids — which
+    asserts `!accepts_language("ruby")` and `!accepts_language("php")`
+    (true when Batch 1 landed, false now). The other 62 tests of that run
+    pass and every integration suite is green. The fix is test-only and
+    three lines: derive the unknown language from the registry instead of
+    hard-coding two languages that Batch 2 now owns. It is reported, not
+    edited: the orchestrator authorizes it or accepts the gate as failing
+    on that single assertion.
+  - **Scope note for the reviewer**: `Cargo.lock` (workspace root) changed
+    — `tree-sitter-php`, `tree-sitter-ruby`, `tree-sitter-sequel`,
+    `tree-sitter-bash` and `tree-sitter-language` — and it is outside the
+    listed surfaces; the dependencies cannot land without it (L7's note
+    verbatim). It also **downgrades `cc` 1.11.0 → 1.2.67** for the whole
+    workspace, and that is worth knowing: `tree-sitter-sequel` declares its
+    build-dependency as `cc = "~1.2.1"` (a `~` pin, so `1.11.0` does not
+    satisfy it) and cargo resolves the only version every other crate
+    accepts. Nothing in a manifest changed and every grammar of the book
+    (the nine and the four) compiles and passes its tests with `cc`
+    1.2.67 — the gate runs above are the evidence — but a reviewer watching
+    the lockfile will see a shared build dependency move because of the SQL
+    grammar crate. `crates/gx-index/tests/book.rs` also changed: the refusal
+    test used `ruby` as the archetype of a language the build does not know,
+    which Batch 2 made false, so it now derives the unknown language from
+    the registry (a later batch: kotlin/swift/dart/scala/zig) and keeps
+    meaning under any feature set.
