@@ -439,3 +439,115 @@ fn the_bridge_reads_the_chapter_without_changing_it() {
         "drawing the detail does not add a relation to the chapter"
     );
 }
+
+/// S6 (f12): the surface is one call — the path of a `.sql` file and its text
+/// in, the document the render door takes out.
+///
+/// The call composes the chapter's own parse with the bridge, so «this .sql
+/// file» reaches the plan through the doors that already exist: the document it
+/// answers is the one `render_json` (the engine door) and `render_diagram` (the
+/// MCP door) already render. No new message, no new tool, no flag.
+#[cfg(feature = "lang-sql")]
+#[test]
+fn a_sql_file_answers_the_document_the_door_renders() {
+    let text = er_bridge::chapter_document("db/schema.sql", DDL)
+        .expect("the schema of the fixture draws a document");
+
+    // The very text the two-step path builds: the chapter's parse plus
+    // `document_json`, never a second mapping that could drift from it.
+    let parsed = parse("db/schema.sql", DDL.as_bytes(), 0).expect("the SQL grammar");
+    assert_eq!(
+        Some(text.as_str()),
+        er_bridge::document_json(parsed.tables.as_deref().expect("the detail of the chapter"))
+            .as_deref(),
+        "the file in, the document the door renders out: one mapping, one document"
+    );
+
+    let document: Value = serde_json::from_str(&text).expect("the document is JSON");
+    assert_eq!(
+        document["tables"]
+            .as_array()
+            .expect("tables")
+            .iter()
+            .map(|table| table["name"].as_str().expect("the name of a table"))
+            .collect::<Vec<_>>(),
+        ["store", "shipment"],
+        "the door gets the tables of the file, not a summary of them"
+    );
+    assert_eq!(
+        relations(&document),
+        [relation("store", "id", "shipment", "store_id")],
+        "and the foreign key of the file travels with them as the er relation"
+    );
+}
+
+/// S6 (f12): the call answers no document when the chapter has nothing to
+/// draw. It never invents a diagram, and it needs no language check to know:
+/// the detail is the mention of the tables.
+#[cfg(feature = "lang-sql")]
+#[test]
+fn a_file_without_a_schema_answers_no_document() {
+    let cases = [
+        // A chapter of another language: it parses, and it carries no table
+        // detail, so there is nothing to draw.
+        ("src/main.rs", "pub fn one() {}\n"),
+        // A `CREATE TABLE … AS SELECT` writes no column list.
+        (
+            "db/snapshot.sql",
+            "CREATE TABLE snapshot AS SELECT id, name FROM store;\n",
+        ),
+        // A path no grammar of the book reads.
+        ("notes.txt", "CREATE TABLE store (id BIGINT PRIMARY KEY);\n"),
+    ];
+    for (path, source) in cases {
+        assert_eq!(
+            er_bridge::chapter_document(path, source),
+            None,
+            "there is no schema to draw on `{path}`"
+        );
+    }
+}
+
+/// S3, S7 (f12): the limit the chapter documents, pinned — the *name* of a
+/// named `CONSTRAINT <name> FOREIGN KEY …` is not readable at this grammar
+/// version, and what the name leaves behind still parses: the `(…) REFERENCES
+/// …` tail is read as the key it declares, so the column is a `fk` row and the
+/// relation is drawn.
+#[cfg(feature = "lang-sql")]
+#[test]
+fn a_named_foreign_key_loses_its_name_and_keeps_its_key() {
+    const DDL: &str = r#"
+CREATE TABLE store (
+    id BIGINT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE shipment (
+    id BIGINT PRIMARY KEY,
+    store_id BIGINT NOT NULL,
+    CONSTRAINT fk_store FOREIGN KEY (store_id) REFERENCES store (id)
+);
+"#;
+    let text = er_bridge::chapter_document("db/named.sql", DDL)
+        .expect("the schema of the fixture draws a document");
+    let document: Value = serde_json::from_str(&text).expect("the document is JSON");
+
+    // The pinned grammar (`tree-sitter-sequel 0.3.11`) does not parse the name:
+    // `CONSTRAINT fk_store FOREIGN` lands in an `ERROR` node and the
+    // `(store_id) REFERENCES store (id)` tail parses as the unnamed key, which
+    // the chapter reads. The limit is the name the book cannot keep, not the key
+    // it can: the diagram is the same one the unnamed form draws.
+    assert_eq!(
+        rows(&document, "shipment"),
+        [
+            row("id", "BIGINT", "pk", false),
+            row("store_id", "BIGINT", "fk", false),
+        ],
+        "the key the named constraint declares is read: `store_id` is a `fk` row"
+    );
+    assert_eq!(
+        relations(&document),
+        [relation("store", "id", "shipment", "store_id")],
+        "and its relation is drawn, because the er contract can anchor it"
+    );
+}

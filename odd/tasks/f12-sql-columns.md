@@ -258,3 +258,115 @@ owner's opening of the feature on 2026-11-09.
   (T3's surface: where the owner meets the bridged document), no mapping of a
   composite key or of a named `CONSTRAINT … FOREIGN KEY`, no `er.rs` change, no
   schema or schema-version change, no serde derive.
+
+- L4 (2026-11-09, worker): T3 landed — the closing task: the surface, the live
+  proof and the honest limits. **The seam, and the touch it refused to make.**
+  The owner's index→document path already had its two halves: the producer
+  (`er_bridge::document_json`, L3) and the door that renders `er` version-1
+  documents from JSON (`gx_core::engine::render_json`, and `render_diagram` over
+  it). What was missing was the call that turns *a `.sql` file* into that
+  document, and it is one function:
+  `crates/gx-index/src/lang/er_bridge.rs::chapter_document(path, source)` — the
+  chapter's own `lang::parse` plus `document_json`, the path and the text of the
+  file in, the text of the document out. It refuses by answering `None` and it
+  needs no language check to do it (a chapter carries `tables` only when its
+  grammar reads a detail), so a Rust chapter, a `CREATE TABLE … AS SELECT` and a
+  path no grammar of the book reads all answer no document — never an empty one.
+  **No new wire message, no new MCP tool, no CLI flag and no `CONTRACT.md`
+  line**: that file is the frontend↔Rust contract and knows nothing of this
+  path, so it is untouched. What is deliberately *not* built is the last mile to
+  the agent: a tool that answers the document (a new name, or a `diagram` key on
+  the answer of `code_structure`) is a change of the tool payload the agents are
+  written against, and the task's non-CONTRACT rule plus S6 ask for none. It is
+  the one thing between this seam and the owner asking «the ER of
+  `db/schema.sql`» in a plain sentence, and it is named here as the gap rather
+  than smuggled in as a tool.
+  **RED→GREEN.** RED, tests first:
+  `cargo test -p gx-index --test sql_er_bridge` → exit 101, `error[E0425]:
+  cannot find function chapter_document in module er_bridge` (three times).
+  GREEN: the function → exit 0, 9 passed (the six of T2 unchanged). The three
+  new tests: the file in / the document the door renders out (and it is the very
+  text `document_json` builds, not a second mapping); a file with no schema
+  answers `None` (another language, `CREATE TABLE … AS SELECT`, a path no
+  grammar reads); the named-key limit, pinned.
+  **A correction the pinned grammar made (S3).** The limit test written first
+  asserted the task's sentence — a named `CONSTRAINT fk FOREIGN KEY …` yields no
+  detail — and it failed: the detail **does** read it. The parse-tree probe on
+  the pinned `tree-sitter-sequel 0.3.11` (`/tmp/f12-t3-live-BwHayH`, `to_sexp`)
+  shows why: `column_definitions (constraints (ERROR (keyword_constraint)
+  (identifier)) (constraint (keyword_key) (ordered_columns …)
+  (keyword_references) (object_reference …) (identifier)))` — the name and the
+  `FOREIGN` keyword land in an `ERROR` node and the `(…) REFERENCES …` tail that
+  follows still parses as the *unnamed* key constraint, which `table_constraints`
+  reads. So the measured truth is: **the name is lost and the key is read**; the
+  column is a `fk` row and the ER relation is drawn exactly as for the unnamed
+  form (verified two-table, one-line and with `ON DELETE CASCADE`; a composite
+  target is still refused by the er contract's single-key rule). The doc now says
+  that (it would have been false to say "not supported"), the test pins it
+  (`a_named_foreign_key_loses_its_name_and_keeps_its_key`), and S3's sentence
+  needs the parent's restatement: the form is unparseable *as a named
+  constraint*, not *unreadable as a key*. L2's «yields no detail» was the error,
+  and the older note in `sql.rs` about the missing `uses` edge was right all
+  along (a table-level key publishes no `uses` edge — detail only).
+  **The limits, where the owner reads them.** `sql.rs`'s chapter header now
+  carries a plain-language block beside the two grammar gap notes: (1) named
+  `CONSTRAINT <name> FOREIGN KEY` — the **name** is not read at this grammar
+  version, the key it declares is (the diagram draws it), and the chapter
+  publishes no `uses` edge for a table-level key; (2) composite keys are carried
+  as one mark per column and the ER mapping is **single-key only** — no relation
+  to or from a composite key, the columns keep their `pk`/`fk` rows; (3)
+  `CREATE TABLE … AS SELECT` **yields no columns** and is not drawn.
+  `er_bridge.rs`'s own "what it does not draw" list and its new surface
+  paragraph say the same in the producer's words, and the stale «a named key
+  never reaches the bridge» bullet was corrected.
+  **Live proof, two ways, real exit codes.** (1) A scratch package outside the
+  worktree (`/tmp/f12-t3-live-BwHayH`, path dependencies, never committed) read
+  the `.sql` fixture from disk, called `chapter_document("db/schema.sql", …)` and
+  rendered the result through `gx_core::engine::render_json` with the product's
+  engines: the door accepted the seam's document — 4949 bytes, 2 nodes, 1 edge —
+  and the SVG text names `store`, `shipment` and `store_id`; exit 0. (2) The
+  real MCP door with `DISPLAY=:0`: the same document through
+  `target/debug/graphium --stdio` (initialize + `tools/call render_diagram`, in
+  the isolation shape of `scripts/smoke.sh` — own `XDG_RUNTIME_DIR`/`HOME` under
+  `/tmp`, owner quit on exit): `rendered=true`, `rendered_kind=er`,
+  `diagram_id=d-0001`, 2 nodes, 1 edge — the diagram on the plan, the window
+  confirming the paint; exit 0. The binary is the worktree's dev build (13:00,
+  before this task's edits); T3 touches no render path, so what it proves is the
+  door T3 connects to, and the document is the one current sources produce.
+  **A build fact the proof met (not built here).** The workspace declares
+  `gx-index` with `default-features = false` and `gx-app` exposes only the five
+  C2 languages as features, so the default `graphium` binary has no SQL grammar
+  (`cargo build -p gx-app` uses the `gx-index` unit whose features are
+  `lang-rust/typescript/python/go/java`). The render door needs no grammar, so
+  the proof holds; a product path that *indexes* `.sql` needs the SQL feature at
+  build time (`--features gx-mcp/lang-sql`), which is the language lever of
+  T4/C3 and not a surface of this task.
+  **Gates** (real exit codes): `cargo test -p gx-index` exit 0 (`sql_er_bridge`
+  9 passed — the six of T2 unchanged —, `sql_detail` 4, `languages` 47, unit
+  89); `cargo test --workspace` exit 0, 0 failed (`er-posts` byte-identical: the
+  golden suite passed with no `UPDATE_GOLDEN`); `cargo fmt --check` exit 0;
+  `cargo clippy --workspace` exit 0, no warning (plus `cargo clippy -p gx-index
+  --all-targets` exit 0). No differential against a base copy was needed: the
+  change is additive (one new function plus documentation; no existing function
+  body moved) and the base commit is this branch's HEAD.
+  **Covered**: S6 (the document of «this `.sql` file» is the `er` version-1 wire
+  shape and it reaches the plan through the call that already serves `er`
+  documents — proven with `rendered=true`; no new message, no CONTRACT payload
+  change), S7 (the seam's tests plus the three `sql_detail` and the two
+  `languages.rs` SQL tests green, `er-posts` byte-identical). S1-S5 stand as T1
+  and T2 delivered them. **S3 is covered only in its measured form**: the third
+  form is documented and pinned, but the claim «not supported» is not what the
+  grammar does — see the correction above, and the parent's restatement of S3 is
+  the one open item.
+  **The feature's state: complete, with one deliberate gap.** «This `.sql`
+  file → the ER diagram of it» works end to end in Rust and reaches the plan
+  through the existing door; what does not exist — on purpose, because it is a
+  CONTRACT touch — is the MCP tool answer that would hand the document to the
+  agent without a Rust caller. The doc-only parts of this task (the limits) have
+  no RED: they are prose pinned by tests where the claim is observable, and
+  nothing in them changes behaviour.
+  **Deliberately not built**: no MCP tool or tool-answer field, no CLI flag, no
+  `CONTRACT.md` line, no frontend change, no `er.rs` change, no dependency or
+  `Cargo.toml` change (no feature for SQL in `gx-app`), no schema or
+  schema-version change, no mapping of a composite key or of a composite foreign
+  key, and no commit (the orchestrator commits).

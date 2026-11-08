@@ -31,10 +31,13 @@
 //! `object_reference` of the statement and the hook reads it there.
 //!
 //! The grammar understands a foreign key written inline
-//! (`store_id BIGINT REFERENCES store (id)`); a *named* constraint
-//! (`CONSTRAINT fk FOREIGN KEY …`) is not in its rules and parses as an error
-//! node, so the book keeps no relation for it and the fixture of the tests
-//! writes the inline form.
+//! (`store_id BIGINT REFERENCES store (id)`) and, at table level, as the
+//! `constraint` node the next paragraph describes. A *named* constraint
+//! (`CONSTRAINT fk FOREIGN KEY …`) is not in the grammar's rules: the name and
+//! the `FOREIGN` keyword land in an error node and the `(…) REFERENCES …` tail
+//! still parses as the unnamed key, so the book keeps no `uses` relation for
+//! the constraint (the detail of f12 does read the key it declares — see the
+//! limits below).
 //!
 //! **The detail of a table (S3, S4 of f12).** SQL is the one language of the
 //! book whose schema hands the diagram a shape, and that shape is **not** a
@@ -68,11 +71,13 @@
 //!   alone, because the `er` contract keys a relation on one column;
 //! - a *named* foreign key (`CONSTRAINT fk FOREIGN KEY …`) is not in the
 //!   grammar's rules at this version (its `_constraint_literal` admits only
-//!   `PRIMARY KEY` and `CHECK`), so it parses as an error node and the chapter
-//!   keeps neither a relation nor a detail for it: the fixtures write the inline
-//!   and the unnamed table-level forms. A named primary key
-//!   (`CONSTRAINT pk PRIMARY KEY (…)`) does parse, and the keyword check reads
-//!   it like the unnamed one;
+//!   `PRIMARY KEY` and `CHECK`): the name and the `FOREIGN` keyword land in an
+//!   `ERROR` node, and the `(…) REFERENCES …` tail that follows still parses as
+//!   the unnamed key constraint — so the name is lost and **the key is read**
+//!   (measured on the pinned grammar; the fixtures write the inline, the
+//!   unnamed table-level and the named forms). A named primary key
+//!   (`CONSTRAINT pk PRIMARY KEY (…)`) parses whole, name field included, and
+//!   the keyword check reads it like the unnamed one;
 //! - the relations of the chapter do not change with this detail: its `uses`
 //!   edges stay the three forms [`visit`] reads, and a table-level foreign key
 //!   lives in [`crate::lang::model::ParsedTable::foreign_keys`] only. Its
@@ -81,14 +86,35 @@
 //!   of the chapter and is not an entry of the detail: the detail is what the
 //!   DDL writes between the parentheses.
 //!
+//! **The limits, in plain language (f12; what the owner should know).**
+//!
+//! - a named `CONSTRAINT <name> FOREIGN KEY (…) REFERENCES …` is not fully
+//!   supported at this grammar version: the constraint's **name is not read**
+//!   (the name and the `FOREIGN` keyword are an error node). The key it
+//!   declares is another matter — the tail parses and the diagram draws it, so
+//!   a named key and an unnamed one draw the same relation — and the chapter
+//!   publishes no `uses` edge for either, because a table-level key is detail
+//!   only;
+//! - a **composite key** is carried as what it is, one mark per column
+//!   (`PRIMARY KEY (a, b)` marks `a` and `b` as keys), and the mapping to the
+//!   `er` contract is **single-key only**: a relation that would point at a
+//!   composite key, or a foreign key of more than one column, is not drawn. The
+//!   columns keep their `pk`/`fk` rows, so the diagram still says what the
+//!   schema declares;
+//! - a `CREATE TABLE … AS SELECT` **yields no columns**: it writes no column
+//!   list, so the detail has nothing for it and it is not drawn in the diagram.
+//!
 //! **The diagram side (S5, S6 of f12).** [`er_bridge`] turns this detail into
 //! the `er` document the engine door already renders — the first index→diagram
 //! path — with the inline and the table-level foreign keys as its relations.
 //! It is a producer over the detail, not a change of this chapter: the symbols
 //! and the relations of a SQL file are the same ones with the bridge or without
-//! it. That module documents the mapping and what it deliberately leaves
-//! undrawn (a target that is not a primary key, a composite key, a named
-//! `CONSTRAINT … FOREIGN KEY`).
+//! it. [`er_bridge::chapter_document`] is the whole of the surface: the path of
+//! a `.sql` file and its text in, the document the door already renders out, so
+//! «this `.sql` file» reaches the plan through the render call that already
+//! serves `er` documents (no new message, no new tool, no flag). That module
+//! documents the mapping and what it deliberately leaves undrawn (a target that
+//! is not a primary key, a composite key).
 
 use tree_sitter::Node;
 

@@ -43,6 +43,21 @@
 //!   crow's foot from the foreign key's nullability (`er.rs:319-330`), so
 //!   writing it would repeat what the document already says.
 //!
+//! **The surface, and the last mile it does not build (S6).**
+//!
+//! [`chapter_document`] is the whole of the surface: the path of a `.sql` file
+//! and its text in, the document the door already renders out. It is the
+//! chapter's own parse plus [`document_json`], so a door that already renders
+//! `er` documents (`gx_core::engine::render_json`, and `render_diagram` over
+//! it) needs nothing new: the document *is* the file. No new wire message, no
+//! new MCP tool, no CLI flag and no `CONTRACT.md` line — the reader that hands
+//! the document to the door is the one every `er` diagram already uses.
+//!
+//! What is deliberately **not** here is the agent-facing name of that call: a
+//! tool that answers the document (a new name, or a new key on the answer of
+//! `code_structure`) would be a change of the tool contract the agents are
+//! written against, and this feature's S6 asks for none.
+//!
 //! **What it does not draw, and why.**
 //!
 //! - a foreign key whose `from` would not be a primary key — a target that is a
@@ -57,9 +72,12 @@
 //!   key — and the loss is documented here and in `sql.rs`;
 //! - a composite foreign key (`FOREIGN KEY (a, b) REFERENCES …`) is skipped for
 //!   the same reason: the contract is column to column;
-//! - a *named* `CONSTRAINT fk FOREIGN KEY …` never reaches the bridge: the
-//!   pinned grammar parses it as an error node (S3) and the detail carries
-//!   nothing for it;
+//! - a *named* `CONSTRAINT fk FOREIGN KEY (…) REFERENCES …` keeps its key: the
+//!   pinned grammar drops the name and the `FOREIGN` keyword into an error node
+//!   and still parses the tail as the unnamed key, which the detail reads — the
+//!   pair `(store_id) REFERENCES store (id)` below is drawn whether the DDL
+//!   named the constraint or not. What the diagram cannot keep is the **name**,
+//!   because the grammar never gives it (documented in `sql.rs`);
 //! - a table with no columns (`CREATE TABLE … AS SELECT` writes none) is
 //!   skipped instead of drawn as an empty compartment, and a detail with no
 //!   table with rows produces no document at all.
@@ -145,6 +163,29 @@ pub fn document(tables: &[ParsedTable]) -> Option<Value> {
 /// detail has a table with rows to draw.
 pub fn document_json(tables: &[ParsedTable]) -> Option<String> {
     document(tables).map(|document| document.to_string())
+}
+
+/// The `er` document of one `.sql` file: «this `.sql` file» in, the document
+/// the engine door renders out (S6 of f12).
+///
+/// The call is the chapter's own parse ([`crate::lang::parse`]) plus
+/// [`document_json`] and nothing else, so the document it answers is the one a
+/// caller would build by hand, never a second mapping that could drift from
+/// it. `path` is the chapter's path relative to the root of the worktree, the
+/// same path the book stores; `source` is the text of the file as it is now
+/// (the detail is read live, because the schema keeps no row for a column).
+///
+/// It refuses by answering `None`, and it needs no language check to do it: a
+/// chapter carries the table detail only when its grammar reads one
+/// ([`crate::lang::engine::Detail`]), so a file of another language, a DDL with
+/// no column list and a path no grammar of the book reads all produce no
+/// document — never an empty one.
+pub fn chapter_document(path: &str, source: &str) -> Option<String> {
+    // The modification time is the book's business (it stamps the `file` row),
+    // never the document's: the caller has the path and the text, and that is
+    // all this mapping reads.
+    let parsed = crate::lang::parse(path, source.as_bytes(), 0).ok()?;
+    document_json(parsed.tables.as_deref()?)
 }
 
 /// The tables of the detail the document draws: the ones with rows, once each.
