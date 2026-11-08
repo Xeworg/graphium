@@ -19,9 +19,7 @@
 
   import {
     CAMERA_THROTTLE_MS,
-    CULL_ZOOM,
     EVENTS,
-    MAX_LIVE_SVGS,
     OBJECT_PADDING,
     PAN_MS,
     SETTINGS_THROTTLE_MS,
@@ -41,10 +39,8 @@
   import {
     cameraOn,
     clampZoom,
-    distanceToView,
+    cullDecide,
     objectCenter,
-    rectsIntersect,
-    visibleRect,
     zoomAtPoint,
   } from "./lib/plane.js";
   import { boxText, sessionEndedNotice } from "./lib/labels.js";
@@ -95,7 +91,6 @@
   // --- machinery outside reactivity ----------------------------------------
 
   let planEl = $state(null);
-  let diagramsEl = $state(null);
   // The size of the plan in CSS pixels, before the current resize
   // (plan.js:287-290). Refreshed before every culling decision that follows
   // an insertion or a paint.
@@ -125,12 +120,10 @@
   const gridStatic = $derived(gridPaintStatic(settings));
   const gridCamera = $derived(gridPaintCamera(settings, camera));
   const palette = $derived(palettePaint(settings));
-  // The camera transform of the layer. The vanilla page applies the same
-  // transform to every object (`plan.js:393-396`); one transform on the
-  // camera layer is the same result for one write.
-  const layerTransform = $derived(
-    `translate(${camera.tx}px, ${camera.ty}px) scale(${camera.zoom})`,
-  );
+  // The camera transform of the layer is pure CSS since T2 of
+  // `odd/tasks/mejoras-frontend.md`: `.diagrams` reads `--tx`/`--ty`/`--zoom`,
+  // which `gridPaintCamera` already publishes on `#plan` with every camera
+  // write. One stylesheet rule, zero JavaScript per frame.
   // How many objects the plan on screen has (A2; B1): the clones on the user
   // plan, the diagrams of the session otherwise.
   const planObjectCount = $derived(
@@ -175,10 +168,6 @@
       root.style.setProperty(name, value);
     }
   });
-  $effect(() => {
-    if (!diagramsEl) return;
-    diagramsEl.style.transform = layerTransform;
-  });
 
   // --- records --------------------------------------------------------------
 
@@ -200,9 +189,14 @@
       // Whether the drawing is out of the DOM (RNF1-ter). Born culled.
       culled: true,
       hidden: false,
+      // The drawing as the owner delivered it — the markup string, never a
+      // parsed DOM node inside reactive state (T2): `{@html}` parses it on
+      // each mount, and the measured cost of one re-parse of the 300-node
+      // fixture (1.47 ms, `tools/measure-html.mjs`) is under the agreed
+      // ~3 ms threshold.
       svg: null,
-      // The drawing of the version the human is browsing, while it lasts
-      // (C27). The culling re-mounts this one, not the live drawing under it.
+      // The markup of the version the human is browsing, while it lasts
+      // (C27). The culling re-parses this one, not the live drawing under it.
       previewSvg: null,
       // The entry of the clone this object is, as the owner states it (B1;
       // plan.js:1690): the tools pill reads its counts from here.
@@ -451,56 +445,21 @@
   // --- culling (plan.js:2064-2195) -------------------------------------------
 
   /**
-   * Decides, object by object, whether its SVG stays in the DOM (RNF1-ter,
-   * C14): at most `MAX_LIVE_SVGS` drawings, the ones closest to the centre
-   * of the view; everything out of the view, below `CULL_ZOOM`, or of a plan
-   * that is not on screen, becomes a box. It runs on every camera write.
+   * The one funnel of the culling (RNF1-ter, C14): every camera write — pan
+   * step, wheel step, camera intent, resize, insertion, plan switch — crosses
+   * here, and nowhere else do the `culled` flags move. The decision itself is
+   * pure (`cullDecide` in `lib/plane.js`); this half applies it to the
+   * records, imperatively — never a `$effect`, which would re-enter
+   * reactivity right after the DOM writes of the frame.
+   *
+   * An object the decision keeps alive whose drawing has not arrived yet (a
+   * clone waiting for its paint) keeps its box: there is nothing to mount.
    */
   function applyCulling() {
-    const view = visibleRect(camera, viewport);
-    const zoomedOut = camera.zoom < CULL_ZOOM;
-    const candidates = [];
+    const alive = cullDecide(plane, camera, viewport);
     for (const rec of plane) {
-      if (rec.hidden) {
-        cullRecord(rec);
-        continue;
-      }
-      if (zoomedOut || !rectsIntersect(rec.rect, view)) {
-        cullRecord(rec);
-        continue;
-      }
-      candidates.push({ rec, distance: distanceToView(rec.rect, view) });
+      rec.culled = !alive.has(rec.id) || !(rec.previewSvg || rec.svg);
     }
-    candidates.sort((left, right) => left.distance - right.distance);
-    for (let index = 0; index < candidates.length; index += 1) {
-      if (index < MAX_LIVE_SVGS) {
-        materializeRecord(candidates[index].rec);
-      } else {
-        cullRecord(candidates[index].rec);
-      }
-    }
-  }
-
-  function cullRecord(rec) {
-    if (rec.culled) {
-      return;
-    }
-    // The drawing leaves the page; the node stays reachable in `rec.svg`, so
-    // coming back into the view re-mounts the same node (the action in the
-    // template does the swap).
-    rec.culled = true;
-  }
-
-  function materializeRecord(rec) {
-    if (!rec.culled) {
-      return;
-    }
-    // An object whose drawing has not arrived yet (a clone waiting for its
-    // paint) keeps its box: there is nothing to mount yet.
-    if (!rec.previewSvg && !rec.svg) {
-      return;
-    }
-    rec.culled = false;
   }
 
   // --- plans (plan.js:1204-1400) ----------------------------------------------
@@ -684,6 +643,9 @@
     }
     const holder = document.createElement("div");
     holder.innerHTML = p.svg || "";
+    // One parse here, at arrival: it validates the payload and reads the
+    // width/height the rectangle needs. The record keeps the STRING — the
+    // template's `{@html}` parses on each mount (T2).
     const svg = holder.querySelector("svg");
     if (!svg) {
       emit(EVENTS.renderAck, { req_id: p.req_id, ok: false });
@@ -714,7 +676,7 @@
       w: width,
       h: height,
     };
-    rec.svg = svg;
+    rec.svg = p.svg || "";
     rec.rect = {
       x: center.x - width / 2 - OBJECT_PADDING,
       y: center.y - height / 2 - OBJECT_PADDING,
@@ -800,9 +762,7 @@
    * changes shape because of the history. The live drawing stays reachable on
    * the record for the restore.
    */
-  function paintPreview(rec, svg) {
-    const width = Number.parseFloat(svg.getAttribute("width") || "0");
-    const height = Number.parseFloat(svg.getAttribute("height") || "0");
+  function paintPreview(rec, svgMarkup, width, height) {
     const center = {
       x: rec.rect.x + rec.rect.w / 2,
       y: rec.rect.y + rec.rect.h / 2,
@@ -813,7 +773,7 @@
       w: width,
       h: height,
     };
-    rec.previewSvg = svg;
+    rec.previewSvg = svgMarkup;
   }
 
   /** Brings the live drawing back: the preview leaves the plan (C26). */
@@ -851,7 +811,7 @@
     if (!svg) {
       return;
     }
-    paintPreview(rec, svg);
+    paintPreview(rec, payload.svg || "", Number.parseFloat(svg.getAttribute("width") || "0"), Number.parseFloat(svg.getAttribute("height") || "0"));
   }
 
   // --- clones of the user plan (plan.js:1510-1877) ----------------------------
@@ -917,14 +877,14 @@
   /** Mounts the drawing the owner rendered for a clone (B1, B2). */
   function mountCloneDrawing(rec, payloadSvg) {
     const holder = document.createElement("div");
-    holder.innerHTML = payloadSvg;
-    const svg = holder.querySelector("svg");
-    if (!svg) {
+    holder.innerHTML = payloadSvg || "";
+    // The parse validates; the record keeps the string (T2).
+    if (!holder.querySelector("svg")) {
       return;
     }
-    // A **new** drawing, not the one that left the page: the action swaps the
-    // nodes and the culling re-decides right after.
-    rec.svg = svg;
+    // A **new** drawing, not the one that left the page: `{@html}` swaps the
+    // tree and the culling re-decides right after.
+    rec.svg = payloadSvg || "";
     rec.previewSvg = null;
     rec.culled = false;
   }
@@ -1184,37 +1144,6 @@
     event.preventDefault();
   }
 
-  // --- the culling's DOM half ---------------------------------------------------
-
-  /**
-   * Mounts (and unmounts, and swaps) the drawing of an object inside its
-   * `.content`, prepended the way the vanilla page does it (`content.prepend`
-   * in `insertDiagram`, `paintPreview` and `materializeObject`), so the `×` of a
-   * diagram keeps painting above it and the tools of a clone keep their corner.
-   * This is the DOM half of the culling: the flags live on the record, the
-   * nodes move here. The preview of a version is what the culling re-mounts
-   * while it lasts (C27).
-   */
-  function svgMount(node, params) {
-    let mounted = null;
-    const apply = (current) => {
-      const target = current.culled ? null : current.preview || current.svg;
-      if (mounted === target) {
-        return;
-      }
-      if (mounted) {
-        mounted.remove();
-        mounted = null;
-      }
-      if (target) {
-        node.prepend(target);
-        mounted = target;
-      }
-    };
-    apply(params);
-    return { update: apply };
-  }
-
   // --- wiring (plan.js:2332-2449) ----------------------------------------------
 
   onMount(() => {
@@ -1318,7 +1247,9 @@
 <!-- The plan: an infinite surface with a grid. The camera lives here
      (PRD §7.1, `index.html:11-13`). -->
 <div id="plan" class="plan" class:dragging={draggingNow} bind:this={planEl}>
-  <div class="diagrams" bind:this={diagramsEl}>
+  <!-- The camera layer: its transform is the stylesheet rule on `.diagrams`
+       reading `--tx`/`--ty`/`--zoom` (T2). -->
+  <div class="diagrams">
     {#each plane as rec (rec.id)}
       <div
         class="diagram"
@@ -1345,8 +1276,14 @@
           style:top="{rec.content.y}px"
           style:width="{rec.content.w}px"
           style:height="{rec.content.h}px"
-          use:svgMount={{ culled: rec.culled, svg: rec.svg, preview: rec.previewSvg }}
         >
+          <!-- The drawing, before the tools so the `×` of a diagram keeps
+               painting above it (the prepend order the action kept). It is
+               `{@html}` since T2: one re-parse per mount, measured at
+               1.47 ms over the 300-node fixture — under the agreed ~3 ms. -->
+          {#if !rec.culled && (rec.previewSvg || rec.svg)}
+            {@html rec.previewSvg || rec.svg}
+          {/if}
           {#if rec.kind === "diagram"}
             <!-- The `×` of the object (PRD §7 RF28): it shows up when the
                  pointer walks over the diagram, in the padding ring. -->

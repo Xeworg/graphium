@@ -125,3 +125,38 @@ orquestador). Persisted in project memory: `analisis-frontend-*` and
   antes la cámara volvía al valor viejo (275.99/67.32 @1.331), ahora cae al
   fallback `newestCenter` (296.36/97.56 @1.21). El mapa deja de crecer con
   una entrada por sesión que el humano visitó.
+- L5 (2026-11-08, orchestrator inline): T2 entregada — la cámara es CSS puro y
+  el culling tiene un embudo único. (1) La regla `.diagrams { transform:
+  translate(var(--tx),var(--ty)) scale(var(--zoom)) }` reemplaza
+  `layerTransform`, su `$effect` y `bind:this={diagramsEl}`: las tres vars ya
+  se publicaban en `#plan` con cada escritura de cámara (split de T1), así que
+  el transform de cámara costó CERO JavaScript por frame. `will-change:
+  transform` se movió de `.diagram` a `.diagrams` con el comentario de
+  `app.css` actualizado (el bug de will-change por objeto, cerrado). (2) La
+  decisión del culling es pura: `cullDecide(plane, camera, viewport)` en
+  `lib/plane.js` devuelve el conjunto de ids vivos; `applyCulling` en
+  `App.svelte` es el ÚNICO embudo que toda escritura de cámara atraviesa
+  (pan step, wheel, camera intent, resize, inserción, pintura de clon, cambio
+  de plano) y lo aplica a los registros de forma imperativa — sin `$effect`,
+  que re-entraría en reactividad detrás de las escrituras DOM del frame.
+  `cullRecord`/`materializeRecord` murieron: un objeto sin dibujo que la
+  decisión mantiene vivo conserva su caja en la misma asignación
+  (`culled = !alive || !(preview||svg)`). (3) Medida `{@html}` vs action
+  (herramienta nueva `tools/measure-html.mjs`, Chromium headless sobre el
+  bundle real, fixture de 300 nodos / 48 172 B de SVG, mediana de 5 muestras
+  de 50 ops): action (re-monte del mismo nodo, sin parseo) 0,060 ms/monte;
+  `{@html}` (re-parseo completo por monte) 1,466 ms/monte — 24,4x peor pero
+  BAJO el umbral acordado de ~3 ms. ADOPTADO: los registros guardan el markup
+  como CADENA (`rec.svg`/`rec.previewSvg` ya no son nodos DOM dentro del
+  estado reactivo — la isla del proxy muere), el template monta con
+  `{@html rec.previewSvg || rec.svg}` antes de las herramientas (mismo orden
+  prepend), el parseo de llegada sigue validando el payload y leyendo
+  width/height, y el action `svgMount` desapareció. Gates (códigos reales):
+  `npm run build` exit 0, `node tools/parity.mjs` 57/57 exit 0, `DISPLAY=:0
+  scripts/smoke.sh` → `rendered=true reason=none` exit 0, `cargo test
+  --workspace` 37 suites / 0 failed, `cargo fmt --check` exit 0, `cargo
+  clippy --workspace` exit 0. La delegación al worker falló tres veces por
+  validación del runtime (bloque `## Allowed edit surfaces`, y el resolutor
+  no ve el documento de la feature fuera del cwd del orquestador): T2 fue
+  inline por orden del runtime; T3 se relanza con `workspace_root` apuntando
+  al worktree.

@@ -413,16 +413,23 @@ body {
   position: absolute;
   inset: 0;
   transform-origin: 0 0;
+  /* The camera transform is pure CSS (T2 of odd/tasks/mejoras-frontend.md):
+   * `--tx`/`--ty`/`--zoom` are published on `#plan` with every camera write,
+   * and this rule is the only consumer. The vanilla page applied the same
+   * transform to every object (plan.js:393-396); one transform on the camera
+   * layer is the same result for one write. */
+  transform: translate(var(--tx), var(--ty)) scale(var(--zoom));
+  will-change: transform;
 }
 
-/* One container per diagram. The camera transform lives here: the SVG
- * inside keeps plan units and is never rescaled on its own (PRD §7.2). */
+/* One container per diagram. The SVG inside keeps plan units and is never
+ * rescaled on its own (PRD §7.2); the camera transform lives on `.diagrams`,
+ * one layer above. */
 .diagram {
   position: absolute;
   left: 0;
   top: 0;
   transform-origin: 0 0;
-  will-change: transform;
 }
 
 .diagram > .content {

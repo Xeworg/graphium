@@ -8,7 +8,7 @@
 //   culling:    `plan.js:2064-2145` (`visibleRect`, `rectsIntersect`,
 //               `distanceToView`, `objectCenter`)
 
-import { ZOOM_MAX, ZOOM_MIN } from "./contract.js";
+import { ZOOM_MAX, ZOOM_MIN, CULL_ZOOM, MAX_LIVE_SVGS } from "./contract.js";
 
 /** The clamp of the wheel (plan.js:334-336): 0.05 … 4.0. */
 export function clampZoom(zoom) {
@@ -80,4 +80,42 @@ export function objectCenter(obj) {
     return null;
   }
   return { x: pos.x + bbox.w / 2, y: pos.y + bbox.h / 2 };
+}
+
+/**
+ * The pure decision of the culling (plan.js:2064-2145, RNF1-ter, C14): which
+ * object ids keep their drawing in the DOM. Hidden objects, everything out of
+ * the view, below `CULL_ZOOM`, and — of the survivors, sorted by distance to
+ * the centre of the view — everything past `MAX_LIVE_SVGS`, is out. It takes
+ * plain values and returns plain values — no DOM, no state — so the funnel
+ * that applies it (`applyCulling` in `App.svelte`) can run on every camera
+ * write without entering reactivity.
+ *
+ * An object whose drawing has not arrived yet (a clone waiting for its paint)
+ * still comes out alive here: the funnel keeps its box, because there is
+ * nothing to mount yet.
+ */
+export function cullDecide(plane, camera, viewport) {
+  const view = visibleRect(camera, viewport);
+  const zoomedOut = camera.zoom < CULL_ZOOM;
+  const candidates = [];
+  for (const rec of plane) {
+    if (rec.hidden) {
+      continue;
+    }
+    if (zoomedOut || !rectsIntersect(rec.rect, view)) {
+      continue;
+    }
+    candidates.push({ rec, distance: distanceToView(rec.rect, view) });
+  }
+  candidates.sort((left, right) => left.distance - right.distance);
+  const alive = new Set();
+  for (
+    let index = 0;
+    index < candidates.length && index < MAX_LIVE_SVGS;
+    index += 1
+  ) {
+    alive.add(candidates[index].rec.id);
+  }
+  return alive;
 }
