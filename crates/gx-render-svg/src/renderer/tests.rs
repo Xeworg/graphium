@@ -734,6 +734,7 @@ fn event(id: &str, lane: &str, label: &str) -> gx_core::IrEvent {
         label: label.to_string(),
         order: 0,
         span: None,
+        depends_on: Vec::new(),
         kind_data: Default::default(),
     }
 }

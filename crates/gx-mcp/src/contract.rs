@@ -429,6 +429,23 @@ fn min_example_of(kind: &str) -> Value {
                 { "from": "operador", "to": "pedidos", "label": "despacha" }
             ]
         }),
+        "gantt" => serde_json::json!({
+            "version": 1,
+            "kind": "gantt",
+            "title": "Mudanza — plan",
+            "lanes": [
+                { "id": "previo", "label": "Previo" },
+                { "id": "dia", "label": "Día" }
+            ],
+            "tasks": [
+                { "id": "cajas", "label": "Empacar cajas", "lane": "previo",
+                  "start": 0, "end": 2 },
+                { "id": "camion", "label": "Camión", "lane": "previo",
+                  "start": 2, "end": 2 },
+                { "id": "mudanza", "label": "Mudanza", "lane": "dia",
+                  "start": 3, "end": 6, "depends_on": ["cajas", "camion"] }
+            ]
+        }),
         "component" => serde_json::json!({
             "version": 1,
             "kind": "component",
@@ -710,6 +727,24 @@ fn rules_of(kind: &str) -> Vec<String> {
             );
             rules.push(
                 "No hay anidamiento en v1: la lectura sale de los tipos, del `level` y de las relaciones."
+                    .to_string(),
+            );
+        }
+        "gantt" => {
+            rules.push(
+                "Cada tarea es un tramo de tiempo: `start` y `end` la ponen en el eje; `end` igual a `start` dibuja un hito (un punto)."
+                    .to_string(),
+            );
+            rules.push(
+                "Los carriles son las filas y son opcionales: sin carriles, todas las tareas caen en el carril único `cronograma`."
+                    .to_string(),
+            );
+            rules.push(
+                "`depends_on` declara qué tiene que terminar antes: cada entrada nombra una tarea declarada en `tasks`, no se repite dentro de su tarea y nadie depende de sí mismo. La escena dibuja una flecha por dependencia."
+                    .to_string(),
+            );
+            rules.push(
+                "Los ciclos entre tareas se dibujan, no se validan: el orden lo dan las columnas de `start`, no la topología."
                     .to_string(),
             );
         }
@@ -1818,6 +1853,35 @@ mod tests {
                 .iter()
                 .any(|rule| rule.contains("level") && rule.contains("context")),
             "the rules teach the level discipline: {rules:?}"
+        );
+    }
+
+    /// S8 de `f18-gantt.md`: el índice le da al agente el kind `gantt` con
+    /// sus techos y sus reglas, y el ejemplo mínimo que trae válida y pinta.
+    #[test]
+    fn the_gantt_kind_is_listed_with_its_limits_and_its_rules() {
+        let index = get_diagram_schema(None).kinds.expect("index");
+        let entry = index
+            .iter()
+            .find(|entry| entry.kind == "gantt")
+            .expect("gantt is in the index");
+        assert_eq!(entry.engine, "lanes");
+        assert_eq!(entry.phase, "F3");
+        assert_eq!(entry.limits.max_nodes, 200);
+        assert!(entry.disponible);
+
+        let example = entry.min_example.to_string();
+        let validated = validate_diagram(&example);
+        assert!(validated.ok, "{:?}", validated.errors);
+
+        let schema = get_diagram_schema(Some("gantt"));
+        assert!(schema.ok);
+        assert_eq!(schema.limits.expect("limits").max_nodes, 200);
+        let rules = schema.rules.expect("rules");
+        assert!(
+            rules.iter().any(|rule| rule.contains("depends_on"))
+                && rules.iter().any(|rule| rule.contains("`start`")),
+            "the rules teach the spans and the dependencies: {rules:?}"
         );
     }
 

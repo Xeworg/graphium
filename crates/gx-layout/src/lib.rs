@@ -1458,6 +1458,7 @@ mod tests {
                     label: "motor".to_string(),
                     order: 0,
                     span: None,
+                    depends_on: Vec::new(),
                     kind_data: Default::default(),
                 },
                 IrEvent {
@@ -1466,6 +1467,7 @@ mod tests {
                     label: "elementos".to_string(),
                     order: 1,
                     span: None,
+                    depends_on: Vec::new(),
                     kind_data: Default::default(),
                 },
             ],

@@ -165,6 +165,7 @@ impl DiagramKind for SwimlaneKind {
                 // Un paso es un punto del proceso, no un tramo de tiempo: el
                 // ancho de la caja es su texto.
                 span: None,
+                depends_on: Vec::new(),
                 kind_data: Default::default(),
             })
             .collect();

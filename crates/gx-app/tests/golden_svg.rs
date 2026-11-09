@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 16] = [
+const CASES: [(&str, &str); 17] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -49,6 +49,7 @@ const CASES: [(&str, &str); 16] = [
     ("component-api", COMPONENT_API),
     ("component-nested", COMPONENT_NESTED),
     ("c4-context", C4_CONTEXT),
+    ("gantt-plan", GANTT_PLAN),
 ];
 
 const MINIMAL: &str = r#"{
@@ -506,3 +507,23 @@ fn the_same_document_renders_the_same_bytes_twice() {
         assert_eq!(first.svg, second.svg, "{name} is not deterministic");
     }
 }
+
+const GANTT_PLAN: &str = r#"{
+  "version": 1,
+  "kind": "gantt",
+  "title": "Restauración — plan",
+  "lanes": [
+    { "id": "diseno", "label": "Diseño" },
+    { "id": "obra", "label": "Obra" }
+  ],
+  "tasks": [
+    { "id": "planos", "label": "Planos", "lane": "diseno",
+      "start": 0, "end": 3 },
+    { "id": "permiso", "label": "Permiso municipal", "lane": "diseno",
+      "start": 2, "end": 5 },
+    { "id": "demolicion", "label": "Demolición", "lane": "obra",
+      "start": 5, "end": 9, "depends_on": ["permiso"] },
+    { "id": "apertura", "label": "Apertura", "lane": "obra",
+      "start": 9, "end": 9, "depends_on": ["demolicion"] }
+  ]
+}"#;

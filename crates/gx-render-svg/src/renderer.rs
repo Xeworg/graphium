@@ -308,7 +308,7 @@ fn write_style(out: &mut String, palette: &Palette) {
     out.push_str("</style>\n");
 }
 
-fn write_defs(out: &mut String, routed: &[(&IrEdge, &LayoutEdge)]) {
+fn write_defs(out: &mut String, routed: &[(IrEdge, LayoutEdge)]) {
     // Only the markers the document references, sorted by id and never by
     // insertion order (PRD §8.5.1).
     let mut used: BTreeSet<&'static str> = BTreeSet::new();

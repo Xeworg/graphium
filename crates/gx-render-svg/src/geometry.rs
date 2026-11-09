@@ -77,6 +77,24 @@ pub(crate) fn event_bar(rect: &Rect, span: Option<Span>) -> Option<Rect> {
     ))
 }
 
+/// The frozen elbow of a dependency arrow (`f18-gantt.md`, S7): out of the
+/// right edge of the task that finishes, across the gap between the two
+/// boxes, down (or up) into the lane of the task that waits, and into its
+/// left edge. The same two boxes always yield the same points.
+pub(crate) fn dependency_route(from: &Rect, to: &Rect) -> Vec<Point> {
+    let exit = Point::new(from.max_x(), from.center().y);
+    let entry = Point::new(to.min_x(), to.center().y);
+    let mid_x = (from.max_x() + to.min_x()) / 2.0;
+    let mut points = vec![
+        exit,
+        Point::new(mid_x, exit.y),
+        Point::new(mid_x, entry.y),
+        entry,
+    ];
+    points.dedup();
+    points
+}
+
 /// The plan rectangle the root element covers.
 pub(crate) fn canvas_rect(layout: &LayoutGraph) -> Rect {
     let bbox = layout.bbox;

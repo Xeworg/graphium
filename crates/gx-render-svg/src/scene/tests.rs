@@ -255,8 +255,9 @@ fn the_scene_carries_the_containers_of_a_graph() {
     assert!(scene.events.is_empty(), "a graph has no events");
 }
 
-/// S3, S4: a timeline has no direction and no edges; its lanes are the bands,
-/// its events carry the box the lanes engine measured and the span of a bar.
+/// S3, S4: a timeline has no direction; without a declared dependency it has
+/// no edges either. Its lanes are the bands, its events carry the box the
+/// lanes engine measured and the span of a bar.
 #[test]
 fn the_scene_carries_the_lanes_and_events_of_a_timeline() {
     let ir = Ir::Timeline(IrTimeline {
@@ -277,6 +278,7 @@ fn the_scene_carries_the_lanes_and_events_of_a_timeline() {
                 label: "arranca".to_string(),
                 order: 0,
                 span: None,
+                depends_on: Vec::new(),
                 kind_data: Default::default(),
             },
             IrEvent {
@@ -288,6 +290,7 @@ fn the_scene_carries_the_lanes_and_events_of_a_timeline() {
                     start: 2.0,
                     end: 4.0,
                 }),
+                depends_on: Vec::new(),
                 kind_data: Default::default(),
             },
         ],
@@ -378,6 +381,7 @@ fn a_spanned_event_carries_the_numbers_of_its_bar() {
                 label: "punto".to_string(),
                 order: 0,
                 span: None,
+                depends_on: Vec::new(),
                 kind_data: Default::default(),
             },
             IrEvent {
@@ -389,6 +393,7 @@ fn a_spanned_event_carries_the_numbers_of_its_bar() {
                     start: 1.0,
                     end: 4.0,
                 }),
+                depends_on: Vec::new(),
                 kind_data: Default::default(),
             },
         ],
@@ -559,4 +564,79 @@ fn the_drawing_plan_knows_which_layers_exist() {
         drawing.draws_lifelines(),
         "a lanes graph draws a lifeline under every actor"
     );
+}
+
+/// S7 (`f18-gantt.md`): a task that declares `depends_on` draws one dependency
+/// arrow, from the dependency's event box to the waiting task's box, with the
+/// frozen elbow of `dependency_route`.
+#[test]
+fn a_declared_dependency_draws_one_arrow_from_the_dependency_to_the_task() {
+    let ir = Ir::Timeline(IrTimeline {
+        lanes: vec![
+            IrLane {
+                id: "a".to_string(),
+                label: Some("Diseño".to_string()),
+            },
+            IrLane {
+                id: "b".to_string(),
+                label: Some("Obra".to_string()),
+            },
+        ],
+        events: vec![
+            IrEvent {
+                id: "one".to_string(),
+                lane: "a".to_string(),
+                label: "planos".to_string(),
+                order: 0,
+                span: Some(Span {
+                    start: 0.0,
+                    end: 3.0,
+                }),
+                depends_on: Vec::new(),
+                kind_data: Default::default(),
+            },
+            IrEvent {
+                id: "two".to_string(),
+                lane: "b".to_string(),
+                label: "demolición".to_string(),
+                order: 5,
+                span: Some(Span {
+                    start: 5.0,
+                    end: 9.0,
+                }),
+                depends_on: vec!["one".to_string()],
+                kind_data: Default::default(),
+            },
+        ],
+    });
+    let layout = fixture::layout(
+        &[
+            ("one", Point::new(80.0, 40.0), Size::new(120.0, 40.0)),
+            ("two", Point::new(320.0, 120.0), Size::new(160.0, 40.0)),
+        ],
+        Vec::new(),
+        Rect::new(0.0, 0.0, 480.0, 160.0),
+    );
+
+    let scene = build_scene(&ir, &layout, &palette());
+
+    assert_eq!(scene.edges.len(), 1, "one arrow per declared dependency");
+    let edge = &scene.edges[0];
+    assert_eq!(edge.id, "m-one-two");
+    assert_eq!(edge.from, "one");
+    assert_eq!(edge.to, "two");
+    assert!(edge.arrow, "the dependency points at the task that waits");
+    assert_eq!(edge.label, None);
+    // The elbow is frozen: out of the right edge of `one` — the box spans
+    // 20..140 — across the mid gap (190), down into `two`'s lane, into its
+    // left edge — the box spans 240..400.
+    assert_eq!(edge.points.len(), 4);
+    assert_eq!(edge.points[0], Point::new(140.0, 40.0));
+    assert_eq!(edge.points[1], Point::new(190.0, 40.0));
+    assert_eq!(edge.points[2], Point::new(190.0, 120.0));
+    assert_eq!(edge.points[3], Point::new(240.0, 120.0));
+
+    // The same document always yields the same arrow (S7, determinism).
+    let again = build_scene(&ir, &layout, &palette());
+    assert_eq!(scene.edges, again.edges);
 }

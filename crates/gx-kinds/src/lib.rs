@@ -11,6 +11,7 @@ pub mod dataflow;
 pub mod er;
 pub mod flow;
 pub mod flowchart;
+pub mod gantt;
 pub mod graph;
 pub mod groups;
 pub mod lanes;
@@ -39,6 +40,7 @@ pub fn register_all() {
     swimlane::register();
     // Los kinds nuevos entran al final: el registro los ordena por nombre.
     c4::register();
+    gantt::register();
 }
 
 /// The names of the kinds registered by this crate.
@@ -57,5 +59,6 @@ pub fn kind_names() -> Vec<&'static str> {
         timeline::TimelineKind::KIND,
         swimlane::SwimlaneKind::KIND,
         c4::C4Kind::KIND,
+        gantt::GanttKind::KIND,
     ]
 }
