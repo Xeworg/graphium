@@ -2057,6 +2057,39 @@ mod tests {
         assert_eq!(response.metrics.expect("metrics").nodes, 2);
     }
 
+    /// `f17-c4-kind.md` (S4, S5): el kind `c4` entra por la misma puerta que
+    /// los demás —registro, validación, layout y dibujo— sin tocar el motor:
+    /// el contexto se pinta como un grafo `layered` de tres cajas y dos
+    /// relaciones.
+    #[test]
+    fn the_c4_kind_renders_a_context() {
+        let _guard = lock_renders_blocking();
+
+        let document = r#"{
+          "version": 1, "kind": "c4", "title": "Pedidos — contexto",
+          "level": "context",
+          "elements": [
+            { "id": "cliente", "type": "person", "label": "Cliente",
+              "description": "hace el pedido" },
+            { "id": "operador", "type": "person", "label": "Operador" },
+            { "id": "pedidos", "type": "system", "label": "Sistema de pedidos",
+              "technology": "Rust" }
+          ],
+          "relations": [
+            { "from": "cliente", "to": "pedidos", "label": "hace un pedido" },
+            { "from": "operador", "to": "pedidos", "label": "despacha" }
+          ]
+        }"#;
+        let response = render(document);
+
+        assert!(response.ok, "{:?}", response.errors);
+        assert_eq!(response.rendered_kind.as_deref(), Some("c4"));
+        let metrics = response.metrics.expect("metrics");
+        assert_eq!(metrics.nodes, 3);
+        assert_eq!(metrics.edges, 2);
+        assert!(metrics.svg_bytes > 0, "{metrics:?}");
+    }
+
     #[test]
     fn an_unknown_kind_is_reported() {
         let _guard = lock_renders_blocking();

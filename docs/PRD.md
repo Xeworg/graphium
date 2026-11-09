@@ -108,6 +108,7 @@ Priorizados por frecuencia de uso real en desarrollo de software. Cada kind decl
 | 22 | `sankey` | Flujo con peso: tráfico, dinero, conversión | sankey | F3 |
 | 23 | `orgchart` | Organigrama: equipos, responsables, reportes | tree | F3 |
 | 24 | `neural` | Arquitectura de modelo: capas, tensores, loops | layered | F3 |
+| 25 | `c4` | Arquitectura C4: contexto, contenedores y componentes con su nivel declarado | layered | F3 |
 
 **Lectura:** de los **24 kinds**, **13 usan `layered`**, **6 usan `lanes`**, **3 usan `tree`** y **2 son especializados** (`sankey`, `gitgraph`). El motor implementa **5 motores de layout** — layered (Sugiyama vía `dagre` open source), lanes, tree, sankey y git — y **la IR no crece**: 13 kinds comparten `IrGraph`, 6 usan `IrTimeline` y los 2 especializados se distinguen por `layout_hint`. Agregar un kind es *schema + traducción a la IR*, no motor nuevo (O7).
 
