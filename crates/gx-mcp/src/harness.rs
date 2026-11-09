@@ -391,7 +391,9 @@ after those ceilings, and the document still renders because an edge never \
 points at a node it dropped; in all cases \
 `next` is the `code_impact` call that answers the same question with the query \
 budget of the connections view, or the same `code_diagram` with a bigger \
-`max_chars` when the envelope can still grow. The connections are syntactic, not typed: the \
+`max_chars` when the envelope can still grow. `unresolved` is the walk's honest \
+count of the names it could not pin down — the same field `code_impact` \
+reports. The connections are syntactic, not typed: the \
 picture is the book's reading of the code. The start symbol travels with \
 `content_hash`, `indexed_at` and the `book_key` of the book; an ambiguous name \
 answers `ok: false` with `ambiguous_symbol` and `candidates[]`, and the book is \
@@ -416,9 +418,14 @@ way, with `ok: false`, code `invalid_value` at `path`, because the guard reads \
 path components before anything is opened. The source is read live, \
 so the document is the file as it is now, not the indexed snapshot. A file that \
 produces no document — another language, a DDL with no column list, or a build \
-without the SQL grammar — answers `ok: false` with the three causes named. The \
-ceilings of the `er` kind still apply at the render: a schema bigger than the \
-kind accepts is refused there with `too_large`. The book is on by default \
+without the SQL grammar — answers `ok: false` with the three causes named. \
+Beside `diagram` the answer reports `tables`, `relations` and `chars` (the byte \
+length of the document), so its size is read without counting the JSON. The \
+ceilings of the `er` kind apply at the render — a schema bigger than the kind \
+accepts is refused there with `too_large` — and a document already over them \
+warns first, with `er_over_kind` in `warnings[]`: `ok` stays `true`, the \
+document travels whole, and splitting the schema file is the way to render it. \
+The book is on by default \
 (`book_disabled` only with an explicit `GRAPHIUM_BOOK=off`). It never renders \
 and never touches the plan."
         }

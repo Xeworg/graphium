@@ -900,6 +900,11 @@ pub mod book {
         response["max_chars"] = json!(envelope.max_chars);
         response["chars"] = json!(pack.used());
         response["truncated"] = truncated.unwrap_or(Value::Null);
+        // f14 S4: the walk already knows how many names it could not pin down
+        // (`impact.unresolved`); the document publishes the same count under
+        // the same name `code_impact` uses, so «no relations» and «nothing
+        // resolved» stop looking identical. The document is untouched.
+        response["unresolved"] = json!(impact.unresolved);
         response["nodes"] = json!(node_count);
         response["edges"] = json!(edge_count);
         response["diagram"] = document;
@@ -1030,6 +1035,10 @@ pub mod book {
                 ),
             );
         };
+        // f14 S2: `chars` is the size of the string the bridge handed over,
+        // measured on that string before it is parsed — never a re-serialized
+        // copy that could differ from the document the agent sends onward.
+        let chars = document.len();
         let document: Value = match serde_json::from_str(&document) {
             Ok(document) => document,
             Err(error) => {
@@ -1041,11 +1050,60 @@ pub mod book {
                 );
             }
         };
+        let tables = document
+            .get("tables")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        let relations = document
+            .get("relations")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
         let mut base = base(&opened);
         base["ok"] = json!(true);
         base["file"] = json!(path);
+        base["tables"] = json!(tables);
+        base["relations"] = json!(relations);
+        base["chars"] = json!(chars);
+        // f14 S3: the render would refuse this document with `too_large`, and
+        // the agent learns it here, before spending the round trip. `ok` stays
+        // `true` and the document travels whole (f13, S6).
+        if let Some(warning) = over_kind_warning(tables, relations) {
+            base["warnings"] = json!([warning]);
+        }
         base["diagram"] = document;
         base
+    }
+
+    /// The `er_over_kind` warning of a document past the ceilings of the `er`
+    /// kind (f14, S3), or `None` when the render would accept it.
+    ///
+    /// The predicate is the one the render applies to an `er` document: the
+    /// engine (`gx_core::engine`) compares the graph it built against the
+    /// `limits()` of the registered kind, and that `check_limits` is private,
+    /// so the same three comparisons run here over the document counts — the
+    /// bridge maps one table to one node and one relation to one edge, which
+    /// is exactly what the kind's `to_ir` does (gx-kinds `er.rs:118-124`).
+    fn over_kind_warning(tables: usize, relations: usize) -> Option<Value> {
+        crate::bootstrap();
+        let limits = gx_core::kind::for_kind("er")?.limits();
+        let density = relations as f64 / tables.max(1) as f64;
+        let over = tables > limits.max_nodes
+            || relations > limits.max_edges
+            || density > limits.max_density;
+        if !over {
+            return None;
+        }
+        // The object keeps the keys the render's warnings[] and errors[] share
+        // (contract.rs): `code` and `message`, plus the optional `hint` an
+        // error carries.
+        Some(json!({
+            "code": "er_over_kind",
+            "message": format!(
+                "the `er` document carries {tables} tables and {relations} relations, over the ceilings of the kind ({} tables, {} relations, density {:.1})",
+                limits.max_nodes, limits.max_edges, limits.max_density
+            ),
+            "hint": "`render_diagram` will refuse this document with `too_large`: split the schema file into smaller `.sql` files and draw each one",
+        }))
     }
 
     /// The fields every answer of the book carries (S5/S7): the book that
@@ -2151,9 +2209,14 @@ way, with `ok: false`, code `invalid_value` at `path`, because the guard reads \
 path components before anything is opened. The source is read live, \
 so the document is the file as it is now, not the indexed snapshot. A file that \
 produces no document — another language, a DDL with no column list, or a build \
-without the SQL grammar — answers `ok: false` with the three causes named. The \
-ceilings of the `er` kind still apply at the render: a schema bigger than the \
-kind accepts is refused there with `too_large`. The book is on by default \
+without the SQL grammar — answers `ok: false` with the three causes named. \
+Beside `diagram` the answer reports `tables`, `relations` and `chars` (the byte \
+length of the document), so its size is read without counting the JSON. The \
+ceilings of the `er` kind apply at the render — a schema bigger than the kind \
+accepts is refused there with `too_large` — and a document already over them \
+warns first, with `er_over_kind` in `warnings[]`: `ok` stays `true`, the \
+document travels whole, and splitting the schema file is the way to render it. \
+The book is on by default \
 (`book_disabled` only with an explicit `GRAPHIUM_BOOK=off`). It never renders \
 and never touches the plan.";
 
@@ -3903,6 +3966,11 @@ mod tests {
         let validated = crate::contract::validate_diagram(&document.to_string());
         assert!(validated.ok, "{:?}", validated.errors);
 
+        // f14 S4: every name of this neighbourhood resolves, so the honest
+        // count of the walk is zero — the field is the walk's own number, not
+        // a symptom of a missing document.
+        assert_eq!(response["unresolved"], 0, "{response}");
+
         // A symbol with no relations is a one-node document, not an error.
         let lonely =
             crate::book::code_diagram_with(&scratch.config(), Some(&project), "lonely", None);
@@ -3912,8 +3980,58 @@ mod tests {
             Some(1),
             "{lonely}"
         );
+        assert_eq!(
+            lonely["unresolved"], 0,
+            "a symbol with no calls resolves nothing wrongly: {lonely}"
+        );
         let validated = crate::contract::validate_diagram(&lonely["diagram"].to_string());
         assert!(validated.ok, "{:?}", validated.errors);
+    }
+
+    /// f14 S4: the diagram walk publishes the same `unresolved` that
+    /// `code_impact` publishes — the names the walk could not pin down — so
+    /// «no relations» and «nothing resolved» stop looking identical.
+    #[test]
+    fn code_diagram_reports_the_names_the_walk_could_not_resolve() {
+        let scratch = BookScratch::new("diagram-unresolved");
+        scratch.write(
+            "src/lonely.rs",
+            "pub fn build() -> u8 { missing_helper() }\n",
+        );
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response =
+            crate::book::code_diagram_with(&scratch.config(), Some(&project), "build", None);
+        assert_eq!(response["ok"], true, "{response}");
+        let unresolved = response["unresolved"]
+            .as_u64()
+            .expect("the answer says how many names it could not resolve");
+        assert!(
+            unresolved > 0,
+            "`missing_helper` has no declaration in the book: {response}"
+        );
+        assert!(
+            response["diagram"]["nodes"]
+                .as_array()
+                .is_some_and(|nodes| !nodes.is_empty()),
+            "the document still travels: {response}"
+        );
+
+        // The same walk, the same number: `code_impact` was already honest
+        // about it and the diagram does not disagree.
+        let impact = crate::book::code_impact_with(
+            &scratch.config(),
+            Some(&project),
+            "build",
+            Some(1),
+            Some("both"),
+        );
+        assert_eq!(impact["ok"], true, "{impact}");
+        assert_eq!(
+            impact["unresolved"], unresolved,
+            "the two tools report the same count: {response}"
+        );
     }
 
     #[test]
@@ -4498,6 +4616,100 @@ CREATE TABLE posts (\n\
             document,
             &serde_json::from_str::<serde_json::Value>(&direct).expect("the document parses"),
             "the tool hands the bridge's document, not a copy of it"
+        );
+    }
+
+    /// f14 S2: the answer says how big the document is — the counts the agent
+    /// would otherwise read out of the JSON, and `chars`, the byte length of
+    /// the string the bridge handed over (the same meaning `code_structure`'s
+    /// `chars` has). The document itself is untouched (f13, S6).
+    #[test]
+    fn code_er_reports_the_size_of_the_document_it_answers() {
+        let scratch = BookScratch::new("code-er-size");
+        scratch.write("db/schema.sql", CODE_ER_DDL);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let answer =
+            crate::book::code_er_query_with(&scratch.config(), Some(&project), "db/schema.sql");
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert_eq!(answer["tables"], 2, "the two tables of the DDL");
+        assert_eq!(answer["relations"], 1, "the one foreign key of the DDL");
+        assert_eq!(
+            answer["diagram"]["tables"].as_array().map(Vec::len),
+            Some(2),
+            "the document still travels whole"
+        );
+
+        // `chars` is the bridge's own string measured byte for byte: the
+        // answer never re-serializes the document to guess its size.
+        let source = std::fs::read_to_string(scratch.root().join("db/schema.sql")).expect("read");
+        let direct = gx_index::lang::sql::er_bridge::chapter_document("db/schema.sql", &source)
+            .expect("the bridge builds it");
+        assert_eq!(
+            answer["chars"],
+            direct.len(),
+            "chars is the byte length of the bridge's document"
+        );
+
+        // A document inside the ceilings of the kind carries no warning: the
+        // field only appears when there is something to say (S3).
+        assert!(
+            answer["warnings"].is_null(),
+            "a small schema needs no warning: {}",
+            answer["warnings"]
+        );
+    }
+
+    /// f14 S3: a schema past the ceilings of the `er` kind answers `ok: true`
+    /// with the whole document — never trimmed — and one `er_over_kind`
+    /// warning that names the refusal the render would give and the way out.
+    #[test]
+    fn code_er_warns_before_a_document_over_the_kind_ceilings() {
+        let scratch = BookScratch::new("code-er-over-kind");
+        // 301 tables is one past the 300 the `er` kind accepts; the only
+        // relation points at the first table.
+        let mut ddl = String::from("CREATE TABLE t000 (\n  id INTEGER PRIMARY KEY\n);\n");
+        for index in 1..301 {
+            ddl.push_str(&format!(
+                "CREATE TABLE t{index:03} (\n  id INTEGER PRIMARY KEY"
+            ));
+            if index == 1 {
+                ddl.push_str(",\n  ref INTEGER REFERENCES t000(id)");
+            }
+            ddl.push_str("\n);\n");
+        }
+        scratch.write("db/big.sql", &ddl);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let answer =
+            crate::book::code_er_query_with(&scratch.config(), Some(&project), "db/big.sql");
+        assert_eq!(answer["ok"], true, "the answer is still a success");
+        assert_eq!(answer["tables"], 301, "the count travels");
+        assert_eq!(answer["relations"], 1, "the count travels");
+        // f13's contract: the document travels whole, never trimmed.
+        assert_eq!(
+            answer["diagram"]["tables"].as_array().map(Vec::len),
+            Some(301),
+            "the over-kind document is not trimmed"
+        );
+        let warnings = answer["warnings"]
+            .as_array()
+            .expect("the over-kind warning travels");
+        assert_eq!(warnings.len(), 1, "one warning is enough: {warnings:?}");
+        assert_eq!(warnings[0]["code"], "er_over_kind", "{warnings:?}");
+        assert!(
+            warnings[0]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("301")),
+            "the message names the size: {warnings:?}"
+        );
+        assert!(
+            warnings[0]["hint"]
+                .as_str()
+                .is_some_and(|hint| hint.contains("too_large")),
+            "the hint names the refusal the render would give: {warnings:?}"
         );
     }
 
