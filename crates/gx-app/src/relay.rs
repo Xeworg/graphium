@@ -108,7 +108,12 @@ pub fn handle_request(line: &str, session_id: &str) -> String {
             json!({
                 "protocolVersion": "2024-11-05",
                 "capabilities": { "tools": { "listChanged": false } },
-                "serverInfo": { "name": "graphium", "version": env!("CARGO_PKG_VERSION") }
+                "serverInfo": { "name": "graphium", "version": env!("CARGO_PKG_VERSION") },
+                // The harness text travels with the answer: an agent that
+                // reaches the owner through the socket gets the same
+                // instructions one that speaks stdio to a fresh binary gets
+                // (the harness's own contract, harness.rs).
+                "instructions": gx_mcp::harness::INSTRUCTIONS
             }),
         ),
         "tools/list" => success_response(id, json!({ "tools": tools() })),
@@ -438,6 +443,15 @@ mod tests {
         let value: Value = serde_json::from_str(&response).expect("json");
         assert_eq!(value["id"], 1);
         assert_eq!(value["result"]["serverInfo"]["name"], "graphium");
+        // The harness travels with the initialize: an agent over the socket
+        // reads the same instructions a direct stdio client reads.
+        let instructions = value["result"]["instructions"]
+            .as_str()
+            .expect("the instructions travel");
+        assert!(
+            instructions.contains("THE CHEAP PATH"),
+            "the instructions are the harness's own"
+        );
     }
 
     #[test]
