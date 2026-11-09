@@ -221,6 +221,7 @@ impl DiagramKind for TimelineKind {
                         start: column as f64,
                         end: end as f64,
                     }),
+                    depends_on: Vec::new(),
                     kind_data: Default::default(),
                 }
             })

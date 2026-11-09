@@ -41,12 +41,59 @@ pub(crate) struct Drawing<'a> {
     pub(crate) nodes: Vec<(&'a IrNode, &'a NodeBox)>,
     /// The events of a timeline, in id order and paired with their box.
     pub(crate) events: Vec<(&'a IrEvent, &'a NodeBox)>,
-    /// The routed edges, in id order.
-    pub(crate) edges: Vec<(&'a IrEdge, &'a LayoutEdge)>,
+    /// The routed edges, in id order. A graph routes its own edges; a
+    /// timeline routes the dependency arrows its tasks declare.
+    pub(crate) edges: Vec<(IrEdge, LayoutEdge)>,
     /// The containers of a graph, outermost first.
     pub(crate) clusters: Vec<&'a LayoutGroup>,
     /// The lane bands of a timeline, in id order.
     pub(crate) lanes: Vec<&'a LayoutGroup>,
+}
+
+/// The dependency arrows of a timeline (`f18-gantt.md`, S7): one edge per
+/// declared `depends_on` entry, from the dependency's event box to the
+/// waiting task's box. Events missing from the layout draw nothing — the
+/// layout is the authority, as everywhere else.
+fn timeline_dependency_edges(
+    timeline: &IrTimeline,
+    layout: &LayoutGraph,
+) -> Vec<(IrEdge, LayoutEdge)> {
+    let placed: BTreeMap<&str, &NodeBox> = timeline
+        .events
+        .iter()
+        .filter_map(|event| {
+            layout
+                .nodes
+                .get(&event.id)
+                .map(|placed| (event.id.as_str(), placed))
+        })
+        .collect();
+    let mut edges = Vec::new();
+    for event in geometry::ordered_events(timeline) {
+        let target = match placed.get(event.id.as_str()) {
+            Some(placed) => *placed,
+            None => continue,
+        };
+        for dep in &event.depends_on {
+            let source = match placed.get(dep.as_str()) {
+                Some(placed) => *placed,
+                None => continue,
+            };
+            edges.push((
+                IrEdge::new(dep.clone(), event.id.clone()),
+                LayoutEdge {
+                    from: dep.clone(),
+                    to: event.id.clone(),
+                    points: geometry::dependency_route(
+                        &geometry::node_rect(source),
+                        &geometry::node_rect(target),
+                    ),
+                    label_at: None,
+                },
+            ));
+        }
+    }
+    edges
 }
 
 impl<'a> Drawing<'a> {
@@ -75,10 +122,14 @@ impl<'a> Drawing<'a> {
             nodes: place_nodes(graph),
             events,
             edges: match graph {
-                Some(graph) => geometry::routed_edges(graph, layout),
-                // A timeline has no edges: every order of events is the order
-                // of the columns, never a line between two boxes.
-                None => Vec::new(),
+                Some(graph) => geometry::routed_edges(graph, layout)
+                    .into_iter()
+                    .map(|(edge, route)| (edge.clone(), route.clone()))
+                    .collect(),
+                // A timeline draws only the arrows its tasks declare: one
+                // dependency arrow per `depends_on` entry (`f18-gantt.md`,
+                // S7), tasks in id order, dependencies in declared order.
+                None => timeline_dependency_edges(timeline.expect("graph or timeline"), layout),
             },
             clusters: match graph {
                 Some(_) => geometry::ordered_clusters(layout),

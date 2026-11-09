@@ -41,6 +41,7 @@ fn event(id: &str, lane: &str, label: &str, order: i64) -> IrEvent {
         order,
         span: None,
         kind_data: Default::default(),
+        depends_on: Vec::new(),
     }
 }
 

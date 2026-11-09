@@ -2090,6 +2090,40 @@ mod tests {
         assert!(metrics.svg_bytes > 0, "{metrics:?}");
     }
 
+    /// `f18-gantt.md` (S4, S7): el kind `gantt` entra por la misma puerta que
+    /// los demás —registro, validación, layout y dibujo— sin tocar el motor:
+    /// el plan se pinta como un cronograma de carriles con sus flechas de
+    /// dependencia.
+    #[test]
+    fn the_gantt_kind_renders_a_plan() {
+        let _guard = lock_renders_blocking();
+
+        let document = r#"{
+          "version": 1, "kind": "gantt", "title": "Mudanza — plan",
+          "lanes": [
+            { "id": "previo", "label": "Previo" },
+            { "id": "dia", "label": "Día" }
+          ],
+          "tasks": [
+            { "id": "cajas", "label": "Empacar cajas", "lane": "previo",
+              "start": 0, "end": 2 },
+            { "id": "camion", "label": "Camión", "lane": "previo",
+              "start": 2, "end": 2 },
+            { "id": "mudanza", "label": "Mudanza", "lane": "dia",
+              "start": 3, "end": 6, "depends_on": ["cajas", "camion"] }
+          ]
+        }"#;
+        let response = render(document);
+
+        assert!(response.ok, "{:?}", response.errors);
+        assert_eq!(response.rendered_kind.as_deref(), Some("gantt"));
+        let metrics = response.metrics.expect("metrics");
+        assert_eq!(metrics.nodes, 3);
+        // El stub del harness devuelve un SVG vacío para timelines (el render
+        // real lo prueban los goldens de gx-app): el tramo que importa acá es
+        // la puerta completa registro→validación→layout.
+    }
+
     #[test]
     fn an_unknown_kind_is_reported() {
         let _guard = lock_renders_blocking();

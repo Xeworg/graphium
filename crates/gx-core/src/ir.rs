@@ -314,6 +314,12 @@ pub struct IrEvent {
     pub order: i64,
     pub span: Option<Span>,
     pub kind_data: BTreeMap<String, IrValue>,
+    /// Task ids this event depends on (`gantt`, feature doc `f18-gantt.md`):
+    /// what has to finish before this event starts. Empty for every other
+    /// timeline kind — `IrValue` has no list variant, so the dependencies
+    /// travel in their own field instead of `kind_data`.
+    #[serde(default)]
+    pub depends_on: Vec<String>,
 }
 
 /// A timeline in the IR.

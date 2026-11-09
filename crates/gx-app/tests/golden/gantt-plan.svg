@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="0.00 0.00 1634.00 220.00" width="1634.00" height="220.00">
+<style>
+.bg{fill:rgba(27, 27, 27, 1.00)}
+.node-fill{fill:rgba(42, 42, 48, 1.00)}
+.node-stroke{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.node-text{fill:rgba(233, 233, 236, 1.00)}
+.edge-stroke{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.edge-text{fill:rgba(185, 185, 194, 1.00)}
+.accent{fill:rgba(110, 168, 254, 1.00);stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight{stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight-text{fill:rgba(110, 168, 254, 1.00)}
+.emphasis-muted{opacity:0.55}
+.group-box{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.12;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:8.00 5.00}
+.group-label{fill:rgba(185, 185, 194, 1.00)}
+.lane-band{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.35;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.lane-label{fill:rgba(185, 185, 194, 1.00)}
+.lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
+.stroke-dashed{stroke-dasharray:6.00 4.00}
+.text{font-family:Inter, sans-serif}
+.cardinality{fill:none;stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00}
+.arrow-normal{fill:rgba(138, 138, 150, 1.00)}
+.arrow-highlight{fill:rgba(110, 168, 254, 1.00)}
+.arrow-muted{fill:rgba(138, 138, 150, 1.00);opacity:0.55}
+</style>
+<defs>
+<marker id="arrow-normal" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
+<path class="arrow-normal" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00 Z"/>
+</marker>
+</defs>
+<g class="layer-lanes">
+<rect id="lane-diseno" class="lane-band" x="0.00" y="0.00" width="1634.00" height="110.00"/>
+<text class="lane-label text" x="12.00" y="55.00" font-size="14.00" text-anchor="start" dominant-baseline="central">Diseño</text>
+<rect id="lane-obra" class="lane-band" x="0.00" y="110.00" width="1634.00" height="110.00"/>
+<text class="lane-label text" x="12.00" y="165.00" font-size="14.00" text-anchor="start" dominant-baseline="central">Obra</text>
+</g>
+<g class="layer-edges">
+<polyline id="m-demolicion-apertura" class="edge-stroke" points="1468.00,165.00 1484.00,165.00 1500.00,165.00" marker-end="url(#arrow-normal)"/>
+<polyline id="m-permiso-demolicion" class="edge-stroke" points="868.00,55.00 884.00,55.00 884.00,165.00 900.00,165.00" marker-end="url(#arrow-normal)"/>
+</g>
+<g class="layer-nodes">
+<rect id="g-apertura" class="node-fill node-stroke shape-rounded" x="1500.00" y="140.25" width="118.00" height="49.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="1559.00" y="165.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">Apertura</text>
+<rect id="g-demolicion" class="node-fill node-stroke shape-rounded" x="900.00" y="140.25" width="568.00" height="49.50" rx="6.00" ry="6.00"/>
+<rect class="accent" x="901.00" y="183.75" width="566.00" height="5.00"/>
+<text class="node-text text" x="1184.00" y="165.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">Demolición</text>
+<rect id="g-permiso" class="node-fill node-stroke shape-rounded" x="450.00" y="30.25" width="418.00" height="49.50" rx="6.00" ry="6.00"/>
+<rect class="accent" x="451.00" y="73.75" width="416.00" height="5.00"/>
+<text class="node-text text" x="659.00" y="55.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">Permiso municipal</text>
+<rect id="g-planos" class="node-fill node-stroke shape-rounded" x="150.00" y="30.25" width="418.00" height="49.50" rx="6.00" ry="6.00"/>
+<rect class="accent" x="151.00" y="73.75" width="416.00" height="5.00"/>
+<text class="node-text text" x="359.00" y="55.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">Planos</text>
+</g>
+</svg>
