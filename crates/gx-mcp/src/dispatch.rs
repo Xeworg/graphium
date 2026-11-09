@@ -241,7 +241,15 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
                 .get("path")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "`path` is required".to_string())?;
-            Ok(crate::book::code_er(session_id, path))
+            // f15 S2: `scope` is handed over as it arrived — the door is the
+            // one authority on its two values. A value that is not even a
+            // string travels as its JSON text, so the door refuses it at
+            // `scope` instead of folding it into the default.
+            let scope = arguments.get("scope").map(|scope| match scope.as_str() {
+                Some(scope) => scope.to_string(),
+                None => scope.to_string(),
+            });
+            Ok(crate::book::code_er(session_id, path, scope.as_deref()))
         }
         other => Err(format!("unknown tool: {other}")),
     }
@@ -454,6 +462,11 @@ pub fn tool_schema(name: &str) -> Value {
                 "path": {
                     "type": "string",
                     "description": "The `.sql` file of the project, relative to the project root with `/` separators, the way the book stores it (`db/schema.sql`). Absolute paths and `..` are refused."
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["file", "project"],
+                    "description": "`file` (the default) draws only the file `path` names; `project` merges every `.sql` chapter of the book into one document and reports `files`, the chapters it parsed."
                 }
             },
             "required": ["path"]
@@ -811,6 +824,55 @@ mod tests {
     fn code_er_requires_a_path() {
         let error = call_tool("code_er", &serde_json::json!({}), "s").expect_err("must fail");
         assert!(error.contains("`path` is required"), "{error}");
+    }
+
+    /// f15 S6: the dispatcher threads `scope` to the door — an unknown value
+    /// answers the door's own `invalid_value` at `scope`, before any book is
+    /// opened, which only happens when the argument reaches it.
+    #[test]
+    fn code_er_threads_scope_to_the_door() {
+        let answered = call_tool(
+            "code_er",
+            &serde_json::json!({ "path": "schema.sql", "scope": "nope" }),
+            "s",
+        )
+        .expect("the tool answers");
+        assert_eq!(answered["ok"], false, "{answered}");
+        assert_eq!(answered["errors"][0]["code"], "invalid_value", "{answered}");
+        assert_eq!(answered["errors"][0]["path"], "scope", "{answered}");
+
+        // A scope that is not even a string is the same refusal, never a
+        // silent fallback to the default.
+        let numeric = call_tool(
+            "code_er",
+            &serde_json::json!({ "path": "schema.sql", "scope": 3 }),
+            "s",
+        )
+        .expect("the tool answers");
+        assert_eq!(numeric["errors"][0]["path"], "scope", "{numeric}");
+    }
+
+    /// f15 S2/S6: the published schema documents `scope` as an optional
+    /// `file | project` choice, so an agent that never saw the tool knows both
+    /// answers exist and that `path` stays required.
+    #[test]
+    fn the_schema_of_code_er_documents_the_scope() {
+        let schema = super::tool_schema("code_er");
+        assert_eq!(schema["properties"]["scope"]["type"], "string", "{schema}");
+        assert_eq!(
+            schema["properties"]["scope"]["enum"],
+            serde_json::json!(["file", "project"]),
+            "{schema}"
+        );
+        assert!(
+            schema["properties"]["scope"]["description"].is_string(),
+            "the scope is documented: {schema}"
+        );
+        let required = schema.get("required").and_then(serde_json::Value::as_array);
+        assert!(
+            required.is_some_and(|required| !required.contains(&serde_json::json!("scope"))),
+            "`scope` stays optional: {schema}"
+        );
     }
 
     /// S2/S4: the published schema names `path` and makes it required, so an

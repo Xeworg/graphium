@@ -958,13 +958,46 @@ pub mod book {
         }
     }
 
-    /// Runs `code_er` for the session with the configuration of the owner (f13).
-    pub fn code_er(session_id: &str, path: &str) -> Value {
-        let config = gx_index::BooksConfig::from_env();
-        code_er_query_with(&config, project_of(session_id).as_deref(), path)
+    /// The breadth of a `code_er` answer (f15, S2): the one file `path` names
+    /// (the default — f13's answer, byte for byte) or every `.sql` chapter of
+    /// the book merged into one document.
+    pub const SCOPE_FILE: &str = "file";
+    /// Every `.sql` chapter the book knows, parsed live and merged (f15, S2/S3).
+    pub const SCOPE_PROJECT: &str = "project";
+
+    /// The `scope` of a `code_er` call: `file` (the default) or `project`.
+    ///
+    /// Absent and empty are the default, because `scope` is additive (S6); any
+    /// other value is refused at `scope` with both values named, never folded
+    /// into the default.
+    fn scope_argument(raw: Option<&str>) -> Result<&'static str, Value> {
+        let text = raw
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .unwrap_or(SCOPE_FILE);
+        match text {
+            SCOPE_FILE => Ok(SCOPE_FILE),
+            SCOPE_PROJECT => Ok(SCOPE_PROJECT),
+            other => Err(failure(
+                "scope",
+                "invalid_value",
+                &format!("`{other}` is not a scope"),
+                Some(
+                    "send `file` (the default: only the file `path` names) or `project` (every `.sql` chapter of the book, merged into one document)",
+                ),
+            )),
+        }
     }
 
-    /// The `er` document of one `.sql` file of the project (f13, S1/S2).
+    /// Runs `code_er` for the session with the configuration of the owner (f13,
+    /// f15).
+    pub fn code_er(session_id: &str, path: &str, scope: Option<&str>) -> Value {
+        let config = gx_index::BooksConfig::from_env();
+        code_er_query_with(&config, project_of(session_id).as_deref(), path, scope)
+    }
+
+    /// The `er` document of a `.sql` file of the project (f13, S1/S2), or of
+    /// every `.sql` chapter of the book merged (f15, S2/S3).
     ///
     /// The answer is a **document**, not a paint: the agent sends `diagram` to
     /// `render_diagram` (or to `validate_diagram` first) unchanged, the same
@@ -975,10 +1008,17 @@ pub mod book {
     /// the schema keeps no row for a column. `path` is relative to the root of
     /// the project, the same shape the book stores, and a path that leaves the
     /// project is refused before anything is opened (S3).
+    ///
+    /// `scope` chooses the breadth and never the mapping: under
+    /// [`SCOPE_FILE`] the document is the bridge's `chapter_document`, and
+    /// under [`SCOPE_PROJECT`] the details of the book's `.sql` chapters are
+    /// concatenated in the book's order and fed to the bridge's own
+    /// `document_json` — the door re-maps nothing (f15, S4).
     pub fn code_er_query_with(
         config: &gx_index::BooksConfig,
         project: Option<&str>,
         path: &str,
+        scope: Option<&str>,
     ) -> Value {
         let path = match text_argument(path, "path") {
             Ok(path) => path,
@@ -1002,21 +1042,28 @@ pub mod book {
                 ),
             );
         }
+        let scope = match scope_argument(scope) {
+            Ok(scope) => scope,
+            Err(response) => return response,
+        };
         let opened = match open(config, project) {
             Ok(opened) => opened,
             Err(response) => return response,
         };
-        let absolute = std::path::Path::new(&opened.project).join(path);
-        let source = match std::fs::read_to_string(&absolute) {
+        match scope {
+            SCOPE_PROJECT => project_document(&opened, path),
+            // S6: the default is f13's answer, one file in and the bridge's
+            // own document out.
+            _ => file_document(&opened, path),
+        }
+    }
+
+    /// The document of the one file `path` names (`scope: "file"`): the
+    /// bridge's `chapter_document`, f13's answer byte for byte.
+    fn file_document(opened: &Opened, path: &str) -> Value {
+        let source = match read_source(opened, path) {
             Ok(source) => source,
-            Err(error) => {
-                return failure(
-                    "path",
-                    "invalid_value",
-                    &format!("the file does not read: {error}"),
-                    Some("the path is relative to the root of the project the session declared"),
-                );
-            }
+            Err(response) => return response,
         };
         // The bridge exists only when the SQL grammar is compiled in; without
         // the feature the tool answers the same refusal a file of another
@@ -1025,6 +1072,102 @@ pub mod book {
         let document = gx_index::lang::sql::er_bridge::chapter_document(path, &source);
         #[cfg(not(feature = "lang-sql"))]
         let document: Option<String> = None;
+        document_answer(opened, path, document, None)
+    }
+
+    /// The document of the whole project (`scope: "project"`, f15 S2/S3): the
+    /// detail of every `.sql` chapter of the book, parsed **live** from disk in
+    /// the book's chapter order and merged, with the named file part of the
+    /// merge like any other chapter's.
+    ///
+    /// The chapter list is the book's ([`gx_index::Book::paths_of_language`]),
+    /// never a walk of the directory; a chapter whose file no longer reads is
+    /// skipped, and `files` counts the chapters that were actually parsed. The
+    /// document is the bridge's own `document_json` over the merged slice, so
+    /// the mapping stays in `gx-index` and the door only concatenates (S4).
+    fn project_document(opened: &Opened, path: &str) -> Value {
+        // `path` stays required under both scopes, so the named file is read
+        // first and strictly: a path that does not read is the same failure
+        // here as under `scope: "file"`.
+        let source = match read_source(opened, path) {
+            Ok(source) => source,
+            Err(response) => return response,
+        };
+        #[cfg(feature = "lang-sql")]
+        {
+            let mut chapters = match opened
+                .handle
+                .book()
+                .paths_of_language(gx_index::lang::sql::LANGUAGE)
+            {
+                Ok(chapters) => chapters,
+                Err(error) => {
+                    return failure("book", UNAVAILABLE_CODE, &error.to_string(), None);
+                }
+            };
+            // The named file takes part like any chapter, even when the book
+            // has not caught up with it yet (a file indexed a moment later, or
+            // one outside the language the book stored).
+            if !chapters.iter().any(|chapter| chapter == path) {
+                chapters.push(path.to_string());
+            }
+            let mut merged: Vec<gx_index::lang::model::ParsedTable> = Vec::new();
+            let mut files = 0usize;
+            for chapter in &chapters {
+                let text = if chapter == path {
+                    source.clone()
+                } else {
+                    match std::fs::read_to_string(
+                        std::path::Path::new(&opened.project).join(chapter),
+                    ) {
+                        Ok(text) => text,
+                        // S3: a chapter that no longer reads is skipped, and
+                        // `files` counts only what was parsed.
+                        Err(_) => continue,
+                    }
+                };
+                let Ok(parsed) = gx_index::lang::parse(chapter, text.as_bytes(), 0) else {
+                    continue;
+                };
+                files += 1;
+                if let Some(tables) = parsed.tables {
+                    merged.extend(tables);
+                }
+            }
+            let document = gx_index::lang::sql::er_bridge::document_json(&merged);
+            document_answer(opened, path, document, Some(files))
+        }
+        #[cfg(not(feature = "lang-sql"))]
+        {
+            let _ = &source;
+            document_answer(opened, path, None, Some(0))
+        }
+    }
+
+    /// Reads the chapter `path` names under the root of the project, or the
+    /// answer that says why it does not read.
+    fn read_source(opened: &Opened, path: &str) -> Result<String, Value> {
+        let absolute = std::path::Path::new(&opened.project).join(path);
+        std::fs::read_to_string(&absolute).map_err(|error| {
+            failure(
+                "path",
+                "invalid_value",
+                &format!("the file does not read: {error}"),
+                Some("the path is relative to the root of the project the session declared"),
+            )
+        })
+    }
+
+    /// The answer both scopes share (f14 S2/S3, f15 S3): the document the
+    /// bridge handed over, its counts, `chars`, the optional `files` count of
+    /// a merged document and the `er_over_kind` warning — one path for both
+    /// scopes, never two copies that could drift.
+    fn document_answer(
+        opened: &Opened,
+        path: &str,
+        document: Option<String>,
+        files: Option<usize>,
+    ) -> Value {
         let Some(document) = document else {
             return failure(
                 "path",
@@ -1058,12 +1201,17 @@ pub mod book {
             .get("relations")
             .and_then(Value::as_array)
             .map_or(0, Vec::len);
-        let mut base = base(&opened);
+        let mut base = base(opened);
         base["ok"] = json!(true);
         base["file"] = json!(path);
         base["tables"] = json!(tables);
         base["relations"] = json!(relations);
         base["chars"] = json!(chars);
+        // f15 S3: a merged document counts the chapters that were parsed; the
+        // file scope keeps f13's answer with no such field (S6).
+        if let Some(files) = files {
+            base["files"] = json!(files);
+        }
         // f14 S3: the render would refuse this document with `too_large`, and
         // the agent learns it here, before spending the round trip. `ok` stays
         // `true` and the document travels whole (f13, S6).
@@ -2198,7 +2346,8 @@ pub struct CodeDiagramParams {
 // The text is duplicated from `harness::description("code_er")`, like every
 // other book tool const, so the harness and the stdio router say the same.
 const CODE_ER_DESCRIPTION: &str =
-    "Build the `er` document of one `.sql` file of the project — its tables as \
+    "Build the `er` document of one `.sql` file of the project — or of the whole \
+project with `scope: \"project\"` — its tables as \
 compartments with their columns and the keys between them — without reading the \
 file yourself: the answer carries the document in `diagram` (`version: 1`, \
 `kind: \"er\"`), ready to send to `validate_diagram` and then `render_diagram` as \
@@ -2210,6 +2359,14 @@ path components before anything is opened. The source is read live, \
 so the document is the file as it is now, not the indexed snapshot. A file that \
 produces no document — another language, a DDL with no column list, or a build \
 without the SQL grammar — answers `ok: false` with the three causes named. \
+`scope` chooses the breadth, never the contract: `\"file\"` (the default) draws \
+only the file `path` names; `\"project\"` parses every `.sql` chapter the book \
+knows live from disk, merges them in the book's chapter order — a table name \
+declared twice is drawn once, a foreign key that points at a table in another \
+file anchors — and answers one document, with `files` reporting how many \
+chapters were parsed and a chapter that no longer reads skipped. `path` stays \
+required under both scopes: it names the file of the answer, and under \
+`\"project\"` its tables take part in the merge like any other chapter's. \
 Beside `diagram` the answer reports `tables`, `relations` and `chars` (the byte \
 length of the document), so its size is read without counting the JSON. The \
 ceilings of the `er` kind apply at the render — a schema bigger than the kind \
@@ -2220,12 +2377,16 @@ The book is on by default \
 (`book_disabled` only with an explicit `GRAPHIUM_BOOK=off`). It never renders \
 and never touches the plan.";
 
-/// Parameters of the `code_er` tool (f13, S2).
+/// Parameters of the `code_er` tool (f13, S2; f15, S2).
 #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeErParams {
     /// The `.sql` file of the project, relative to its root, with `/`.
     pub path: String,
+    /// f15: `file` (the default) or `project`, which merges every `.sql`
+    /// chapter of the book into one document.
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 /// The MCP server of Graphium.
@@ -2687,13 +2848,13 @@ impl GraphiumServer {
         Parameters(params): Parameters<CodeErParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let session_id = self.session_id.clone();
+        let scope = params.scope.clone();
         // The source is read live from disk: the read runs off the async loop.
-        let response =
-            tokio::task::spawn_blocking(move || book::code_er(&session_id, &params.path))
-                .await
-                .map_err(|error| {
-                    ErrorData::internal_error(format!("the er task failed: {error}"), None)
-                })?;
+        let response = tokio::task::spawn_blocking(move || {
+            book::code_er(&session_id, &params.path, scope.as_deref())
+        })
+        .await
+        .map_err(|error| ErrorData::internal_error(format!("the er task failed: {error}"), None))?;
         structured(response)
     }
 }
@@ -4582,8 +4743,12 @@ CREATE TABLE posts (\n\
         scratch.indexed();
         let project = scratch.root().to_string_lossy().to_string();
 
-        let answer =
-            crate::book::code_er_query_with(&scratch.config(), Some(&project), "db/schema.sql");
+        let answer = crate::book::code_er_query_with(
+            &scratch.config(),
+            Some(&project),
+            "db/schema.sql",
+            None,
+        );
         assert_eq!(answer["ok"], true, "{answer}");
         assert_eq!(answer["file"], "db/schema.sql", "{answer}");
         assert!(answer["book_key"].is_string(), "{answer}");
@@ -4630,8 +4795,12 @@ CREATE TABLE posts (\n\
         scratch.indexed();
         let project = scratch.root().to_string_lossy().to_string();
 
-        let answer =
-            crate::book::code_er_query_with(&scratch.config(), Some(&project), "db/schema.sql");
+        let answer = crate::book::code_er_query_with(
+            &scratch.config(),
+            Some(&project),
+            "db/schema.sql",
+            None,
+        );
         assert_eq!(answer["ok"], true, "{answer}");
         assert_eq!(answer["tables"], 2, "the two tables of the DDL");
         assert_eq!(answer["relations"], 1, "the one foreign key of the DDL");
@@ -4684,7 +4853,7 @@ CREATE TABLE posts (\n\
         let project = scratch.root().to_string_lossy().to_string();
 
         let answer =
-            crate::book::code_er_query_with(&scratch.config(), Some(&project), "db/big.sql");
+            crate::book::code_er_query_with(&scratch.config(), Some(&project), "db/big.sql", None);
         assert_eq!(answer["ok"], true, "the answer is still a success");
         assert_eq!(answer["tables"], 301, "the count travels");
         assert_eq!(answer["relations"], 1, "the count travels");
@@ -4729,7 +4898,8 @@ CREATE TABLE posts (\n\
             "db/../../outside.sql",
             "./db/schema.sql",
         ] {
-            let answer = crate::book::code_er_query_with(&scratch.config(), Some(&project), path);
+            let answer =
+                crate::book::code_er_query_with(&scratch.config(), Some(&project), path, None);
             assert_eq!(answer["ok"], false, "{path}: {answer}");
             assert_eq!(
                 answer["errors"][0]["code"], "invalid_value",
@@ -4756,7 +4926,7 @@ CREATE TABLE posts (\n\
         let project = scratch.root().to_string_lossy().to_string();
 
         let rust =
-            crate::book::code_er_query_with(&scratch.config(), Some(&project), "src/main.rs");
+            crate::book::code_er_query_with(&scratch.config(), Some(&project), "src/main.rs", None);
         assert_eq!(rust["ok"], false, "{rust}");
         assert_eq!(rust["errors"][0]["code"], "invalid_value", "{rust}");
         assert!(
@@ -4772,7 +4942,7 @@ CREATE TABLE posts (\n\
         assert!(hint.contains("SQL grammar"), "{rust}");
 
         let bare =
-            crate::book::code_er_query_with(&scratch.config(), Some(&project), "db/bare.sql");
+            crate::book::code_er_query_with(&scratch.config(), Some(&project), "db/bare.sql", None);
         assert_eq!(bare["ok"], false, "{bare}");
         assert!(
             bare["errors"][0]["message"]
@@ -4782,7 +4952,7 @@ CREATE TABLE posts (\n\
         );
 
         let missing =
-            crate::book::code_er_query_with(&scratch.config(), Some(&project), "db/nope.sql");
+            crate::book::code_er_query_with(&scratch.config(), Some(&project), "db/nope.sql", None);
         assert_eq!(missing["ok"], false, "{missing}");
         assert!(
             missing["errors"][0]["message"]
@@ -4802,13 +4972,201 @@ CREATE TABLE posts (\n\
         let off =
             gx_index::BooksConfig::from_parts(Some("off".into()), Some(scratch.base.join("books")));
 
-        let answer = crate::book::code_er_query_with(&off, Some(&project), "db/schema.sql");
+        let answer = crate::book::code_er_query_with(&off, Some(&project), "db/schema.sql", None);
         assert_eq!(answer["ok"], false, "{answer}");
         assert_eq!(
             answer["errors"][0]["code"],
             crate::book::DISABLED_CODE,
             "{answer}"
         );
+    }
+
+    /// The two chapters of the project-scope fixtures: `users` in one file and
+    /// `posts`, whose foreign key points at `users`, in another. Per file the
+    /// key vanishes; merged it anchors (the finding of f15 S1).
+    const CODE_ER_USERS: &str = "\
+CREATE TABLE users (\n\
+  id INTEGER PRIMARY KEY,\n\
+  name TEXT NOT NULL\n\
+);\n";
+
+    const CODE_ER_POSTS: &str = "\
+CREATE TABLE posts (\n\
+  id INTEGER PRIMARY KEY,\n\
+  user_id INTEGER NOT NULL REFERENCES users(id),\n\
+  title TEXT\n\
+);\n";
+
+    /// f15 S2/S3/S5: `scope: "project"` answers **one** document built from
+    /// every `.sql` chapter of the book — the two tables of the two files, the
+    /// cross-file foreign key anchored, and `files` counting what it parsed.
+    /// The same call with `scope: "file"` is still today's one-file answer.
+    #[test]
+    fn code_er_project_merges_every_sql_chapter_into_one_document() {
+        let scratch = BookScratch::new("code-er-project");
+        scratch.write("db/users.sql", CODE_ER_USERS);
+        scratch.write("db/posts.sql", CODE_ER_POSTS);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let merged = crate::book::code_er_query_with(
+            &scratch.config(),
+            Some(&project),
+            "db/posts.sql",
+            Some("project"),
+        );
+        assert_eq!(merged["ok"], true, "{merged}");
+        // The named file stays the anchor of the answer, under both scopes.
+        assert_eq!(merged["file"], "db/posts.sql", "{merged}");
+        assert_eq!(merged["files"], 2, "the two chapters it parsed: {merged}");
+        assert_eq!(merged["tables"], 2, "both chapters' tables: {merged}");
+        assert_eq!(merged["relations"], 1, "the cross-file key: {merged}");
+
+        let document = &merged["diagram"];
+        let names: Vec<&str> = document["tables"]
+            .as_array()
+            .expect("the tables travel")
+            .iter()
+            .map(|table| table["name"].as_str().expect("a table has a name"))
+            .collect();
+        assert_eq!(
+            names,
+            ["posts", "users"],
+            "the merge follows the book's chapter order: {merged}"
+        );
+        let relations = document["relations"]
+            .as_array()
+            .expect("the relations travel");
+        assert_eq!(relations.len(), 1, "{merged}");
+        assert_eq!(relations[0]["from"]["table"], "users", "{merged}");
+        assert_eq!(relations[0]["from"]["column"], "id", "{merged}");
+        assert_eq!(relations[0]["to"]["table"], "posts", "{merged}");
+        assert_eq!(relations[0]["to"]["column"], "user_id", "{merged}");
+
+        // S6: the file scope is exactly today's answer — one file in, the
+        // bridge's own document out, no `files` and no relation to a table the
+        // file does not carry.
+        let single = crate::book::code_er_query_with(
+            &scratch.config(),
+            Some(&project),
+            "db/posts.sql",
+            Some("file"),
+        );
+        assert_eq!(single["ok"], true, "{single}");
+        assert_eq!(single["tables"], 1, "{single}");
+        assert_eq!(single["relations"], 0, "{single}");
+        assert!(single["files"].is_null(), "no count of files: {single}");
+        assert_eq!(
+            single["diagram"]["tables"]
+                .as_array()
+                .expect("the table travels")
+                .len(),
+            1,
+            "{single}"
+        );
+    }
+
+    /// f15 S3: the chapter list is the book's, and a chapter whose file no
+    /// longer reads is skipped — `files` counts only what was parsed, never
+    /// what the book remembers.
+    #[test]
+    fn code_er_project_skips_a_chapter_that_no_longer_reads() {
+        let scratch = BookScratch::new("code-er-project-gone");
+        scratch.write("db/users.sql", CODE_ER_USERS);
+        scratch.write("db/posts.sql", CODE_ER_POSTS);
+        scratch.write(
+            "db/tags.sql",
+            "CREATE TABLE tags (\n  id INTEGER PRIMARY KEY,\n  label TEXT\n);\n",
+        );
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        std::fs::remove_file(scratch.root().join("db/tags.sql")).expect("the chapter goes away");
+
+        let merged = crate::book::code_er_query_with(
+            &scratch.config(),
+            Some(&project),
+            "db/users.sql",
+            Some("project"),
+        );
+        assert_eq!(merged["ok"], true, "{merged}");
+        assert_eq!(
+            merged["files"], 2,
+            "only the chapters that parsed: {merged}"
+        );
+        assert_eq!(merged["tables"], 2, "{merged}");
+        let names: Vec<&str> = merged["diagram"]["tables"]
+            .as_array()
+            .expect("the tables travel")
+            .iter()
+            .map(|table| table["name"].as_str().expect("a table has a name"))
+            .collect();
+        assert!(
+            !names.contains(&"tags"),
+            "the chapter that no longer reads contributes nothing: {merged}"
+        );
+    }
+
+    /// f15 S2: `scope` accepts `file` or `project` and refuses anything else
+    /// with `invalid_value` at `scope`, naming both values it takes.
+    #[test]
+    fn code_er_refuses_an_unknown_scope() {
+        let scratch = BookScratch::new("code-er-scope");
+        scratch.write("db/users.sql", CODE_ER_USERS);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        for scope in ["nope", "files", "project2"] {
+            let answer = crate::book::code_er_query_with(
+                &scratch.config(),
+                Some(&project),
+                "db/users.sql",
+                Some(scope),
+            );
+            assert_eq!(answer["ok"], false, "{scope}: {answer}");
+            assert_eq!(
+                answer["errors"][0]["code"], "invalid_value",
+                "{scope}: {answer}"
+            );
+            assert_eq!(answer["errors"][0]["path"], "scope", "{scope}: {answer}");
+            let hint = answer["errors"][0]["hint"]
+                .as_str()
+                .expect("the hint names the values it takes");
+            assert!(hint.contains("file"), "{scope}: {answer}");
+            assert!(hint.contains("project"), "{scope}: {answer}");
+        }
+    }
+
+    /// f15 S6: an absent (or empty) `scope` is the `"file"` answer, byte for
+    /// byte — the additive change never moves the default.
+    #[test]
+    fn the_absent_scope_answers_the_same_json_as_file_scope() {
+        let scratch = BookScratch::new("code-er-scope-default");
+        scratch.write("db/users.sql", CODE_ER_USERS);
+        scratch.write("db/posts.sql", CODE_ER_POSTS);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let absent = crate::book::code_er_query_with(
+            &scratch.config(),
+            Some(&project),
+            "db/posts.sql",
+            None,
+        );
+        let empty = crate::book::code_er_query_with(
+            &scratch.config(),
+            Some(&project),
+            "db/posts.sql",
+            Some(""),
+        );
+        let file = crate::book::code_er_query_with(
+            &scratch.config(),
+            Some(&project),
+            "db/posts.sql",
+            Some("file"),
+        );
+        assert_eq!(absent, file, "absent is `file`, not another answer");
+        assert_eq!(empty, file, "empty is `file`, not another answer");
     }
 
     /// T5/S7: every cut is an object with the reason, the numbers and the
