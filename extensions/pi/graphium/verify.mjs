@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import graphium, {
+  bookLine,
   cwdOf,
   exportsRoot,
   findBinary,
@@ -165,14 +166,35 @@ check("the factory registers the MCP server and the /graphium command", () => {
   assert.equal(pi.commands.get("graphium").description.includes("open"), true);
 });
 
+check("the description sells the book and its two diagram routes", () => {
+  const pi = stubPi();
+  graphium(pi, process.execPath);
+  const description = pi.registered.get("graphium").description;
+  assert.match(description, /índice/);
+  assert.match(description, /code_diagram/);
+  assert.match(description, /code_er/);
+});
+
 check("the status names the binary, the MCP server and the exports root", () => {
   const pi = stubPi();
   pi.registerMcpServer("graphium", { command: process.execPath, args: ["--stdio"] });
   const lines = statusLines(pi, process.execPath).join("\n");
   assert.match(lines, /binario: .*node|binario: .*\/usr\//);
   assert.match(lines, /MCP: registrado/);
+  assert.match(lines, /libro: activo: el agente lee el índice de /);
   assert.match(lines, /raíz de exportes: /);
   assert.match(lines, /\/graphium open/);
+});
+
+check("the book line says whether the book is on and which project it reads", () => {
+  const identity = identityEnv({ cwd: "/tmp/graphium-proyecto" }, {});
+  assert.equal(
+    bookLine(identity, {}),
+    "libro: activo: el agente lee el índice de /tmp/graphium-proyecto",
+  );
+  assert.match(bookLine(identity, { GRAPHIUM_BOOK: "off" }), /^libro: apagado \(GRAPHIUM_BOOK=off\)/);
+  assert.match(bookLine(identity, { GRAPHIUM_BOOK: "on" }), /^libro: activo/);
+  assert.match(bookLine({}, {}), /no declara GRAPHIUM_PROJECT: el libro responde invalid_value/);
 });
 
 check("without a binary the command says what to do instead of throwing", async () => {

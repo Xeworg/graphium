@@ -195,7 +195,11 @@ mod tests {
             // Every shape names the command and the transport.
             assert!(config.contains("command"), "{client}: {config}");
         }
-        assert!(mcp_config_for("pi").contains("[mcp_servers.graphium]"));
+        // pi reads a JSON `mcp.json` (harness-pi-texto, S6): the shape it
+        // prints is the mcpServers object, not the TOML it used to be.
+        let pi: serde_json::Value =
+            serde_json::from_str(&mcp_config_for("pi")).expect("pi speaks json");
+        assert!(pi["mcpServers"]["graphium"]["command"].is_string(), "{pi}");
     }
 
     #[test]

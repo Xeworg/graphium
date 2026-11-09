@@ -44,7 +44,9 @@ const RECENT_EXPORTS = 3;
 
 /** What the server offers, in a sentence: `/mcp` and the system prompt read it. */
 const DESCRIPTION =
-  "Graphium: dibuja diagramas en una ventana sobre un plano y los exporta a SVG o PNG";
+  "Graphium: dibuja diagramas en una ventana sobre un plano y los exporta a SVG o PNG. " +
+  "Lee el índice del proyecto (el libro) y dibuja desde ahí: `code_diagram` para el " +
+  "código y `code_er` para un `.sql`.";
 
 /** The directory this extension lives in, wherever Pi resolved it from. */
 function here(): string {
@@ -247,8 +249,34 @@ function sameIdentity(left: Record<string, string>, right: Record<string, string
   return keys.length === Object.keys(right).length && keys.every((key) => left[key] === right[key]);
 }
 
+/**
+ * The one line `/graphium` prints about the book the agent will see.
+ *
+ * It reads the two sources that decide it and invents none: the identity env
+ * this extension registers (`GRAPHIUM_PROJECT`, through `identityEnv`) and the
+ * `GRAPHIUM_BOOK` the MCP child inherits from this process. A session without a
+ * project is the `invalid_value` at `session.project` the server answers.
+ */
+export function bookLine(
+  identity: Record<string, string | undefined> = identityEnv(),
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const off = (env.GRAPHIUM_BOOK ?? "").trim() === "off";
+  const project = notEmpty(identity.GRAPHIUM_PROJECT);
+  if (off) {
+    return "libro: apagado (GRAPHIUM_BOOK=off): el agente no tiene índice y escribe los documentos a mano";
+  }
+  return project
+    ? `libro: activo: el agente lee el índice de ${project}`
+    : "libro: activo, pero la sesión no declara GRAPHIUM_PROJECT: el libro responde invalid_value";
+}
+
 /** The lines `/graphium` prints. */
-export function statusLines(pi: Pick<ExtensionAPI, "getMcpServers">, binary: string | null): string[] {
+export function statusLines(
+  pi: Pick<ExtensionAPI, "getMcpServers">,
+  binary: string | null,
+  identity: Record<string, string | undefined> = identityEnv(),
+): string[] {
   const root = exportsRoot();
   const recent = recentExports(root);
   const registered = pi
@@ -261,6 +289,7 @@ export function statusLines(pi: Pick<ExtensionAPI, "getMcpServers">, binary: str
     binary
       ? `MCP: ${registered ? "registrado para esta sesión" : "no registrado"}, como \`${SERVER}\` en /mcp`
       : "MCP: sin binario no hay servidor que registrar",
+    bookLine(identity),
     `raíz de exportes: ${root}`,
     recent.length > 0
       ? `últimos archivos: ${recent.join(", ")}`
@@ -359,7 +388,7 @@ export default function graphium(
 
   pi.registerCommand("graphium", {
     description:
-      "Estado de Graphium (binario, versión, raíz de exportes); `open` abre la ventana",
+      "Estado de Graphium (binario, versión, libro, raíz de exportes); `open` abre la ventana",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       const verb = args.trim();
       if (verb === "open") {
@@ -370,7 +399,11 @@ export default function graphium(
         ctx.ui.notify(`Graphium: ${openPlan(binary)}`, "info");
         return;
       }
-      for (const line of statusLines(pi, binary)) {
+      for (const line of statusLines(
+        pi,
+        binary,
+        identityEnv({ sessionId: sessionIdOf(ctx), cwd: cwdOf(ctx) }),
+      )) {
         ctx.ui.notify(line, "info");
       }
     },

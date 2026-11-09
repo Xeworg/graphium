@@ -2146,7 +2146,9 @@ file yourself: the answer carries the document in `diagram` (`version: 1`, \
 `kind: \"er\"`), ready to send to `validate_diagram` and then `render_diagram` as \
 it is, the same contract `code_diagram` keeps. `path` is the file relative to \
 the project root with `/` separators, the way the book stores it \
-(`db/schema.sql`); absolute paths and `..` are refused. The source is read live, \
+(`db/schema.sql`); absolute paths, `..` and a leading `./` are refused the same \
+way, with `ok: false`, code `invalid_value` at `path`, because the guard reads \
+path components before anything is opened. The source is read live, \
 so the document is the file as it is now, not the indexed snapshot. A file that \
 produces no document — another language, a DDL with no column list, or a build \
 without the SQL grammar — answers `ok: false` with the three causes named. The \
