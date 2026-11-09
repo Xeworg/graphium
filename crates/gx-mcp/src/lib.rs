@@ -703,6 +703,14 @@ pub mod book {
     /// neighbourhood is a `code_impact` question, not a document. Past those
     /// ceilings the character envelope (`max_chars`, L7) trims the document,
     /// never its validity: an edge always connects nodes the document carries.
+    ///
+    /// f16 (S2/S3): the document is the shape of the code, not a flat list. Its
+    /// nodes group by the file they were declared in — one flat group per
+    /// file, only when the neighbourhood spans more than one — and the seed
+    /// node travels emphasised, so the reader sees which symbol the question
+    /// was about. The groups are charged to the envelope like the rows they
+    /// describe, and a grouping it cannot carry whole is left out, so the
+    /// answer never spends more than `max_chars`.
     pub fn code_diagram_query_with(
         config: &gx_index::BooksConfig,
         project: Option<&str>,
@@ -765,7 +773,16 @@ pub mod book {
         let node_rows: Vec<Value> = impact
             .nodes
             .iter()
-            .map(|node| json!({ "id": node_id(node.id), "label": node.qname }))
+            .map(|node| {
+                let mut row = json!({ "id": node_id(node.id), "label": node.qname });
+                // S3 (f16): the seed is the symbol the question was about, so
+                // it is the one node that travels emphasised — `highlight`, the
+                // contract's «this is the one». No other node is.
+                if node.id == hit.id {
+                    row["emphasis"] = json!("highlight");
+                }
+                row
+            })
             .collect();
         let edge_rows: Vec<Value> = impact
             .edges
@@ -801,6 +818,47 @@ pub mod book {
             nodes.push(row);
         }
         let node_count = nodes.len();
+        // S2 (f16): every node knows the file it was declared in, so the nodes
+        // group by file — one flat group per file of the document — and only
+        // when the neighbourhood spans more than one: a single group around
+        // everything is noise, not structure. The members are the node ids the
+        // document kept, so a document the envelope trimmed never names a node
+        // it does not carry.
+        let mut files: Vec<(String, Vec<String>)> = Vec::new();
+        for node in &impact.nodes {
+            let id = node_id(node.id);
+            if !kept.contains(&id) {
+                continue;
+            }
+            match files.iter_mut().find(|(file, _)| file == &node.file) {
+                Some((_, members)) => members.push(id),
+                None => files.push((node.file.clone(), vec![id])),
+            }
+        }
+        // The groups are document structure, so they are measured like every
+        // other row (L7): they are charged first and the edges take what they
+        // leave. A grouping the envelope cannot carry whole is dropped whole —
+        // half a grouping would lie about the files it leaves out — and the
+        // document keeps the shape it had before.
+        let mut groups: Vec<Value> = Vec::new();
+        if files.len() > 1 {
+            let mut taken: Vec<String> = kept.iter().cloned().collect();
+            let rows: Vec<Value> = files
+                .iter()
+                .map(|(file, members)| {
+                    json!({
+                        "id": file_group_id(file, &mut taken),
+                        "label": file,
+                        "members": members,
+                    })
+                })
+                .collect();
+            let mut charged = pack;
+            if rows.iter().all(|row| charged.take_under(row, room)) {
+                pack = charged;
+                groups = rows;
+            }
+        }
         let mut document_edges: Vec<Value> = Vec::new();
         let mut dropped_by_density = 0usize;
         let mut dropped_by_envelope = 0usize;
@@ -824,13 +882,16 @@ pub mod book {
         }
         let edge_count = document_edges.len();
         let nodes_dropped = node_count < impact.nodes.len();
-        let document = json!({
+        let mut document = json!({
             "version": 1,
             "kind": "graph",
             "title": format!("{} — relations", hit.qname),
             "nodes": nodes,
             "edges": document_edges,
         });
+        if !groups.is_empty() {
+            document["groups"] = Value::Array(groups);
+        }
 
         // The follow-up of a cut diagram is the connections view: the same
         // walk, with its own query budget and without the document ceiling.
@@ -1563,6 +1624,32 @@ pub mod book {
     /// even when two chapters carry the same qname.
     fn node_id(id: i64) -> String {
         format!("s{id}")
+    }
+
+    /// The id of the group that holds the nodes of one file (f16, S2): the
+    /// path folded to `[a-z0-9-]`, the fold the book already uses for its
+    /// slugs, and made unique against the ids already taken — the nodes and the
+    /// groups before it — so the document the answer carries stays valid as it
+    /// arrives (S4): a group never takes the id of a node and no id repeats.
+    fn file_group_id(file: &str, taken: &mut Vec<String>) -> String {
+        let mut folded = String::with_capacity(file.len());
+        for character in file.chars() {
+            if character.is_ascii_alphanumeric() {
+                folded.push(character.to_ascii_lowercase());
+            } else if !folded.ends_with('-') {
+                folded.push('-');
+            }
+        }
+        let base = folded.trim_matches('-');
+        let base = if base.is_empty() { "file" } else { base };
+        let mut id = base.to_string();
+        let mut suffix = 2;
+        while taken.iter().any(|seen| seen == &id) {
+            id = format!("{base}-{suffix}");
+            suffix += 1;
+        }
+        taken.push(id.clone());
+        id
     }
 
     /// The `max_chars` envelope of the three answering tools (L7): absent is
@@ -2304,7 +2391,10 @@ any file. The answer is a complete `graph` document (`version: 1`, `kind: \
 connection labelled with its kind) in `diagram`: send it to `render_diagram` \
 as it is, or to `validate_diagram` first. The document respects the contract of \
 the kind (at most 300 nodes, 600 edges and a density of 3), so it is \
-renderable with no repair. The walk is the same as `code_impact` with \
+renderable with no repair; when the neighbourhood spans more than one file it \
+groups its nodes by file — one flat group per file — and the seed node travels \
+`emphasis: \"highlight\"`, so the reader sees which symbol the question was \
+about. The walk is the same as `code_impact` with \
 `direction: both` and `depth` clamped to 3 hops; `edges` narrows which kinds \
 it follows. `truncated` is the object `{reason, shown, total, next}`: \
 `density` means the document was trimmed to render, `nodes`/`edges` mean the \
@@ -4127,6 +4217,19 @@ mod tests {
         let validated = crate::contract::validate_diagram(&document.to_string());
         assert!(validated.ok, "{:?}", validated.errors);
 
+        // S2 of f16: a one-file neighbourhood carries no `groups` — a single
+        // group around everything is noise, not structure — and S3: the seed
+        // is the one node the document emphasises.
+        assert!(
+            document.get("groups").is_none(),
+            "a one-file neighbourhood carries no groups: {response}"
+        );
+        let seed = nodes
+            .iter()
+            .find(|node| node["label"] == "store::open_store")
+            .expect("the seed travels");
+        assert_eq!(seed["emphasis"], "highlight", "{response}");
+
         // f14 S4: every name of this neighbourhood resolves, so the honest
         // count of the walk is zero — the field is the walk's own number, not
         // a symptom of a missing document.
@@ -4147,6 +4250,116 @@ mod tests {
         );
         let validated = crate::contract::validate_diagram(&lonely["diagram"].to_string());
         assert!(validated.ok, "{:?}", validated.errors);
+
+        // S4 of f16: the grouping and the emphasis are part of the document,
+        // so the same validation the render runs has to accept a neighbourhood
+        // that spans two files exactly as it arrives.
+        scratch.write("src/api.rs", "pub fn handler() -> u8 { build() }\n");
+        scratch.indexed();
+        let grouped =
+            crate::book::code_diagram_with(&scratch.config(), Some(&project), "handler", None);
+        assert_eq!(grouped["ok"], true, "{grouped}");
+        assert_eq!(
+            grouped["diagram"]["groups"].as_array().map(Vec::len),
+            Some(2),
+            "{grouped}"
+        );
+        let seed = grouped["diagram"]["nodes"]
+            .as_array()
+            .expect("the nodes travel")
+            .iter()
+            .find(|node| node["label"] == "api::handler")
+            .expect("the seed travels");
+        assert_eq!(seed["emphasis"], "highlight", "{grouped}");
+        let validated = crate::contract::validate_diagram(&grouped["diagram"].to_string());
+        assert!(validated.ok, "{:?}", validated.errors);
+    }
+
+    /// S2/S3 of f16: the document is the shape of the code — one flat group per
+    /// file when the neighbourhood spans more than one — and the seed is the
+    /// only node that travels emphasised, so the reader sees which symbol the
+    /// question was about.
+    #[test]
+    fn the_code_diagram_groups_its_nodes_by_file_and_emphasises_the_seed() {
+        let scratch = BookScratch::new("diagram-groups");
+        scratch.write(
+            "src/seed.rs",
+            "pub fn start() -> u8 { helper() + other() }\npub fn helper() -> u8 { 1 }\n",
+        );
+        scratch.write("src/other.rs", "pub fn other() -> u8 { 2 }\n");
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response =
+            crate::book::code_diagram_with(&scratch.config(), Some(&project), "start", None);
+        assert_eq!(response["ok"], true, "{response}");
+        let document = &response["diagram"];
+        let nodes = document["nodes"].as_array().expect("the nodes travel");
+        assert_eq!(nodes.len(), 3, "{response}");
+
+        // The rest of the document is the one it always was: the same title,
+        // the same nodes and the same edges of the walk, untouched by the
+        // grouping and the emphasis.
+        assert_eq!(document["title"], "seed::start — relations", "{response}");
+        let edges = document["edges"].as_array().expect("the edges travel");
+        assert_eq!(edges.len(), 2, "{response}");
+        assert!(
+            edges.iter().all(|edge| edge["label"] == "calls"),
+            "{response}"
+        );
+
+        // The document names its nodes `s<id>`: the test reads the id from the
+        // label it knows instead of guessing an index.
+        let id_of = |qname: &str| -> String {
+            nodes
+                .iter()
+                .find(|node| node["label"] == qname)
+                .unwrap_or_else(|| panic!("`{qname}` travels: {response}"))["id"]
+                .as_str()
+                .expect("the node id")
+                .to_string()
+        };
+
+        // S3: the seed carries the emphasis that reads «this is the one», and
+        // no other node is emphasised.
+        let seed = nodes
+            .iter()
+            .find(|node| node["label"] == "seed::start")
+            .expect("the seed travels");
+        assert_eq!(seed["emphasis"], "highlight", "{response}");
+        for node in nodes.iter().filter(|node| node["label"] != "seed::start") {
+            assert!(
+                node.get("emphasis").is_none(),
+                "only the seed is emphasised: {response}"
+            );
+        }
+
+        // S2: one flat group per file of the neighbourhood, and the members
+        // are the node ids the document declares in that file.
+        let groups = document["groups"]
+            .as_array()
+            .expect("a two-file neighbourhood groups its nodes");
+        assert_eq!(groups.len(), 2, "{response}");
+        let group = |file: &str| {
+            groups
+                .iter()
+                .find(|group| group["label"] == file)
+                .unwrap_or_else(|| panic!("the group of `{file}` travels: {response}"))
+        };
+        let seed_file = group("src/seed.rs");
+        assert_eq!(seed_file["id"], "src-seed-rs", "{response}");
+        assert_eq!(
+            seed_file["members"],
+            serde_json::json!([id_of("seed::start"), id_of("seed::helper")]),
+            "{response}"
+        );
+        let other_file = group("src/other.rs");
+        assert_eq!(other_file["id"], "src-other-rs", "{response}");
+        assert_eq!(
+            other_file["members"],
+            serde_json::json!([id_of("other::other")]),
+            "{response}"
+        );
     }
 
     /// f14 S4: the diagram walk publishes the same `unresolved` that
