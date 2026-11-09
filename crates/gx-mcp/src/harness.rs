@@ -381,7 +381,10 @@ reading any file: the answer is a complete `graph` document (`version: 1`, \
 `kind: \"graph\"`, one node per symbol labelled with its `qname`, one edge per \
 connection labelled with its kind) in `diagram`. Send it to `render_diagram` \
 as it is, or to `validate_diagram` first: it respects the contract of the kind \
-(300 nodes, 600 edges, density 3), so it needs no repair. The walk is \
+(300 nodes, 600 edges, density 3), so it needs no repair. When the neighbourhood \
+spans more than one file the document groups its nodes by file — one flat group \
+per file — and the seed node travels `emphasis: \"highlight\"`, so the reader sees \
+which symbol the question was about. The walk is \
 `code_impact` with `direction: both` and `depth` clamped to 3 hops; `edges` \
 narrows which kinds it follows. `truncated` is `{reason, shown, total, next}` \
 and tells the two cuts apart: `density` means the document was trimmed to \
