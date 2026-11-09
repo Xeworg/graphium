@@ -2136,6 +2136,33 @@ pub struct CodeDiagramParams {
     pub max_chars: Option<usize>,
 }
 
+/// Description of the `code_er` tool, written for the agent (f13, S5).
+// The text is duplicated from `harness::description("code_er")`, like every
+// other book tool const, so the harness and the stdio router say the same.
+const CODE_ER_DESCRIPTION: &str =
+    "Build the `er` document of one `.sql` file of the project — its tables as \
+compartments with their columns and the keys between them — without reading the \
+file yourself: the answer carries the document in `diagram` (`version: 1`, \
+`kind: \"er\"`), ready to send to `validate_diagram` and then `render_diagram` as \
+it is, the same contract `code_diagram` keeps. `path` is the file relative to \
+the project root with `/` separators, the way the book stores it \
+(`db/schema.sql`); absolute paths and `..` are refused. The source is read live, \
+so the document is the file as it is now, not the indexed snapshot. A file that \
+produces no document — another language, a DDL with no column list, or a build \
+without the SQL grammar — answers `ok: false` with the three causes named. The \
+ceilings of the `er` kind still apply at the render: a schema bigger than the \
+kind accepts is refused there with `too_large`. The book is on by default \
+(`book_disabled` only with an explicit `GRAPHIUM_BOOK=off`). It never renders \
+and never touches the plan.";
+
+/// Parameters of the `code_er` tool (f13, S2).
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeErParams {
+    /// The `.sql` file of the project, relative to its root, with `/`.
+    pub path: String,
+}
+
 /// The MCP server of Graphium.
 ///
 /// It is a plain [`ServerHandler`]: the tool router comes from the
@@ -2578,6 +2605,32 @@ impl GraphiumServer {
         })?;
         structured(response)
     }
+
+    #[tool(
+        name = "code_er",
+        description = CODE_ER_DESCRIPTION,
+        annotations(
+            title = "Build the er document of a .sql file from the book",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn code_er(
+        &self,
+        Parameters(params): Parameters<CodeErParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session_id = self.session_id.clone();
+        // The source is read live from disk: the read runs off the async loop.
+        let response =
+            tokio::task::spawn_blocking(move || book::code_er(&session_id, &params.path))
+                .await
+                .map_err(|error| {
+                    ErrorData::internal_error(format!("the er task failed: {error}"), None)
+                })?;
+        structured(response)
+    }
 }
 
 #[tool_handler(name = "graphium")]
@@ -2844,6 +2897,20 @@ mod tests {
             .collect();
         assert!(warnings.contains(&"opts_ignored"), "{warnings:?}");
         assert!(warnings.contains(&"no_window"), "{warnings:?}");
+    }
+
+    /// f13/S1: every tool the dispatcher answers is advertised over stdio too.
+    /// A tool that exists in the dispatcher and not here is invisible to a
+    /// stdio client, and every client config speaks stdio.
+    #[test]
+    fn every_dispatcher_tool_is_advertised_over_stdio() {
+        let tools = GraphiumServer::tool_router().list_all();
+        for name in crate::dispatch::TOOL_NAMES {
+            assert!(
+                tools.iter().any(|tool| tool.name == name),
+                "{name} is advertised over stdio"
+            );
+        }
     }
 
     /// RF14/R3: the router advertises the two read-only history tools with the
