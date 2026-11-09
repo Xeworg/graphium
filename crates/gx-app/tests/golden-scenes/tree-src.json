@@ -1,0 +1,233 @@
+{
+  "canvas": {
+    "x": 0.0,
+    "y": 0.0,
+    "w": 451.744140625,
+    "h": 262.0
+  },
+  "tokens": {
+    "text_size": 14.0,
+    "node_padding": 12.0,
+    "corner_radius": 6.0,
+    "border_width": 1.0,
+    "line_height": 1.25,
+    "regular_weight": 400,
+    "semibold_weight": 600,
+    "arrow_length": 10.0,
+    "crow_foot": 22.0,
+    "crow_foot_spread": 0.85,
+    "badge_width": 26.0,
+    "muted_opacity": 0.55,
+    "lifeline_dash": [
+      4.0,
+      4.0
+    ],
+    "dash_pattern": [
+      6.0,
+      4.0
+    ],
+    "group_dash": [
+      8.0,
+      5.0
+    ]
+  },
+  "direction": "TB",
+  "layout_hint": "tree",
+  "palette": {
+    "source": "css-vars",
+    "theme": "dark",
+    "bg": "var(--bg)",
+    "node_fill": "var(--node-fill)",
+    "node_stroke": "var(--node-stroke)",
+    "node_text": "var(--node-text)",
+    "edge_stroke": "var(--edge-stroke)",
+    "edge_text": "var(--edge-text)",
+    "accent": "var(--accent)"
+  },
+  "nodes": [
+    {
+      "id": "g-src",
+      "label": "src",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 225.8720703125,
+        "y": 20.75
+      },
+      "size": {
+        "w": 45.095703125,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-src/lib",
+      "label": "lib",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 288.7978515625,
+        "y": 122.25
+      },
+      "size": {
+        "w": 40.064453125,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-src/lib/layout.rs",
+      "label": "layout.rs",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 410.14453125,
+        "y": 223.75
+      },
+      "size": {
+        "w": 83.19921875,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-src/lib/mod.rs",
+      "label": "mod.rs",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 161.640625,
+        "y": 223.75
+      },
+      "size": {
+        "w": 71.578125,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-src/lib/render.rs",
+      "label": "render.rs\n312 líneas",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 282.9873046875,
+        "y": 232.5
+      },
+      "size": {
+        "w": 91.115234375,
+        "h": 59.0
+      }
+    },
+    {
+      "id": "g-src/main.rs",
+      "label": "main.rs\n48 líneas",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 42.92578125,
+        "y": 131.0
+      },
+      "size": {
+        "w": 85.8515625,
+        "h": 59.0
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "m-src-src/lib",
+      "from": "src",
+      "to": "src/lib",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": false,
+      "points": [
+        {
+          "x": 225.8720703125,
+          "y": 41.5
+        },
+        {
+          "x": 288.7978515625,
+          "y": 101.5
+        }
+      ]
+    },
+    {
+      "id": "m-src-src/main.rs",
+      "from": "src",
+      "to": "src/main.rs",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": false,
+      "points": [
+        {
+          "x": 225.8720703125,
+          "y": 41.5
+        },
+        {
+          "x": 42.92578125,
+          "y": 101.5
+        }
+      ]
+    },
+    {
+      "id": "m-src/lib-src/lib/layout.rs",
+      "from": "src/lib",
+      "to": "src/lib/layout.rs",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": false,
+      "points": [
+        {
+          "x": 288.7978515625,
+          "y": 143.0
+        },
+        {
+          "x": 410.14453125,
+          "y": 203.0
+        }
+      ]
+    },
+    {
+      "id": "m-src/lib-src/lib/mod.rs",
+      "from": "src/lib",
+      "to": "src/lib/mod.rs",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": false,
+      "points": [
+        {
+          "x": 288.7978515625,
+          "y": 143.0
+        },
+        {
+          "x": 161.640625,
+          "y": 203.0
+        }
+      ]
+    },
+    {
+      "id": "m-src/lib-src/lib/render.rs",
+      "from": "src/lib",
+      "to": "src/lib/render.rs",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": false,
+      "points": [
+        {
+          "x": 288.7978515625,
+          "y": 143.0
+        },
+        {
+          "x": 282.9873046875,
+          "y": 203.0
+        }
+      ]
+    }
+  ],
+  "bands": [],
+  "events": []
+}

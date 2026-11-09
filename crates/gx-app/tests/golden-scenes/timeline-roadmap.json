@@ -1,0 +1,161 @@
+{
+  "canvas": {
+    "x": 0.0,
+    "y": 0.0,
+    "w": 734.0,
+    "h": 220.0
+  },
+  "tokens": {
+    "text_size": 14.0,
+    "node_padding": 12.0,
+    "corner_radius": 6.0,
+    "border_width": 1.0,
+    "line_height": 1.25,
+    "regular_weight": 400,
+    "semibold_weight": 600,
+    "arrow_length": 10.0,
+    "crow_foot": 22.0,
+    "crow_foot_spread": 0.85,
+    "badge_width": 26.0,
+    "muted_opacity": 0.55,
+    "lifeline_dash": [
+      4.0,
+      4.0
+    ],
+    "dash_pattern": [
+      6.0,
+      4.0
+    ],
+    "group_dash": [
+      8.0,
+      5.0
+    ]
+  },
+  "direction": null,
+  "layout_hint": null,
+  "palette": {
+    "source": "css-vars",
+    "theme": "dark",
+    "bg": "var(--bg)",
+    "node_fill": "var(--node-fill)",
+    "node_stroke": "var(--node-stroke)",
+    "node_text": "var(--node-text)",
+    "edge_stroke": "var(--edge-stroke)",
+    "edge_text": "var(--edge-text)",
+    "accent": "var(--accent)"
+  },
+  "nodes": [],
+  "edges": [],
+  "bands": [
+    {
+      "id": "lane-q1",
+      "label": "Q1",
+      "bbox": {
+        "x": 0.0,
+        "y": 0.0,
+        "w": 734.0,
+        "h": 110.0
+      },
+      "depth": 0,
+      "members": [
+        "event-0",
+        "event-1"
+      ],
+      "gutter": 150.0
+    },
+    {
+      "id": "lane-q2",
+      "label": "Q2",
+      "bbox": {
+        "x": 0.0,
+        "y": 110.0,
+        "w": 734.0,
+        "h": 110.0
+      },
+      "depth": 0,
+      "members": [
+        "event-2",
+        "event-3"
+      ],
+      "gutter": 150.0
+    }
+  ],
+  "events": [
+    {
+      "id": "g-event-0",
+      "lane": "q1",
+      "label": "spike F0",
+      "order": 0,
+      "center": {
+        "x": 209.0,
+        "y": 55.0
+      },
+      "size": {
+        "w": 118.0,
+        "h": 49.5
+      }
+    },
+    {
+      "id": "g-event-1",
+      "lane": "q1",
+      "label": "MVP",
+      "order": 1,
+      "span": {
+        "start": 1.0,
+        "end": 2.0
+      },
+      "center": {
+        "x": 359.0,
+        "y": 55.0
+      },
+      "size": {
+        "w": 118.0,
+        "h": 49.5
+      },
+      "bar": {
+        "x": 301.0,
+        "y": 73.75,
+        "w": 116.0,
+        "h": 5.0
+      }
+    },
+    {
+      "id": "g-event-2",
+      "lane": "q2",
+      "label": "los 10 kinds",
+      "order": 2,
+      "center": {
+        "x": 509.0,
+        "y": 165.0
+      },
+      "size": {
+        "w": 118.0,
+        "h": 49.5
+      }
+    },
+    {
+      "id": "g-event-3",
+      "lane": "q2",
+      "label": "export",
+      "order": 3,
+      "span": {
+        "start": 3.0,
+        "end": 4.0
+      },
+      "center": {
+        "x": 659.0,
+        "y": 165.0
+      },
+      "size": {
+        "w": 118.0,
+        "h": 49.5
+      },
+      "bar": {
+        "x": 601.0,
+        "y": 183.75,
+        "w": 116.0,
+        "h": 5.0
+      }
+    }
+  ]
+}

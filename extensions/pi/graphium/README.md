@@ -11,6 +11,10 @@ binario, registra el servidor MCP para la sesión y agrega el comando
   `export_diagram` y el resto de las tools disponibles, sin `mcp.json`. Un
   `mcp.json` con una entrada `graphium` sigue ganando: el humano tiene la última
   palabra.
+- **Le cuenta al agente lo que registra.** La descripción del servidor nombra el
+  libro del proyecto y sus dos rutas de dibujo: `code_diagram` para el código y
+  `code_er` para un `.sql`. `/mcp` y el system prompt la leen, así que el agente
+  sabe que hay un índice antes de escribir un documento a mano.
 - **Declara quién es la sesión.** En el `env` del registro pasa
   `GRAPHIUM_CLIENT=pi`, `GRAPHIUM_PROJECT` (el directorio de trabajo) y
   `GRAPHIUM_SESSION` (el id de la sesión de Pi, cuando se puede leer). Gracias a
@@ -20,11 +24,14 @@ binario, registra el servidor MCP para la sesión y agrega el comando
   nueva; si no se puede leer ningún id, el `env` va sin `GRAPHIUM_SESSION` y no
   se inventa ninguno.
 - **`/graphium`** muestra dónde está el binario, qué versión es, si el MCP quedó
-  registrado, cuál es la raíz de exportes y los últimos archivos exportados.
+  registrado, si el libro está activo y de qué proyecto lee el índice, cuál es la
+  raíz de exportes y los últimos archivos exportados. La línea del libro sale de
+  lo que la extensión ya sabe: `GRAPHIUM_BOOK` (apagado solo con `off`) y el
+  `GRAPHIUM_PROJECT` que declara el `env` de la sesión.
 - **`/graphium open`** abre la ventana del plano sin pedirle un diagrama al
   agente.
 - Si no encuentra el binario, **no rompe la sesión**: avisa qué hacer
-  (`GRAPHIUM_BIN` o `cargo build --release`).
+  (`GRAPHIUM_BIN` o `scripts/build.sh --release` en un checkout del repositorio).
 
 Dónde busca el binario, en orden:
 
@@ -83,10 +90,28 @@ node extensions/pi/graphium/verify.mjs
 
 Cubre la búsqueda del binario (incluida la ausencia), la raíz de exportes, el
 listado de archivos exportados, el orden de los bytes que muestra, el registro
-del servidor MCP y que el comando sin binario avise en vez de tirar.
+del servidor MCP, la descripción que vende el libro, la línea del libro y que el
+comando sin binario avise en vez de tirar. Para la comprobación que exige un
+build en el checkout (`target/release/graphium` o `target/debug/graphium`),
+compilá antes con `scripts/build.sh --release`.
 
-## Un detalle que esta extensión no arregla
+## La configuración que Pi lee
 
-`graphium mcp-config --client pi` imprime TOML, pero Pi lee
-`~/.pi/agent/mcp.json` en JSON. Mientras eso siga así, la extensión es el camino
-correcto para Pi: no pasa por ese archivo.
+Pi lee `~/.pi/agent/mcp.json` en JSON, con el mismo objeto `mcpServers` que los
+otros clientes MCP. `graphium mcp-config --client pi` imprime exactamente esa
+entrada, con la ruta absoluta del binario, para pegarla a mano:
+
+```json
+{
+  "mcpServers": {
+    "graphium": {
+      "command": "/ruta/a/graphium",
+      "args": ["--stdio"]
+    }
+  }
+}
+```
+
+La extensión no pasa por ese archivo: registra el servidor desde `index.ts` y le
+agrega el `env` de identidad. Un `mcp.json` con una entrada `graphium` sigue
+ganando, así que el humano tiene la última palabra.

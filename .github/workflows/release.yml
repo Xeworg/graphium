@@ -37,6 +37,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # El binario embebe `crates/gx-app/frontend/dist` al compilar: el bundle
+      # de Vite corre primero (frontend-consolidacion, L3).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/gx-app/frontend/package-lock.json
+
+      - name: Frontend bundle (Vite)
+        working-directory: crates/gx-app/frontend
+        run: |
+          npm ci --no-fund --no-audit
+          npm run build
+
       - name: Formatting
         run: cargo fmt --all -- --check
 
@@ -79,6 +93,20 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+
+      # El bundle del plano viaja dentro del binario: se construye en cada
+      # runner (frontend-consolidacion, L3).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/gx-app/frontend/package-lock.json
+
+      - name: Frontend bundle (Vite)
+        working-directory: crates/gx-app/frontend
+        run: |
+          npm ci --no-fund --no-audit
+          npm run build
 
       - name: Build
         run: cargo build --release --locked

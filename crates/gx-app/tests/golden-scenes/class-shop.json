@@ -1,0 +1,236 @@
+{
+  "canvas": {
+    "x": 0.0,
+    "y": 0.0,
+    "w": 325.0478515625,
+    "h": 319.5
+  },
+  "tokens": {
+    "text_size": 14.0,
+    "node_padding": 12.0,
+    "corner_radius": 6.0,
+    "border_width": 1.0,
+    "line_height": 1.25,
+    "regular_weight": 400,
+    "semibold_weight": 600,
+    "arrow_length": 10.0,
+    "crow_foot": 22.0,
+    "crow_foot_spread": 0.85,
+    "badge_width": 26.0,
+    "muted_opacity": 0.55,
+    "lifeline_dash": [
+      4.0,
+      4.0
+    ],
+    "dash_pattern": [
+      6.0,
+      4.0
+    ],
+    "group_dash": [
+      8.0,
+      5.0
+    ]
+  },
+  "direction": "TB",
+  "layout_hint": "layered",
+  "palette": {
+    "source": "css-vars",
+    "theme": "dark",
+    "bg": "var(--bg)",
+    "node_fill": "var(--node-fill)",
+    "node_stroke": "var(--node-stroke)",
+    "node_text": "var(--node-text)",
+    "edge_stroke": "var(--edge-stroke)",
+    "edge_text": "var(--edge-text)",
+    "accent": "var(--accent)"
+  },
+  "nodes": [
+    {
+      "id": "g-Base",
+      "label": "Base",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 296.4296875,
+        "y": 298.75
+      },
+      "size": {
+        "w": 57.236328125,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-Money",
+      "label": "Money",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 35.12939453125,
+        "y": 298.75
+      },
+      "size": {
+        "w": 70.2587890625,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-Order",
+      "label": "Order",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 169.03515625,
+        "y": 159.75
+      },
+      "size": {
+        "w": 62.58203125,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-Payable",
+      "label": "Payable",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 169.03515625,
+        "y": 298.75
+      },
+      "size": {
+        "w": 77.552734375,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-Refund",
+      "label": "Refund",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 169.03515625,
+        "y": 20.75
+      },
+      "size": {
+        "w": 72.548828125,
+        "h": 41.5
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "m-Order-Base",
+      "from": "Order",
+      "to": "Base",
+      "label": "extends",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 200.326171875,
+          "y": 176.82079232208014
+        },
+        {
+          "x": 296.4296875,
+          "y": 229.25
+        },
+        {
+          "x": 296.4296875,
+          "y": 278.0
+        }
+      ],
+      "label_at": {
+        "x": 332.73095703125,
+        "y": 229.25
+      }
+    },
+    {
+      "id": "m-Order-Money",
+      "from": "Order",
+      "to": "Money",
+      "label": "total",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": false,
+      "points": [
+        {
+          "x": 137.744140625,
+          "y": 175.99071703878732
+        },
+        {
+          "x": 35.12939453125,
+          "y": 229.25
+        },
+        {
+          "x": 35.12939453125,
+          "y": 278.0
+        }
+      ],
+      "label_at": {
+        "x": 59.49853515625,
+        "y": 229.25
+      }
+    },
+    {
+      "id": "m-Order-Payable",
+      "from": "Order",
+      "to": "Payable",
+      "label": "implements",
+      "emphasis": "normal",
+      "style": "dashed",
+      "arrow": true,
+      "points": [
+        {
+          "x": 169.03515625,
+          "y": 180.5
+        },
+        {
+          "x": 169.03515625,
+          "y": 229.25
+        },
+        {
+          "x": 169.03515625,
+          "y": 278.0
+        }
+      ],
+      "label_at": {
+        "x": 217.18994140625,
+        "y": 229.25
+      }
+    },
+    {
+      "id": "m-Refund-Order",
+      "from": "Refund",
+      "to": "Order",
+      "label": "extends",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 169.03515625,
+          "y": 41.5
+        },
+        {
+          "x": 169.03515625,
+          "y": 90.25
+        },
+        {
+          "x": 169.03515625,
+          "y": 139.0
+        }
+      ],
+      "label_at": {
+        "x": 205.33642578125,
+        "y": 90.25
+      }
+    }
+  ],
+  "bands": [],
+  "events": []
+}

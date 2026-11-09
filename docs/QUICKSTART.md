@@ -10,10 +10,15 @@ agente lo manda por MCP y la ventana lo pone en el plano.
 ## 1. Compilar
 
 ```bash
-cargo build --release --bin graphium
+./scripts/build.sh --release   # npm ci + npm run build + cargo build --release
+cargo test --workspace
 ```
 
-Únicas dependencias de sistema: `webkit2gtk-4.1` y `gtk3` (RNF2). En Fedora:
+Dependencias de sistema: `webkit2gtk-4.1` y `gtk3` (RNF2). Para compilar desde
+el repositorio hace falta además **Node 22 y npm**: el plano es una app Svelte
+y su bundle (`crates/gx-app/frontend/dist`) se embebe en el binario al compilar.
+Si compilás a mano, el orden es `npm ci && npm run build` en
+`crates/gx-app/frontend` y después `cargo build`. En Fedora:
 
 ```bash
 sudo dnf install webkit2gtk4.1-devel gtk3-devel

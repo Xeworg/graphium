@@ -62,10 +62,26 @@ fn the_state_is_shared_between_the_window_and_the_hook() {
 fn the_render_hook_maps_a_paint_into_a_reason() {
     use gx_mcp::tools::{RenderHookPayload, RenderStatus};
 
+    // `f11-elementos.md` T3/C: the payload of the window carries the scene and
+    // nothing else — the SVG string of the export is not a runtime payload.
+    gx_app::install_engines().expect("the engines of the application are installed");
+    gx_mcp::bootstrap();
+    let scene = gx_core::engine::render_json(
+        r#"{
+          "version": 1, "kind": "graph",
+          "nodes": [ { "id": "a", "label": "A" }, { "id": "b", "label": "B" } ],
+          "edges": [ { "from": "a", "to": "b" } ]
+        }"#,
+        &gx_core::render::RenderOpts::default(),
+    )
+    .expect("the document renders")
+    .elements
+    .expect("the paint path builds a scene");
+
     let payload = RenderHookPayload {
         diagram_id: "d-0001".to_string(),
         kind: "graph".to_string(),
-        svg: "<svg/>".to_string(),
+        elements: scene,
         width: 100.0,
         height: 50.0,
         focus: None,
@@ -79,6 +95,7 @@ fn the_render_hook_maps_a_paint_into_a_reason() {
         },
     };
 
+    assert_eq!(payload.elements.nodes.len(), 2);
     assert!(RenderStatus::Painted.painted());
     assert_eq!(RenderStatus::Painted.reason(), None);
     assert_eq!(RenderStatus::Headless.reason(), Some("headless"));
@@ -86,5 +103,4 @@ fn the_render_hook_maps_a_paint_into_a_reason() {
     assert_eq!(RenderStatus::Timeout.reason(), Some("ui_timeout"));
     assert_eq!(RenderStatus::Error.reason(), Some("ui_error"));
     assert!(!RenderStatus::Timeout.painted());
-    let _ = payload;
 }

@@ -738,6 +738,132 @@ fn event(id: &str, lane: &str, label: &str) -> gx_core::IrEvent {
     }
 }
 
+/// Un evento con una duración: `IrEvent.span` es un tramo de tiempo, no un
+/// punto (`f11-elementos.md`, T4/D).
+fn spanned(id: &str, lane: &str, label: &str, start: f64, end: f64) -> gx_core::IrEvent {
+    gx_core::IrEvent {
+        span: Some(gx_core::ir::Span { start, end }),
+        ..event(id, lane, label)
+    }
+}
+
+/// Un timeline con un punto en el tiempo y un evento que dura: el mismo
+/// documento con el que se prueban las dos emisoras de la barra.
+fn bar_timeline() -> (Ir, LayoutGraph) {
+    let ir = Ir::Timeline(IrTimeline {
+        lanes: vec![gx_core::IrLane {
+            id: "q1".to_string(),
+            label: Some("Q1".to_string()),
+        }],
+        events: vec![
+            event("point", "q1", "punto"),
+            spanned("bar", "q1", "dura", 1.0, 4.0),
+        ],
+    });
+    let layout = LayoutGraph {
+        nodes: [
+            (
+                "point".to_string(),
+                NodeBox {
+                    center: Point::new(100.0, 70.0),
+                    size: Size::new(120.0, 44.0),
+                },
+            ),
+            (
+                "bar".to_string(),
+                NodeBox {
+                    center: Point::new(300.0, 70.0),
+                    size: Size::new(250.0, 44.0),
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        edges: Vec::new(),
+        groups: vec![group("q1", Some("Q1"), Rect::new(0.0, 0.0, 500.0, 150.0))],
+        bbox: Rect::new(0.0, 0.0, 500.0, 150.0),
+    };
+    (ir, layout)
+}
+
+/// `f11-elementos.md`, T4/D: un evento que dura se dibuja como una barra, y un
+/// punto en el tiempo no.
+///
+/// El motor de carriles ya lee `IrEvent.span` al medir el evento (`gx-layout`,
+/// `event_size`: un tramo de `n` columnas pide una caja de `n` columnas de
+/// ancho), así que la caja medida **es** el largo de la barra. Lo que faltaba
+/// era la marca: un punto en el tiempo y un tramo se dibujaban igual. La barra
+/// es una banda al pie de la caja medida, con la clase `accent` que la paleta
+/// ya resuelve — ninguna regla de estilo nueva, así que ningún golden de un
+/// documento sin tramos cambia.
+#[test]
+fn a_spanned_event_is_drawn_as_a_bar_and_a_point_in_time_is_not() {
+    let (ir, layout) = bar_timeline();
+    let svg = render(&ir, &layout, &Palette::plano());
+    let document = document(&svg);
+
+    let bars: Vec<_> = element(&document, "rect")
+        .into_iter()
+        .filter(|node| classes(*node) == "accent")
+        .collect();
+    assert_eq!(bars.len(), 1, "one bar: the event with a span");
+    let bar = bars[0];
+    // La caja del evento `bar`: centro (300, 70), tamaño 250 × 44 →
+    // rect (175, 48, 250, 44); la barra se mete el borde por cada lado y
+    // mide las constantes congeladas de `geometry.rs`.
+    assert_eq!(bar.attribute("x"), Some("176.00"));
+    assert_eq!(bar.attribute("y"), Some("86.00"));
+    assert_eq!(bar.attribute("width"), Some("248.00"));
+    assert_eq!(bar.attribute("height"), Some("5.00"));
+
+    // La barra va con su evento: después de su caja y antes de su texto.
+    let chip = svg.find("id=\"g-bar\"").expect("la caja del evento");
+    let at = svg.find("class=\"accent\"").expect("la barra");
+    let label = svg.find("dura").expect("el texto del evento");
+    assert!(chip < at && at < label, "la barra va sobre su caja");
+}
+
+/// T4/D, S5: la barra viaja como números y las dos emisoras llevan los mismos:
+/// el payload no lleva un path y el painter no recalcula nada.
+#[test]
+fn the_bar_of_a_spanned_event_is_the_same_number_in_both_emitters() {
+    let (ir, layout) = bar_timeline();
+    let svg = render(&ir, &layout, &Palette::plano());
+    let scene = crate::scene::scene(&ir, &layout, &Palette::plano());
+
+    let document = document(&svg);
+    let bar = element(&document, "rect")
+        .into_iter()
+        .find(|node| classes(*node) == "accent")
+        .expect("la barra del SVG");
+    let number = |name: &str| {
+        bar.attribute(name)
+            .unwrap_or_else(|| panic!("the bar carries {name}"))
+            .parse::<f64>()
+            .expect("a canonical number")
+    };
+
+    let spanned = scene
+        .events
+        .iter()
+        .find(|event| event.id == "g-bar")
+        .expect("el evento con tramo");
+    let json = serde_json::to_value(spanned).expect("el evento serializa");
+    let numbers = json
+        .get("bar")
+        .expect("la barra del evento viaja como números (S5)");
+    assert_eq!(numbers["x"].as_f64(), Some(number("x")));
+    assert_eq!(numbers["y"].as_f64(), Some(number("y")));
+    assert_eq!(numbers["w"].as_f64(), Some(number("width")));
+    assert_eq!(numbers["h"].as_f64(), Some(number("height")));
+    assert!(
+        !serde_json::to_string(&json)
+            .expect("json")
+            .contains("\"d\""),
+        "the bar is numbers, never a path"
+    );
+}
+
 /// Una banda de carril del layout.
 fn group(id: &str, label: Option<&str>, bbox: Rect) -> gx_core::LayoutGroup {
     gx_core::LayoutGroup {
@@ -745,6 +871,8 @@ fn group(id: &str, label: Option<&str>, bbox: Rect) -> gx_core::LayoutGroup {
         label: label.map(str::to_string),
         bbox,
         depth: 0,
+        members: Vec::new(),
+        gutter: Some(0.0),
     }
 }
 
@@ -974,5 +1102,19 @@ fn the_export_background_arrives_through_the_trait_object() {
     assert!(
         !plan.contains("<rect class=\"bg\""),
         "el plano sigue saliendo sin fondo: {plan}"
+    );
+}
+
+/// The marks of an ER relation (the crow's-foot fork and the zero circle)
+/// carry `class="cardinality"`, and the page styles them (`app.css`:
+/// `fill:none; stroke: var(--edge-stroke); 1px`). A standalone export loads no
+/// stylesheet, so the style block must carry the same rule — without it the
+/// marks fall back to the default black (pre-existing before f11; found while
+/// delivering T4/D).
+#[test]
+fn the_style_block_styles_the_cardinality_marks() {
+    assert!(
+        render_fixture().contains(".cardinality{fill:none;stroke:"),
+        "the export's style block must style the cardinality marks"
     );
 }

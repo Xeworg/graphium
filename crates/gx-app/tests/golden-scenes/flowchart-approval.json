@@ -1,0 +1,285 @@
+{
+  "canvas": {
+    "x": 0.0,
+    "y": 0.0,
+    "w": 342.03515625,
+    "h": 545.0
+  },
+  "tokens": {
+    "text_size": 14.0,
+    "node_padding": 12.0,
+    "corner_radius": 6.0,
+    "border_width": 1.0,
+    "line_height": 1.25,
+    "regular_weight": 400,
+    "semibold_weight": 600,
+    "arrow_length": 10.0,
+    "crow_foot": 22.0,
+    "crow_foot_spread": 0.85,
+    "badge_width": 26.0,
+    "muted_opacity": 0.55,
+    "lifeline_dash": [
+      4.0,
+      4.0
+    ],
+    "dash_pattern": [
+      6.0,
+      4.0
+    ],
+    "group_dash": [
+      8.0,
+      5.0
+    ]
+  },
+  "direction": "TB",
+  "layout_hint": "layered",
+  "palette": {
+    "source": "css-vars",
+    "theme": "dark",
+    "bg": "var(--bg)",
+    "node_fill": "var(--node-fill)",
+    "node_stroke": "var(--node-stroke)",
+    "node_text": "var(--node-text)",
+    "edge_stroke": "var(--edge-stroke)",
+    "edge_text": "var(--edge-text)",
+    "accent": "var(--accent)"
+  },
+  "nodes": [
+    {
+      "id": "g-auto",
+      "label": "aprobado en el acto",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 78.8076171875,
+        "y": 402.75
+      },
+      "size": {
+        "w": 157.615234375,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-fin",
+      "label": "fin",
+      "shape": "ellipse",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 179.31640625,
+        "y": 524.25
+      },
+      "size": {
+        "w": 41.7529296875,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-inicio",
+      "label": "pedido",
+      "shape": "ellipse",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 179.31640625,
+        "y": 20.75
+      },
+      "size": {
+        "w": 70.67578125,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-jefe",
+      "label": "aprueba el jefe",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 279.8251953125,
+        "y": 402.75
+      },
+      "size": {
+        "w": 124.419921875,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-limite",
+      "label": "¿supera el límite?",
+      "shape": "diamond",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 179.31640625,
+        "y": 263.75
+      },
+      "size": {
+        "w": 141.6396484375,
+        "h": 41.5
+      }
+    },
+    {
+      "id": "g-monto",
+      "label": "monto del gasto",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 179.31640625,
+        "y": 142.25
+      },
+      "size": {
+        "w": 132.5751953125,
+        "h": 41.5
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "m-auto-fin",
+      "from": "auto",
+      "to": "fin",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 78.8076171875,
+          "y": 423.5
+        },
+        {
+          "x": 78.8076171875,
+          "y": 463.5
+        },
+        {
+          "x": 158.43994140625,
+          "y": 511.6317478940158
+        }
+      ]
+    },
+    {
+      "id": "m-inicio-monto",
+      "from": "inicio",
+      "to": "monto",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 179.31640625,
+          "y": 41.5
+        },
+        {
+          "x": 179.31640625,
+          "y": 81.5
+        },
+        {
+          "x": 179.31640625,
+          "y": 121.5
+        }
+      ]
+    },
+    {
+      "id": "m-jefe-fin",
+      "from": "jefe",
+      "to": "fin",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 279.8251953125,
+          "y": 423.5
+        },
+        {
+          "x": 279.8251953125,
+          "y": 463.5
+        },
+        {
+          "x": 200.19287109375,
+          "y": 511.6317478940158
+        }
+      ]
+    },
+    {
+      "id": "m-limite-auto",
+      "from": "limite",
+      "to": "auto",
+      "label": "no",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 149.30838649392985,
+          "y": 284.5
+        },
+        {
+          "x": 78.8076171875,
+          "y": 333.25
+        },
+        {
+          "x": 78.8076171875,
+          "y": 382.0
+        }
+      ],
+      "label_at": {
+        "x": 97.140625,
+        "y": 333.25
+      }
+    },
+    {
+      "id": "m-limite-jefe",
+      "from": "limite",
+      "to": "jefe",
+      "label": "sí",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 209.32442600607015,
+          "y": 284.5
+        },
+        {
+          "x": 279.8251953125,
+          "y": 333.25
+        },
+        {
+          "x": 279.8251953125,
+          "y": 382.0
+        }
+      ],
+      "label_at": {
+        "x": 295.21533203125,
+        "y": 333.25
+      }
+    },
+    {
+      "id": "m-monto-limite",
+      "from": "monto",
+      "to": "limite",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 179.31640625,
+          "y": 163.0
+        },
+        {
+          "x": 179.31640625,
+          "y": 203.0
+        },
+        {
+          "x": 179.31640625,
+          "y": 243.0
+        }
+      ]
+    }
+  ],
+  "bands": [],
+  "events": []
+}

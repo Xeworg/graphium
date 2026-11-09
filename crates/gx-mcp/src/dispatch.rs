@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use crate::contract;
 
 /// Every tool of the server, in the order the index reports them.
-pub const TOOL_NAMES: [&str; 11] = [
+pub const TOOL_NAMES: [&str; 16] = [
     "render_diagram",
     "validate_diagram",
     "get_diagram_schema",
@@ -22,6 +22,11 @@ pub const TOOL_NAMES: [&str; 11] = [
     "get_diagram_version",
     "clear_canvas",
     "register_session",
+    "code_search",
+    "code_structure",
+    "code_impact",
+    "code_diagram",
+    "code_er",
 ];
 
 /// Calls a tool by name with its JSON arguments.
@@ -38,6 +43,9 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
                 .ok_or_else(|| "`diagram` is required".to_string())?;
             // The same implementation the stdio server uses: `opts` cannot
             // work on one path and be ignored on the other.
+            // The indexer parses with one thread while a render is in flight
+            // (ideas §10.1, «Backpressure»).
+            let _render = gx_index::service::RenderGuard::enter();
             let response = crate::tools::render_diagram_from_json(
                 &crate::tools::RenderRequest {
                     document: document.to_string(),
@@ -141,8 +149,121 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
             let response = contract::register_session(session_id, label);
             serde_json::to_value(&response).map_err(|error| error.to_string())
         }
+        "code_search" => {
+            let query = arguments
+                .get("query")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "`query` is required".to_string())?;
+            // The same implementation the stdio server uses, with the same
+            // reading of the session: a forwarded client searches the book of
+            // its own project, never another one (D4).
+            Ok(crate::book::code_search(session_id, query))
+        }
+        "code_structure" => {
+            // Exactly one selector: `file` or `symbol`. Both are optional in
+            // the schema and the tool decides, so an empty call is the same
+            // answer on both doors.
+            let file = arguments.get("file").and_then(Value::as_str);
+            let symbol = arguments.get("symbol").and_then(Value::as_str);
+            let request = gx_index::StructureRequest {
+                after_line: arguments.get("after_line").and_then(Value::as_i64),
+                limit: arguments
+                    .get("limit")
+                    .and_then(Value::as_u64)
+                    .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX)),
+                kinds: string_array(arguments.get("kinds")).unwrap_or_default(),
+                max_chars: arguments
+                    .get("max_chars")
+                    .and_then(Value::as_u64)
+                    .map(|max| usize::try_from(max).unwrap_or(usize::MAX)),
+            };
+            Ok(crate::book::code_structure(
+                session_id, file, symbol, &request,
+            ))
+        }
+        "code_impact" => {
+            // The seed grammar (one of `symbol` or `file`) belongs to the
+            // tool: the relay answers the same `invalid_value` the stdio
+            // server does instead of a transport error.
+            let question = crate::book::ImpactQuestion {
+                symbol: arguments
+                    .get("symbol")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                file: arguments
+                    .get("file")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                depth: arguments
+                    .get("depth")
+                    .and_then(Value::as_u64)
+                    .map(|depth| depth.min(u32::MAX as u64) as u32),
+                direction: arguments
+                    .get("direction")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                edges: string_array(arguments.get("edges")),
+                budget: arguments
+                    .get("budget")
+                    .and_then(Value::as_u64)
+                    .map(|budget| usize::try_from(budget).unwrap_or(usize::MAX)),
+                max_chars: arguments
+                    .get("max_chars")
+                    .and_then(Value::as_u64)
+                    .map(|max| usize::try_from(max).unwrap_or(usize::MAX)),
+            };
+            Ok(crate::book::code_impact(session_id, &question))
+        }
+        "code_diagram" => {
+            let symbol = arguments
+                .get("symbol")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "`symbol` is required".to_string())?;
+            let depth = arguments
+                .get("depth")
+                .and_then(Value::as_u64)
+                .map(|depth| depth.min(u32::MAX as u64) as u32);
+            let edges = string_array(arguments.get("edges"));
+            let max_chars = arguments
+                .get("max_chars")
+                .and_then(Value::as_u64)
+                .map(|max| usize::try_from(max).unwrap_or(usize::MAX));
+            Ok(crate::book::code_diagram(
+                session_id,
+                symbol,
+                depth,
+                edges.as_deref(),
+                max_chars,
+            ))
+        }
+        "code_er" => {
+            let path = arguments
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "`path` is required".to_string())?;
+            // f15 S2: `scope` is handed over as it arrived — the door is the
+            // one authority on its two values. A value that is not even a
+            // string travels as its JSON text, so the door refuses it at
+            // `scope` instead of folding it into the default.
+            let scope = arguments.get("scope").map(|scope| match scope.as_str() {
+                Some(scope) => scope.to_string(),
+                None => scope.to_string(),
+            });
+            Ok(crate::book::code_er(session_id, path, scope.as_deref()))
+        }
         other => Err(format!("unknown tool: {other}")),
     }
+}
+
+/// A JSON array of strings, or `None` when the key is absent.
+fn string_array(value: Option<&Value>) -> Option<Vec<String>> {
+    value.and_then(Value::as_array).map(|values| {
+        values
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect()
+    })
 }
 
 /// The schema of the arguments of a tool, as the MCP clients see it.
@@ -227,6 +348,128 @@ pub fn tool_schema(name: &str) -> Value {
                     "description": "The name the human sees for this session; it is trimmed. Without it the tool only answers the session. An empty or whitespace-only label is `invalid_value`."
                 }
             }
+        }),
+        "code_search" => json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The symbol to look for: one or more words of its name or qname. Every word has to match; an ambiguous query answers `ambiguous_symbol` with `candidates[]`."
+                }
+            },
+            "required": ["query"]
+        }),
+        "code_structure" => json!({
+            "type": "object",
+            "properties": {
+                "file": {
+                    "type": ["string", "null"],
+                    "description": "The path of the chapter, relative to the project root, with `/` separators."
+                },
+                "symbol": {
+                    "type": ["string", "null"],
+                    "description": "The symbol whose chapter to read: a name, as `code_search` takes it. Send exactly one of `file` or `symbol`."
+                },
+                "after_line": {
+                    "type": ["integer", "null"],
+                    "description": "Start strictly after this line: with `limit` it is a range over the span-ordered list of the chapter. Without it the answer is the outline."
+                },
+                "limit": {
+                    "type": ["integer", "null"],
+                    "description": "How many rows the answer carries: 200 by default and 200 at most."
+                },
+                "kinds": {
+                    "type": ["array", "null"],
+                    "items": {
+                        "type": "string",
+                        "enum": ["fn", "method", "type", "class", "trait", "impl", "module", "const", "static"]
+                    },
+                    "description": "The declaration kinds to answer; `total` keeps counting the whole chapter."
+                },
+                "max_chars": {
+                    "type": ["integer", "null"],
+                    "description": "The character envelope of the answer: by default the ladder of the book (13,000 up to 150 indexed files, 18,000 up to 500, 24,000 beyond), overridable up to 1.5 times that. Past it the rows cliff to `pointers`."
+                }
+            }
+        }),
+        "code_impact" => json!({
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": ["string", "null"],
+                    "description": "The symbol to start from: a name, as `code_search` takes it. Send exactly one of `symbol` or `file`."
+                },
+                "file": {
+                    "type": ["string", "null"],
+                    "description": "The chapter to walk as a node: the connections view, grouped by file. Send exactly one of `symbol` or `file`."
+                },
+                "depth": {
+                    "type": ["integer", "null"],
+                    "description": "Hops to follow: 1 by default, clamped to 3."
+                },
+                "direction": {
+                    "type": ["string", "null"],
+                    "enum": ["in", "out", "both", null],
+                    "description": "`in` (default of a symbol): the edges that point at it; `out`: what it reaches; `both` (default of a file)."
+                },
+                "edges": {
+                    "type": ["array", "null"],
+                    "items": {
+                        "type": "string",
+                        "enum": ["calls", "imports", "inherits", "uses"]
+                    },
+                    "description": "The edge kinds the walk follows; omitted follows all four."
+                },
+                "budget": {
+                    "type": ["integer", "null"],
+                    "description": "The query budget in nodes: 600 by default and 2000 at most (the edges are twice the nodes)."
+                },
+                "max_chars": {
+                    "type": ["integer", "null"],
+                    "description": "The character envelope of the answer: by default the ladder of the book (13,000 up to 150 indexed files, 18,000 up to 500, 24,000 beyond), overridable up to 1.5 times that. Past it the nodes cliff to `pointers`."
+                }
+            }
+        }),
+        "code_diagram" => json!({
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "The symbol to draw the neighbourhood of: a name, as `code_search` takes it."
+                },
+                "depth": {
+                    "type": ["integer", "null"],
+                    "description": "Hops to follow: 1 by default, clamped to 3."
+                },
+                "edges": {
+                    "type": ["array", "null"],
+                    "items": {
+                        "type": "string",
+                        "enum": ["calls", "imports", "inherits", "uses"]
+                    },
+                    "description": "The edge kinds the walk follows; omitted follows all four."
+                },
+                "max_chars": {
+                    "type": ["integer", "null"],
+                    "description": "The character envelope of the answer: by default the ladder of the book, overridable up to 1.5 times that. The document is trimmed inside it and stays renderable."
+                }
+            },
+            "required": ["symbol"]
+        }),
+        "code_er" => json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "The `.sql` file of the project, relative to the project root with `/` separators, the way the book stores it (`db/schema.sql`). Absolute paths and `..` are refused."
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["file", "project"],
+                    "description": "`file` (the default) draws only the file `path` names; `project` merges every `.sql` chapter of the book into one document and reports `files`, the chapters it parsed."
+                }
+            },
+            "required": ["path"]
         }),
         _ => json!({ "type": "object" }),
     }
@@ -557,6 +800,91 @@ mod tests {
         assert!(
             required.is_none_or(|required| required.is_empty()),
             "`label` is optional: {schema}"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // f13 — `code_er`: the door hands the `er` document to the agent
+    // -----------------------------------------------------------------
+
+    /// S1: the tool answers through the dispatcher instead of an unknown-tool
+    /// error. Without a session project the answer is the book's own
+    /// `invalid_value` failure, which is still the tool answering.
+    #[test]
+    fn code_er_is_reachable_through_the_dispatcher() {
+        let answered = call_tool("code_er", &serde_json::json!({ "path": "schema.sql" }), "s")
+            .expect("the tool answers");
+        assert_eq!(answered["ok"], false, "{answered}");
+        assert_eq!(answered["errors"][0]["code"], "invalid_value", "{answered}");
+    }
+
+    /// S4: a call without `path` is refused by the dispatcher, the same way
+    /// `code_diagram` refuses a call without `symbol`.
+    #[test]
+    fn code_er_requires_a_path() {
+        let error = call_tool("code_er", &serde_json::json!({}), "s").expect_err("must fail");
+        assert!(error.contains("`path` is required"), "{error}");
+    }
+
+    /// f15 S6: the dispatcher threads `scope` to the door — an unknown value
+    /// answers the door's own `invalid_value` at `scope`, before any book is
+    /// opened, which only happens when the argument reaches it.
+    #[test]
+    fn code_er_threads_scope_to_the_door() {
+        let answered = call_tool(
+            "code_er",
+            &serde_json::json!({ "path": "schema.sql", "scope": "nope" }),
+            "s",
+        )
+        .expect("the tool answers");
+        assert_eq!(answered["ok"], false, "{answered}");
+        assert_eq!(answered["errors"][0]["code"], "invalid_value", "{answered}");
+        assert_eq!(answered["errors"][0]["path"], "scope", "{answered}");
+
+        // A scope that is not even a string is the same refusal, never a
+        // silent fallback to the default.
+        let numeric = call_tool(
+            "code_er",
+            &serde_json::json!({ "path": "schema.sql", "scope": 3 }),
+            "s",
+        )
+        .expect("the tool answers");
+        assert_eq!(numeric["errors"][0]["path"], "scope", "{numeric}");
+    }
+
+    /// f15 S2/S6: the published schema documents `scope` as an optional
+    /// `file | project` choice, so an agent that never saw the tool knows both
+    /// answers exist and that `path` stays required.
+    #[test]
+    fn the_schema_of_code_er_documents_the_scope() {
+        let schema = super::tool_schema("code_er");
+        assert_eq!(schema["properties"]["scope"]["type"], "string", "{schema}");
+        assert_eq!(
+            schema["properties"]["scope"]["enum"],
+            serde_json::json!(["file", "project"]),
+            "{schema}"
+        );
+        assert!(
+            schema["properties"]["scope"]["description"].is_string(),
+            "the scope is documented: {schema}"
+        );
+        let required = schema.get("required").and_then(serde_json::Value::as_array);
+        assert!(
+            required.is_some_and(|required| !required.contains(&serde_json::json!("scope"))),
+            "`scope` stays optional: {schema}"
+        );
+    }
+
+    /// S2/S4: the published schema names `path` and makes it required, so an
+    /// agent that never saw the tool still calls it right.
+    #[test]
+    fn the_schema_of_code_er_has_a_required_path() {
+        let schema = super::tool_schema("code_er");
+        assert!(schema["properties"]["path"].is_object(), "{schema}");
+        let required = schema.get("required").and_then(serde_json::Value::as_array);
+        assert!(
+            required.is_some_and(|required| required.contains(&serde_json::json!("path"))),
+            "`path` is required: {schema}"
         );
     }
 }

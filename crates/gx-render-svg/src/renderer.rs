@@ -1,5 +1,18 @@
 //! The deterministic SVG writer (PRD §8.5, §8.5.1, §8.5.2).
 //!
+//! This module is **one of the two emitters** of the drawing
+//! (`f11-elementos.md`, T1). It walks the same [`Drawing`] plan the scene
+//! builder walks ([`crate::scene`]) and spells it as markup; the scene builder
+//! spells the very same plan as data for the window. Everything that is not
+//! "how do I write this in SVG" — the box of a node, the order of the layers,
+//! the ids of the drawing, the lines of a label, the geometry of a crow's foot,
+//! the frozen tokens — lives in [`crate::geometry`], so the two emitters cannot
+//! drift apart.
+//!
+//! The SVG of this emitter is the **export artifact** (S2): the goldens of
+//! `crates/gx-app/tests/golden_svg.rs` compare it byte by byte and the window
+//! no longer depends on it.
+//!
 //! Rules this module enforces mechanically:
 //!
 //! - Every numeric attribute goes through [`gx_core::fmt_num`] (S7).
@@ -19,28 +32,21 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use gx_core::{
-    fmt_num, Emphasis, Ir, IrEdge, IrEvent, IrGraph, IrNode, IrTimeline, LayoutEdge, LayoutGraph,
-    LayoutGroup, LayoutHint, NodeBox, Palette, Rect, Shape, Style,
+    fmt_num, Cardinality, CardinalityBound, CardinalityMax, Ir, IrEdge, IrEvent, IrNode,
+    LayoutEdge, LayoutGraph, LayoutGroup, NodeBox, Palette, Scene, Shape, Style,
     SvgRenderer as SvgRendererContract, TextMetrics, TOKENS,
 };
 
 use crate::escape::escape_text;
+use crate::geometry::{
+    self, band_label, centered_baselines, cluster_id, crow_foot_mark, edge_id, label_lines,
+    lane_id, marker_id, node_id, node_rect, points_text, push_emphasis, shape_class, CrowFoot,
+    Table, ARROW_LENGTH, DASH_PATTERN, GROUP_DASH, LIFELINE_DASH, MUTED_OPACITY,
+};
+use crate::scene::Drawing;
 
 /// Namespace of the emitted document, so the SVG parses on its own (S12).
 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
-/// Length of the arrowhead, in plan units (`markerUnits="userSpaceOnUse"`).
-const ARROW_LENGTH: f64 = 10.0;
-/// Opacity of a muted node or edge.
-const MUTED_OPACITY: f64 = 0.55;
-/// Dash pattern of a dashed node border or edge, in plan units.
-/// El punteado de una línea de vida: más corto que el de una flecha, para que
-/// no compita con los mensajes.
-const LIFELINE_DASH: (f64, f64) = (4.0, 4.0);
-/// El punteado de una flecha declarada punteada.
-const DASH_PATTERN: (f64, f64) = (6.0, 4.0);
-/// El punteado del borde de un contenedor: dice "esto es una frontera", no una
-/// caja más del dibujo.
-const GROUP_DASH: (f64, f64) = (8.0, 5.0);
 
 /// The only `SvgRenderer` of Graphium (PRD §8.5).
 pub struct SvgRenderer {
@@ -59,6 +65,14 @@ impl SvgRenderer {
         Arc::clone(&self.metrics)
     }
 
+    /// The drawing as data, beside the SVG string (`f11-elementos.md`, T1).
+    ///
+    /// It is the second emitter of the same [`Drawing`] plan: the ids, the
+    /// order of the layers and the numbers are the ones the string carries.
+    pub fn scene(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> Scene {
+        crate::scene::scene(ir, layout, palette)
+    }
+
     fn render_with(
         &self,
         ir: &Ir,
@@ -66,7 +80,10 @@ impl SvgRenderer {
         palette: &Palette,
         background: bool,
     ) -> String {
-        let canvas = canvas_rect(layout);
+        // Los dos emisores del dibujo leen el mismo plan: éste lo escribe como
+        // markup, el serializador de elementos como datos.
+        let drawing = Drawing::of(ir, layout);
+        let canvas = drawing.canvas;
         let mut out = String::new();
 
         out.push_str(&format!(
@@ -92,22 +109,14 @@ impl SvgRenderer {
             ));
         }
 
-        let graph = ir.graph();
-        let timeline = ir.timeline();
-        let routed = match graph {
-            Some(graph) => routed_edges(graph, layout),
-            // A timeline has no edges: every order of events is the order of
-            // the columns, never a line between two boxes.
-            None => Vec::new(),
-        };
-        write_defs(&mut out, &routed);
+        write_defs(&mut out, &drawing.edges);
 
         // Los contenedores de un grafo van primero: son el fondo sobre el que
         // se leen las cajas. Sin ellos un diagrama de componentes es una nube
         // de cajas y no se ve qué piezas forman el mismo sistema.
-        if graph.is_some() {
+        if drawing.draws_clusters() {
             out.push_str("<g class=\"layer-groups\">\n");
-            for group in ordered_clusters(layout) {
+            for group in &drawing.clusters {
                 write_group_box(&mut out, group);
             }
             out.push_str("</g>\n");
@@ -116,9 +125,9 @@ impl SvgRenderer {
         // Las bandas de carril van primero: son el fondo sobre el que se leen
         // los eventos. Sin ellas un swimlane es una nube de cajas y no se ve
         // quién hace qué (PRD §6, `timeline` y `swimlane`).
-        if timeline.is_some() {
+        if drawing.draws_lanes() {
             out.push_str("<g class=\"layer-lanes\">\n");
-            for group in ordered_groups(layout) {
+            for group in &drawing.lanes {
                 write_lane_band(&mut out, group);
             }
             out.push_str("</g>\n");
@@ -128,44 +137,32 @@ impl SvgRenderer {
         // flecha flota y no se ve a qué columna pertenece. Se dibujan del
         // borde inferior del actor hasta el fondo del dibujo, y van antes de
         // las aristas para que las flechas queden encima (PRD §6, `sequence`).
-        if let Some(graph) = graph {
-            if graph.layout_hint == LayoutHint::Lanes {
-                out.push_str("<g class=\"layer-lifelines\">\n");
-                for node in ordered_nodes(graph) {
-                    if let Some(placed) = layout.nodes.get(&node.id) {
-                        out.push_str(&format!(
-                            "<line class=\"lifeline\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>\n",
-                            fmt_num(placed.center.x),
-                            fmt_num(placed.center.y + placed.size.h / 2.0),
-                            fmt_num(placed.center.x),
-                            fmt_num(canvas.max_y()),
-                        ));
-                    }
-                }
-                out.push_str("</g>\n");
+        if drawing.draws_lifelines() {
+            out.push_str("<g class=\"layer-lifelines\">\n");
+            for (_, placed) in &drawing.nodes {
+                out.push_str(&format!(
+                    "<line class=\"lifeline\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>\n",
+                    fmt_num(geometry::lifeline_x(placed)),
+                    fmt_num(geometry::lifeline_start(placed)),
+                    fmt_num(geometry::lifeline_x(placed)),
+                    fmt_num(geometry::lifeline_end(&canvas)),
+                ));
             }
+            out.push_str("</g>\n");
         }
 
         out.push_str("<g class=\"layer-edges\">\n");
-        for (edge, route) in &routed {
+        for (edge, route) in &drawing.edges {
             write_edge(&mut out, edge, route);
         }
         out.push_str("</g>\n");
 
         out.push_str("<g class=\"layer-nodes\">\n");
-        if let Some(graph) = graph {
-            for node in ordered_nodes(graph) {
-                if let Some(placed) = layout.nodes.get(&node.id) {
-                    write_node(&mut out, node, placed);
-                }
-            }
+        for (node, placed) in &drawing.nodes {
+            write_node(&mut out, node, placed);
         }
-        if let Some(timeline) = timeline {
-            for event in ordered_events(timeline) {
-                if let Some(placed) = layout.nodes.get(&event.id) {
-                    write_event(&mut out, event, placed);
-                }
-            }
+        for (event, placed) in &drawing.events {
+            write_event(&mut out, event, placed);
         }
         out.push_str("</g>\n");
 
@@ -179,7 +176,7 @@ impl SvgRendererContract for SvgRenderer {
         self.render_with(ir, layout, palette, false)
     }
 
-    /// The drawing as a **self-contained** document: the same SVG the plan
+    /// The drawing as **self-contained** document: the same SVG the plan
     /// paints, plus the canvas rectangle in the palette colour (PRD §8.5.2,
     /// S7).
     ///
@@ -196,98 +193,16 @@ impl SvgRendererContract for SvgRenderer {
     fn render_export(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> String {
         self.render_with(ir, layout, palette, true)
     }
-}
 
-/// The plan rectangle the root element covers.
-fn canvas_rect(layout: &LayoutGraph) -> Rect {
-    let bbox = layout.bbox;
-    if bbox.w > 0.0 && bbox.h > 0.0 {
-        return bbox;
+    /// The structured drawing beside the string (`f11-elementos.md`, T1/S3).
+    fn scene(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> Option<Scene> {
+        Some(SvgRenderer::scene(self, ir, layout, palette))
     }
-    // The layout normalizes the graph so the bounding box starts at `(0, 0)`
-    // (F0 decision L9) and always reports it. If a layout does not, derive one
-    // from the node boxes so the canvas is never degenerate. Safe default.
-    let mut bounds: Option<Rect> = None;
-    for placed in layout.nodes.values() {
-        let rect = node_rect(placed);
-        bounds = Some(match bounds {
-            Some(union) => union.union(&rect),
-            None => rect,
-        });
-    }
-    bounds.unwrap_or(bbox)
-}
-
-fn node_rect(placed: &NodeBox) -> Rect {
-    Rect::new(
-        placed.center.x - placed.size.w / 2.0,
-        placed.center.y - placed.size.h / 2.0,
-        placed.size.w,
-        placed.size.h,
-    )
-}
-
-fn ordered_nodes(graph: &IrGraph) -> Vec<&IrNode> {
-    let mut nodes: Vec<&IrNode> = graph.nodes.iter().collect();
-    nodes.sort_by(|left, right| left.id.cmp(&right.id));
-    nodes
-}
-
-/// The events of a timeline, in id order (PRD §8.5.1: never insertion order).
-fn ordered_events(timeline: &IrTimeline) -> Vec<&IrEvent> {
-    let mut events: Vec<&IrEvent> = timeline.events.iter().collect();
-    events.sort_by(|left, right| left.id.cmp(&right.id));
-    events
-}
-
-/// The clusters of a graph, outermost first: a box is drawn behind the ones it
-/// contains, so the inner box never hides the outer border (PRD §7 RF15).
-fn ordered_clusters(layout: &LayoutGraph) -> Vec<&LayoutGroup> {
-    let mut groups: Vec<&LayoutGroup> = layout.groups.iter().collect();
-    groups.sort_by(|left, right| {
-        left.depth
-            .cmp(&right.depth)
-            .then_with(|| left.id.cmp(&right.id))
-    });
-    groups
-}
-
-/// The lane bands of a timeline, in id order.
-fn ordered_groups(layout: &LayoutGraph) -> Vec<&LayoutGroup> {
-    let mut groups: Vec<&LayoutGroup> = layout.groups.iter().collect();
-    groups.sort_by(|left, right| left.id.cmp(&right.id));
-    groups
-}
-
-/// The edges that can be drawn, in id order.
-fn routed_edges<'a>(
-    graph: &'a IrGraph,
-    layout: &'a LayoutGraph,
-) -> Vec<(&'a IrEdge, &'a LayoutEdge)> {
-    let mut routed: Vec<(&IrEdge, &LayoutEdge)> = graph
-        .edges
-        .iter()
-        .filter_map(|edge| {
-            let route = layout
-                .edges
-                .iter()
-                .find(|candidate| candidate.from == edge.from && candidate.to == edge.to)?;
-            Some((edge, route))
-        })
-        .collect();
-    // `sort_by` is stable, so parallel edges keep the order the layout gave
-    // them. `m-<from>-<to>` cannot tell them apart and the canonical shape
-    // forbids counters, so parallel edges share an id in F0 (known limitation).
-    routed.sort_by(|left, right| {
-        (left.0.from.as_str(), left.0.to.as_str())
-            .cmp(&(right.0.from.as_str(), right.0.to.as_str()))
-    });
-    routed
 }
 
 fn write_style(out: &mut String, palette: &Palette) {
     let border = fmt_num(TOKENS.border_width);
-    let rules: [(&str, String); 20] = [
+    let rules: [(&str, String); 21] = [
         (".bg", format!("fill:{}", palette.bg.css())),
         (".node-fill", format!("fill:{}", palette.node_fill.css())),
         (
@@ -363,6 +278,13 @@ fn write_style(out: &mut String, palette: &Palette) {
         ),
         (".text", String::from("font-family:Inter, sans-serif")),
         (
+            ".cardinality",
+            format!(
+                "fill:none;stroke:{};stroke-width:{border}",
+                palette.edge_stroke.css()
+            ),
+        ),
+        (
             ".arrow-normal",
             format!("fill:{}", palette.edge_stroke.css()),
         ),
@@ -384,14 +306,6 @@ fn write_style(out: &mut String, palette: &Palette) {
         out.push_str("}\n");
     }
     out.push_str("</style>\n");
-}
-
-fn marker_id(emphasis: Emphasis) -> &'static str {
-    match emphasis {
-        Emphasis::Normal => "arrow-normal",
-        Emphasis::Highlight => "arrow-highlight",
-        Emphasis::Muted => "arrow-muted",
-    }
 }
 
 fn write_defs(out: &mut String, routed: &[(&IrEdge, &LayoutEdge)]) {
@@ -422,11 +336,7 @@ fn write_marker(out: &mut String, id: &str) {
 }
 
 fn write_edge(out: &mut String, edge: &IrEdge, route: &LayoutEdge) {
-    let points: Vec<String> = route
-        .points
-        .iter()
-        .map(|point| format!("{},{}", fmt_num(point.x), fmt_num(point.y)))
-        .collect();
+    let points = points_text(&route.points);
     if points.is_empty() {
         return;
     }
@@ -442,7 +352,7 @@ fn write_edge(out: &mut String, edge: &IrEdge, route: &LayoutEdge) {
     } else {
         String::new()
     };
-    let id = escape_text(&format!("m-{}-{}", edge.from, edge.to));
+    let id = escape_text(&edge_id(&edge.from, &edge.to));
     out.push_str(&format!(
         "<polyline id=\"{id}\" class=\"{classes}\" points=\"{}\"{marker}/>\n",
         points.join(" ")
@@ -469,7 +379,7 @@ fn write_edge(out: &mut String, edge: &IrEdge, route: &LayoutEdge) {
 
 fn write_node(out: &mut String, node: &IrNode, placed: &NodeBox) {
     let rect = node_rect(placed);
-    let id = escape_text(&format!("g-{}", node.id));
+    let id = escape_text(&node_id(&node.id));
     let mut classes = String::from("node-fill node-stroke ");
     classes.push_str(shape_class(node.shape));
     if node.style == Style::Dashed {
@@ -492,32 +402,21 @@ fn write_node(out: &mut String, node: &IrNode, placed: &NodeBox) {
     }
 }
 
-/// Size of the glyphs of the crow's foot, in plan units.///
-/// The legs of the foot are wide and short: a narrow fan reads as an
-/// arrowhead, which is the one thing a crow's foot must not look like.
-const CROW_FOOT: f64 = 22.0;
-
-/// How wide the single stroke of the "one" side opens.
-const CROW_FOOT_SPREAD: f64 = 0.85;
-
-/// Horizontal space reserved for the `PK` / `FK` badge of a row.
-const BADGE_WIDTH: f64 = 26.0;
-
 /// Draws the two ends of a relation with the crow's foot notation.
 ///
 /// Each end says how many rows of the other table can point here and whether
 /// zero is allowed, which is what makes a schema diagram readable (PRD §6.1).
-fn write_cardinality(out: &mut String, cardinality: gx_core::ir::Cardinality, route: &LayoutEdge) {
+fn write_cardinality(out: &mut String, cardinality: Cardinality, route: &LayoutEdge) {
     let (Some(first), Some(last)) = (route.points.first(), route.points.last()) else {
         return;
     };
 
     // The direction of the line at each end, pointing into the box.
-    let end_direction = direction_at(route, true);
-    let start_direction = direction_at(route, false);
+    let end_direction = geometry::direction_at(route, true);
+    let start_direction = geometry::direction_at(route, false);
 
     let mut classes = String::from("cardinality");
-    if cardinality.to_min == gx_core::ir::CardinalityBound::Optional {
+    if cardinality.to_min == CardinalityBound::Optional {
         classes.push_str(" cardinality-optional");
     }
 
@@ -539,49 +438,25 @@ fn write_cardinality(out: &mut String, cardinality: gx_core::ir::Cardinality, ro
     );
 }
 
-/// The unit direction of the line at one of its ends.
-fn direction_at(route: &LayoutEdge, at_end: bool) -> (f64, f64) {
-    let (from, to) = if at_end {
-        let last = route.points.last().copied().unwrap_or_default();
-        let before = route.points.iter().rev().nth(1).copied().unwrap_or(last);
-        (last, before)
-    } else {
-        let first = route.points.first().copied().unwrap_or_default();
-        let after = route.points.get(1).copied().unwrap_or(first);
-        (first, after)
-    };
-    let dx = from.x - to.x;
-    let dy = from.y - to.y;
-    let length = (dx * dx + dy * dy).sqrt();
-    if length <= f64::EPSILON {
-        (1.0, 0.0)
-    } else {
-        (dx / length, dy / length)
-    }
-}
-
 /// Draws the glyphs of one end: the circle when zero rows are allowed and the
-/// fork when many rows are.
+/// fork when many rows are. The points come from [`crate::geometry`], the same
+/// numbers the painter gets in the tokens (S5).
 fn write_crow_foot(
     out: &mut String,
     at: gx_core::Point,
     direction: (f64, f64),
-    bound: gx_core::ir::CardinalityBound,
-    max: gx_core::ir::CardinalityMax,
+    bound: CardinalityBound,
+    max: CardinalityMax,
     classes: &str,
 ) {
-    let (dx, dy) = direction;
-    let back = |distance: f64| gx_core::Point::new(at.x - dx * distance, at.y - dy * distance);
-    let side = |point: gx_core::Point, offset: f64| {
-        gx_core::Point::new(point.x - dy * offset, point.y + dx * offset)
-    };
-    match max {
-        gx_core::ir::CardinalityMax::Many => {
-            // The crow's foot opens TOWARDS the table: the ankle sits away
-            // from it and the three toes touch its edge. Opening away from
-            // the table draws an arrowhead, which is the opposite meaning.
-            let ankle = back(CROW_FOOT);
-            let toe = |spread: f64| side(at, spread);
+    let mark = crow_foot_mark(
+        at,
+        direction,
+        bound == CardinalityBound::Optional,
+        max == CardinalityMax::Many,
+    );
+    match mark.glyph {
+        CrowFoot::Many { ankle, toes } => {
             let stroke = |to: gx_core::Point| {
                 format!(
                     "M {} {} L {} {} ",
@@ -591,22 +466,17 @@ fn write_crow_foot(
                     fmt_num(to.y)
                 )
             };
-            let spread = CROW_FOOT * 0.62;
             let mut path = String::new();
             path.push_str(&stroke(at));
-            path.push_str(&stroke(toe(spread)));
-            path.push_str(&stroke(toe(-spread)));
+            for toe in toes {
+                path.push_str(&stroke(toe));
+            }
             out.push_str(&format!(
                 "<path class=\"{classes}\" d=\"{}\"/>\n",
                 path.trim_end()
             ));
         }
-        gx_core::ir::CardinalityMax::One => {
-            // Exactly one: a single stroke across the relation.
-            let mark = back(CROW_FOOT * 0.6);
-            let half = CROW_FOOT * CROW_FOOT_SPREAD;
-            let from = side(mark, half);
-            let to = side(mark, -half);
+        CrowFoot::One { from, to } => {
             out.push_str(&format!(
                 "<line class=\"{classes}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>\n",
                 fmt_num(from.x),
@@ -617,13 +487,12 @@ fn write_crow_foot(
         }
     }
 
-    if bound == gx_core::ir::CardinalityBound::Optional {
-        let center = back(CROW_FOOT * 1.45);
+    if let Some(center) = mark.optional {
         out.push_str(&format!(
             "<circle class=\"{classes}\" cx=\"{}\" cy=\"{}\" r=\"{}\"/>\n",
             fmt_num(center.x),
             fmt_num(center.y),
-            fmt_num(CROW_FOOT / 3.5)
+            fmt_num(mark.radius)
         ));
     }
 }
@@ -633,59 +502,44 @@ fn write_crow_foot(
 /// rows are its columns).
 fn write_node_table(out: &mut String, node: &IrNode, placed: &NodeBox) {
     let rect = node_rect(placed);
-    let padding = TOKENS.node_padding;
-    let line = TOKENS.text_size * TOKENS.line_height;
+    let table = Table::of(&rect);
 
     // The header: the label, centered, in the first line of the box.
-    let header_y = rect.y + padding + line / 2.0;
     let mut label_classes = String::from("node-text text");
     push_emphasis(&mut label_classes, node.emphasis, true);
     out.push_str(&format!(
         "<text class=\"{label_classes}\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\" font-weight=\"{}\">{}</text>\n",
         fmt_num(rect.center().x),
-        fmt_num(header_y),
+        fmt_num(table.header_y),
         fmt_num(TOKENS.text_size),
         TOKENS.semibold_weight,
         escape_text(&node.label),
     ));
 
     // The rule that separates the header from the rows.
-    let rule_y = header_y + line / 2.0;
     out.push_str(&format!(
         "<line class=\"node-stroke\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke-width=\"{}\"/>\n",
         fmt_num(rect.x),
-        fmt_num(rule_y),
+        fmt_num(table.rule_y),
         fmt_num(rect.max_x()),
-        fmt_num(rule_y),
+        fmt_num(table.rule_y),
         fmt_num(TOKENS.border_width),
     ));
 
     // One line per row: the key role on the left, the name, the note right.
     for (index, row) in node.rows.iter().enumerate() {
-        let y = rule_y + line * (index as f64 + 0.5);
-        let badge = match row.key {
-            gx_core::ir::RowKey::Pk => "PK".to_string(),
-            gx_core::ir::RowKey::Fk => "FK".to_string(),
-            gx_core::ir::RowKey::PkFk => "PK, FK".to_string(),
-            gx_core::ir::RowKey::None => String::new(),
-        };
-        let mut name_classes = String::from("node-text text");
-        if matches!(row.key, gx_core::ir::RowKey::Pk | gx_core::ir::RowKey::PkFk) {
-            name_classes.push_str(" row-key");
-        }
-        if row.nullable {
-            name_classes.push_str(" row-nullable");
-        }
+        let y = table.row_y(index);
         out.push_str(&format!(
             "<text class=\"row-badge text\" x=\"{}\" y=\"{}\" font-size=\"{}\" dominant-baseline=\"central\">{}</text>\n",
-            fmt_num(rect.x + padding / 2.0),
+            fmt_num(table.badge_x),
             fmt_num(y),
             fmt_num(TOKENS.text_size * 0.85),
-            escape_text(&badge),
+            escape_text(Table::badge(row.key)),
         ));
         out.push_str(&format!(
-            "<text class=\"{name_classes}\" x=\"{}\" y=\"{}\" font-size=\"{}\" dominant-baseline=\"central\">{}</text>\n",
-            fmt_num(rect.x + padding + BADGE_WIDTH),
+            "<text class=\"{}\" x=\"{}\" y=\"{}\" font-size=\"{}\" dominant-baseline=\"central\">{}</text>\n",
+            geometry::row_name_classes(row),
+            fmt_num(table.name_x),
             fmt_num(y),
             fmt_num(TOKENS.text_size),
             escape_text(&row.text),
@@ -693,7 +547,7 @@ fn write_node_table(out: &mut String, node: &IrNode, placed: &NodeBox) {
         if let Some(note) = &row.note {
             out.push_str(&format!(
                 "<text class=\"row-note text\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"end\" dominant-baseline=\"central\">{}</text>\n",
-                fmt_num(rect.max_x() - padding / 2.0),
+                fmt_num(table.note_x),
                 fmt_num(y),
                 fmt_num(TOKENS.text_size * 0.9),
                 escape_text(note),
@@ -702,32 +556,13 @@ fn write_node_table(out: &mut String, node: &IrNode, placed: &NodeBox) {
     }
 }
 
-/// Adds the classes an emphasis needs. Highlighting a shape changes its stroke
-/// and highlighting a text changes its fill, so the two need their own class.
-fn push_emphasis(classes: &mut String, emphasis: Emphasis, for_text: bool) {
-    match emphasis {
-        Emphasis::Normal => {}
-        Emphasis::Highlight => classes.push_str(if for_text {
-            " emphasis-highlight-text"
-        } else {
-            " emphasis-highlight"
-        }),
-        Emphasis::Muted => classes.push_str(" emphasis-muted"),
-    }
-}
-
-fn shape_class(shape: Shape) -> &'static str {
-    match shape {
-        Shape::Box => "shape-box",
-        Shape::Rounded => "shape-rounded",
-        Shape::Cylinder => "shape-cylinder",
-        Shape::Diamond => "shape-diamond",
-        Shape::Ellipse => "shape-ellipse",
-        Shape::Note => "shape-note",
-    }
-}
-
-fn write_rect(out: &mut String, id: &str, classes: &str, rect: &Rect, radius: Option<f64>) {
+fn write_rect(
+    out: &mut String,
+    id: &str,
+    classes: &str,
+    rect: &gx_core::Rect,
+    radius: Option<f64>,
+) {
     let (x, y) = (fmt_num(rect.x), fmt_num(rect.y));
     let (width, height) = (fmt_num(rect.w), fmt_num(rect.h));
     match radius {
@@ -742,7 +577,7 @@ fn write_rect(out: &mut String, id: &str, classes: &str, rect: &Rect, radius: Op
     }
 }
 
-fn write_cylinder(out: &mut String, id: &str, classes: &str, rect: &Rect) {
+fn write_cylinder(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
     // The rim height is the corner radius, capped to a quarter of the box so a
     // short node still has a readable body. Safe default for T4.
     let rim = TOKENS.corner_radius.min(rect.h / 4.0);
@@ -785,7 +620,7 @@ fn write_cylinder(out: &mut String, id: &str, classes: &str, rect: &Rect) {
     ));
 }
 
-fn write_diamond(out: &mut String, id: &str, classes: &str, rect: &Rect) {
+fn write_diamond(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
     let left = fmt_num(rect.x);
     let right = fmt_num(rect.x + rect.w);
     let top = fmt_num(rect.y);
@@ -797,7 +632,7 @@ fn write_diamond(out: &mut String, id: &str, classes: &str, rect: &Rect) {
     ));
 }
 
-fn write_ellipse(out: &mut String, id: &str, classes: &str, rect: &Rect) {
+fn write_ellipse(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
     out.push_str(&format!(
         "<ellipse id=\"{id}\" class=\"{classes}\" cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\"/>\n",
         fmt_num(rect.x + rect.w / 2.0),
@@ -807,7 +642,7 @@ fn write_ellipse(out: &mut String, id: &str, classes: &str, rect: &Rect) {
     ));
 }
 
-fn write_note(out: &mut String, id: &str, classes: &str, rect: &Rect) {
+fn write_note(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
     let fold = TOKENS.corner_radius.min(rect.w / 4.0).min(rect.h / 4.0);
     let left = fmt_num(rect.x);
     let right = fmt_num(rect.x + rect.w);
@@ -834,7 +669,7 @@ fn write_node_text(out: &mut String, node: &IrNode, placed: &NodeBox) {
 /// A node and a timeline event are the same thing for the reader —a box with
 /// its name— so they share this writer instead of drifting apart.
 fn write_centered_text(out: &mut String, classes: &str, label: &str, placed: &NodeBox) {
-    let lines: Vec<&str> = label.lines().collect();
+    let lines = label_lines(label);
     if lines.is_empty() {
         return;
     }
@@ -853,10 +688,10 @@ fn write_centered_text(out: &mut String, classes: &str, label: &str, placed: &No
     out.push_str(&format!(
         "<text class=\"{classes}\" font-size=\"{size}\" text-anchor=\"middle\" dominant-baseline=\"central\">\n"
     ));
-    let line_height = TOKENS.text_size * TOKENS.line_height;
-    let total = line_height * lines.len() as f64;
-    for (index, line) in lines.iter().enumerate() {
-        let baseline = placed.center.y - total / 2.0 + line_height * (index as f64 + 0.5);
+    for (line, baseline) in lines
+        .iter()
+        .zip(centered_baselines(placed.center.y, lines.len()))
+    {
         out.push_str(&format!(
             "<tspan x=\"{center_x}\" y=\"{}\">{}</tspan>\n",
             fmt_num(baseline),
@@ -868,7 +703,7 @@ fn write_centered_text(out: &mut String, classes: &str, label: &str, placed: &No
 
 /// Draws one group of a graph: its container and its name, top left.
 fn write_group_box(out: &mut String, group: &LayoutGroup) {
-    let id = escape_text(&format!("cluster-{}", group.id));
+    let id = escape_text(&cluster_id(&group.id));
     write_rect(
         out,
         &id,
@@ -877,11 +712,7 @@ fn write_group_box(out: &mut String, group: &LayoutGroup) {
         Some(TOKENS.corner_radius),
     );
 
-    let Some(label) = group
-        .label
-        .as_deref()
-        .filter(|label| !label.trim().is_empty())
-    else {
+    let Some(label) = band_label(group) else {
         return;
     };
     out.push_str(&format!(
@@ -899,14 +730,10 @@ fn write_group_box(out: &mut String, group: &LayoutGroup) {
 /// sits in the gutter the layout reserved for it, so it never rides on top of
 /// the first event of the row.
 fn write_lane_band(out: &mut String, group: &LayoutGroup) {
-    let id = escape_text(&format!("lane-{}", group.id));
+    let id = escape_text(&lane_id(&group.id));
     write_rect(out, &id, "lane-band", &group.bbox, None);
 
-    let Some(label) = group
-        .label
-        .as_deref()
-        .filter(|label| !label.trim().is_empty())
-    else {
+    let Some(label) = band_label(group) else {
         return;
     };
     out.push_str(&format!(
@@ -919,9 +746,14 @@ fn write_lane_band(out: &mut String, group: &LayoutGroup) {
 }
 
 /// Draws one event of a timeline: a box with its label, inside its lane.
+///
+/// An event that lasts is also a bar (`f11-elementos.md`, T4/D): the lanes
+/// engine already sizes its box from `IrEvent.span`, so the box is the length
+/// of the bar and the drawing only had to say it. The numbers come from
+/// [`geometry::event_bar`], the same rectangle the scene carries (S5).
 fn write_event(out: &mut String, event: &IrEvent, placed: &NodeBox) {
     let rect = node_rect(placed);
-    let id = escape_text(&format!("g-{}", event.id));
+    let id = escape_text(&node_id(&event.id));
     write_rect(
         out,
         &id,
@@ -929,6 +761,15 @@ fn write_event(out: &mut String, event: &IrEvent, placed: &NodeBox) {
         &rect,
         Some(TOKENS.corner_radius),
     );
+    if let Some(bar) = geometry::event_bar(&rect, event.span) {
+        out.push_str(&format!(
+            "<rect class=\"accent\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>\n",
+            fmt_num(bar.x),
+            fmt_num(bar.y),
+            fmt_num(bar.w),
+            fmt_num(bar.h),
+        ));
+    }
     write_centered_text(out, "node-text text", &event.label, placed);
 }
 

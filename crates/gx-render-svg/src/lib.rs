@@ -13,10 +13,12 @@
 //! drawn with the same faces as the SVG (PRD §8.5).
 
 pub mod escape;
+pub(crate) mod geometry;
 pub mod metrics;
 #[cfg(feature = "png")]
 pub mod png;
 pub mod renderer;
+pub mod scene;
 
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -26,3 +28,4 @@ pub use metrics::{InterMetrics, MetricsError};
 #[cfg(feature = "png")]
 pub use png::ResvgRasterizer;
 pub use renderer::SvgRenderer;
+pub use scene::{scene, scene_tokens};

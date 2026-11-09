@@ -16,7 +16,8 @@ Graphium owns, so nothing is written to disk.
 
 WHEN TO USE IT. When a picture explains the answer better than prose: the flow of \
 a function or a module, dependencies between packages, the schema of a database \
-(tables, columns, keys, cardinality), or an architecture of services. The human \
+(tables, columns, keys, cardinality), which `code_er` draws from a `.sql` file, or \
+an architecture of services. The human \
 asked to see it, or the explanation needs a shape that words make long. \
 WHEN NOT TO USE IT. For a single fact, a list of files, a diff, a stack trace or \
 anything that reads better as text: a diagram there costs a window and adds \
@@ -48,6 +49,12 @@ the human sees you.
 merge patch and the `revision` you read: it is transactional, so a bad patch \
 leaves the diagram untouched. Do not render a new one to replace it.
 
+THE CHEAP PATH. If the subject is in this project's index, do not write JSON by \
+hand: `code_search` locates a symbol, `code_diagram` draws its neighbourhood as a \
+ready `graph` document, and a `.sql` file becomes the `er` document of `code_er`; \
+the two documents go to `validate_diagram` and `render_diagram` unchanged. \
+Hand-write a document only when the subject is not in the index.
+
 BIG DIAGRAMS. Hundreds of nodes are not one picture: they are a view of one. \
 `render_diagram` accepts `opts.extract: { around: \"<id>\", depth }` (default \
 `depth: 1`, at most 300 nodes in the subgraph) and draws only the neighbourhood \
@@ -62,8 +69,10 @@ depth 8 with two laying out at a time: when the queue is full the answer is \
 `ok: false` with code `busy`, `queue_depth` and `retry_after_ms`, so wait that \
 long and send it again instead of retrying in a loop. `opts.focus: { id, depth? }` \
 puts the camera on one node and, with `depth`, on its neighbourhood (default 1, \
-max 300 nodes). `opts.replace_id` and `opts.interactive` arrive in F2/F3: \
-sending them today costs a warning, never the diagram.
+max 300 nodes). `opts.replace_id` is honoured today: it replaces the document of \
+the named diagram, and an unknown id answers `unknown_diagram` and creates \
+nothing. `opts.interactive` still arrives in F3: sending it today costs a warning \
+(`opts_ignored`), never the diagram.
 
 ERRORS. Every failure carries `{ path, code, message, hint? }` with a stable code \
 and the JSON path of the problem. `unknown_ref` and `duplicate_id` are rules of a \
@@ -71,7 +80,11 @@ kind, `unknown_field` means a key the schema does not admit (`hint` carries the 
 closest name), `unknown_kind` lists the kinds that exist, `too_large` means the \
 document is over the limit of its kind, `stale_revision` means you read an old \
 version, `layout_timeout` means the layout missed `opts.layout_timeout_ms`, and \
-`busy` means the queue of renders is full: wait `retry_after_ms` and try again. Fix \
+`busy` means the queue of renders is full: wait `retry_after_ms` and try again. In \
+the book, `invalid_value` means an argument the tool cannot use, `ambiguous_symbol` \
+means the name fits more than one declaration and `candidates[]` lists them, \
+`book_disabled` means the owner opted out with `GRAPHIUM_BOOK=off`, and \
+`book_unavailable` means the book of the project could not be opened. Fix \
 the path the error names instead of rewriting the whole document.
 
 THE PLAN. Diagrams stay on the plan until the human closes them or \
@@ -105,7 +118,66 @@ one) and `get_diagram_version` returns the exact document of one version; both \
 are read-only, so browsing history never touches the plan. To go back, take the \
 document of the version and render it again (with `opts.replace_id` to stay on \
 the same diagram). Use them when the human asks what changed or wants an older \
-shape back; the versions live only while the diagram is open.";
+shape back; the versions live only while the diagram is open.
+
+THE BOOK. The book answers the project the session's client declared \
+(`GRAPHIUM_PROJECT`, or the working directory when it declares none): a session \
+without a project gets `ok: false` with `invalid_value` at `session.project`. \
+`code_search` answers from the index of the project instead of \
+reading files: it returns the `file`, `line`, `kind`, `name`, `qname`, \
+`content_hash` and `indexed_at` of one symbol, plus the `book_key` of the book \
+that answered. Use it to locate the code behind a diagram, or to find a \
+function by name before drawing its flow. Every word of `query` has to match \
+and the tool never guesses: a query that fits more than one declaration \
+answers `ok: false` with `code_search`'s `ambiguous_symbol` code and \
+`candidates[]`, so send the words of one candidate's `qname` to narrow it. \
+`code_structure` reads a chapter (`file`) or the chapter that declares one \
+symbol (`symbol`) and answers the outline by default: only the declarations \
+whose parent is `NULL`, with `total` and \
+`collapsed: {hidden_symbols, declarations_with_children, next}`, where `next` \
+is the copy-pasteable call that reads the hidden children. Ask for a slice of \
+the tree with `after_line` + `limit` (a range over the same span-ordered list, \
+never a mode) and filter the rows with `kinds`; every cut is an object, \
+`truncated: {reason, shown, total, next}`. `code_impact` walks the connections \
+of a symbol — `direction: \"in\"` by default (what points at it, so what a \
+change would affect), `out` (what it calls or imports) or `both` — or of a \
+whole chapter with a file seed, `file`: the file as a node (the connections \
+view), where every declaration of it starts the walk and the answer adds a \
+`files` grouping of `imports_out`, `referenced_by_in` and `symbols` per \
+connected file (the seed file is `file`, never a row of `files`). `edges` narrows the kinds it follows (`calls`, `imports`, `inherits`, \
+`uses`) and `budget` sets the query budget in nodes (600 by default, 2000 at \
+most, the edges at twice the nodes — its own number, decoupled from the 300/600 \
+a diagram document can render). The walk stops at 3 hops, answers a cycle once, \
+and states every cut in `truncated: {reason, shown, total, next}`, with `next` \
+as the call that continues it. `unresolved` counts the names the book could not \
+pin down (resolution is by name, only while a name has at most five definers). \
+Those connections are syntactic, not typed: they are read from the code and may \
+be false positives. Only `code_structure`, `code_impact` and `code_diagram` take \
+`max_chars` and report `chars` (what it spends) and `max_chars` (the envelope it \
+had — the ladder of the book by indexed files, 13,000 up to 150, 18,000 up to \
+500, 24,000 beyond, overridable with the `max_chars` argument up to 1.5 times); \
+past the envelope the head keeps the full rows, the tail cliffs to one-line \
+`pointers`, and the cut says `reason: \"budget\"` with the exact wider call in \
+`next`. `code_search` and `code_er` have no envelope: `code_search` answers one \
+row or `candidates[]`, `code_er` answers the whole document, and a `max_chars` \
+sent to either is refused as an unknown field (`deny_unknown_fields`). \
+`code_diagram` turns the same neighbourhood into a `graph` \
+document in `diagram`, ready to send to `render_diagram` with no repair: that \
+is the cheap diagram, drawn from the book instead of from the code; it takes \
+the same `edges` filter and keeps the 300/600 ceilings, so `truncated.reason` \
+says `density` when the document was trimmed and `nodes`/`edges` when the walk \
+was cut. `code_er` hands you the `er` document of one `.sql` file of the \
+project (`path`, relative to the project root with `/` separators) — or, with \
+`scope: \"project\"`, of every `.sql` chapter of the book merged into one \
+document, with `files` counting the chapters it parsed: its tables \
+as compartments with their columns and the keys between them, in `diagram`, \
+ready for `validate_diagram` and then `render_diagram` — the picture of a \
+database read live from the file instead of from the code. The book is \
+on by default: `book_disabled` only answers when the owner opted out with \
+`GRAPHIUM_BOOK=off`, and a book that cannot be opened answers \
+`book_unavailable`. `progress.state` tells whether the first pass is still \
+`indexing`, so a symbol that is not there yet may appear in a moment. The \
+book is a cache of the project and never changes the plan.";
 
 /// The description of `register_session`, written for the agent (S3, D2).
 ///
@@ -226,11 +298,147 @@ several. `opts.scale` (default 1.0, ceiling 3.0) and `opts.max_px` (default \
 16 Mpx, ceiling 64 Mpx) govern the PNG; inline SVG is capped at 1 MB. Exporting \
 never changes the plan."
         }
+        "code_search" => {
+            "\
+Search the book of this project: the symbols the indexer extracted, without \
+reading the files. It answers the places of ONE symbol with `file`, `line`, \
+`kind`, `name`, `qname`, `content_hash` and `indexed_at`, plus the `book_key` \
+of the book that answered. `query` is split into words and every word has to \
+match (`render config` finds a symbol whose name carries both); CamelCase and \
+snake_case are both indexed. When the query fits more than one declaration \
+the answer is `ok: false` with code `ambiguous_symbol` and `candidates[]` \
+(`name`, `kind`, `qname`, `file`, `line`, `occurrences`): send the words of \
+one candidate's qname to narrow it, never guess. The book is on by default: \
+`book_disabled` only answers when the owner opted out with \
+`GRAPHIUM_BOOK=off`, a book that cannot be opened answers `book_unavailable`, \
+and `progress.state == \"indexing\"` means the first pass is still running. \
+Read-only: it never touches the plan."
+        }
+        "code_structure" => {
+            "Read the structure of one chapter of the book, and it answers the outline by \
+default: only the declarations whose parent is `NULL`, ordered by span, each \
+with `name`, `kind`, `qname`, `line`, `column`, `end_line`, `end_column` and \
+`parent` (the qname of the declaration that contains it). The answer carries \
+`count` (the full rows plus the pointer tail), `total` (every declaration of \
+the chapter, filter included) and, when children were hidden, \
+`collapsed: {hidden_symbols, declarations_with_children, next}`, where `next` \
+is the copy-pasteable call that reads them. To read a slice of the tree, send \
+`after_line` (start strictly after that line) and `limit` (1..=200): they are \
+a range over the same span-ordered list, never a mode, so the whole tree is a \
+sequence of monotone pages. `kinds` filters the rows by declaration kind and \
+never changes `total`. Send exactly one selector: `file` (a path relative to \
+the project root, with `/`) or `symbol` (a name, as `code_search` takes it). A \
+symbol that fits more than one declaration answers `ok: false` with \
+`ambiguous_symbol` and `candidates[]`; an unknown path answers `invalid_value` \
+at `path: \"file\"` with a hint, never an empty tree that reads as «no \
+declarations». A cut answers `truncated: {reason, shown, total, next}` with \
+reason `collapsed` (the outline hid children) or `nodes` (the limit cut the \
+range). The answer carries the `content_hash` and `indexed_at` of the chapter, \
+the `book_key` of the book and `progress.state` (`indexing` means the first \
+pass is running). It is bounded in characters too (`chars`, `max_chars`): past \
+the envelope the full rows stop and the tail arrives as one-line `pointers` \
+(`{name, line, kind}`), the `after_line` cursor still reads what was left, and \
+the cut says reason `budget` with the exact wider call in `next`. The book is on \
+by default: `book_disabled` only answers when \
+the owner opted out with `GRAPHIUM_BOOK=off`, and a book that cannot be opened \
+answers `book_unavailable`. Read-only: it never touches the plan."
+        }
+        "code_impact" => {
+            "Walk the connections of one symbol, or of one whole chapter, in the book: who \
+points at it, what it reaches, or both. The seed is exactly one of `symbol` (a \
+name, as `code_search` takes it) or `file` (a path relative to the project \
+root, with `/`): a file seed is the connections view — the file as a node — \
+where every declaration of the chapter starts the walk and the answer adds \
+`file` and a `files` grouping of the connected files (`imports_out`, \
+`referenced_by_in`, `symbols`). `direction` is `in` for a symbol (the default: \
+what a change would affect), `out` (what the symbol calls, imports or uses) or \
+`both` (the default of a file seed); `edges` narrows which kinds the walk \
+follows (`calls`, `imports`, `inherits`, `uses`). The edges are syntactic, not \
+typed — a call by name, an import by its bound segment, an `impl Trait for \
+Type`, a type reference — so a common name may be a false positive, and \
+`unresolved` counts the targets the book could not pin to one declaration \
+(resolution is by name, only while the name has at most five definers). The \
+walk has three guards and the answer states them: `depth` is clamped to 3 \
+hops, a cycle is answered once per symbol and never followed twice, and the \
+answer is bounded by `budget` nodes (600 by default, 2000 at most, with the \
+edges at twice the nodes). A cut answers `truncated: {reason, shown, total, \
+next}`: `nodes` or `edges` when the budget bit (then `next` is the same call \
+with twice the budget), `budget` when the character envelope of the answer \
+(`chars`, `max_chars` — the ladder of the book by indexed files, overridable \
+up to 1.5 times) stopped the full rows and the rest arrived as one-line \
+`pointers` (then `next` is the wider call, or a narrower walk at the \
+ceiling), `depth` when the request asked for more hops than 3 \
+and the walk still had somewhere to go (`next` is `null`: the cap is the \
+answer). Nodes carry `file`, `line` and the hop they were reached at; the seed \
+travels with `content_hash`, `indexed_at` and the `book_key` of the book. An \
+ambiguous name answers `ok: false` with `ambiguous_symbol` and `candidates[]`; \
+the book is on by default, so `book_disabled` only comes from an explicit \
+`GRAPHIUM_BOOK=off`. Read-only: it never touches the plan."
+        }
+        "code_diagram" => {
+            "Build the diagram of one symbol's neighbourhood from the book, without \
+reading any file: the answer is a complete `graph` document (`version: 1`, \
+`kind: \"graph\"`, one node per symbol labelled with its `qname`, one edge per \
+connection labelled with its kind) in `diagram`. Send it to `render_diagram` \
+as it is, or to `validate_diagram` first: it respects the contract of the kind \
+(300 nodes, 600 edges, density 3), so it needs no repair. The walk is \
+`code_impact` with `direction: both` and `depth` clamped to 3 hops; `edges` \
+narrows which kinds it follows. `truncated` is `{reason, shown, total, next}` \
+and tells the two cuts apart: `density` means the document was trimmed to \
+render (the walk itself was complete) and `nodes`/`edges` mean the walk was cut \
+first, because `budget` keeps the 300/600 ceilings of the kind; `budget` means \
+the character envelope of the answer (`chars`, `max_chars`, L7 — the ladder of \
+the book by indexed files, overridable up to 1.5 times) trimmed the document \
+after those ceilings, and the document still renders because an edge never \
+points at a node it dropped; in all cases \
+`next` is the `code_impact` call that answers the same question with the query \
+budget of the connections view, or the same `code_diagram` with a bigger \
+`max_chars` when the envelope can still grow. `unresolved` is the walk's honest \
+count of the names it could not pin down — the same field `code_impact` \
+reports. The connections are syntactic, not typed: the \
+picture is the book's reading of the code. The start symbol travels with \
+`content_hash`, `indexed_at` and the `book_key` of the book; an ambiguous name \
+answers `ok: false` with `ambiguous_symbol` and `candidates[]`, and the book is \
+on by default (`book_disabled` only with an explicit `GRAPHIUM_BOOK=off`). It \
+never renders and never touches the plan."
+        }
         "clear_canvas" => {
             "\
 Remove diagrams from the plan. Without `scope` it clears only the diagrams of this \
 session; with `scope: \"plano\"` it clears the whole plan, including the ones of \
 other sessions. It does not close the window and does not stop the MCP session."
+        }
+        "code_er" => {
+            "Build the `er` document of one `.sql` file of the project — or of the whole \
+project with `scope: \"project\"` — its tables as \
+compartments with their columns and the keys between them — without reading the \
+file yourself: the answer carries the document in `diagram` (`version: 1`, \
+`kind: \"er\"`), ready to send to `validate_diagram` and then `render_diagram` as \
+it is, the same contract `code_diagram` keeps. `path` is the file relative to \
+the project root with `/` separators, the way the book stores it \
+(`db/schema.sql`); absolute paths, `..` and a leading `./` are refused the same \
+way, with `ok: false`, code `invalid_value` at `path`, because the guard reads \
+path components before anything is opened. The source is read live, \
+so the document is the file as it is now, not the indexed snapshot. A file that \
+produces no document — another language, a DDL with no column list, or a build \
+without the SQL grammar — answers `ok: false` with the three causes named. \
+`scope` chooses the breadth, never the contract: `\"file\"` (the default) draws \
+only the file `path` names; `\"project\"` parses every `.sql` chapter the book \
+knows live from disk, merges them in the book's chapter order — a table name \
+declared twice is drawn once, a foreign key that points at a table in another \
+file anchors — and answers one document, with `files` reporting how many \
+chapters were parsed and a chapter that no longer reads skipped. `path` stays \
+required under both scopes: it names the file of the answer, and under \
+`\"project\"` its tables take part in the merge like any other chapter's. \
+Beside `diagram` the answer reports `tables`, `relations` and `chars` (the byte \
+length of the document), so its size is read without counting the JSON. The \
+ceilings of the `er` kind apply at the render — a schema bigger than the kind \
+accepts is refused there with `too_large` — and a document already over them \
+warns first, with `er_over_kind` in `warnings[]`: `ok` stays `true`, the \
+document travels whole, and splitting the schema file is the way to render it. \
+The book is on by default \
+(`book_disabled` only with an explicit `GRAPHIUM_BOOK=off`). It never renders \
+and never touches the plan."
         }
         _ => "A Graphium tool.",
     }
@@ -242,13 +450,10 @@ other sessions. It does not close the window and does not stop the MCP session."
 /// the file it expects.
 pub fn client_config(client: &str, command: &str) -> String {
     match client {
-        "pi" => format!(
-            "[mcp_servers.graphium]\ncommand = {command:?}\nargs = [\"--stdio\"]\n"
-        ),
-        "claude" => format!(
-            "{{\n  \"mcpServers\": {{\n    \"graphium\": {{\n      \"command\": {command:?},\n      \"args\": [\"--stdio\"]\n    }}\n  }}\n}}"
-        ),
-        "cursor" => format!(
+        // S6: Pi reads a JSON `mcp.json` (`~/.pi/agent/mcp.json`), with the
+        // same `mcpServers` object Claude and Cursor read; the TOML of
+        // `[mcp_servers.graphium]` is the shape of another client entirely.
+        "pi" | "claude" | "cursor" => format!(
             "{{\n  \"mcpServers\": {{\n    \"graphium\": {{\n      \"command\": {command:?},\n      \"args\": [\"--stdio\"]\n    }}\n  }}\n}}"
         ),
         _ => format!("{{\"command\":{command:?},\"args\":[\"--stdio\"]}}"),
@@ -294,6 +499,10 @@ mod tests {
             "stale_revision",
             "layout_timeout",
             "busy",
+            "book_disabled",
+            "book_unavailable",
+            "ambiguous_symbol",
+            "invalid_value",
         ] {
             assert!(INSTRUCTIONS.contains(code), "falta `{code}`");
         }
@@ -306,6 +515,35 @@ mod tests {
             assert!(text.len() > 120, "{tool} needs a real description");
             assert_ne!(text, description("nope"), "{tool} is a fallback");
         }
+    }
+
+    /// S5/L5: the book is on by default, so no description tells the human to
+    /// turn it on: `GRAPHIUM_BOOK=off` is the explicit opt-out.
+    #[test]
+    fn the_book_descriptions_say_the_book_is_on_by_default() {
+        for tool in [
+            "code_search",
+            "code_structure",
+            "code_impact",
+            "code_diagram",
+            "code_er",
+        ] {
+            let text = description(tool);
+            assert!(
+                text.contains("on by default"),
+                "{tool} has to say the book is on by default"
+            );
+            assert!(
+                text.contains("GRAPHIUM_BOOK=off"),
+                "{tool} has to name the opt-out"
+            );
+            assert!(
+                !text.contains("GRAPHIUM_BOOK=on"),
+                "{tool} must not ask to enable the book"
+            );
+        }
+        assert!(INSTRUCTIONS.contains("GRAPHIUM_BOOK=off"));
+        assert!(!INSTRUCTIONS.contains("GRAPHIUM_BOOK=on"));
     }
 
     /// S1-S5: the agent learns how an export travels and what it costs,
@@ -331,6 +569,9 @@ mod tests {
 
     /// S21: the agent learns that `opts.extract`, `opts.layout_timeout_ms` and
     /// `extracted_from` exist without reading any other document.
+    ///
+    /// S1: and the sentence about `opts.replace_id`/`opts.interactive` says the
+    /// truth: `replace_id` is honoured today and only `interactive` still waits.
     #[test]
     fn the_harness_teaches_opts_extract_and_the_layout_deadline() {
         let render = description("render_diagram");
@@ -351,6 +592,113 @@ mod tests {
             assert!(
                 INSTRUCTIONS.contains(future),
                 "the instructions lack `{future}`"
+            );
+        }
+        // S1: the stale F2/F3 sentence is gone; `replace_id` is honoured now
+        // and only `interactive` still costs the warning.
+        assert!(
+            INSTRUCTIONS.contains("`opts.replace_id` is honoured today"),
+            "the instructions have to say `replace_id` is honoured"
+        );
+        assert!(
+            INSTRUCTIONS.contains("an unknown id answers `unknown_diagram` and creates nothing"),
+            "the instructions have to say what an unknown `replace_id` does"
+        );
+        assert!(
+            INSTRUCTIONS.contains("`opts.interactive` still arrives in F3"),
+            "the instructions have to say `interactive` is still not honoured"
+        );
+        assert!(
+            INSTRUCTIONS.contains("costs a warning"),
+            "the instructions have to say what `interactive` costs"
+        );
+        assert!(
+            !INSTRUCTIONS.contains("arrive in F2/F3"),
+            "the stale sentence is gone"
+        );
+    }
+
+    /// S2: the character envelope is a fact of the three tools that take
+    /// `max_chars`, and the other two answer without one — the instructions
+    /// must not promise it for all five.
+    #[test]
+    fn the_instructions_bound_only_the_three_tools_with_an_envelope() {
+        for tool in ["code_structure", "code_impact", "code_diagram"] {
+            assert!(
+                INSTRUCTIONS.contains(tool),
+                "the instructions have to name the bounded tool `{tool}`"
+            );
+        }
+        assert!(
+            INSTRUCTIONS.contains("Only `code_structure`, `code_impact` and `code_diagram` take"),
+            "the bound is stated for its three tools"
+        );
+        assert!(
+            INSTRUCTIONS.contains("13,000 up to 150, 18,000 up to 500, 24,000 beyond"),
+            "the ladder numbers stay"
+        );
+        assert!(
+            INSTRUCTIONS.contains("up to 1.5 times"),
+            "the 1.5x ceiling stays"
+        );
+        assert!(
+            INSTRUCTIONS.contains("`code_search` and `code_er` have no envelope"),
+            "the two tools without an envelope are named"
+        );
+        assert!(
+            INSTRUCTIONS.contains("`deny_unknown_fields`"),
+            "`max_chars` on those two is refused as an unknown field"
+        );
+        assert!(
+            !INSTRUCTIONS.contains("Every answer of the book is bounded"),
+            "the false universal is gone"
+        );
+    }
+
+    /// S3: the cheap path comes before BIG DIAGRAMS: a subject in the index is
+    /// drawn from the book, and JSON is hand-written only when it is not there.
+    #[test]
+    fn the_instructions_teach_the_cheap_path_of_the_book() {
+        let cheap = INSTRUCTIONS
+            .find("THE CHEAP PATH.")
+            .expect("the instructions name the cheap path");
+        let big = INSTRUCTIONS
+            .find("BIG DIAGRAMS.")
+            .expect("BIG DIAGRAMS stays");
+        let manual = INSTRUCTIONS.find("HOW, IN ORDER.").expect("HOW stays");
+        assert!(
+            manual < cheap && cheap < big,
+            "the cheap path comes after HOW and before BIG DIAGRAMS"
+        );
+        for needle in [
+            "`code_search` locates a symbol",
+            "`code_diagram` draws its neighbourhood as a ready `graph` document",
+            "`.sql` file becomes the `er` document of `code_er`",
+            "go to `validate_diagram` and `render_diagram` unchanged",
+            "Hand-write a document only when the subject is not in the index",
+        ] {
+            assert!(
+                INSTRUCTIONS.contains(needle),
+                "the cheap path lacks `{needle}`"
+            );
+        }
+        assert!(
+            INSTRUCTIONS.contains("which `code_er` draws from a `.sql` file"),
+            "the WHEN TO USE IT database bullet names `code_er`"
+        );
+    }
+
+    /// S4: the book states its precondition (the declared project) and the
+    /// instructions name the codes of its refusals.
+    #[test]
+    fn the_instructions_state_the_precondition_of_the_book() {
+        for needle in [
+            "`GRAPHIUM_PROJECT`, or the working directory when it declares none",
+            "without a project gets `ok: false` with `invalid_value` at `session.project`",
+        ] {
+            assert!(
+                INSTRUCTIONS.contains(needle),
+                "the book precondition lacks `{needle}`"
             );
         }
     }
@@ -377,11 +725,25 @@ mod tests {
         );
     }
 
+    /// S6: Pi reads a JSON `mcp.json`, so the config printed for it is the
+    /// `mcpServers` object its README documents; claude, cursor and generic
+    /// keep exactly the shapes they had.
     #[test]
-    fn the_pi_config_is_toml_and_the_rest_is_json() {
+    fn the_pi_config_is_json_and_the_rest_keeps_its_shape() {
         let pi = client_config("pi", "/usr/local/bin/graphium");
-        assert!(pi.contains("[mcp_servers.graphium]"));
-        assert!(pi.contains("args = [\"--stdio\"]"));
+        let value: serde_json::Value = serde_json::from_str(&pi).expect("pi reads JSON");
+        assert_eq!(
+            value["mcpServers"]["graphium"]["command"],
+            "/usr/local/bin/graphium"
+        );
+        assert_eq!(
+            value["mcpServers"]["graphium"]["args"],
+            serde_json::json!(["--stdio"])
+        );
+        assert!(
+            !pi.contains("[mcp_servers.graphium]"),
+            "pi is not TOML: {pi}"
+        );
 
         for client in ["claude", "cursor", "generic"] {
             let config = client_config(client, "/usr/local/bin/graphium");
@@ -396,5 +758,60 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// f13 S5: `code_er` is a named tool of the door with a description of
+    /// its own, and it follows the book family's contract: the book is on by
+    /// default and the description names the explicit opt-out.
+    #[test]
+    fn the_code_er_description_follows_the_book_family_contract() {
+        assert!(
+            crate::dispatch::TOOL_NAMES.contains(&"code_er"),
+            "the tool is named in TOOL_NAMES: {:?}",
+            crate::dispatch::TOOL_NAMES
+        );
+        let text = description("code_er");
+        assert!(text.len() > 120, "code_er needs a real description");
+        assert_ne!(text, description("nope"), "code_er is a fallback");
+        assert!(text.contains("on by default"), "{text}");
+        assert!(text.contains("GRAPHIUM_BOOK=off"), "{text}");
+        assert!(!text.contains("GRAPHIUM_BOOK=on"), "{text}");
+        // S5: the refusal shape is named, and a leading `./` is refused like
+        // the absolute path and the `..` beside it (the guard reads components).
+        for needle in [
+            "`ok: false`",
+            "code `invalid_value` at `path`",
+            "a leading `./`",
+            "the guard reads path components",
+        ] {
+            assert!(text.contains(needle), "code_er lacks `{needle}`: {text}");
+        }
+    }
+
+    /// f15 S6: the two copies of the `code_er` description — the const the
+    /// stdio router publishes and `description()`, which the harness and the
+    /// relay read — are one text, byte for byte, and both name the new scope
+    /// and the count a merged document answers with.
+    #[test]
+    fn the_code_er_description_names_the_scope_in_both_copies() {
+        let text = description("code_er");
+        assert_eq!(
+            text,
+            crate::CODE_ER_DESCRIPTION,
+            "the duplicated copies of the `code_er` description drifted apart"
+        );
+        for needle in ["`scope`", "`\"project\"`", "`\"file\"`", "`files`"] {
+            assert!(text.contains(needle), "code_er lacks `{needle}`: {text}");
+        }
+    }
+
+    /// f13 S6: the instructions teach the tool's place in the book section,
+    /// next to the tools it shares the project with.
+    #[test]
+    fn the_instructions_present_code_er_next_to_the_book() {
+        assert!(
+            INSTRUCTIONS.contains("code_er"),
+            "THE BOOK section has to name the tool"
+        );
     }
 }

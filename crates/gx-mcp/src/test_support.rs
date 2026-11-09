@@ -13,6 +13,9 @@ use gx_core::ir::{Ir, IrGraph};
 use gx_core::layout::{LayoutEdge, LayoutEngine, LayoutGraph, NodeBox};
 use gx_core::render::{Palette, SvgRenderer};
 use gx_core::text::{TextMetrics, TextStyle};
+use gx_core::{
+    Scene, SceneBand, SceneEdge, SceneEvent, SceneNode, ScenePalette, SceneTokens, TOKENS,
+};
 
 use crate::store::diagram_store;
 use crate::tools;
@@ -156,6 +159,167 @@ impl SvgRenderer for StubRenderer {
             }
             None => svg,
         }
+    }
+
+    /// The scene of the stub (`f11-elementos.md` T3/C): since the flip the
+    /// paint payload is the elements, so the test double has to produce one.
+    ///
+    /// It is the minimum the paint contract needs — the canvas of the layout,
+    /// one `g-<id>` per placed node, the routed edges, the bands and the
+    /// events — with the frozen tokens of the drawing. `gx-mcp` does not
+    /// depend on the emitter (PRD §9.1), so the glyph constants are mirrored
+    /// here: the *product* renderer is the one that writes the real numbers,
+    /// and `crates/gx-app/tests/scene_payload.rs` checks that one.
+    fn scene(&self, ir: &Ir, layout: &LayoutGraph, palette: &Palette) -> Option<Scene> {
+        let graph = ir.graph();
+        let timeline = ir.timeline();
+        let mut nodes: Vec<SceneNode> = graph
+            .map(|graph| {
+                let mut ordered: Vec<_> = graph.nodes.iter().collect();
+                ordered.sort_by(|left, right| left.id.cmp(&right.id));
+                ordered
+                    .into_iter()
+                    .filter_map(|node| {
+                        let placed = layout.nodes.get(&node.id)?;
+                        Some(SceneNode {
+                            id: format!("g-{}", node.id),
+                            label: node.label.clone(),
+                            shape: node.shape,
+                            emphasis: node.emphasis,
+                            style: node.style,
+                            center: placed.center,
+                            size: placed.size,
+                            rows: node.rows.clone(),
+                            meta: node.meta.clone(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        nodes.sort_by(|left, right| left.id.cmp(&right.id));
+
+        let mut edges: Vec<SceneEdge> = graph
+            .map(|graph| {
+                graph
+                    .edges
+                    .iter()
+                    .filter_map(|edge| {
+                        let route = layout
+                            .edges
+                            .iter()
+                            .find(|route| route.from == edge.from && route.to == edge.to)?;
+                        Some(SceneEdge {
+                            id: format!("m-{}-{}", edge.from, edge.to),
+                            from: edge.from.clone(),
+                            to: edge.to.clone(),
+                            label: edge.label.clone(),
+                            emphasis: edge.emphasis,
+                            style: edge.style,
+                            arrow: edge.arrow,
+                            from_row: edge.from_row,
+                            to_row: edge.to_row,
+                            cardinality: edge.cardinality,
+                            points: route.points.clone(),
+                            label_at: route.label_at,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        edges.sort_by(|left, right| left.id.cmp(&right.id));
+
+        let mut groups: Vec<_> = layout.groups.iter().collect();
+        groups.sort_by(|left, right| {
+            left.depth
+                .cmp(&right.depth)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let bands: Vec<SceneBand> = groups
+            .into_iter()
+            .map(|group| SceneBand {
+                id: if timeline.is_some() {
+                    format!("lane-{}", group.id)
+                } else {
+                    format!("cluster-{}", group.id)
+                },
+                label: group.label.clone(),
+                bbox: group.bbox,
+                depth: group.depth,
+                members: group.members.clone(),
+                gutter: group.gutter,
+            })
+            .collect();
+
+        let events: Vec<SceneEvent> = timeline
+            .map(|timeline| {
+                let mut ordered: Vec<_> = timeline.events.iter().collect();
+                ordered.sort_by(|left, right| left.id.cmp(&right.id));
+                ordered
+                    .into_iter()
+                    .filter_map(|event| {
+                        let placed = layout.nodes.get(&event.id)?;
+                        Some(SceneEvent {
+                            id: format!("g-{}", event.id),
+                            lane: event.lane.clone(),
+                            label: event.label.clone(),
+                            order: event.order,
+                            span: event.span,
+                            center: placed.center,
+                            size: placed.size,
+                            // The bar of an event that lasts, mirrored from
+                            // `geometry::event_bar` for the same reason as the
+                            // tokens above: `gx-mcp` does not depend on
+                            // `gx-render-svg` (PRD §9.1).
+                            bar: event.span.filter(|span| span.end > span.start).map(|_| {
+                                let inset = TOKENS.border_width;
+                                let height = 5.0;
+                                Rect::new(
+                                    placed.center.x - placed.size.w / 2.0 + inset,
+                                    placed.center.y + placed.size.h / 2.0 - inset - height,
+                                    placed.size.w - 2.0 * inset,
+                                    height,
+                                )
+                            }),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Some(Scene {
+            canvas: layout.bbox,
+            tokens: scene_tokens(),
+            direction: graph.map(|graph| graph.direction),
+            layout_hint: graph.map(|graph| graph.layout_hint),
+            palette: ScenePalette::css_vars(palette.theme),
+            nodes,
+            edges,
+            bands,
+            events,
+        })
+    }
+}
+
+/// The frozen glyph numbers the stub scene carries: the tokens of
+/// `gx-core/src/tokens.rs` plus the constants of the emitter, mirrored here
+/// because `gx-mcp` does not depend on it (PRD §9.1).
+fn scene_tokens() -> SceneTokens {
+    SceneTokens {
+        text_size: TOKENS.text_size,
+        node_padding: TOKENS.node_padding,
+        corner_radius: TOKENS.corner_radius,
+        border_width: TOKENS.border_width,
+        line_height: TOKENS.line_height,
+        regular_weight: TOKENS.regular_weight,
+        semibold_weight: TOKENS.semibold_weight,
+        arrow_length: 10.0,
+        crow_foot: 22.0,
+        crow_foot_spread: 0.85,
+        badge_width: 26.0,
+        muted_opacity: 0.55,
+        lifeline_dash: [4.0, 4.0],
+        dash_pattern: [6.0, 4.0],
+        group_dash: [8.0, 5.0],
     }
 }
 

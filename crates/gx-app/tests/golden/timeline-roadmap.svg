@@ -17,6 +17,7 @@
 .lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
 .stroke-dashed{stroke-dasharray:6.00 4.00}
 .text{font-family:Inter, sans-serif}
+.cardinality{fill:none;stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00}
 .arrow-normal{fill:rgba(138, 138, 150, 1.00)}
 .arrow-highlight{fill:rgba(110, 168, 254, 1.00)}
 .arrow-muted{fill:rgba(138, 138, 150, 1.00);opacity:0.55}
@@ -35,10 +36,12 @@
 <rect id="g-event-0" class="node-fill node-stroke shape-rounded" x="150.00" y="30.25" width="118.00" height="49.50" rx="6.00" ry="6.00"/>
 <text class="node-text text" x="209.00" y="55.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">spike F0</text>
 <rect id="g-event-1" class="node-fill node-stroke shape-rounded" x="300.00" y="30.25" width="118.00" height="49.50" rx="6.00" ry="6.00"/>
+<rect class="accent" x="301.00" y="73.75" width="116.00" height="5.00"/>
 <text class="node-text text" x="359.00" y="55.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">MVP</text>
 <rect id="g-event-2" class="node-fill node-stroke shape-rounded" x="450.00" y="140.25" width="118.00" height="49.50" rx="6.00" ry="6.00"/>
 <text class="node-text text" x="509.00" y="165.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">los 10 kinds</text>
 <rect id="g-event-3" class="node-fill node-stroke shape-rounded" x="600.00" y="140.25" width="118.00" height="49.50" rx="6.00" ry="6.00"/>
+<rect class="accent" x="601.00" y="183.75" width="116.00" height="5.00"/>
 <text class="node-text text" x="659.00" y="165.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">export</text>
 </g>
 </svg>

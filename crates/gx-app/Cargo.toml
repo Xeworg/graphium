@@ -12,6 +12,8 @@ gx-core = { workspace = true }
 gx-kinds = { workspace = true }
 gx-layout = { workspace = true }
 gx-render-svg = { workspace = true, features = ["png"] }
+# The languages of the book reach the binary as features (T4/C3): they are on by
+# default and a slim `graphium` asks for the ones it needs.
 gx-mcp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -20,6 +22,50 @@ signal-hook = { workspace = true }
 # the binary, so the tray needs the image decoder.
 tauri = { workspace = true, features = ["tray-icon", "image-png"] }
 tokio = { workspace = true }
+
+[features]
+default = [
+  "lang-rust",
+  "lang-typescript",
+  "lang-python",
+  "lang-go",
+  "lang-java",
+  "lang-javascript",
+  "lang-c",
+  "lang-cpp",
+  "lang-csharp",
+  "lang-php",
+  "lang-ruby",
+  "lang-sql",
+  "lang-shell",
+  "lang-swift",
+  "lang-kotlin",
+  "lang-dart",
+  "lang-scala",
+  "lang-r",
+  "lang-lua",
+  "lang-zig",
+]
+lang-rust = ["gx-mcp/lang-rust"]
+lang-typescript = ["gx-mcp/lang-typescript"]
+lang-python = ["gx-mcp/lang-python"]
+lang-go = ["gx-mcp/lang-go"]
+lang-java = ["gx-mcp/lang-java"]
+lang-javascript = ["gx-mcp/lang-javascript"]
+lang-c = ["gx-mcp/lang-c"]
+lang-cpp = ["gx-mcp/lang-cpp"]
+lang-csharp = ["gx-mcp/lang-csharp"]
+lang-php = ["gx-mcp/lang-php"]
+lang-ruby = ["gx-mcp/lang-ruby"]
+lang-sql = ["gx-mcp/lang-sql"]
+lang-shell = ["gx-mcp/lang-shell"]
+lang-swift = ["gx-mcp/lang-swift"]
+lang-kotlin = ["gx-mcp/lang-kotlin"]
+lang-dart = ["gx-mcp/lang-dart"]
+lang-scala = ["gx-mcp/lang-scala"]
+lang-r = ["gx-mcp/lang-r"]
+lang-lua = ["gx-mcp/lang-lua"]
+lang-zig = ["gx-mcp/lang-zig"]
 
 [build-dependencies]
 tauri-build = { workspace = true }

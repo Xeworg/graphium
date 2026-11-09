@@ -6,6 +6,7 @@ members = [
     "crates/gx-layout",
     "crates/gx-render-svg",
     "crates/gx-mcp",
+    "crates/gx-index",
     "crates/gx-app",
 ]
 
@@ -21,7 +22,12 @@ gx-core = { path = "crates/gx-core" }
 gx-kinds = { path = "crates/gx-kinds" }
 gx-layout = { path = "crates/gx-layout" }
 gx-render-svg = { path = "crates/gx-render-svg" }
-gx-mcp = { path = "crates/gx-mcp" }
+# `default-features = false` here is what makes the per-language features of the
+# book (T4/C3, RNF1-quater) a real lever: a dependent that wants the defaults
+# asks for them through its own features, so a slim `graphium` build really
+# leaves the grammars out instead of inheriting them from this table.
+gx-mcp = { path = "crates/gx-mcp", default-features = false }
+gx-index = { path = "crates/gx-index", default-features = false }
 
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
@@ -37,6 +43,22 @@ rustybuzz = "0.20.1"
 # (feature doc `f2-export.md`, L6) — and `memmap-fonts`/`raster-images` are off
 # because nothing here reads fonts or images from disk or from the document.
 resvg = { version = "0.45.1", default-features = false, features = ["text"] }
+# The book of the project (F9): the SQLite/FTS5 engine and its watcher.
+# `bundled` compiles SQLite with its own flags (FTS5 on), so the engine does
+# not depend on the flags of a system sqlite (ideas §10.1, delta 4).
+rusqlite = { version = "0.41", features = ["bundled"] }
+ignore = "0.4"
+notify = "8"
+sha2 = "0.10"
+tree-sitter = "0.25"
+tree-sitter-rust = "0.24"
+# The languages of C2 (T3, S3): the newest release of each grammar that
+# compiles against the tree-sitter 0.25 of the engine. One crate per language,
+# one module per crate in `crates/gx-index/src/lang/` (L5).
+tree-sitter-typescript = "0.23.2"
+tree-sitter-python = "0.25.0"
+tree-sitter-go = "0.25.0"
+tree-sitter-java = "0.23.5"
 tauri = { version = "2.12.5", features = [] }
 tauri-build = { version = "2.7.4", features = [] }
 
