@@ -4,6 +4,7 @@
 //! translation to the IR. Adding a kind never touches `gx-mcp` nor `gx-app`
 //! (PRD §7, O7).
 
+pub mod c4;
 pub mod class;
 pub mod component;
 pub mod dataflow;
@@ -36,6 +37,8 @@ pub fn register_all() {
     dataflow::register();
     timeline::register();
     swimlane::register();
+    // Los kinds nuevos entran al final: el registro los ordena por nombre.
+    c4::register();
 }
 
 /// The names of the kinds registered by this crate.
@@ -53,5 +56,6 @@ pub fn kind_names() -> Vec<&'static str> {
         dataflow::DataflowKind::KIND,
         timeline::TimelineKind::KIND,
         swimlane::SwimlaneKind::KIND,
+        c4::C4Kind::KIND,
     ]
 }

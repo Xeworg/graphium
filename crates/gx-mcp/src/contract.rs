@@ -412,6 +412,23 @@ fn limits_of(limits: gx_core::kind::KindLimits) -> LimitsPayload {
 /// The minimal example of a kind (PRD §6.1).
 fn min_example_of(kind: &str) -> Value {
     match kind {
+        "c4" => serde_json::json!({
+            "version": 1,
+            "kind": "c4",
+            "title": "Pedidos — contexto",
+            "level": "context",
+            "elements": [
+                { "id": "cliente", "type": "person", "label": "Cliente",
+                  "description": "hace el pedido" },
+                { "id": "operador", "type": "person", "label": "Operador" },
+                { "id": "pedidos", "type": "system", "label": "Sistema de pedidos",
+                  "technology": "Rust" }
+            ],
+            "relations": [
+                { "from": "cliente", "to": "pedidos", "label": "hace un pedido" },
+                { "from": "operador", "to": "pedidos", "label": "despacha" }
+            ]
+        }),
         "component" => serde_json::json!({
             "version": 1,
             "kind": "component",
@@ -675,6 +692,24 @@ fn rules_of(kind: &str) -> Vec<String> {
             rules.push("Un proceso necesita al menos un carril y al menos un paso.".to_string());
             rules.push(
                 "Cada paso referencia con `lane` un carril declarado, y el orden de `steps` es el orden del proceso."
+                    .to_string(),
+            );
+        }
+        "c4" => {
+            rules.push(
+                "El `level` decide qué `type` admite cada elemento: `context` → `person` y `system`; `containers` → `system` y `container`; `components` → `container` y `component`."
+                    .to_string(),
+            );
+            rules.push(
+                "Cada elemento tiene un `id` único y una `label`; `description` y `technology` son opcionales."
+                    .to_string(),
+            );
+            rules.push(
+                "Cada relación referencia con `from` y `to` elementos declarados en `elements`, y su `label` es el verbo (`usa`, `lee`, `cobra`)."
+                    .to_string(),
+            );
+            rules.push(
+                "No hay anidamiento en v1: la lectura sale de los tipos, del `level` y de las relaciones."
                     .to_string(),
             );
         }
@@ -1753,6 +1788,37 @@ mod tests {
                 Some(1)
             );
         }
+    }
+
+    /// S5/S6 de `f17-c4-kind.md`: el índice le da al agente el kind `c4` con
+    /// sus techos y sus niveles, y el ejemplo mínimo que trae válida y pinta.
+    #[test]
+    fn the_c4_kind_is_listed_with_its_limits_and_its_levels() {
+        let index = get_diagram_schema(None).kinds.expect("index");
+        let entry = index
+            .iter()
+            .find(|entry| entry.kind == "c4")
+            .expect("c4 is in the index");
+        assert_eq!(entry.engine, "layered");
+        assert_eq!(entry.phase, "F3");
+        assert_eq!(entry.limits.max_nodes, 300);
+        assert_eq!(entry.limits.max_edges, 600);
+        assert!(entry.disponible);
+
+        let example = entry.min_example.to_string();
+        let validated = validate_diagram(&example);
+        assert!(validated.ok, "{:?}", validated.errors);
+
+        let schema = get_diagram_schema(Some("c4"));
+        assert!(schema.ok);
+        assert_eq!(schema.limits.expect("limits").max_nodes, 300);
+        let rules = schema.rules.expect("rules");
+        assert!(
+            rules
+                .iter()
+                .any(|rule| rule.contains("level") && rule.contains("context")),
+            "the rules teach the level discipline: {rules:?}"
+        );
     }
 
     #[test]
