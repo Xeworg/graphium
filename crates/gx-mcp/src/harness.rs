@@ -16,7 +16,8 @@ Graphium owns, so nothing is written to disk.
 
 WHEN TO USE IT. When a picture explains the answer better than prose: the flow of \
 a function or a module, dependencies between packages, the schema of a database \
-(tables, columns, keys, cardinality), or an architecture of services. The human \
+(tables, columns, keys, cardinality), which `code_er` draws from a `.sql` file, or \
+an architecture of services. The human \
 asked to see it, or the explanation needs a shape that words make long. \
 WHEN NOT TO USE IT. For a single fact, a list of files, a diff, a stack trace or \
 anything that reads better as text: a diagram there costs a window and adds \
@@ -48,6 +49,12 @@ the human sees you.
 merge patch and the `revision` you read: it is transactional, so a bad patch \
 leaves the diagram untouched. Do not render a new one to replace it.
 
+THE CHEAP PATH. If the subject is in this project's index, do not write JSON by \
+hand: `code_search` locates a symbol, `code_diagram` draws its neighbourhood as a \
+ready `graph` document, and a `.sql` file becomes the `er` document of `code_er`; \
+the two documents go to `validate_diagram` and `render_diagram` unchanged. \
+Hand-write a document only when the subject is not in the index.
+
 BIG DIAGRAMS. Hundreds of nodes are not one picture: they are a view of one. \
 `render_diagram` accepts `opts.extract: { around: \"<id>\", depth }` (default \
 `depth: 1`, at most 300 nodes in the subgraph) and draws only the neighbourhood \
@@ -62,8 +69,10 @@ depth 8 with two laying out at a time: when the queue is full the answer is \
 `ok: false` with code `busy`, `queue_depth` and `retry_after_ms`, so wait that \
 long and send it again instead of retrying in a loop. `opts.focus: { id, depth? }` \
 puts the camera on one node and, with `depth`, on its neighbourhood (default 1, \
-max 300 nodes). `opts.replace_id` and `opts.interactive` arrive in F2/F3: \
-sending them today costs a warning, never the diagram.
+max 300 nodes). `opts.replace_id` is honoured today: it replaces the document of \
+the named diagram, and an unknown id answers `unknown_diagram` and creates \
+nothing. `opts.interactive` still arrives in F3: sending it today costs a warning \
+(`opts_ignored`), never the diagram.
 
 ERRORS. Every failure carries `{ path, code, message, hint? }` with a stable code \
 and the JSON path of the problem. `unknown_ref` and `duplicate_id` are rules of a \
@@ -71,7 +80,11 @@ kind, `unknown_field` means a key the schema does not admit (`hint` carries the 
 closest name), `unknown_kind` lists the kinds that exist, `too_large` means the \
 document is over the limit of its kind, `stale_revision` means you read an old \
 version, `layout_timeout` means the layout missed `opts.layout_timeout_ms`, and \
-`busy` means the queue of renders is full: wait `retry_after_ms` and try again. Fix \
+`busy` means the queue of renders is full: wait `retry_after_ms` and try again. In \
+the book, `invalid_value` means an argument the tool cannot use, `ambiguous_symbol` \
+means the name fits more than one declaration and `candidates[]` lists them, \
+`book_disabled` means the owner opted out with `GRAPHIUM_BOOK=off`, and \
+`book_unavailable` means the book of the project could not be opened. Fix \
 the path the error names instead of rewriting the whole document.
 
 THE PLAN. Diagrams stay on the plan until the human closes them or \
@@ -107,7 +120,10 @@ document of the version and render it again (with `opts.replace_id` to stay on \
 the same diagram). Use them when the human asks what changed or wants an older \
 shape back; the versions live only while the diagram is open.
 
-THE BOOK. `code_search` answers from the index of the project instead of \
+THE BOOK. The book answers the project the session's client declared \
+(`GRAPHIUM_PROJECT`, or the working directory when it declares none): a session \
+without a project gets `ok: false` with `invalid_value` at `session.project`. \
+`code_search` answers from the index of the project instead of \
 reading files: it returns the `file`, `line`, `kind`, `name`, `qname`, \
 `content_hash` and `indexed_at` of one symbol, plus the `book_key` of the book \
 that answered. Use it to locate the code behind a diagram, or to find a \
@@ -136,12 +152,15 @@ and states every cut in `truncated: {reason, shown, total, next}`, with `next` \
 as the call that continues it. `unresolved` counts the names the book could not \
 pin down (resolution is by name, only while a name has at most five definers). \
 Those connections are syntactic, not typed: they are read from the code and may \
-be false positives. Every answer of the book is bounded in characters as well: \
-it reports `chars` (what it spends) and `max_chars` (the envelope it had — the \
-ladder of the book by indexed files, 13,000 up to 150, 18,000 up to 500, \
-24,000 beyond, overridable with the `max_chars` argument up to 1.5 times), the \
-head keeps the full rows and the tail cliffs to one-line `pointers`, and a cut \
-in all three tools says `reason: \"budget\"` with the exact wider call in `next`. \
+be false positives. Only `code_structure`, `code_impact` and `code_diagram` take \
+`max_chars` and report `chars` (what it spends) and `max_chars` (the envelope it \
+had — the ladder of the book by indexed files, 13,000 up to 150, 18,000 up to \
+500, 24,000 beyond, overridable with the `max_chars` argument up to 1.5 times); \
+past the envelope the head keeps the full rows, the tail cliffs to one-line \
+`pointers`, and the cut says `reason: \"budget\"` with the exact wider call in \
+`next`. `code_search` and `code_er` have no envelope: `code_search` answers one \
+row or `candidates[]`, `code_er` answers the whole document, and a `max_chars` \
+sent to either is refused as an unknown field (`deny_unknown_fields`). \
 `code_diagram` turns the same neighbourhood into a `graph` \
 document in `diagram`, ready to send to `render_diagram` with no repair: that \
 is the cheap diagram, drawn from the book instead of from the code; it takes \
@@ -392,7 +411,9 @@ file yourself: the answer carries the document in `diagram` (`version: 1`, \
 `kind: \"er\"`), ready to send to `validate_diagram` and then `render_diagram` as \
 it is, the same contract `code_diagram` keeps. `path` is the file relative to \
 the project root with `/` separators, the way the book stores it \
-(`db/schema.sql`); absolute paths and `..` are refused. The source is read live, \
+(`db/schema.sql`); absolute paths, `..` and a leading `./` are refused the same \
+way, with `ok: false`, code `invalid_value` at `path`, because the guard reads \
+path components before anything is opened. The source is read live, \
 so the document is the file as it is now, not the indexed snapshot. A file that \
 produces no document — another language, a DDL with no column list, or a build \
 without the SQL grammar — answers `ok: false` with the three causes named. The \
@@ -411,13 +432,10 @@ and never touches the plan."
 /// the file it expects.
 pub fn client_config(client: &str, command: &str) -> String {
     match client {
-        "pi" => format!(
-            "[mcp_servers.graphium]\ncommand = {command:?}\nargs = [\"--stdio\"]\n"
-        ),
-        "claude" => format!(
-            "{{\n  \"mcpServers\": {{\n    \"graphium\": {{\n      \"command\": {command:?},\n      \"args\": [\"--stdio\"]\n    }}\n  }}\n}}"
-        ),
-        "cursor" => format!(
+        // S6: Pi reads a JSON `mcp.json` (`~/.pi/agent/mcp.json`), with the
+        // same `mcpServers` object Claude and Cursor read; the TOML of
+        // `[mcp_servers.graphium]` is the shape of another client entirely.
+        "pi" | "claude" | "cursor" => format!(
             "{{\n  \"mcpServers\": {{\n    \"graphium\": {{\n      \"command\": {command:?},\n      \"args\": [\"--stdio\"]\n    }}\n  }}\n}}"
         ),
         _ => format!("{{\"command\":{command:?},\"args\":[\"--stdio\"]}}"),
@@ -463,6 +481,10 @@ mod tests {
             "stale_revision",
             "layout_timeout",
             "busy",
+            "book_disabled",
+            "book_unavailable",
+            "ambiguous_symbol",
+            "invalid_value",
         ] {
             assert!(INSTRUCTIONS.contains(code), "falta `{code}`");
         }
@@ -529,6 +551,9 @@ mod tests {
 
     /// S21: the agent learns that `opts.extract`, `opts.layout_timeout_ms` and
     /// `extracted_from` exist without reading any other document.
+    ///
+    /// S1: and the sentence about `opts.replace_id`/`opts.interactive` says the
+    /// truth: `replace_id` is honoured today and only `interactive` still waits.
     #[test]
     fn the_harness_teaches_opts_extract_and_the_layout_deadline() {
         let render = description("render_diagram");
@@ -549,6 +574,113 @@ mod tests {
             assert!(
                 INSTRUCTIONS.contains(future),
                 "the instructions lack `{future}`"
+            );
+        }
+        // S1: the stale F2/F3 sentence is gone; `replace_id` is honoured now
+        // and only `interactive` still costs the warning.
+        assert!(
+            INSTRUCTIONS.contains("`opts.replace_id` is honoured today"),
+            "the instructions have to say `replace_id` is honoured"
+        );
+        assert!(
+            INSTRUCTIONS.contains("an unknown id answers `unknown_diagram` and creates nothing"),
+            "the instructions have to say what an unknown `replace_id` does"
+        );
+        assert!(
+            INSTRUCTIONS.contains("`opts.interactive` still arrives in F3"),
+            "the instructions have to say `interactive` is still not honoured"
+        );
+        assert!(
+            INSTRUCTIONS.contains("costs a warning"),
+            "the instructions have to say what `interactive` costs"
+        );
+        assert!(
+            !INSTRUCTIONS.contains("arrive in F2/F3"),
+            "the stale sentence is gone"
+        );
+    }
+
+    /// S2: the character envelope is a fact of the three tools that take
+    /// `max_chars`, and the other two answer without one — the instructions
+    /// must not promise it for all five.
+    #[test]
+    fn the_instructions_bound_only_the_three_tools_with_an_envelope() {
+        for tool in ["code_structure", "code_impact", "code_diagram"] {
+            assert!(
+                INSTRUCTIONS.contains(tool),
+                "the instructions have to name the bounded tool `{tool}`"
+            );
+        }
+        assert!(
+            INSTRUCTIONS.contains("Only `code_structure`, `code_impact` and `code_diagram` take"),
+            "the bound is stated for its three tools"
+        );
+        assert!(
+            INSTRUCTIONS.contains("13,000 up to 150, 18,000 up to 500, 24,000 beyond"),
+            "the ladder numbers stay"
+        );
+        assert!(
+            INSTRUCTIONS.contains("up to 1.5 times"),
+            "the 1.5x ceiling stays"
+        );
+        assert!(
+            INSTRUCTIONS.contains("`code_search` and `code_er` have no envelope"),
+            "the two tools without an envelope are named"
+        );
+        assert!(
+            INSTRUCTIONS.contains("`deny_unknown_fields`"),
+            "`max_chars` on those two is refused as an unknown field"
+        );
+        assert!(
+            !INSTRUCTIONS.contains("Every answer of the book is bounded"),
+            "the false universal is gone"
+        );
+    }
+
+    /// S3: the cheap path comes before BIG DIAGRAMS: a subject in the index is
+    /// drawn from the book, and JSON is hand-written only when it is not there.
+    #[test]
+    fn the_instructions_teach_the_cheap_path_of_the_book() {
+        let cheap = INSTRUCTIONS
+            .find("THE CHEAP PATH.")
+            .expect("the instructions name the cheap path");
+        let big = INSTRUCTIONS
+            .find("BIG DIAGRAMS.")
+            .expect("BIG DIAGRAMS stays");
+        let manual = INSTRUCTIONS.find("HOW, IN ORDER.").expect("HOW stays");
+        assert!(
+            manual < cheap && cheap < big,
+            "the cheap path comes after HOW and before BIG DIAGRAMS"
+        );
+        for needle in [
+            "`code_search` locates a symbol",
+            "`code_diagram` draws its neighbourhood as a ready `graph` document",
+            "`.sql` file becomes the `er` document of `code_er`",
+            "go to `validate_diagram` and `render_diagram` unchanged",
+            "Hand-write a document only when the subject is not in the index",
+        ] {
+            assert!(
+                INSTRUCTIONS.contains(needle),
+                "the cheap path lacks `{needle}`"
+            );
+        }
+        assert!(
+            INSTRUCTIONS.contains("which `code_er` draws from a `.sql` file"),
+            "the WHEN TO USE IT database bullet names `code_er`"
+        );
+    }
+
+    /// S4: the book states its precondition (the declared project) and the
+    /// instructions name the codes of its refusals.
+    #[test]
+    fn the_instructions_state_the_precondition_of_the_book() {
+        for needle in [
+            "`GRAPHIUM_PROJECT`, or the working directory when it declares none",
+            "without a project gets `ok: false` with `invalid_value` at `session.project`",
+        ] {
+            assert!(
+                INSTRUCTIONS.contains(needle),
+                "the book precondition lacks `{needle}`"
             );
         }
     }
@@ -575,11 +707,25 @@ mod tests {
         );
     }
 
+    /// S6: Pi reads a JSON `mcp.json`, so the config printed for it is the
+    /// `mcpServers` object its README documents; claude, cursor and generic
+    /// keep exactly the shapes they had.
     #[test]
-    fn the_pi_config_is_toml_and_the_rest_is_json() {
+    fn the_pi_config_is_json_and_the_rest_keeps_its_shape() {
         let pi = client_config("pi", "/usr/local/bin/graphium");
-        assert!(pi.contains("[mcp_servers.graphium]"));
-        assert!(pi.contains("args = [\"--stdio\"]"));
+        let value: serde_json::Value = serde_json::from_str(&pi).expect("pi reads JSON");
+        assert_eq!(
+            value["mcpServers"]["graphium"]["command"],
+            "/usr/local/bin/graphium"
+        );
+        assert_eq!(
+            value["mcpServers"]["graphium"]["args"],
+            serde_json::json!(["--stdio"])
+        );
+        assert!(
+            !pi.contains("[mcp_servers.graphium]"),
+            "pi is not TOML: {pi}"
+        );
 
         for client in ["claude", "cursor", "generic"] {
             let config = client_config(client, "/usr/local/bin/graphium");
@@ -612,6 +758,16 @@ mod tests {
         assert!(text.contains("on by default"), "{text}");
         assert!(text.contains("GRAPHIUM_BOOK=off"), "{text}");
         assert!(!text.contains("GRAPHIUM_BOOK=on"), "{text}");
+        // S5: the refusal shape is named, and a leading `./` is refused like
+        // the absolute path and the `..` beside it (the guard reads components).
+        for needle in [
+            "`ok: false`",
+            "code `invalid_value` at `path`",
+            "a leading `./`",
+            "the guard reads path components",
+        ] {
+            assert!(text.contains(needle), "code_er lacks `{needle}`: {text}");
+        }
     }
 
     /// f13 S6: the instructions teach the tool's place in the book section,
