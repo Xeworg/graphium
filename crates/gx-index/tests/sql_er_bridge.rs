@@ -551,3 +551,165 @@ CREATE TABLE shipment (
         "and its relation is drawn, because the er contract can anchor it"
     );
 }
+
+/// The detail of one chapter of a merged project, as the door concatenates it:
+/// the tables of the chapter in the order the book lists its chapters, or
+/// nothing when a chapter carries no table (S2/S3 of f15).
+#[cfg(feature = "lang-sql")]
+fn details_of(chapters: &[(&str, &str)]) -> Vec<ParsedTable> {
+    let mut merged: Vec<ParsedTable> = Vec::new();
+    for (path, source) in chapters {
+        let parsed = parse(path, source.as_bytes(), 0).expect("the grammar of the chapter");
+        if let Some(tables) = parsed.tables {
+            merged.extend(tables);
+        }
+    }
+    merged
+}
+
+/// S4/S5 (f15): the merge is the bridge fed the merged slice — a foreign key in
+/// one chapter that references a table declared in **another** chapter anchors,
+/// because `document_json` resolves `anchor`/`primary_key` over the whole slice
+/// and never over one chapter at a time.
+#[cfg(feature = "lang-sql")]
+#[test]
+fn a_foreign_key_across_two_chapters_anchors_on_the_merged_slice() {
+    const USERS: &str = "\
+CREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  name TEXT NOT NULL\n);\n";
+    const POSTS: &str = "\
+CREATE TABLE posts (\n  id INTEGER PRIMARY KEY,\n  user_id INTEGER NOT NULL REFERENCES users(id),\n  title TEXT\n);\n";
+
+    // The per-chapter answer still loses the cross-file key: the target table
+    // is not in the slice, so the bridge draws no relation for it. That is the
+    // finding S1 closes («a FK to a table declared in another `.sql` silently
+    // vanishes»), pinned as the reason the merge exists.
+    let posts_alone = er_bridge::document(
+        parse("db/posts.sql", POSTS.as_bytes(), 0)
+            .expect("the SQL grammar")
+            .tables
+            .as_deref()
+            .expect("the detail of the chapter"),
+    )
+    .expect("the table with rows draws");
+    assert!(
+        relations(&posts_alone).is_empty(),
+        "one chapter alone cannot anchor a key to a table it does not carry: {:?}",
+        relations(&posts_alone)
+    );
+
+    let merged = details_of(&[("db/users.sql", USERS), ("db/posts.sql", POSTS)]);
+    let text = er_bridge::document_json(&merged).expect("the merged detail draws");
+    let document: Value = serde_json::from_str(&text).expect("the document is JSON");
+
+    assert_eq!(
+        document["tables"]
+            .as_array()
+            .expect("tables")
+            .iter()
+            .map(|table| table["name"].as_str().expect("a table has a name"))
+            .collect::<Vec<_>>(),
+        ["users", "posts"],
+        "the merged slice draws the tables of both chapters, in the order the \
+         book lists them"
+    );
+    assert_eq!(
+        relations(&document),
+        [relation("users", "id", "posts", "user_id")],
+        "the cross-file foreign key anchors at last: `users.id` is a key of the \
+         merged slice, so the relation `posts.user_id` declares is drawn"
+    );
+    assert_eq!(
+        rows(&document, "posts"),
+        [
+            row("id", "INTEGER", "pk", false),
+            row("user_id", "INTEGER", "fk", false),
+            row("title", "TEXT", "", true),
+        ],
+        "the referencing column keeps its `fk` row, as it did per chapter"
+    );
+}
+
+/// S2/S4 (f15): a table name the merged slice carries twice is drawn **once**,
+/// and the first occurrence wins — `drawable()` dedupes by name, so the second
+/// chapter's copy contributes rows only when the first one had none to draw.
+#[cfg(feature = "lang-sql")]
+#[test]
+fn a_table_name_declared_twice_is_drawn_once_with_the_first_occurrence() {
+    const FIRST: &str = "\
+CREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  name TEXT NOT NULL\n);\n";
+    // The same table, migrated: another shape under the same name.
+    const SECOND: &str = "\
+CREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  email TEXT NOT NULL\n);\n\
+CREATE TABLE posts (\n  id INTEGER PRIMARY KEY,\n  user_id INTEGER NOT NULL REFERENCES users(id)\n);\n";
+
+    let merged = details_of(&[("db/001-users.sql", FIRST), ("db/002-users.sql", SECOND)]);
+    let document: Value =
+        serde_json::from_str(&er_bridge::document_json(&merged).expect("the merged detail draws"))
+            .expect("the document is JSON");
+
+    assert_eq!(
+        document["tables"]
+            .as_array()
+            .expect("tables")
+            .iter()
+            .filter(|table| table["name"] == "users")
+            .count(),
+        1,
+        "the er contract keys a table by name, so `users` is one compartment: {document}"
+    );
+    assert_eq!(
+        rows(&document, "users"),
+        [
+            row("id", "INTEGER", "pk", false),
+            row("name", "TEXT", "", false),
+        ],
+        "the first occurrence wins: the second chapter's `users` adds no row to \
+         the document"
+    );
+    assert_eq!(
+        relations(&document),
+        [relation("users", "id", "posts", "user_id")],
+        "the relation of the second chapter still anchors on the drawn `users`"
+    );
+}
+
+/// S3 (f15): a chapter with no table contributes nothing to the merge — it is
+/// not an empty node and it does not change the document of the chapters that
+/// do carry detail.
+#[cfg(feature = "lang-sql")]
+#[test]
+fn a_chapter_with_no_tables_contributes_nothing_to_the_merge() {
+    const USERS: &str = "\
+CREATE TABLE users (\n  id INTEGER PRIMARY KEY,\n  name TEXT NOT NULL\n);\n";
+    // Parses, carries no table: another language and a SQL chapter of notes.
+    const NOTES_SQL: &str = "-- the schema is in db/users.sql\nSELECT 1;\n";
+    const RUST: &str = "pub fn main() {}\n";
+
+    let alone = details_of(&[("db/users.sql", USERS)]);
+    let with_empty = details_of(&[
+        ("db/notes.sql", NOTES_SQL),
+        ("db/users.sql", USERS),
+        ("src/main.rs", RUST),
+    ]);
+
+    assert_eq!(
+        er_bridge::document_json(&with_empty),
+        er_bridge::document_json(&alone),
+        "a chapter with no tables is not a table of the merged document and \
+         changes nothing about the ones that are"
+    );
+    let document: Value = serde_json::from_str(
+        &er_bridge::document_json(&with_empty).expect("the merged detail draws"),
+    )
+    .expect("the document is JSON");
+    assert_eq!(
+        document["tables"]
+            .as_array()
+            .expect("tables")
+            .iter()
+            .map(|table| table["name"].as_str().expect("a table has a name"))
+            .collect::<Vec<_>>(),
+        ["users"],
+        "only the chapter that declares a table appears"
+    );
+}

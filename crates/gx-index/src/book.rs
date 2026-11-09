@@ -330,6 +330,23 @@ impl Book {
         Ok(paths)
     }
 
+    /// The paths of the chapters whose language is `lang`, sorted by path
+    /// (f15, S3): the chapter list one merged document is built from.
+    ///
+    /// The list is the book's — the same source that knows which files are
+    /// chapters — and never a walk of the worktree; a chapter the watcher has
+    /// not removed yet is still named here, and the caller is the one that
+    /// skips it when its file no longer reads.
+    pub fn paths_of_language(&self, lang: &str) -> Result<Vec<String>, BookError> {
+        let writer = self.writer.lock().expect("the book writer lock");
+        let mut statement =
+            writer.prepare("SELECT path FROM file WHERE lang = ?1 ORDER BY path")?;
+        let paths = statement
+            .query_map([lang], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(paths)
+    }
+
     /// Reads the progress of the first index (S9).
     pub fn progress(&self) -> Result<Progress, BookError> {
         let writer = self.writer.lock().expect("the book writer lock");

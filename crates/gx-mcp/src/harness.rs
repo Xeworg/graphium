@@ -167,7 +167,9 @@ is the cheap diagram, drawn from the book instead of from the code; it takes \
 the same `edges` filter and keeps the 300/600 ceilings, so `truncated.reason` \
 says `density` when the document was trimmed and `nodes`/`edges` when the walk \
 was cut. `code_er` hands you the `er` document of one `.sql` file of the \
-project (`path`, relative to the project root with `/` separators): its tables \
+project (`path`, relative to the project root with `/` separators) — or, with \
+`scope: \"project\"`, of every `.sql` chapter of the book merged into one \
+document, with `files` counting the chapters it parsed: its tables \
 as compartments with their columns and the keys between them, in `diagram`, \
 ready for `validate_diagram` and then `render_diagram` — the picture of a \
 database read live from the file instead of from the code. The book is \
@@ -407,7 +409,8 @@ session; with `scope: \"plano\"` it clears the whole plan, including the ones of
 other sessions. It does not close the window and does not stop the MCP session."
         }
         "code_er" => {
-            "Build the `er` document of one `.sql` file of the project — its tables as \
+            "Build the `er` document of one `.sql` file of the project — or of the whole \
+project with `scope: \"project\"` — its tables as \
 compartments with their columns and the keys between them — without reading the \
 file yourself: the answer carries the document in `diagram` (`version: 1`, \
 `kind: \"er\"`), ready to send to `validate_diagram` and then `render_diagram` as \
@@ -419,6 +422,14 @@ path components before anything is opened. The source is read live, \
 so the document is the file as it is now, not the indexed snapshot. A file that \
 produces no document — another language, a DDL with no column list, or a build \
 without the SQL grammar — answers `ok: false` with the three causes named. \
+`scope` chooses the breadth, never the contract: `\"file\"` (the default) draws \
+only the file `path` names; `\"project\"` parses every `.sql` chapter the book \
+knows live from disk, merges them in the book's chapter order — a table name \
+declared twice is drawn once, a foreign key that points at a table in another \
+file anchors — and answers one document, with `files` reporting how many \
+chapters were parsed and a chapter that no longer reads skipped. `path` stays \
+required under both scopes: it names the file of the answer, and under \
+`\"project\"` its tables take part in the merge like any other chapter's. \
 Beside `diagram` the answer reports `tables`, `relations` and `chars` (the byte \
 length of the document), so its size is read without counting the JSON. The \
 ceilings of the `er` kind apply at the render — a schema bigger than the kind \
@@ -773,6 +784,23 @@ mod tests {
             "a leading `./`",
             "the guard reads path components",
         ] {
+            assert!(text.contains(needle), "code_er lacks `{needle}`: {text}");
+        }
+    }
+
+    /// f15 S6: the two copies of the `code_er` description — the const the
+    /// stdio router publishes and `description()`, which the harness and the
+    /// relay read — are one text, byte for byte, and both name the new scope
+    /// and the count a merged document answers with.
+    #[test]
+    fn the_code_er_description_names_the_scope_in_both_copies() {
+        let text = description("code_er");
+        assert_eq!(
+            text,
+            crate::CODE_ER_DESCRIPTION,
+            "the duplicated copies of the `code_er` description drifted apart"
+        );
+        for needle in ["`scope`", "`\"project\"`", "`\"file\"`", "`files`"] {
             assert!(text.contains(needle), "code_er lacks `{needle}`: {text}");
         }
     }
