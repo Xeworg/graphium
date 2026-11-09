@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 15] = [
+const CASES: [(&str, &str); 16] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -48,6 +48,7 @@ const CASES: [(&str, &str); 15] = [
     ("class-shop", CLASS_SHOP),
     ("component-api", COMPONENT_API),
     ("component-nested", COMPONENT_NESTED),
+    ("c4-context", C4_CONTEXT),
 ];
 
 const MINIMAL: &str = r#"{
@@ -320,6 +321,28 @@ const COMPONENT_NESTED: &str = r#"{
     { "from": "web", "to": "api", "label": "HTTPS" },
     { "from": "api", "to": "db", "label": "SQL" },
     { "from": "api", "to": "pagos", "label": "cobro" }
+  ]
+}"#;
+
+/// S5 de `f17-c4-kind.md`: un contexto C4 —dos personas, un sistema y las dos
+/// relaciones que las conectan—. Cada elemento se dibuja como una caja con su
+/// etiqueta en el encabezado y su tipo en el compartimento de detalle, con la
+/// tecnología a la derecha; cada relación lleva su verbo.
+const C4_CONTEXT: &str = r#"{
+  "version": 1,
+  "kind": "c4",
+  "title": "Pedidos — contexto",
+  "level": "context",
+  "elements": [
+    { "id": "cliente", "type": "person", "label": "Cliente",
+      "description": "hace el pedido" },
+    { "id": "soporte", "type": "person", "label": "Soporte" },
+    { "id": "pedidos", "type": "system", "label": "Sistema de pedidos",
+      "technology": "Rust + Svelte" }
+  ],
+  "relations": [
+    { "from": "cliente", "to": "pedidos", "label": "usa" },
+    { "from": "soporte", "to": "pedidos", "label": "consulta" }
   ]
 }"#;
 
