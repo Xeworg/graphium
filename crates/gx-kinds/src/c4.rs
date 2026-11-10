@@ -116,6 +116,10 @@ impl DiagramKind for C4Kind {
         schemars::schema_for!(C4Input)
     }
 
+    fn shapes() -> Vec<Shape> {
+        vec![Shape::Box]
+    }
+
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
         let mut errors = validate_header(Self::KIND, &input.kind, SUPPORTED_VERSION, input.version);
 

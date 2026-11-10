@@ -36,6 +36,15 @@
 
 /** The shapes of `gx-core/src/ir.rs`. */
 const SHAPES = ["box", "rounded", "cylinder", "diamond", "ellipse", "note"];
+
+/** The shape of a node, or the loud end of the run: a shape the painter does
+ * not know never paints as a plausible box (`f19-formas.md`, S5). */
+function shapeOf(shape) {
+  if (!SHAPES.includes(shape)) {
+    throw new Error(`the scene names a shape the painter does not know: ${shape}`);
+  }
+  return shape;
+}
 /** The emphases of `gx-core/src/ir.rs`. */
 const EMPHASES = ["normal", "highlight", "muted"];
 /** The key roles of a row. */
@@ -179,7 +188,7 @@ function nodeOf(raw) {
   return {
     id: raw.id,
     label: raw.label,
-    shape: SHAPES.includes(raw.shape) ? raw.shape : "box",
+    shape: shapeOf(raw.shape),
     emphasis: EMPHASES.includes(raw.emphasis) ? raw.emphasis : "normal",
     style: raw.style === "dashed" ? "dashed" : "solid",
     center,

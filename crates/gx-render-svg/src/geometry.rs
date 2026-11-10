@@ -229,15 +229,8 @@ pub(crate) fn push_emphasis(classes: &mut String, emphasis: Emphasis, for_text: 
 
 /// The class of a shape: the painter mounts the same names, so the CSS rules of
 /// the page and the stylesheet of the export say the same thing.
-pub(crate) fn shape_class(shape: Shape) -> &'static str {
-    match shape {
-        Shape::Box => "shape-box",
-        Shape::Rounded => "shape-rounded",
-        Shape::Cylinder => "shape-cylinder",
-        Shape::Diamond => "shape-diamond",
-        Shape::Ellipse => "shape-ellipse",
-        Shape::Note => "shape-note",
-    }
+pub(crate) fn shape_class(shape: Shape) -> String {
+    format!("shape-{}", shape.as_str())
 }
 
 /// The lines a label breaks into.

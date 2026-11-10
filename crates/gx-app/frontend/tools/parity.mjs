@@ -47,6 +47,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { evaluate, launch, openPage, serve } from "./lib/harness.mjs";
+import { shapeClass } from "../src/lib/scene/glyph.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, ".."); // crates/gx-app/frontend
@@ -179,6 +180,33 @@ function sceneFixture(marker, width = 320, height = 180) {
     events: [],
   };
 }
+
+/**
+ * One render payload per shape of `gx-core/src/ir.rs` (`f19-formas.md`, S6):
+ * the probe mounts each one and expects the glyph with its own class. A shape
+ * the painter does not know fails loud (scene.js `shapeOf`), so a forgotten
+ * painter branch is a red run, never a plausible box.
+ */
+const SHAPES_OF_THE_IR = ["box", "rounded", "cylinder", "diamond", "ellipse", "note"];
+const SHAPE_PAYLOADS = SHAPES_OF_THE_IR.map((shape) => {
+  const scene = sceneFixture(shape, 200, 120);
+  scene.nodes[0].shape = shape;
+  return {
+    req_id: `r-shape-${shape}`,
+    diagram_id: `d-shape-${shape}`,
+    session_id: "s1",
+    elements: scene,
+    placement: { x: 40, y: 40 },
+    camera: { tx: 0, ty: 0, zoom: 1 },
+  };
+});
+/** What the probe needs per shape: the case and the object it will land on.
+ * The payload itself travels separately — the window reads known fields
+ * only. */
+const SHAPE_CASES = SHAPES_OF_THE_IR.map((shape) => ({
+  shape,
+  diagram_id: `d-shape-${shape}`,
+}));
 
 const RENDER = {
   req_id: "r1",
@@ -2043,11 +2071,80 @@ async function staticChecks() {
 
 // --- main ------------------------------------------------------------------
 
+/**
+ * S6 (`f19-formas.md`): every shape paints its own class. One fresh page per
+ * shape — the window bounds the mounted SVGs on its canvas and follows the
+ * newest diagram, so stacking all six in one page makes the later ones cull
+ * out. A shape the painter does not know fails loud (S5), so this gate is
+ * what turns a forgotten painter branch into a red run instead of a
+ * plausible box.
+ */
+async function runShapeProbes(browser) {
+  const server = await serve(SVELTE_DIR);
+  const results = [];
+  try {
+    for (const shape of SHAPES_OF_THE_IR) {
+      const payload = SHAPE_PAYLOADS.find((candidate) => candidate.req_id === `r-shape-${shape}`);
+      const page = await openPage(browser, server.url, "global");
+      try {
+        const expression = `(async () => {
+          __t.rust('graphium://render', ${JSON.stringify(payload)});
+          for (let attempt = 0; attempt < 30; attempt++) {
+            await __t.wait(100);
+            const object = document.querySelector('#plan .diagram');
+            if (object !== null && object.querySelector('.shape-${shape}') !== null) {
+              return { painted: true };
+            }
+          }
+          const object = document.querySelector('#plan .diagram');
+          const content = object === null ? null : object.querySelector('.content');
+          return { painted: false, content: content === null ? 'null' : content.innerHTML.slice(0, 300) };
+        })()`;
+        const value = await evaluate(browser.cdp, page.session.sessionId, expression);
+        results.push({
+          scenario: "shapes",
+          build: "svelte",
+          id: ["S6"],
+          name: `${shape} paints its own class`,
+          compare: "report",
+          ok: value.painted === true,
+          value,
+          error: value.painted === true ? undefined : `content: ${value.content}`,
+        });
+      } finally {
+        await page.close();
+      }
+    }
+  } finally {
+    await server.close();
+  }
+  return results;
+}
+
 async function main() {
   if (!existsSync(path.join(SVELTE_DIR, "index.html"))) {
     console.error("parity: no bundle at dist/ — run scripts/build.sh (or `npm run build`) first");
     process.exit(2);
   }
+
+  // The shape vocabulary gate (`f19-formas.md`, S5): the class of every shape
+  // is its own word, and an unknown shape is a loud end, never a plausible
+  // box.
+  for (const shape of SHAPES_OF_THE_IR) {
+    const cls = shapeClass(shape);
+    if (cls !== `shape-${shape}`) {
+      console.error(`parity: shapeClass("${shape}") returned ${cls}`);
+      process.exit(1);
+    }
+  }
+  try {
+    shapeClass("hexagon");
+    console.error("parity: shapeClass accepted an unknown shape — the painter still fails soft");
+    process.exit(1);
+  } catch {
+    // loud is right
+  }
+
   const builds = [["svelte", SVELTE_DIR]];
 
   const browser = await launch(CHROMIUM);
@@ -2057,6 +2154,7 @@ async function main() {
       const results = await runBuild(browser, name, root, 0);
       all.push(...results);
     }
+    all.push(...(await runShapeProbes(browser)));
   } finally {
     await browser.close();
   }

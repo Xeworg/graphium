@@ -26,8 +26,22 @@
  * float tail.
  */
 export function num(value) {
-  const rounded = Math.round(value * 100) / 100;
-  return Object.is(rounded, -0) ? 0 : rounded;
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  const scaled = value * 100;
+  const lower = Math.floor(scaled);
+  const remainder = scaled - lower;
+  // Round-half-to-even at two decimals: the canonical rule of
+  // `gx-core/src/fmt.rs` (PRD §8.5.1). `Math.round` rounds every .5 up, so
+  // 91.125 became 91.13 while the export wrote 91.12 — the exact drift the
+  // equivalence gate caught on the baselines of the c4 golden.
+  let rounded;
+  if (remainder > 0.5) rounded = lower + 1;
+  else if (remainder < 0.5) rounded = lower;
+  else rounded = lower % 2 === 0 ? lower : lower + 1;
+  const result = rounded / 100;
+  return Object.is(result, -0) ? 0 : result;
 }
 
 /** A list of points as the `points` attribute of a polyline or a polygon. */
@@ -79,9 +93,12 @@ export function nodeRect(node) {
 
 // --- classes (S3) -----------------------------------------------------------
 
-/** The class of a shape: the names the emitter writes. */
+/** The class of a shape: the names the emitter writes. An unknown shape is a
+ * loud end of the run, never a plausible box (`f19-formas.md`, S5). */
 export function shapeClass(shape) {
   switch (shape) {
+    case "box":
+      return "shape-box";
     case "rounded":
       return "shape-rounded";
     case "cylinder":
@@ -93,7 +110,7 @@ export function shapeClass(shape) {
     case "note":
       return "shape-note";
     default:
-      return "shape-box";
+      throw new Error(`the painter does not know the shape: ${shape}`);
   }
 }
 

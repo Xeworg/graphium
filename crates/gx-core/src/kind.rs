@@ -15,7 +15,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::error::{ErrorCode, ValidationError};
-use crate::ir::{Ir, LayoutHint};
+use crate::ir::{Ir, LayoutHint, Shape};
 
 /// Limits declared by a kind (PRD §7.3). They live in one place: the kind
 /// module, never repeated in another crate.
@@ -60,6 +60,13 @@ pub trait DiagramKind: Send + Sync + Default {
 
     /// The JSON schema of the kind.
     fn schema() -> schemars::Schema;
+
+    /// The shapes the kind draws, as the schema reports them (PRD §11.1,
+    /// `f19-formas.md` S4): the truth of the kind, never a hand list. Role
+    /// tables derive it; kinds without one draw their default.
+    fn shapes() -> Vec<Shape> {
+        vec![Shape::Rounded]
+    }
 }
 
 /// Object safe view of a kind, used by the registry.
@@ -68,6 +75,9 @@ pub trait KindHandler: Send + Sync {
     fn layout_hint(&self) -> LayoutHint;
     fn limits(&self) -> KindLimits;
     fn schema(&self) -> schemars::Schema;
+
+    /// The shapes the kind draws (`f19-formas.md`, S4).
+    fn shapes(&self) -> Vec<Shape>;
 
     /// Validates a document against the kind contract.
     fn validate_json(&self, document: &Value) -> Result<(), Vec<ValidationError>>;
@@ -108,6 +118,10 @@ impl<K: DiagramKind> KindHandler for KindAdapter<K> {
 
     fn schema(&self) -> schemars::Schema {
         K::schema()
+    }
+
+    fn shapes(&self) -> Vec<Shape> {
+        K::shapes()
     }
 
     fn validate_json(&self, document: &Value) -> Result<(), Vec<ValidationError>> {

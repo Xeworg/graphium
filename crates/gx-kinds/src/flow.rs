@@ -75,6 +75,18 @@ fn shape_of(roles: &[Role], role: &str) -> Shape {
         .unwrap_or(Shape::Rounded)
 }
 
+/// The shapes a role table draws, in table order, without repeats
+/// (`f19-formas.md`, S4): the truth of the kind, derived once.
+pub fn shapes_of_roles(roles: &[Role]) -> Vec<Shape> {
+    let mut shapes: Vec<Shape> = Vec::new();
+    for role in roles {
+        if !shapes.contains(&role.shape) {
+            shapes.push(role.shape);
+        }
+    }
+    shapes
+}
+
 /// Validates a flow document: the rules JSON Schema cannot express.
 ///
 /// `roles` are the roles the kind admits and `default_role` the one used when

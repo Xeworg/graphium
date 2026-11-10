@@ -381,7 +381,7 @@ fn write_node(out: &mut String, node: &IrNode, placed: &NodeBox) {
     let rect = node_rect(placed);
     let id = escape_text(&node_id(&node.id));
     let mut classes = String::from("node-fill node-stroke ");
-    classes.push_str(shape_class(node.shape));
+    classes.push_str(&shape_class(node.shape));
     if node.style == Style::Dashed {
         classes.push_str(" stroke-dashed");
     }

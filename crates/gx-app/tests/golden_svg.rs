@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 17] = [
+const CASES: [(&str, &str); 18] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -50,6 +50,7 @@ const CASES: [(&str, &str); 17] = [
     ("component-nested", COMPONENT_NESTED),
     ("c4-context", C4_CONTEXT),
     ("gantt-plan", GANTT_PLAN),
+    ("graph-note", GRAPH_NOTE),
 ];
 
 const MINIMAL: &str = r#"{
@@ -526,4 +527,15 @@ const GANTT_PLAN: &str = r#"{
     { "id": "apertura", "label": "Apertura", "lane": "obra",
       "start": 9, "end": 9, "depends_on": ["demolicion"] }
   ]
+}"#;
+
+const GRAPH_NOTE: &str = r#"{
+  "version": 1,
+  "kind": "graph",
+  "title": "Nota al margen",
+  "nodes": [
+    { "id": "idea", "label": "La idea" },
+    { "id": "margen", "label": "el margen la anota", "shape": "note" }
+  ],
+  "edges": [ { "from": "idea", "to": "margen", "label": "anota" } ]
 }"#;

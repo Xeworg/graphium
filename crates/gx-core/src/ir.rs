@@ -51,6 +51,33 @@ pub enum Shape {
     Note,
 }
 
+impl Shape {
+    /// Every shape, in declaration order: the one list of the wire words
+    /// (`f19-formas.md`, S3). A new shape enters here and the compiler walks
+    /// the rest of the way.
+    pub const ALL: [Shape; 6] = [
+        Shape::Box,
+        Shape::Rounded,
+        Shape::Cylinder,
+        Shape::Diamond,
+        Shape::Ellipse,
+        Shape::Note,
+    ];
+
+    /// The wire word of the shape: the one spelling every painter, the scene
+    /// payload and the schema read (`f19-formas.md`, S3).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Shape::Box => "box",
+            Shape::Rounded => "rounded",
+            Shape::Cylinder => "cylinder",
+            Shape::Diamond => "diamond",
+            Shape::Ellipse => "ellipse",
+            Shape::Note => "note",
+        }
+    }
+}
+
 /// Visual emphasis of a node or an edge (PRD §11.1, RF16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
