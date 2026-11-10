@@ -20,6 +20,10 @@ pub struct Tokens {
     pub regular_weight: u16,
     /// Font weight of emphasized text.
     pub semibold_weight: u16,
+    /// Diameter of the circle dot, in plan units. The label of a circle sits
+    /// beside it, so the dot is its own size, never the label's
+    /// (`f19-formas.md`, S8).
+    pub circle_diameter: f64,
 }
 
 impl Default for Tokens {
@@ -32,6 +36,7 @@ impl Default for Tokens {
             line_height: 1.25,
             regular_weight: 400,
             semibold_weight: 600,
+            circle_diameter: 24.0,
         }
     }
 }
@@ -45,6 +50,7 @@ pub const TOKENS: Tokens = Tokens {
     line_height: 1.25,
     regular_weight: 400,
     semibold_weight: 600,
+    circle_diameter: 24.0,
 };
 
 #[cfg(test)]

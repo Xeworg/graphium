@@ -109,6 +109,8 @@ export function shapeClass(shape) {
       return "shape-ellipse";
     case "note":
       return "shape-note";
+    case "circle":
+      return "shape-circle";
     default:
       throw new Error(`the painter does not know the shape: ${shape}`);
   }
@@ -244,6 +246,17 @@ export function badgeText(key) {
  * closes the top. The rim height is the corner radius, capped to a quarter of
  * the box so a short node still has a readable body.
  */
+/** The circle dot inside the envelope: the frozen diameter, at the left edge
+ * of the envelope, so the arrows that arrive land on it (`f19-formas.md`,
+ * S8/S9). The twin of `geometry::glyph_rect` in `gx-render-svg`. */
+export function circleGeometry(rect, tokens) {
+  return {
+    cx: num(rect.x + tokens.node_padding + tokens.circle_diameter / 2),
+    cy: num(rect.y + rect.h / 2),
+    r: num(tokens.circle_diameter / 2),
+  };
+}
+
 export function cylinderGeometry(rect, tokens) {
   const rim = Math.min(tokens.corner_radius, rect.h / 4);
   // Cubics instead of elliptical arcs: an arc flag is a bare `0`/`1`, which
@@ -479,8 +492,15 @@ export function nodePaint(node, tokens) {
       w: num(rect.w),
       h: num(rect.h),
       radius: node.shape === "rounded" ? num(tokens.corner_radius) : null,
+      // The ellipse halves, computed from the raw rect and rounded once: the
+      // emitter writes fmt_num(w / 2) from the raw width, and rounding before
+      // dividing drifts exactly on the boundary (`f19-formas.md`, L6).
+      rx: node.shape === "ellipse" ? num(rect.w / 2) : null,
+      ry: node.shape === "ellipse" ? num(rect.h / 2) : null,
     },
     center: { x: num(node.center.x), y: num(node.center.y) },
+    circle:
+      node.shape === "circle" ? circleGeometry(nodeRect(node), tokens) : null,
     cylinder:
       node.shape === "cylinder" ? cylinderGeometry(rect, tokens) : null,
     note: node.shape === "note" ? noteGeometry(rect, tokens) : null,
@@ -513,14 +533,25 @@ export function nodePaint(node, tokens) {
     label:
       isTable || lines.length === 0
         ? null
-        : textPaint({
-            lines,
-            baselines: centeredBaselines(node.center.y, lines.length, tokens),
-            x: node.center.x,
-            classes,
-            size: tokens.text_size,
-            anchor: "middle",
-          }),
+        : node.label_at !== undefined && node.label_at !== null
+          ? // The beside placement of the circle (`f19-formas.md`, S8): the
+            // scene computed the point; the painter only spells it.
+            textPaint({
+              lines,
+              baselines: [node.label_at.y],
+              x: node.label_at.x,
+              classes,
+              size: tokens.text_size,
+              anchor: "start",
+            })
+          : textPaint({
+              lines,
+              baselines: centeredBaselines(node.center.y, lines.length, tokens),
+              x: node.center.x,
+              classes,
+              size: tokens.text_size,
+              anchor: "middle",
+            }),
     rows: isTable
       ? node.rows.map((row, index) => ({
           badge: textPaint({

@@ -97,6 +97,8 @@ pub struct SceneTokens {
     pub dash_pattern: [f64; 2],
     /// Dash pattern of the border of a container, in plan units.
     pub group_dash: [f64; 2],
+    /// Diameter of the circle dot, in plan units (`f19-formas.md`, S8).
+    pub circle_diameter: f64,
 }
 
 /// Where the paint takes its colours from (`f11-elementos.md`, S3).
@@ -177,6 +179,12 @@ pub struct SceneNode {
     pub center: Point,
     /// Size of the measured box, never `IrNode.size` recomputed in the JS (S4).
     pub size: Size,
+    /// Where the label sits (`f19-formas.md`, S8). `None` is the default:
+    /// centered inside the box, middle-anchored, as every shape but the
+    /// circle draws it. `Some(point)` is the beside placement — the label
+    /// starts at that point, vertically centered (`f19-formas.md`, S8).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label_at: Option<Point>,
     /// The detail rows of the node, drawn under its label. Absent when the
     /// node has none: an empty list and no list mean the same thing.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -332,6 +340,7 @@ mod tests {
             lifeline_dash: [4.0, 4.0],
             dash_pattern: [6.0, 4.0],
             group_dash: [8.0, 5.0],
+            circle_diameter: 24.0,
         };
         assert_eq!(tokens.text_size, TOKENS.text_size);
         let json = serde_json::to_value(tokens).expect("the tokens serialise");

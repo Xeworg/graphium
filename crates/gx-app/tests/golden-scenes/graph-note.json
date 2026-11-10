@@ -29,7 +29,8 @@
     "group_dash": [
       8.0,
       5.0
-    ]
+    ],
+    "circle_diameter": 24.0
   },
   "direction": "TB",
   "layout_hint": "layered",

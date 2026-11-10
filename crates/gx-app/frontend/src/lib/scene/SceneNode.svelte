@@ -82,6 +82,15 @@
     fill="none"
     d={paint.cylinder.rimPath}
   />
+{:else if paint.circle !== null}
+  <circle
+    id={paint.id}
+    class={shapeClasses}
+    cx={paint.circle.cx}
+    cy={paint.circle.cy}
+    r={paint.circle.r}
+    {...hit}
+  />
 {:else if paint.diamond !== null}
   <polygon id={paint.id} class={shapeClasses} points={paint.diamond} {...hit} />
 {:else if paint.shape === "ellipse"}
@@ -90,8 +99,8 @@
     class={shapeClasses}
     cx={paint.center.x}
     cy={paint.center.y}
-    rx={paint.rect.w / 2}
-    ry={paint.rect.h / 2}
+    rx={paint.rect.rx}
+    ry={paint.rect.ry}
     {...hit}
   />
 {:else if paint.note !== null}

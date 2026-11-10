@@ -145,6 +145,7 @@ function sceneFixture(marker, width = 320, height = 180) {
       crow_foot_spread: 0.85,
       badge_width: 26,
       muted_opacity: 0.55,
+      circle_diameter: 24,
       lifeline_dash: [4, 4],
       dash_pattern: [6, 4],
       group_dash: [8, 5],
@@ -187,7 +188,7 @@ function sceneFixture(marker, width = 320, height = 180) {
  * the painter does not know fails loud (scene.js `shapeOf`), so a forgotten
  * painter branch is a red run, never a plausible box.
  */
-const SHAPES_OF_THE_IR = ["box", "rounded", "cylinder", "diamond", "ellipse", "note"];
+const SHAPES_OF_THE_IR = ["box", "rounded", "cylinder", "diamond", "ellipse", "note", "circle"];
 const SHAPE_PAYLOADS = SHAPES_OF_THE_IR.map((shape) => {
   const scene = sceneFixture(shape, 200, 120);
   scene.nodes[0].shape = shape;

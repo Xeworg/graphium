@@ -35,7 +35,7 @@
 // empty route), so the painter draws exactly the edges the export would.
 
 /** The shapes of `gx-core/src/ir.rs`. */
-const SHAPES = ["box", "rounded", "cylinder", "diamond", "ellipse", "note"];
+const SHAPES = ["box", "rounded", "cylinder", "diamond", "ellipse", "note", "circle"];
 
 /** The shape of a node, or the loud end of the run: a shape the painter does
  * not know never paints as a plausible box (`f19-formas.md`, S5). */
@@ -68,6 +68,7 @@ const NUMBER_TOKENS = [
   "crow_foot_spread",
   "badge_width",
   "muted_opacity",
+  "circle_diameter",
 ];
 /** The tokens that are a dash pattern of two numbers. */
 const DASH_TOKENS = ["lifeline_dash", "dash_pattern", "group_dash"];
@@ -193,6 +194,17 @@ function nodeOf(raw) {
     style: raw.style === "dashed" ? "dashed" : "solid",
     center,
     size: measured,
+    // The beside placement of the circle (`f19-formas.md`, S8): the scene
+    // computed the point and it travels verbatim. A malformed one is a loud
+    // end — a label that paints somewhere else is worse than no run.
+    label_at:
+      raw.label_at === undefined || raw.label_at === null
+        ? null
+        : isRecord(raw.label_at) && isNumber(raw.label_at.x) && isNumber(raw.label_at.y)
+          ? { x: raw.label_at.x, y: raw.label_at.y }
+          : (() => {
+              throw new Error(`the scene names a malformed label_at: ${JSON.stringify(raw.label_at)}`);
+            })(),
     rows,
     meta: isRecord(raw.meta) ? raw.meta : {},
   };

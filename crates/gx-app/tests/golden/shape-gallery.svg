@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="0.00 0.00 695.86 326.00" width="695.86" height="326.00">
+<style>
+.bg{fill:rgba(27, 27, 27, 1.00)}
+.node-fill{fill:rgba(42, 42, 48, 1.00)}
+.node-stroke{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.node-text{fill:rgba(233, 233, 236, 1.00)}
+.edge-stroke{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.edge-text{fill:rgba(185, 185, 194, 1.00)}
+.accent{fill:rgba(110, 168, 254, 1.00);stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight{stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight-text{fill:rgba(110, 168, 254, 1.00)}
+.emphasis-muted{opacity:0.55}
+.group-box{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.12;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:8.00 5.00}
+.group-label{fill:rgba(185, 185, 194, 1.00)}
+.lane-band{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.35;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.lane-label{fill:rgba(185, 185, 194, 1.00)}
+.lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
+.stroke-dashed{stroke-dasharray:6.00 4.00}
+.text{font-family:Inter, sans-serif}
+.cardinality{fill:none;stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00}
+.arrow-normal{fill:rgba(138, 138, 150, 1.00)}
+.arrow-highlight{fill:rgba(110, 168, 254, 1.00)}
+.arrow-muted{fill:rgba(138, 138, 150, 1.00);opacity:0.55}
+</style>
+<defs>
+<marker id="arrow-normal" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
+<path class="arrow-normal" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00 Z"/>
+</marker>
+</defs>
+<g class="layer-groups">
+</g>
+<g class="layer-edges">
+<polyline id="m-caja-rombo" class="edge-stroke" points="122.71,41.50 122.71,90.25 122.71,139.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="155.13" y="90.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">decide</text>
+<polyline id="m-rombo-punto" class="edge-stroke" points="122.71,180.50 122.71,229.25 122.71,278.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="157.15" y="229.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">commit</text>
+</g>
+<g class="layer-nodes">
+<rect id="g-caja" class="node-fill node-stroke shape-box" x="95.68" y="0.00" width="54.06" height="41.50"/>
+<text class="node-text text" x="122.71" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Caja</text>
+<path id="g-cilindro" class="node-fill node-stroke shape-cylinder" d="M 378.76 6.00 C 378.76 -2.00 455.14 -2.00 455.14 6.00 L 455.14 35.50 C 455.14 43.50 378.76 43.50 378.76 35.50 Z"/>
+<path class="node-stroke shape-cylinder" fill="none" d="M 378.76 6.00 C 378.76 14.00 455.14 14.00 455.14 6.00"/>
+<text class="node-text text" x="416.95" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Cilindro</text>
+<ellipse id="g-elipse" class="node-fill node-stroke shape-ellipse" cx="547.40" cy="20.75" rx="32.25" ry="20.75"/>
+<text class="node-text text" x="547.40" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Elipse</text>
+<path id="g-nota" class="node-fill node-stroke shape-note" d="M 639.65 0.00 L 689.86 0.00 L 695.86 6.00 L 695.86 41.50 L 639.65 41.50 Z"/>
+<path class="node-stroke shape-note" fill="none" d="M 689.86 0.00 L 689.86 6.00 L 695.86 6.00"/>
+<text class="node-text text" x="667.76" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Nota</text>
+<circle id="g-punto" class="node-fill node-stroke shape-circle" cx="24.00" cy="302.00" r="12.00"/>
+<text class="node-text text" x="42.00" y="302.00" font-size="14.00" text-anchor="start" dominant-baseline="central">el punto, su etiqueta al lado</text>
+<rect id="g-redondeada" class="node-fill node-stroke shape-rounded" x="209.73" y="0.00" width="109.03" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="264.25" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Redondeada</text>
+<polygon id="g-rombo" class="node-fill node-stroke shape-diamond" points="122.71,139.00 158.38,159.75 122.71,180.50 87.03,159.75"/>
+<text class="node-text text" x="122.71" y="159.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Rombo</text>
+</g>
+</svg>

@@ -95,6 +95,47 @@ pub(crate) fn dependency_route(from: &Rect, to: &Rect) -> Vec<Point> {
     points
 }
 
+/// The glyph rect of a shape inside the measured envelope (`f19-formas.md`,
+/// S9): the two-box model of the `event_bar` precedent. Everything but the
+/// circle fills its envelope; the dot is the frozen diameter, at the left
+/// edge, so the arrows that arrive do land on it.
+pub(crate) fn glyph_rect(shape: Shape, rect: &Rect) -> Rect {
+    match shape {
+        Shape::Circle => {
+            let d = TOKENS.circle_diameter;
+            Rect::new(
+                rect.x + TOKENS.node_padding,
+                rect.center().y - d / 2.0,
+                d,
+                d,
+            )
+        }
+        _ => *rect,
+    }
+}
+
+/// Where the label of a shape sits (`f19-formas.md`, S8): inside, centered,
+/// for every shape but the circle — whose label starts beside the dot,
+/// vertically centered.
+pub(crate) enum LabelPlacement {
+    /// Centered inside the box: the writer computes the baselines.
+    Inside,
+    /// The label starts at this point, vertically centered.
+    Beside { at: Point },
+}
+
+pub(crate) fn label_placement(shape: Shape, rect: &Rect) -> LabelPlacement {
+    match shape {
+        Shape::Circle => {
+            let glyph = glyph_rect(shape, rect);
+            LabelPlacement::Beside {
+                at: Point::new(glyph.max_x() + TOKENS.node_padding / 2.0, rect.center().y),
+            }
+        }
+        _ => LabelPlacement::Inside,
+    }
+}
+
 /// The plan rectangle the root element covers.
 pub(crate) fn canvas_rect(layout: &LayoutGraph) -> Rect {
     let bbox = layout.bbox;

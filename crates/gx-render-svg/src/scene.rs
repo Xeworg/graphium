@@ -23,8 +23,8 @@ use gx_core::{
 };
 
 use crate::geometry::{
-    self, canvas_rect, cluster_id, edge_id, lane_id, node_id, ARROW_LENGTH, BADGE_WIDTH, CROW_FOOT,
-    CROW_FOOT_SPREAD, DASH_PATTERN, GROUP_DASH, LIFELINE_DASH, MUTED_OPACITY,
+    self, canvas_rect, cluster_id, edge_id, lane_id, node_id, node_rect, ARROW_LENGTH, BADGE_WIDTH,
+    CROW_FOOT, CROW_FOOT_SPREAD, DASH_PATTERN, GROUP_DASH, LIFELINE_DASH, MUTED_OPACITY,
 };
 
 /// The drawing plan both emitters walk (`f11-elementos.md`, T1).
@@ -175,19 +175,28 @@ impl<'a> Drawing<'a> {
             nodes: self
                 .nodes
                 .iter()
-                .map(|(node, placed)| SceneNode {
-                    id: node_id(&node.id),
-                    // The label travels exactly as the IR has it: the `\n` is
-                    // the wrap (S4), there is nothing to compute here.
-                    label: node.label.clone(),
-                    shape: node.shape,
-                    emphasis: node.emphasis,
-                    style: node.style,
-                    // The size is the measured one, never `IrNode.size` (S4).
-                    center: placed.center,
-                    size: placed.size,
-                    rows: node.rows.clone(),
-                    meta: node.meta.clone(),
+                .map(|(node, placed)| {
+                    let rect = node_rect(placed);
+                    SceneNode {
+                        id: node_id(&node.id),
+                        // The label travels exactly as the IR has it: the `\n` is
+                        // the wrap (S4), there is nothing to compute here.
+                        label: node.label.clone(),
+                        shape: node.shape,
+                        emphasis: node.emphasis,
+                        style: node.style,
+                        // The size is the measured one, never `IrNode.size` (S4).
+                        center: placed.center,
+                        size: placed.size,
+                        // The beside placement of the circle; `None` keeps the
+                        // centered default of every other shape (S8).
+                        label_at: match geometry::label_placement(node.shape, &rect) {
+                            geometry::LabelPlacement::Inside => None,
+                            geometry::LabelPlacement::Beside { at } => Some(at),
+                        },
+                        rows: node.rows.clone(),
+                        meta: node.meta.clone(),
+                    }
                 })
                 .collect(),
             edges: self
@@ -297,6 +306,7 @@ pub fn scene_tokens() -> SceneTokens {
         lifeline_dash: [LIFELINE_DASH.0, LIFELINE_DASH.1],
         dash_pattern: [DASH_PATTERN.0, DASH_PATTERN.1],
         group_dash: [GROUP_DASH.0, GROUP_DASH.1],
+        circle_diameter: TOKENS.circle_diameter,
     }
 }
 
