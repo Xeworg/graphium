@@ -100,6 +100,11 @@
       {#each paint.lifelines as line, index (index)}
         <line class="lifeline" x1={line.x} y1={line.y1} x2={line.x} y2={line.y2} />
       {/each}
+      {#each paint.activations as bar, index (index)}
+        <!-- The activation of a sequence (`f22-dibujo.md`, S5): the thin
+             rectangle over the lifeline while the actor holds the control. -->
+        <rect class="activation" x={bar.x} y={bar.y} width={bar.w} height={bar.h} />
+      {/each}
     </g>
   {/if}
 

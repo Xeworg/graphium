@@ -221,6 +221,12 @@ pub struct IrEdge {
     pub to_row: Option<u32>,
     /// Cardinality drawn at the target end, when the kind has one.
     pub cardinality: Option<Cardinality>,
+    /// Kind-specific scalar data, the same channel [`IrNode`] and
+    /// [`IrEvent`] carry: ordered, never rendered directly (PRD §8.3). The
+    /// `sequence` kind marks its activating messages here (`f22-dibujo.md`,
+    /// S5, L7b).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub kind_data: BTreeMap<String, IrValue>,
 }
 
 /// How many rows of each side take part in a relation (PRD §6.1, kind `er`).
@@ -320,6 +326,7 @@ impl IrEdge {
             from_row: None,
             to_row: None,
             cardinality: None,
+            kind_data: BTreeMap::new(),
         }
     }
 }

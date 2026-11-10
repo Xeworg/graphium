@@ -429,3 +429,137 @@ fn a_sequence_layout_carries_no_axis() {
 
     assert!(layout.axis.is_none(), "the actors are not time");
 }
+
+// S5 (`f22-dibujo.md`): the activation of a sequence — an opt-in flag on the
+// message contract that draws a thin rectangle over the `to` actor's
+// lifeline while the actor holds the control. The layout computes the bars
+// (`f22-dibujo.md`, L7c): from the activating row to the next message the
+// actor **sends**, so control is held until the answer leaves.
+mod activation {
+    use super::*;
+
+    /// A sequence graph: three actors, four rows, built row by row so every
+    /// test declares its own messages.
+    struct Rows {
+        graph: IrGraph,
+    }
+
+    impl Rows {
+        fn new() -> Self {
+            let nodes: Vec<IrNode> = ["cliente", "api", "db"]
+                .iter()
+                .map(|id| graph_node(id, 90.0, 40.0))
+                .collect();
+            Self {
+                graph: IrGraph {
+                    direction: Direction::TB,
+                    layout_hint: LayoutHint::Lanes,
+                    nodes,
+                    edges: Vec::new(),
+                    groups: Vec::new(),
+                },
+            }
+        }
+
+        fn row(mut self, from: &str, to: &str, activation: bool) -> Self {
+            let mut edge = IrEdge::new(from, to);
+            if activation {
+                edge.kind_data
+                    .insert("activation".to_string(), gx_core::ir::IrValue::Bool(true));
+            }
+            self.graph.edges.push(edge);
+            self
+        }
+
+        fn layout(&self) -> gx_core::layout::LayoutGraph {
+            engine().layout(&self.graph, &LayoutOpts::default())
+        }
+    }
+
+    use gx_core::ir::{IrEdge, IrGraph};
+
+    #[test]
+    fn an_activation_holds_control_until_the_actor_answers() {
+        let rows = Rows::new()
+            .row("cliente", "api", false)
+            .row("db", "api", true)
+            .row("api", "cliente", false)
+            .row("api", "db", false);
+        let layout = rows.layout();
+
+        // The activating message is row 2; the actor's next send is row 4:
+        // the bar brackets rows 2..4.
+        assert_eq!(layout.activations.len(), 1, "una barra por activación");
+        let bar = &layout.activations[0];
+        let step = layout.edges[1].points[0].y - layout.edges[0].points[0].y;
+        let row_y = |row: usize| layout.edges[row - 1].points[0].y;
+        assert!(
+            (bar.x - layout.nodes["api"].center.x).abs() < 1e-6,
+            "la barra vive en la línea de vida del actor: {}",
+            bar.x
+        );
+        assert!(
+            (bar.y1 - (row_y(2) - 0.35 * step)).abs() < 1e-6,
+            "la barra arranca sobre su flecha: {} vs {}",
+            bar.y1,
+            row_y(2) - 0.35 * step
+        );
+        // El primer envío del actor es la fila 3 (la respuesta): ahí se
+        // sostiene hasta, no en la fila 4.
+        assert!(
+            (bar.y2 - (row_y(3) + 0.35 * step)).abs() < 1e-6,
+            "y se sostiene hasta que el actor contesta: {} vs {}",
+            bar.y2,
+            row_y(3) + 0.35 * step
+        );
+    }
+
+    #[test]
+    fn an_activation_without_an_answer_covers_its_own_row() {
+        let rows = Rows::new()
+            .row("cliente", "api", true)
+            .row("cliente", "db", false);
+        let layout = rows.layout();
+
+        // The api actor never sends again: the bar covers its own row only.
+        let bar = &layout.activations[0];
+        let step = layout.edges[1].points[0].y - layout.edges[0].points[0].y;
+        let row_y = |row: usize| layout.edges[row - 1].points[0].y;
+        assert!(
+            (bar.y2 - (row_y(1) + 0.35 * step)).abs() < 1e-6,
+            "sin respuesta la barra no baja: {} vs {}",
+            bar.y2,
+            row_y(1) + 0.35 * step
+        );
+    }
+
+    #[test]
+    fn a_second_activation_inside_a_held_control_extends_the_bar() {
+        let rows = Rows::new()
+            .row("db", "api", true)
+            .row("db", "api", true)
+            .row("api", "cliente", false);
+        let layout = rows.layout();
+
+        // Two activating rows, one answer: one merged bar over both, never
+        // two rectangles painted on the same lifeline.
+        assert_eq!(
+            layout.activations.len(),
+            1,
+            "las barras del mismo actor se funden: {:?}",
+            layout.activations
+        );
+    }
+
+    #[test]
+    fn a_sequence_without_activations_carries_no_bar() {
+        let rows = Rows::new().row("cliente", "api", false);
+        let layout = rows.layout();
+
+        assert!(
+            layout.activations.is_empty(),
+            "nadie pidió control: {:?}",
+            layout.activations
+        );
+    }
+}

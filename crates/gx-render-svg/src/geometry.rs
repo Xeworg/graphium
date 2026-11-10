@@ -22,6 +22,12 @@ use gx_core::{
 
 /// Length of the arrowhead, in plan units (`markerUnits="userSpaceOnUse"`).
 pub(crate) const ARROW_LENGTH: f64 = 10.0;
+
+/// The width of an activation bar of a sequence (`f22-dibujo.md`, S5): the
+/// thin rectangle over the lifeline. It travels in the tokens
+/// (`SceneTokens.activation_width`) so the painter twin spells the same
+/// number.
+pub(crate) const ACTIVATION_WIDTH: f64 = 10.0;
 /// Opacity of a muted node or edge.
 pub(crate) const MUTED_OPACITY: f64 = 0.55;
 /// Dash pattern of a lifeline, in plan units: shorter than the one of an

@@ -79,6 +79,7 @@ const NUMBER_TOKENS = [
   "badge_width",
   "muted_opacity",
   "circle_diameter",
+  "activation_width",
 ];
 /** The tokens that are a dash pattern of two numbers. */
 const DASH_TOKENS = ["lifeline_dash", "dash_pattern", "group_dash"];
@@ -451,7 +452,26 @@ export function sceneFromElements(raw) {
     // The time axis of a timeline (`f22-dibujo.md`, S2): the numbers travel
     // verbatim; a malformed one is a loud end, like a malformed label_at.
     axis: axisOf(raw.axis),
+    // The activation bars of a sequence (`f22-dibujo.md`, S5): absent on
+    // payloads that carry none, a loud end when one is malformed.
+    activations: activationsOf(raw.activations),
   };
+}
+
+/** The activation bars of a sequence, or `[]` when there are none. */
+function activationsOf(raw) {
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    throw new Error(`the scene names malformed activations: ${JSON.stringify(raw)}`);
+  }
+  return raw.map((bar) => {
+    if (!isRecord(bar) || !isNumber(bar.x) || !isNumber(bar.y1) || !isNumber(bar.y2)) {
+      throw new Error(`the scene names a malformed activation: ${JSON.stringify(bar)}`);
+    }
+    return { x: bar.x, y1: bar.y1, y2: bar.y2 };
+  });
 }
 
 /** The axis of a timeline scene, or `null` when there is none. */

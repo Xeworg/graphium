@@ -18,13 +18,16 @@ use std::collections::BTreeMap;
 
 use gx_core::{
     Ir, IrEdge, IrEvent, IrGraph, IrNode, IrTimeline, LayoutAxis, LayoutEdge, LayoutGraph,
-    LayoutGroup, NodeBox, Palette, Rect, Scene, SceneAxis, SceneBand, SceneEdge, SceneEvent,
-    SceneNode, ScenePalette, SceneTokens, TOKENS,
+    LayoutGroup, NodeBox, Palette, Rect, Scene, SceneActivation, SceneAxis, SceneBand, SceneEdge,
+    SceneEvent, SceneNode, ScenePalette, SceneTokens, TOKENS,
 };
 
+use gx_core::layout::LayoutActivation;
+
 use crate::geometry::{
-    self, canvas_rect, cluster_id, edge_id, lane_id, node_id, node_rect, ARROW_LENGTH, BADGE_WIDTH,
-    CROW_FOOT, CROW_FOOT_SPREAD, DASH_PATTERN, GROUP_DASH, LIFELINE_DASH, MUTED_OPACITY,
+    self, canvas_rect, cluster_id, edge_id, lane_id, node_id, node_rect, ACTIVATION_WIDTH,
+    ARROW_LENGTH, BADGE_WIDTH, CROW_FOOT, CROW_FOOT_SPREAD, DASH_PATTERN, GROUP_DASH,
+    LIFELINE_DASH, MUTED_OPACITY,
 };
 
 /// The drawing plan both emitters walk (`f11-elementos.md`, T1).
@@ -50,6 +53,9 @@ pub(crate) struct Drawing<'a> {
     pub(crate) lanes: Vec<&'a LayoutGroup>,
     /// The time axis of a timeline (`f22-dibujo.md`, S2).
     pub(crate) axis: Option<LayoutAxis>,
+    /// The activation bars of a sequence (`f22-dibujo.md`, S5), in the order
+    /// the layout computed them.
+    pub(crate) activations: Vec<LayoutActivation>,
 }
 
 /// The dependency arrows of a timeline (`f18-gantt.md`, S7): one edge per
@@ -154,6 +160,7 @@ impl<'a> Drawing<'a> {
                 None => Vec::new(),
             },
             axis: layout.axis.clone(),
+            activations: layout.activations.clone(),
         }
     }
 
@@ -285,6 +292,18 @@ impl<'a> Drawing<'a> {
                 x2: axis.x2,
                 ticks: axis.ticks.clone(),
             }),
+            // The bars travel verbatim (`f22-dibujo.md`, L7): the layout
+            // computed them, the scene carries the numbers, the width is a
+            // token.
+            activations: self
+                .activations
+                .iter()
+                .map(|bar| SceneActivation {
+                    x: bar.x,
+                    y1: bar.y1,
+                    y2: bar.y2,
+                })
+                .collect(),
         }
     }
 }
@@ -335,6 +354,7 @@ pub fn scene_tokens() -> SceneTokens {
         dash_pattern: [DASH_PATTERN.0, DASH_PATTERN.1],
         group_dash: [GROUP_DASH.0, GROUP_DASH.1],
         circle_diameter: TOKENS.circle_diameter,
+        activation_width: ACTIVATION_WIDTH,
     }
 }
 

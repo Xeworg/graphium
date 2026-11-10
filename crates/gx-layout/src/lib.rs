@@ -15,7 +15,8 @@ use dagre::{layout, EdgeLabel, LayoutOptions, NodeLabel, RankDir, Ranker};
 use gx_core::geom::{Point, Rect, Size};
 use gx_core::ir::{Direction, IrEvent, IrGraph, IrGroup, IrLane, IrTimeline};
 use gx_core::layout::{
-    LayoutAxis, LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, LayoutOpts, NodeBox,
+    LayoutActivation, LayoutAxis, LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, LayoutOpts,
+    NodeBox,
 };
 use gx_core::text::{TextMetrics, TextStyle};
 use gx_core::tokens::TOKENS;
@@ -124,6 +125,7 @@ impl LayoutEngine for DagreEngine {
 
         let bbox = drawing_bbox(&pass.nodes, &pass.edges, &groups);
         LayoutGraph {
+            activations: Vec::new(),
             nodes: pass.nodes,
             edges: pass.edges,
             groups,
@@ -1027,6 +1029,7 @@ impl LayoutEngine for TreeEngine {
         let bbox = bbox.unwrap_or_default();
 
         LayoutGraph {
+            activations: Vec::new(),
             nodes: placed,
             edges,
             groups: Vec::new(),
@@ -1172,10 +1175,17 @@ impl LayoutEngine for LanesEngine {
         }
 
         // The messages: one row each, in the order of the document, as a
-        // horizontal arrow between the two columns.
+        // horizontal arrow between the two columns. Every processed row is
+        // remembered: what each message says decides how long an activation
+        // holds (S5).
+        let mut sequence_rows: Vec<(&str, &str, bool)> = Vec::new();
         let mut edges: Vec<LayoutEdge> = Vec::new();
         let mut row = 1.0;
         for edge in &graph.edges {
+            let activating = matches!(
+                edge.kind_data.get("activation"),
+                Some(gx_core::ir::IrValue::Bool(true))
+            );
             let (Some(from), Some(to)) = (
                 column_of.get(edge.from.as_str()),
                 column_of.get(edge.to.as_str()),
@@ -1213,7 +1223,43 @@ impl LayoutEngine for LanesEngine {
                 }),
             });
             row += 1.0;
+            sequence_rows.push((edge.from.as_str(), edge.to.as_str(), activating));
         }
+
+        // The activation bars (S5, `f22-dibujo.md` L7c): a message that hands
+        // control draws a thin rectangle over its `to` actor's lifeline,
+        // held until the actor's next outgoing message — control leaves with
+        // the answer. Bars of one actor merge when they touch, so a second
+        // activation inside a held control extends the bar and never doubles
+        // it. Actors without an activation carry nothing.
+        let mut bars: BTreeMap<&str, Vec<(f64, f64)>> = BTreeMap::new();
+        for (index, (_, actor, activating)) in sequence_rows.iter().enumerate() {
+            if !activating {
+                continue;
+            }
+            let row = (index + 1) as f64;
+            let end = sequence_rows[index..]
+                .iter()
+                .position(|(sender, ..)| sender == actor)
+                .map_or(row, |offset| (index + offset + 1) as f64);
+            let y = |r: f64| header + r * step;
+            let actor_bars = bars.entry(actor).or_default();
+            match actor_bars.last_mut() {
+                Some(last) if y(row) - step * 0.35 <= last.1 => {
+                    last.1 = last.1.max(y(end) + step * 0.35);
+                }
+                _ => actor_bars.push((y(row) - step * 0.35, y(end) + step * 0.35)),
+            }
+        }
+        let activations = bars
+            .into_iter()
+            .flat_map(|(actor, actor_bars)| {
+                let x = column_of[actor].0;
+                actor_bars
+                    .into_iter()
+                    .map(move |(y1, y2)| LayoutActivation { x, y1, y2 })
+            })
+            .collect();
 
         let bbox = bounds_of(&nodes);
         let bbox = Rect::new(
@@ -1228,6 +1274,7 @@ impl LayoutEngine for LanesEngine {
             edges,
             groups: Vec::new(),
             axis: None,
+            activations,
             bbox,
         }
     }
@@ -1408,6 +1455,7 @@ impl LayoutEngine for LanesEngine {
         let bbox = Rect::new(0.0, 0.0, width, top + axis_band);
 
         LayoutGraph {
+            activations: Vec::new(),
             nodes,
             edges: Vec::new(),
             groups,

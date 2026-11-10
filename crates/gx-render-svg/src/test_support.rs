@@ -71,6 +71,7 @@ pub(crate) fn layout(
         );
     }
     LayoutGraph {
+        activations: Vec::new(),
         axis: None,
         nodes: map,
         edges,

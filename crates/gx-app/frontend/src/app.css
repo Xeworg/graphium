@@ -222,6 +222,14 @@
   fill: none;
 }
 
+/* La activación de una secuencia (`f22-dibujo.md`, S5): el rectángulo fino
+ * sobre la línea de vida mientras el actor tiene el control. */
+.graphium .activation {
+  fill: var(--node-fill);
+  stroke: var(--node-stroke);
+  stroke-width: 1px;
+}
+
 /* El contenedor de un grupo (un *boundary* de un diagrama de componentes): el
  * recuadro punteado que dice qué piezas forman el mismo sistema, y su nombre
  * arriba a la izquierda. */

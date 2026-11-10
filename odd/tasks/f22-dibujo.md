@@ -134,6 +134,7 @@ ola first).
   (`axisOf` in scene.js fails loud on a malformed one). Columns the document
   never mentions do not tick. The canvas grows by the axis band. Sequence
   draws no axis: its columns are actors, the lifelines are its axis already.
+
 - L6 (2026-11-10, execution, T1-T3): the equivalence gate caught the shape
   class spelling drift (the class CSS is the wire word of `as_str()` —
   `shape-ring_dot`, underscore); the app.css grid gate REDs when the window
@@ -145,3 +146,48 @@ ola first).
   timeline-milestone golden joined the suite (20 cases). The milestone
   golden shows the diamond label overflowing its slanted edges — the S9
   finding, for T7.
+
+- L7 (2026-11-10, design note for T4, the S5 owner decision): the activation
+  travels the axis's path (L5) — the layout computes, the scene carries
+  numbers, both painters spell them. (a) Contract: `Message.activation: bool`
+  (serde default false, additive, opt-in): the message that carries it hands
+  control to its `to` actor, who draws a thin rectangle over the lifeline.
+  (b) IR: the flag rides the edge's `kind_data` (`"activation" = Bool(true)`),
+  the scalar channel the IR already reserves for kind-specific data — no new
+  `IrEdge` field for one kind. (c) Layout (`LanesEngine::layout`): a bar per
+  activating message, on the `to` actor, spanning from its own row to the next
+  message the actor **sends** (`from == actor`), so control is held until the
+  answer leaves; without one the bar covers only its own row. Rows bracket
+  their arrows: y from `row_y - 0.35*step` to `end_row_y + 0.35*step`. Bars of
+  the same actor merge when they touch (a second activation inside a held
+  control extends the bar, never doubles it). Output: `LayoutActivation { x,
+  y1, y2 }` — the lifeline x is the actor's center, the same number
+  `lifeline_x` uses — on the new `LayoutGraph.activations` (empty for every
+  other engine, `Vec::is_empty` skipped in the payload, additive like the
+  axis). (d) Painters: the export draws `<rect class="activation">` inside
+  `layer-lifelines`, after the lines and under the arrows; width is a drawing
+  constant (`ACTIVATION_WIDTH = 10.0`), the CSS rule joins `write_style` and
+  `app.css`. (e) The painter twin parses `activationsOf` fail-loud (default
+  `[]` when the key is absent: old payloads stay valid) and paints the same
+  rects. (f) Evidence: golden `sequence-activation` joins the suite (21
+  cases), parity adds C47 (the bar mounts with the scene's numbers), and the
+  contract test pins the additive field plus the span rule.
+
+- L8 (2026-11-10, execution, T4): the activation landed on every layer of
+  the axis's path. `IrEdge` grew the `kind_data` channel `IrNode` and
+  `IrEvent` already had (the scalar channel, `skip_serializing_if` empty —
+  the asymmetry was the discovery: the flag had nowhere to ride). The span
+  rule is the one L7c names: bar from the activating row to the actor's next
+  outgoing message; two activations inside a held control merge. The width
+  travels as a frozen token (`Tokens`/`SceneTokens.activation_width` = 10.0,
+  all-or-nothing in the twin's `tokensOf`, mirrored in `gx-mcp`'s stub and
+  parity's fixtures). Evidence: gates fmt/clippy 0, 832 tests (new: contract
+  in `sequence.rs`, four bar-geometry tests in `lanes.rs`, the painter test
+  in `renderer/tests.rs`), parity 72/72 with the new C47, equivalence 21/21
+  with the new `sequence-activation` golden (its two bars: API rows 1-2,
+  Base rows 2-3). The export golden of the nested clusters moved — the
+  stylesheet is the drawing's, so the new `.activation` rule regenerates it;
+  every scene json moved with the token. Trap avoided (L6): `shapeOf` was
+  the last pure-module lesson; this time `activationsOf` went into
+  `scene.js` first and `DiagramScene.svelte` reads the paint plan, not the
+  module.

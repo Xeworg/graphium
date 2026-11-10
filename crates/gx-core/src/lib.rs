@@ -31,11 +31,13 @@ pub use ir::{
     IrGraph, IrGroup, IrLane, IrNode, IrRow, IrTimeline, IrValue, LayoutHint, RowKey, Shape, Style,
 };
 pub use kind::{for_kind, kind_names, register_kind, DiagramKind, KindHandler, KindLimits};
-pub use layout::{LayoutAxis, LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, NodeBox};
+pub use layout::{
+    LayoutActivation, LayoutAxis, LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, NodeBox,
+};
 pub use render::{Color, Palette, RenderMetrics, RenderOpts, RenderOutcome, SvgRenderer, Theme};
 pub use scene::{
-    BandKind, Scene, SceneAxis, SceneBand, SceneEdge, SceneEvent, SceneNode, ScenePalette,
-    SceneTokens,
+    BandKind, Scene, SceneActivation, SceneAxis, SceneBand, SceneEdge, SceneEvent, SceneNode,
+    ScenePalette, SceneTokens,
 };
 pub use text::{TextMetrics, TextStyle};
 pub use tokens::{Tokens, TOKENS};

@@ -71,6 +71,7 @@ impl LayoutEngine for StubLayout {
             })
             .collect();
         LayoutGraph {
+            activations: Vec::new(),
             axis: None,
             nodes,
             edges,
@@ -297,6 +298,7 @@ impl SvgRenderer for StubRenderer {
 
         Some(Scene {
             axis: None,
+            activations: Vec::new(),
             canvas: layout.bbox,
             tokens: scene_tokens(),
             direction: graph.map(|graph| graph.direction),
@@ -331,6 +333,7 @@ fn scene_tokens() -> SceneTokens {
         dash_pattern: [6.0, 4.0],
         group_dash: [8.0, 5.0],
         circle_diameter: 24.0,
+        activation_width: 10.0,
     }
 }
 

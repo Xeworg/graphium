@@ -306,6 +306,7 @@ fn the_scene_carries_the_lanes_and_events_of_a_timeline() {
         Rect::new(0.0, 0.0, 400.0, 160.0),
     );
     let layout = LayoutGraph {
+        activations: Vec::new(),
         groups: vec![
             LayoutGroup {
                 id: "a".to_string(),

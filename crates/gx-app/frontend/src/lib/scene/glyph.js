@@ -806,6 +806,14 @@ export function diagramPaint(scene) {
           return { x: num(line.x), y1: num(line.y1), y2: num(line.y2) };
         })
       : [],
+    // The activation bars (`f22-dibujo.md`, S5): the x centers the bar on
+    // the lifeline with the tokens' width, y is the layout's.
+    activations: (scene.activations ?? []).map((bar) => ({
+      x: num(bar.x - tokens.activation_width / 2),
+      y: num(bar.y1),
+      w: num(tokens.activation_width),
+      h: num(Math.max(0, bar.y2 - bar.y1)),
+    })),
     axis:
       scene.axis === null || scene.axis === undefined
         ? null

@@ -542,6 +542,7 @@ fn an_event_is_drawn_as_the_same_rounded_box_as_a_node() {
         events: vec![event("event-0", "q1", "spike")],
     });
     let layout = LayoutGraph {
+        activations: Vec::new(),
         axis: None,
         nodes: [(
             "event-0".to_string(),
@@ -625,6 +626,7 @@ fn a_graph_draws_each_group_as_a_container_with_its_name() {
         }],
     });
     let layout = LayoutGraph {
+        activations: Vec::new(),
         axis: None,
         nodes: [
             (
@@ -719,6 +721,7 @@ fn nested_groups_draw_the_outer_box_first_and_indent_the_inner_name() {
         ],
     });
     let layout = LayoutGraph {
+        activations: Vec::new(),
         axis: None,
         nodes: [(
             "api".to_string(),
@@ -795,6 +798,7 @@ fn a_timeline_draws_each_lane_as_a_band_with_its_name() {
         events: vec![event("event-0", "q1", "spike")],
     });
     let layout = LayoutGraph {
+        activations: Vec::new(),
         axis: None,
         nodes: [(
             "event-0".to_string(),
@@ -863,6 +867,7 @@ fn the_timeline_is_written_in_id_order_with_the_bands_underneath() {
         events: vec![event("event-1", "b", "uno"), event("event-0", "a", "dos")],
     });
     let layout = LayoutGraph {
+        activations: Vec::new(),
         axis: None,
         nodes: [
             (
@@ -944,6 +949,7 @@ fn bar_timeline() -> (Ir, LayoutGraph) {
         ],
     });
     let layout = LayoutGraph {
+        activations: Vec::new(),
         axis: None,
         nodes: [
             (
@@ -1087,6 +1093,7 @@ fn the_crow_foot_opens_towards_the_table() {
     });
 
     let layout = LayoutGraph {
+        activations: Vec::new(),
         axis: None,
         nodes: [
             (
@@ -1301,5 +1308,92 @@ fn the_style_block_styles_the_cardinality_marks() {
     assert!(
         render_fixture().contains(".cardinality{fill:none;stroke:"),
         "the export's style block must style the cardinality marks"
+    );
+}
+
+/// S5 (`f22-dibujo.md`): the activation of a sequence is a thin rectangle on
+/// the lifeline of the actor that holds the control — inside the lifelines
+/// layer, after the lines and under the arrows. A sequence without
+/// activations paints none, and a layered graph never does.
+#[test]
+fn an_activation_is_a_rect_on_the_lifeline_of_its_actor() {
+    use gx_core::ir::LayoutHint;
+
+    let mut sequence = crate::test_support::graph(
+        vec![
+            crate::test_support::node("cliente", "Cliente"),
+            crate::test_support::node("api", "API"),
+        ],
+        vec![crate::test_support::labeled_edge(
+            "cliente",
+            "api",
+            "POST /orders",
+        )],
+    );
+    if let gx_core::ir::Ir::Graph(graph) = &mut sequence {
+        graph.layout_hint = LayoutHint::Lanes;
+    }
+    let mut layout = crate::test_support::layout(
+        &[
+            (
+                "cliente",
+                gx_core::geom::Point::new(60.0, 30.0),
+                gx_core::geom::Size::new(90.0, 40.0),
+            ),
+            (
+                "api",
+                gx_core::geom::Point::new(240.0, 30.0),
+                gx_core::geom::Size::new(90.0, 40.0),
+            ),
+        ],
+        vec![crate::test_support::routed(
+            "cliente",
+            "api",
+            &[(60.0, 120.0), (240.0, 120.0)],
+            Some((150.0, 100.0)),
+        )],
+        gx_core::geom::Rect::new(0.0, 0.0, 300.0, 220.0),
+    );
+    layout.activations = vec![gx_core::LayoutActivation {
+        x: 240.0,
+        y1: 80.0,
+        y2: 160.0,
+    }];
+
+    let svg = render(&sequence, &layout, &Palette::plano());
+
+    // The bar sits centered on the actor's lifeline: x is the left edge of
+    // the tokens' width, y is the layout's.
+    assert!(
+        svg.contains("<rect class=\"activation\" x=\"235.00\" y=\"80.00\" width=\"10.00\" height=\"80.00\"/>"),
+        "la barra vive sobre la línea de vida: {svg}"
+    );
+    assert!(
+        svg.contains(".activation{"),
+        "la regla del tema viaja en el SVG"
+    );
+    // The bar belongs to the lifelines layer, before the edges: the arrow
+    // the edge layer paints later rides over it.
+    let lifelines = svg
+        .split("<g class=\"layer-lifelines\">")
+        .nth(1)
+        .and_then(|rest| rest.split("</g>").next())
+        .unwrap_or_default();
+    assert!(
+        lifelines.contains("class=\"activation\""),
+        "la barra es de la capa de líneas de vida: {lifelines}"
+    );
+
+    // Without an activation nothing is painted, and the rule still ships:
+    // the stylesheet is the drawing's, not one element's.
+    layout.activations.clear();
+    let svg = render(&sequence, &layout, &Palette::plano());
+    assert!(
+        !svg.contains("class=\"activation\""),
+        "nadie pidió control: {svg}"
+    );
+    assert!(
+        svg.contains(".activation{"),
+        "la regla del tema viaja igual"
     );
 }

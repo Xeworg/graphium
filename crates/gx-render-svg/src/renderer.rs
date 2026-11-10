@@ -42,7 +42,7 @@ use crate::escape::escape_text;
 use crate::geometry::{
     self, band_label, centered_baselines, cluster_id, crow_foot_mark, edge_id, label_lines,
     lane_id, marker_id, node_id, node_rect, points_text, push_emphasis, shape_class, CrowFoot,
-    Table, ARROW_LENGTH, DASH_PATTERN, GROUP_DASH, LIFELINE_DASH, MUTED_OPACITY,
+    Table, ACTIVATION_WIDTH, ARROW_LENGTH, DASH_PATTERN, GROUP_DASH, LIFELINE_DASH, MUTED_OPACITY,
 };
 use crate::scene::Drawing;
 
@@ -149,6 +149,18 @@ impl SvgRenderer {
                     fmt_num(geometry::lifeline_end(&canvas)),
                 ));
             }
+            // The activation bars (S5): on the lifeline, after the lines and
+            // under the arrows the edge layer paints later. The x centers the
+            // bar the tokens' width announces; y is the layout's.
+            for bar in &drawing.activations {
+                out.push_str(&format!(
+                    "<rect class=\"activation\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>\n",
+                    fmt_num(bar.x - ACTIVATION_WIDTH / 2.0),
+                    fmt_num(bar.y1),
+                    fmt_num(ACTIVATION_WIDTH),
+                    fmt_num((bar.y2 - bar.y1).max(0.0)),
+                ));
+            }
             out.push_str("</g>\n");
         }
 
@@ -227,7 +239,7 @@ impl SvgRendererContract for SvgRenderer {
 
 fn write_style(out: &mut String, palette: &Palette) {
     let border = fmt_num(TOKENS.border_width);
-    let rules: [(&str, String); 31] = [
+    let rules: [(&str, String); 32] = [
         (".bg", format!("fill:{}", palette.bg.css())),
         (".node-fill", format!("fill:{}", palette.node_fill.css())),
         (
@@ -291,6 +303,14 @@ fn write_style(out: &mut String, palette: &Palette) {
                 palette.node_stroke.css(),
                 fmt_num(LIFELINE_DASH.0),
                 fmt_num(LIFELINE_DASH.1),
+            ),
+        ),
+        (
+            ".activation",
+            format!(
+                "fill:{};stroke:{};stroke-width:{border}",
+                palette.node_fill.css(),
+                palette.node_stroke.css(),
             ),
         ),
         (

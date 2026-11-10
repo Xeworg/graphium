@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 20] = [
+const CASES: [(&str, &str); 21] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -40,6 +40,7 @@ const CASES: [(&str, &str); 20] = [
     ("tree-src", TREE_SRC),
     ("mindmap-feature", MINDMAP),
     ("sequence-order", SEQUENCE),
+    ("sequence-activation", SEQUENCE_ACTIVATION),
     ("timeline-roadmap", TIMELINE_ROADMAP),
     ("timeline-milestone", TIMELINE_MILESTONE),
     ("swimlane-soporte", SWIMLANE_SOPORTE),
@@ -165,6 +166,26 @@ const SEQUENCE: &str = r#"{
     { "from": "api", "to": "db", "label": "INSERT" },
     { "from": "db", "to": "api", "label": "ok", "reply": true },
     { "from": "api", "to": "api", "label": "reintento", "reply": true },
+    { "from": "api", "to": "cliente", "label": "201", "reply": true }
+  ]
+}"#;
+
+/// S5 (`f22-dibujo.md`): the activation — the control the `to` actor holds
+/// from the message that hands it over until its next outgoing message. Two
+/// bars of different spans: API holds rows 1-2, Base rows 2-3.
+const SEQUENCE_ACTIVATION: &str = r#"{
+  "version": 1,
+  "kind": "sequence",
+  "title": "pedido con control",
+  "participants": [
+    { "id": "cliente", "label": "Cliente" },
+    { "id": "api", "label": "API" },
+    { "id": "db", "label": "Base" }
+  ],
+  "messages": [
+    { "from": "cliente", "to": "api", "label": "POST /orders", "activation": true },
+    { "from": "api", "to": "db", "label": "INSERT", "activation": true },
+    { "from": "db", "to": "api", "label": "ok", "reply": true },
     { "from": "api", "to": "cliente", "label": "201", "reply": true }
   ]
 }"#;

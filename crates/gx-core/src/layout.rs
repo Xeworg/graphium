@@ -73,6 +73,19 @@ pub struct LayoutAxis {
     pub ticks: Vec<(f64, i64)>,
 }
 
+/// An activation bar of a sequence (`f22-dibujo.md`, S5): the thin rectangle
+/// over an actor's lifeline while the actor holds the control. The layout
+/// computes it and the painters spell it; an empty [`LayoutGraph
+/// ::activations`] draws nothing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LayoutActivation {
+    /// The x of the lifeline: the center of the actor.
+    pub x: f64,
+    /// Where the bar starts and ends, bracketing the rows it spans.
+    pub y1: f64,
+    pub y2: f64,
+}
+
 /// The result of a layout run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LayoutGraph {
@@ -83,6 +96,9 @@ pub struct LayoutGraph {
     /// The time axis of a timeline layout (`f22-dibujo.md`, S2): `None` for
     /// every graph layout and for the sequence lanes, which have no time.
     pub axis: Option<LayoutAxis>,
+    /// The activation bars of a sequence (`f22-dibujo.md`, S5), in actor
+    /// order: empty for every other layout.
+    pub activations: Vec<LayoutActivation>,
     pub bbox: Rect,
 }
 
@@ -93,6 +109,7 @@ impl LayoutGraph {
             edges: Vec::new(),
             groups: Vec::new(),
             axis: None,
+            activations: Vec::new(),
             bbox: Rect::default(),
         }
     }
@@ -132,6 +149,7 @@ pub trait LayoutEngine: Send + Sync {
         }
         let bbox = bounds_of(&nodes);
         LayoutGraph {
+            activations: Vec::new(),
             nodes,
             edges: Vec::new(),
             groups: timeline
