@@ -126,21 +126,22 @@ ola first).
   CSS classes in app.css and the export's write_style.
 - L5 (2026-11-10, design note for T2, the S2 owner decision): the axis is a
   new layer of the drawing, drawn between the lane bands and the edges —
-  `layer-axis`, after `layer-lanes`, so the axis line never rides on an event
-  box. The layout computes it, the scene carries it, the painter spells it:
-  (a) `SceneAxis` in `gx-core/src/scene.rs`: the y of the axis line (below
-  the last lane band, one padding down), x1/x2 spanning column centers, and
-  one `SceneTick` per known column `{x, value}` (i64 column value for
-  timeline and gantt alike). The layout already computes the column lefts
-  (`known: BTreeMap<i64, f64>`): the tick x is the **center** of the column,
-  not its left edge; columns that no document mentioned (skipped orders) do
-  not tick — the axis says what exists, and LayoutGraph carries
-  `axis: Option<LayoutAxis>` (`None` = no axis, so sequence/swimlane and
-  every graph kind are untouched). (b) The renderer draws
-  `<line class="axis-line"/>` + one `<text class="axis-value">` per tick,
-  two new rules in `write_style`; the canvas grows by the axis band (the
-  line + one text line + padding) in `canvas_rect`/bbox so nothing clips.
-  (c) The painter twin: `axisPaint` in glyph.js, `<g class="layer-axis">`
-  in DiagramScene, the same two CSS classes in app.css. (d) The axis spans
-  both `timeline` and `gantt` (S2 names both); sequence draws no axis (its
-  columns are actors, not time — the lifelines are its axis already).
+  `layer-axis`, after `layer-lanes`. The layout computes it (`LayoutAxis`:
+  line y below the last lane, x span, one tick per known column at its time
+  position, left + half step — never the event box center), the scene
+  carries it (`SceneAxis`), the renderer spells `layer-axis` between lanes
+  and edges, the painter twin draws the same layer from the same numbers
+  (`axisOf` in scene.js fails loud on a malformed one). Columns the document
+  never mentions do not tick. The canvas grows by the axis band. Sequence
+  draws no axis: its columns are actors, the lifelines are its axis already.
+- L6 (2026-11-10, execution, T1-T3): the equivalence gate caught the shape
+  class spelling drift (the class CSS is the wire word of `as_str()` —
+  `shape-ring_dot`, underscore); the app.css grid gate REDs when the window
+  CSS misses a rule the drawing paints; parity C46 caught an undefined
+  `shapeOf` killing the whole timeline mount (glyph.js is a pure module:
+  helpers it needs must be exported from scene.js and imported). Goldens
+  regenerated: state-order draws the frontier glyphs, class-shop the
+  stereotypes, timeline-roadmap/gantt-plan the axis, and the new
+  timeline-milestone golden joined the suite (20 cases). The milestone
+  golden shows the diamond label overflowing its slanted edges — the S9
+  finding, for T7.
