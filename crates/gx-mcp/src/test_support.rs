@@ -71,6 +71,7 @@ impl LayoutEngine for StubLayout {
             })
             .collect();
         LayoutGraph {
+            axis: None,
             nodes,
             edges,
             groups: Vec::new(),
@@ -294,6 +295,7 @@ impl SvgRenderer for StubRenderer {
             .unwrap_or_default();
 
         Some(Scene {
+            axis: None,
             canvas: layout.bbox,
             tokens: scene_tokens(),
             direction: graph.map(|graph| graph.direction),

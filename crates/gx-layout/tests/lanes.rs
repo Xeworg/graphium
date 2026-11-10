@@ -5,9 +5,15 @@
 //! leerse de izquierda a derecha sin adivinar.
 
 use gx_core::geom::Size;
-use gx_core::ir::{IrEvent, IrLane, IrTimeline};
+use gx_core::ir::{Direction, IrEvent, IrGraph, IrLane, IrNode, IrTimeline, LayoutHint};
 use gx_core::layout::{LayoutEngine, LayoutOpts};
 use gx_layout::LanesEngine;
+
+fn graph_node(id: &str, w: f64, h: f64) -> IrNode {
+    let mut node = IrNode::new(id, id);
+    node.size = Size::new(w, h);
+    node
+}
 
 /// Un medidor con ancho fijo por carácter: el layout no depende de la fuente.
 struct FakeMetrics;
@@ -354,4 +360,67 @@ fn sequential_steps_keep_air_between_boxes() {
     let second = layout.nodes.get("s1").expect("s1 placed");
     let gap = second.center.x - second.size.w / 2.0 - (first.center.x + first.size.w / 2.0);
     assert!(gap >= 2.0 * 16.0 - 0.01, "the steps touch: gap {gap}");
+}
+
+/// The time axis says what the columns mean (`f22-dibujo.md`, S2): one tick
+/// per known column, at the column center, under the last lane — and no axis
+/// where there is no time.
+#[test]
+fn the_time_axis_names_what_the_columns_mean() {
+    let timeline = timeline(
+        vec![lane("a", "A"), lane("b", "B")],
+        vec![event("e1", "a", "uno", 0), event("e2", "b", "dos", 2)],
+    );
+
+    let layout = engine().layout_timeline(&timeline, &LayoutOpts::default());
+
+    // Column 1 was never mentioned: the axis ticks only what exists.
+    let axis = layout.axis.expect("the timeline draws its axis");
+    let values: Vec<i64> = axis.ticks.iter().map(|(_, value)| *value).collect();
+    assert_eq!(values, vec![0, 2], "one tick per known column, in order");
+
+    // Each tick sits at the center of its own column: the column starts at
+    // its left edge and is one step wide (a wide point event widens its own
+    // column, so the tick center is left + step/2, not the event's center).
+    let e1 = layout.nodes.get("e1").expect("e1");
+    let e2 = layout.nodes.get("e2").expect("e2");
+    let e1_left = e1.center.x - e1.size.w / 2.0;
+    let e2_left = e2.center.x - e2.size.w / 2.0;
+    // The tick is the time position of the column: left edge + half a step —
+    // NOT the event box center, because a wide point event (e1's label is
+    // 118 wide: max(label+2p, step−2p)) shifts its own box but not the time.
+    assert_eq!(axis.ticks[0].0, e1_left + 75.0);
+    assert_eq!(axis.ticks[1].0, e2_left + 75.0);
+
+    // The line runs under the last lane band.
+    let last_lane = layout.groups.last().expect("lanes");
+    assert!(
+        axis.y > last_lane.bbox.y + last_lane.bbox.h - 0.01,
+        "the axis is below the last lane"
+    );
+    assert_eq!(axis.x1, axis.ticks.first().expect("first tick").0);
+    assert_eq!(axis.x2, axis.ticks.last().expect("last tick").0);
+
+    // The axis band lives inside the bounding box: nothing clips.
+    assert!(
+        layout.bbox.max_y() >= axis.y + 0.01,
+        "the axis fits the bbox"
+    );
+}
+
+/// A sequence has no time axis: its columns are actors, and the lifelines
+/// already say which column is which (`f22-dibujo.md`, L5d).
+#[test]
+fn a_sequence_layout_carries_no_axis() {
+    let graph = IrGraph {
+        direction: Direction::LR,
+        layout_hint: LayoutHint::Lanes,
+        nodes: vec![graph_node("u", 90.0, 40.0), graph_node("s", 90.0, 40.0)],
+        edges: vec![],
+        groups: Vec::new(),
+    };
+
+    let layout = engine().layout(&graph, &LayoutOpts::default());
+
+    assert!(layout.axis.is_none(), "the actors are not time");
 }

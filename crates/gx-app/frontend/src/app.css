@@ -353,6 +353,18 @@
   fill: var(--edge-text);
 }
 
+/* The time axis (`f22-dibujo.md`, S2): the line under the lanes and the
+ * value each known column names. */
+.graphium .axis-line {
+  stroke: var(--edge-stroke);
+  stroke-width: 1px;
+  fill: none;
+}
+
+.graphium .axis-value {
+  fill: var(--edge-text);
+}
+
 .graphium .cardinality {
   fill: none;
   stroke: var(--edge-stroke);

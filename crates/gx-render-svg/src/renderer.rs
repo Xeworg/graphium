@@ -152,6 +152,30 @@ impl SvgRenderer {
             out.push_str("</g>\n");
         }
 
+        // El eje de tiempo (`f22-dibujo.md`, S2, L5a): debajo de los carriles
+        // y antes de las aristas, para que la línea no pase sobre una caja.
+        // Solo un timeline lo lleva: `None` no dibuja capa.
+        if let Some(axis) = &drawing.axis {
+            out.push_str("<g class=\"layer-axis\">\n");
+            out.push_str(&format!(
+                "<line class=\"axis-line\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>\n",
+                fmt_num(axis.x1),
+                fmt_num(axis.y),
+                fmt_num(axis.x2),
+                fmt_num(axis.y),
+            ));
+            for (x, value) in &axis.ticks {
+                out.push_str(&format!(
+                    "<text class=\"axis-value text\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"middle\" dominant-baseline=\"hanging\">{}</text>\n",
+                    fmt_num(*x),
+                    fmt_num(axis.y + TOKENS.node_padding / 2.0),
+                    fmt_num(TOKENS.text_size * 0.85),
+                    value,
+                ));
+            }
+            out.push_str("</g>\n");
+        }
+
         out.push_str("<g class=\"layer-edges\">\n");
         for (edge, route) in &drawing.edges {
             write_edge(&mut out, edge, route);
@@ -203,7 +227,7 @@ impl SvgRendererContract for SvgRenderer {
 
 fn write_style(out: &mut String, palette: &Palette) {
     let border = fmt_num(TOKENS.border_width);
-    let rules: [(&str, String); 29] = [
+    let rules: [(&str, String); 31] = [
         (".bg", format!("fill:{}", palette.bg.css())),
         (".node-fill", format!("fill:{}", palette.node_fill.css())),
         (
@@ -325,6 +349,16 @@ fn write_style(out: &mut String, palette: &Palette) {
             ".node-stereotype",
             format!("fill:{}", palette.edge_text.css()),
         ),
+        // The time axis (`f22-dibujo.md`, S2): the line under the lanes and
+        // the value each known column names.
+        (
+            ".axis-line",
+            format!(
+                "stroke:{};stroke-width:{border};fill:none",
+                palette.edge_stroke.css(),
+            ),
+        ),
+        (".axis-value", format!("fill:{}", palette.edge_text.css())),
     ];
     out.push_str("<style>\n");
     for (selector, body) in rules {

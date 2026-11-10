@@ -14,7 +14,9 @@ use dagre::graph::{Graph, GraphOptions};
 use dagre::{layout, EdgeLabel, LayoutOptions, NodeLabel, RankDir, Ranker};
 use gx_core::geom::{Point, Rect, Size};
 use gx_core::ir::{Direction, IrEvent, IrGraph, IrGroup, IrLane, IrTimeline};
-use gx_core::layout::{LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, LayoutOpts, NodeBox};
+use gx_core::layout::{
+    LayoutAxis, LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, LayoutOpts, NodeBox,
+};
 use gx_core::text::{TextMetrics, TextStyle};
 use gx_core::tokens::TOKENS;
 
@@ -125,6 +127,7 @@ impl LayoutEngine for DagreEngine {
             nodes: pass.nodes,
             edges: pass.edges,
             groups,
+            axis: None,
             bbox,
         }
     }
@@ -1027,6 +1030,7 @@ impl LayoutEngine for TreeEngine {
             nodes: placed,
             edges,
             groups: Vec::new(),
+            axis: None,
             bbox,
         }
     }
@@ -1223,6 +1227,7 @@ impl LayoutEngine for LanesEngine {
             nodes,
             edges,
             groups: Vec::new(),
+            axis: None,
             bbox,
         }
     }
@@ -1377,12 +1382,36 @@ impl LayoutEngine for LanesEngine {
             });
             top += height;
         }
-        let bbox = Rect::new(0.0, 0.0, width, top);
+        // The time axis (`f22-dibujo.md`, S2, L5): under the last lane, one
+        // tick per known column. The known columns are the ones the document
+        // mentioned; their left edges are `known`, and the tick sits at the
+        // center of the step the column advances by — the column's time
+        // position, not an event box's center.
+        let axis_y = top + padding;
+        let tick_xs: Vec<(f64, i64)> = known
+            .iter()
+            .map(|(&order, &left)| (left + step / 2.0, order))
+            .collect();
+        let axis = (!tick_xs.is_empty()).then(|| LayoutAxis {
+            y: axis_y,
+            x1: tick_xs.first().expect("first tick").0,
+            x2: tick_xs.last().expect("last tick").0,
+            ticks: tick_xs,
+        });
+        // The bbox grows by the axis band: the line and one text line under
+        // it, plus its own padding, so no tick value clips.
+        let axis_band = if axis.is_some() {
+            padding + TOKENS.text_size * TOKENS.line_height
+        } else {
+            0.0
+        };
+        let bbox = Rect::new(0.0, 0.0, width, top + axis_band);
 
         LayoutGraph {
             nodes,
             edges: Vec::new(),
             groups,
+            axis,
             bbox,
         }
     }

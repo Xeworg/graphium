@@ -542,6 +542,7 @@ fn an_event_is_drawn_as_the_same_rounded_box_as_a_node() {
         events: vec![event("event-0", "q1", "spike")],
     });
     let layout = LayoutGraph {
+        axis: None,
         nodes: [(
             "event-0".to_string(),
             NodeBox {
@@ -624,6 +625,7 @@ fn a_graph_draws_each_group_as_a_container_with_its_name() {
         }],
     });
     let layout = LayoutGraph {
+        axis: None,
         nodes: [
             (
                 "api".to_string(),
@@ -717,6 +719,7 @@ fn nested_groups_draw_the_outer_box_first_and_indent_the_inner_name() {
         ],
     });
     let layout = LayoutGraph {
+        axis: None,
         nodes: [(
             "api".to_string(),
             NodeBox {
@@ -792,6 +795,7 @@ fn a_timeline_draws_each_lane_as_a_band_with_its_name() {
         events: vec![event("event-0", "q1", "spike")],
     });
     let layout = LayoutGraph {
+        axis: None,
         nodes: [(
             "event-0".to_string(),
             NodeBox {
@@ -859,6 +863,7 @@ fn the_timeline_is_written_in_id_order_with_the_bands_underneath() {
         events: vec![event("event-1", "b", "uno"), event("event-0", "a", "dos")],
     });
     let layout = LayoutGraph {
+        axis: None,
         nodes: [
             (
                 "event-1".to_string(),
@@ -938,6 +943,7 @@ fn bar_timeline() -> (Ir, LayoutGraph) {
         ],
     });
     let layout = LayoutGraph {
+        axis: None,
         nodes: [
             (
                 "point".to_string(),
@@ -1080,6 +1086,7 @@ fn the_crow_foot_opens_towards_the_table() {
     });
 
     let layout = LayoutGraph {
+        axis: None,
         nodes: [
             (
                 "users".to_string(),

@@ -443,6 +443,36 @@ export function sceneFromElements(raw) {
     edges,
     bands,
     events,
+    // The time axis of a timeline (`f22-dibujo.md`, S2): the numbers travel
+    // verbatim; a malformed one is a loud end, like a malformed label_at.
+    axis: axisOf(raw.axis),
+  };
+}
+
+/** The axis of a timeline scene, or `null` when there is none. */
+function axisOf(raw) {
+  if (raw === undefined || raw === null) {
+    return null;
+  }
+  if (
+    !isRecord(raw) ||
+    !isNumber(raw.y) ||
+    !isNumber(raw.x1) ||
+    !isNumber(raw.x2) ||
+    !Array.isArray(raw.ticks)
+  ) {
+    throw new Error(`the scene names a malformed axis: ${JSON.stringify(raw)}`);
+  }
+  return {
+    y: raw.y,
+    x1: raw.x1,
+    x2: raw.x2,
+    ticks: raw.ticks.map((tick) => {
+      if (!Array.isArray(tick) || tick.length !== 2 || !isNumber(tick[0]) || !Number.isInteger(tick[1])) {
+        throw new Error(`the scene names a malformed axis tick: ${JSON.stringify(tick)}`);
+      }
+      return [tick[0], tick[1]];
+    }),
   };
 }
 

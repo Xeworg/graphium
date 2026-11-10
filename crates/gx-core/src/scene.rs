@@ -56,6 +56,25 @@ pub struct Scene {
     pub bands: Vec<SceneBand>,
     /// The events of a timeline, in id order.
     pub events: Vec<SceneEvent>,
+    /// The time axis of a timeline (`f22-dibujo.md`, S2): the line under the
+    /// last lane and one tick per known column. `None` draws nothing — the
+    /// graphs and the sequence have no time axis (L5).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub axis: Option<SceneAxis>,
+}
+
+/// The time axis of a timeline, as the painter spells it (`f22-dibujo.md`,
+/// S2): the numbers are the layout's (`LayoutAxis`), the payload carries no
+/// path.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SceneAxis {
+    /// The y of the axis line.
+    pub y: f64,
+    /// Where the line starts and ends.
+    pub x1: f64,
+    pub x2: f64,
+    /// One tick per known column: its x and the column value it names.
+    pub ticks: Vec<(f64, i64)>,
 }
 
 /// The frozen numbers of the drawing (`f11-elementos.md`, S5).

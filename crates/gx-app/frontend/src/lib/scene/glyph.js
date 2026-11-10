@@ -801,6 +801,15 @@ export function diagramPaint(scene) {
           return { x: num(line.x), y1: num(line.y1), y2: num(line.y2) };
         })
       : [],
+    axis:
+      scene.axis === null || scene.axis === undefined
+        ? null
+        : {
+            y: num(scene.axis.y),
+            x1: num(scene.axis.x1),
+            x2: num(scene.axis.x2),
+            ticks: scene.axis.ticks.map(([x, value]) => ({ x: num(x), value })),
+          },
     edges: scene.edges.map((edge) => edgePaint(edge, tokens)),
     nodes: [
       ...scene.nodes.map((node) => nodePaint(node, tokens)),

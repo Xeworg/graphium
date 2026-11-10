@@ -57,6 +57,22 @@ pub struct LayoutGroup {
     pub gutter: Option<f64>,
 }
 
+/// A time axis under the last lane of a timeline (`f22-dibujo.md`, S2): the
+/// line, its x span and one tick per known column. The layout computes it
+/// and the painter spells it; `None` on [`LayoutGraph.axis`] draws nothing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LayoutAxis {
+    /// The y of the axis line, below the last lane band.
+    pub y: f64,
+    /// The x where the line starts and ends: the center of the first and of
+    /// the last known column.
+    pub x1: f64,
+    pub x2: f64,
+    /// One tick per known column, in order: the center x of the column and
+    /// the column value it names.
+    pub ticks: Vec<(f64, i64)>,
+}
+
 /// The result of a layout run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LayoutGraph {
@@ -64,6 +80,9 @@ pub struct LayoutGraph {
     pub nodes: BTreeMap<String, NodeBox>,
     pub edges: Vec<LayoutEdge>,
     pub groups: Vec<LayoutGroup>,
+    /// The time axis of a timeline layout (`f22-dibujo.md`, S2): `None` for
+    /// every graph layout and for the sequence lanes, which have no time.
+    pub axis: Option<LayoutAxis>,
     pub bbox: Rect,
 }
 
@@ -73,6 +92,7 @@ impl LayoutGraph {
             nodes: BTreeMap::new(),
             edges: Vec::new(),
             groups: Vec::new(),
+            axis: None,
             bbox: Rect::default(),
         }
     }
@@ -139,6 +159,9 @@ pub trait LayoutEngine: Send + Sync {
                     gutter: Some(0.0),
                 })
                 .collect(),
+            // The default timeline layout has no axis yet: the lanes engine
+            // is the one that computes it (`f22-dibujo.md`, S2).
+            axis: None,
             bbox,
         }
     }

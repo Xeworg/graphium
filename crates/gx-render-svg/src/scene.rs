@@ -17,9 +17,9 @@
 use std::collections::BTreeMap;
 
 use gx_core::{
-    Ir, IrEdge, IrEvent, IrGraph, IrNode, IrTimeline, LayoutEdge, LayoutGraph, LayoutGroup,
-    NodeBox, Palette, Rect, Scene, SceneBand, SceneEdge, SceneEvent, SceneNode, ScenePalette,
-    SceneTokens, TOKENS,
+    Ir, IrEdge, IrEvent, IrGraph, IrNode, IrTimeline, LayoutAxis, LayoutEdge, LayoutGraph,
+    LayoutGroup, NodeBox, Palette, Rect, Scene, SceneAxis, SceneBand, SceneEdge, SceneEvent,
+    SceneNode, ScenePalette, SceneTokens, TOKENS,
 };
 
 use crate::geometry::{
@@ -48,6 +48,8 @@ pub(crate) struct Drawing<'a> {
     pub(crate) clusters: Vec<&'a LayoutGroup>,
     /// The lane bands of a timeline, in id order.
     pub(crate) lanes: Vec<&'a LayoutGroup>,
+    /// The time axis of a timeline (`f22-dibujo.md`, S2).
+    pub(crate) axis: Option<LayoutAxis>,
 }
 
 /// The dependency arrows of a timeline (`f18-gantt.md`, S7): one edge per
@@ -151,6 +153,7 @@ impl<'a> Drawing<'a> {
                 Some(_) => geometry::ordered_groups(layout),
                 None => Vec::new(),
             },
+            axis: layout.axis.clone(),
         }
     }
 
@@ -272,6 +275,15 @@ impl<'a> Drawing<'a> {
                     bar: geometry::event_bar(&geometry::node_rect(placed), event.span),
                 })
                 .collect(),
+            // The axis travels verbatim (`f22-dibujo.md`, L5): the layout
+            // computed it, the scene carries the numbers, the painter spells
+            // them — no path ships in the payload (S5).
+            axis: self.axis.as_ref().map(|axis| SceneAxis {
+                y: axis.y,
+                x1: axis.x1,
+                x2: axis.x2,
+                ticks: axis.ticks.clone(),
+            }),
         }
     }
 }
