@@ -358,6 +358,10 @@ impl DiagramKind for ErKind {
     fn schema() -> schemars::Schema {
         schemars::schema_for!(ErInput)
     }
+
+    fn shapes() -> Vec<Shape> {
+        vec![Shape::Box]
+    }
 }
 
 /// The column of a table, if both exist.

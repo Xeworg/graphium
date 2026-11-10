@@ -381,7 +381,7 @@ fn write_node(out: &mut String, node: &IrNode, placed: &NodeBox) {
     let rect = node_rect(placed);
     let id = escape_text(&node_id(&node.id));
     let mut classes = String::from("node-fill node-stroke ");
-    classes.push_str(shape_class(node.shape));
+    classes.push_str(&shape_class(node.shape));
     if node.style == Style::Dashed {
         classes.push_str(" stroke-dashed");
     }
@@ -394,8 +394,9 @@ fn write_node(out: &mut String, node: &IrNode, placed: &NodeBox) {
         Shape::Diamond => write_diamond(out, &id, &classes, &rect),
         Shape::Ellipse => write_ellipse(out, &id, &classes, &rect),
         Shape::Note => write_note(out, &id, &classes, &rect),
+        Shape::Circle => write_circle(out, &id, &classes, &geometry::glyph_rect(node.shape, &rect)),
     }
-    if node.rows.is_empty() {
+    if node.rows.is_empty() || node.shape == Shape::Circle {
         write_node_text(out, node, placed);
     } else {
         write_node_table(out, node, placed);
@@ -642,6 +643,17 @@ fn write_ellipse(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect
     ));
 }
 
+/// Draws the circle dot: one `<circle>` in the glyph rect
+/// (`f19-formas.md`, S8).
+fn write_circle(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
+    out.push_str(&format!(
+        "<circle id=\"{id}\" class=\"{classes}\" cx=\"{}\" cy=\"{}\" r=\"{}\"/>\n",
+        fmt_num(rect.center().x),
+        fmt_num(rect.center().y),
+        fmt_num(rect.w / 2.0),
+    ));
+}
+
 fn write_note(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
     let fold = TOKENS.corner_radius.min(rect.w / 4.0).min(rect.h / 4.0);
     let left = fmt_num(rect.x);
@@ -661,7 +673,46 @@ fn write_note(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
 fn write_node_text(out: &mut String, node: &IrNode, placed: &NodeBox) {
     let mut classes = String::from("node-text text");
     push_emphasis(&mut classes, node.emphasis, true);
-    write_centered_text(out, &classes, &node.label, placed);
+    match geometry::label_placement(node.shape, &node_rect(placed)) {
+        geometry::LabelPlacement::Inside => {
+            write_centered_text(out, &classes, &node.label, placed);
+        }
+        geometry::LabelPlacement::Beside { at } => {
+            write_beside_text(out, &classes, &node.label, at);
+        }
+    }
+}
+
+/// Draws the label beside a dot: start-anchored at the point the placement
+/// computed, vertically centered (`f19-formas.md`, S8).
+fn write_beside_text(out: &mut String, classes: &str, label: &str, at: gx_core::Point) {
+    let lines = label_lines(label);
+    if lines.is_empty() {
+        return;
+    }
+    let size = fmt_num(TOKENS.text_size);
+    let x = fmt_num(at.x);
+    let y = fmt_num(at.y);
+
+    if lines.len() == 1 {
+        out.push_str(&format!(
+            "<text class=\"{classes}\" x=\"{x}\" y=\"{y}\" font-size=\"{size}\" text-anchor=\"start\" dominant-baseline=\"central\">{}</text>\n",
+            escape_text(lines[0]),
+        ));
+        return;
+    }
+
+    out.push_str(&format!(
+        "<text class=\"{classes}\" font-size=\"{size}\" text-anchor=\"start\" dominant-baseline=\"central\">\n"
+    ));
+    for (line, baseline) in lines.iter().zip(centered_baselines(at.y, lines.len())) {
+        out.push_str(&format!(
+            "<tspan x=\"{x}\" y=\"{}\">{}</tspan>\n",
+            fmt_num(baseline),
+            escape_text(line)
+        ));
+    }
+    out.push_str("</text>\n");
 }
 
 /// Draws a label centered on its box, one `<text>` per line.

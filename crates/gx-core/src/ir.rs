@@ -49,6 +49,38 @@ pub enum Shape {
     Diamond,
     Ellipse,
     Note,
+    /// The dot: a frozen-diameter circle whose label sits beside it, not
+    /// inside (`f19-formas.md`, S8). The commit of a `gitgraph`.
+    Circle,
+}
+
+impl Shape {
+    /// Every shape, in declaration order: the one list of the wire words
+    /// (`f19-formas.md`, S3). A new shape enters here and the compiler walks
+    /// the rest of the way.
+    pub const ALL: [Shape; 7] = [
+        Shape::Box,
+        Shape::Rounded,
+        Shape::Cylinder,
+        Shape::Diamond,
+        Shape::Ellipse,
+        Shape::Note,
+        Shape::Circle,
+    ];
+
+    /// The wire word of the shape: the one spelling every painter, the scene
+    /// payload and the schema read (`f19-formas.md`, S3).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Shape::Box => "box",
+            Shape::Rounded => "rounded",
+            Shape::Cylinder => "cylinder",
+            Shape::Diamond => "diamond",
+            Shape::Ellipse => "ellipse",
+            Shape::Note => "note",
+            Shape::Circle => "circle",
+        }
+    }
 }
 
 /// Visual emphasis of a node or an edge (PRD §11.1, RF16).

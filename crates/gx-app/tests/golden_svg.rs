@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 17] = [
+const CASES: [(&str, &str); 19] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -50,6 +50,8 @@ const CASES: [(&str, &str); 17] = [
     ("component-nested", COMPONENT_NESTED),
     ("c4-context", C4_CONTEXT),
     ("gantt-plan", GANTT_PLAN),
+    ("graph-note", GRAPH_NOTE),
+    ("shape-gallery", SHAPE_GALLERY),
 ];
 
 const MINIMAL: &str = r#"{
@@ -525,5 +527,35 @@ const GANTT_PLAN: &str = r#"{
       "start": 5, "end": 9, "depends_on": ["permiso"] },
     { "id": "apertura", "label": "Apertura", "lane": "obra",
       "start": 9, "end": 9, "depends_on": ["demolicion"] }
+  ]
+}"#;
+
+const GRAPH_NOTE: &str = r#"{
+  "version": 1,
+  "kind": "graph",
+  "title": "Nota al margen",
+  "nodes": [
+    { "id": "idea", "label": "La idea" },
+    { "id": "margen", "label": "el margen la anota", "shape": "note" }
+  ],
+  "edges": [ { "from": "idea", "to": "margen", "label": "anota" } ]
+}"#;
+
+const SHAPE_GALLERY: &str = r#"{
+  "version": 1,
+  "kind": "graph",
+  "title": "Las siete formas",
+  "nodes": [
+    { "id": "caja", "label": "Caja", "shape": "box" },
+    { "id": "redondeada", "label": "Redondeada", "shape": "rounded" },
+    { "id": "cilindro", "label": "Cilindro", "shape": "cylinder" },
+    { "id": "rombo", "label": "Rombo", "shape": "diamond" },
+    { "id": "elipse", "label": "Elipse", "shape": "ellipse" },
+    { "id": "nota", "label": "Nota", "shape": "note" },
+    { "id": "punto", "label": "el punto, su etiqueta al lado", "shape": "circle" }
+  ],
+  "edges": [
+    { "from": "caja", "to": "rombo", "label": "decide" },
+    { "from": "rombo", "to": "punto", "label": "commit" }
   ]
 }"#;

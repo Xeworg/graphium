@@ -219,6 +219,10 @@ impl DiagramKind for GraphKind {
     fn schema() -> schemars::Schema {
         schemars::schema_for!(GraphInput)
     }
+
+    fn shapes() -> Vec<Shape> {
+        Shape::ALL.to_vec()
+    }
 }
 
 /// Registers the `graph` kind in the global registry.

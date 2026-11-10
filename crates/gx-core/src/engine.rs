@@ -193,6 +193,17 @@ fn measure_node(
         }
     };
     let label = metrics.measure(&node.label, &style(TextStyle::semibold(TOKENS.text_size)));
+
+    // A circle carries its label beside it (`f19-formas.md`, S8/S9): the
+    // envelope reserves dot + gap + label, and the rows never apply — a dot
+    // with a compartment is not a dot.
+    if node.shape == crate::ir::Shape::Circle {
+        let width =
+            TOKENS.circle_diameter + TOKENS.node_padding + label.w + 2.0 * TOKENS.node_padding;
+        let height = TOKENS.circle_diameter.max(label.h) + 2.0 * TOKENS.node_padding;
+        return Size::new(width, height);
+    }
+
     let mut width = label.w;
     let mut height = label.h + 2.0 * TOKENS.node_padding;
 

@@ -768,20 +768,21 @@ fn admits_groups(kind: &str) -> bool {
     )
 }
 
-/// The shapes valid for a kind (PRD §11.1).
+/// The shapes valid for a kind (PRD §11.1): the truth of the kind — what its
+/// roles draw (`f19-formas.md`, S4) — read from the registry, never a hand
+/// list here.
 fn shapes_of(kind: &str) -> Vec<String> {
-    match kind {
-        "graph" => vec![
-            "box".to_string(),
-            "rounded".to_string(),
-            "cylinder".to_string(),
-            "diamond".to_string(),
-            "ellipse".to_string(),
-            "note".to_string(),
-        ],
-        "er" => vec!["table".to_string(), "column".to_string()],
-        _ => vec![],
-    }
+    gx_core::kind::handlers()
+        .iter()
+        .find(|handler| handler.kind() == kind)
+        .map(|handler| {
+            handler
+                .shapes()
+                .iter()
+                .map(|shape| shape.as_str().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -1803,6 +1804,34 @@ mod tests {
         assert!(shapes.contains(&"rounded".to_string()));
         assert!(!shapes.is_empty());
         assert_eq!(response.required.unwrap(), vec!["version", "kind"]);
+    }
+
+    /// S4 de `f19-formas.md`: `shapes[]` es la verdad del kind — lo que sus
+    /// roles dibujan, no una lista escrita a mano en gx-mcp. El er que
+    /// anunciaba `table`/`column` (que nunca fueron variantes de `Shape`) y
+    /// los kinds que anunciaban una lista vacía mienten al agente.
+    #[test]
+    fn the_shapes_of_a_kind_are_its_own_truth() {
+        let flowchart = get_diagram_schema(Some("flowchart"));
+        assert!(flowchart.ok);
+        let shapes = flowchart.shapes.expect("shapes");
+        assert!(shapes.contains(&"diamond".to_string()), "{shapes:?}");
+        assert!(shapes.contains(&"ellipse".to_string()), "{shapes:?}");
+        assert!(shapes.contains(&"note".to_string()), "{shapes:?}");
+
+        let er = get_diagram_schema(Some("er"));
+        assert_eq!(
+            er.shapes.expect("shapes"),
+            vec!["box".to_string()],
+            "er draws boxes: the table/column fiction dies"
+        );
+
+        let gantt = get_diagram_schema(Some("gantt"));
+        assert_eq!(
+            gantt.shapes.expect("shapes"),
+            vec!["rounded".to_string()],
+            "a kind without a role table draws its default"
+        );
     }
 
     /// El índice de kinds le da al agente un ejemplo mínimo de cada kind: si

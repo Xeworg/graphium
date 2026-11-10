@@ -77,6 +77,10 @@ impl DiagramKind for StateKind {
         schemars::schema_for!(StateInput)
     }
 
+    fn shapes() -> Vec<Shape> {
+        crate::flow::shapes_of_roles(&ROLES)
+    }
+
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
         let mut errors = validate_header(Self::KIND, &input.kind, SUPPORTED_VERSION, input.version);
         errors.extend(validate_flow(

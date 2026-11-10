@@ -280,6 +280,7 @@ fn shapes_are_drawn_with_their_own_class() {
             fixture::shaped("dia", "diamond", Shape::Diamond),
             fixture::shaped("ell", "ellipse", Shape::Ellipse),
             fixture::shaped("nte", "note", Shape::Note),
+            fixture::shaped("dot", "dot", Shape::Circle),
         ],
         Vec::new(),
     );
@@ -290,9 +291,10 @@ fn shapes_are_drawn_with_their_own_class() {
             ("dia", Point::new(200.0, 40.0), Size::new(90.0, 60.0)),
             ("ell", Point::new(200.0, 130.0), Size::new(90.0, 60.0)),
             ("nte", Point::new(200.0, 220.0), Size::new(90.0, 60.0)),
+            ("dot", Point::new(200.0, 310.0), Size::new(120.0, 48.0)),
         ],
         Vec::new(),
-        Rect::new(0.0, 0.0, 260.0, 260.0),
+        Rect::new(0.0, 0.0, 260.0, 340.0),
     );
     let svg = render(&ir, &layout, &Palette::plano());
     let document = document(&svg);
@@ -310,7 +312,20 @@ fn shapes_are_drawn_with_their_own_class() {
     assert!(of_id("g-dia").contains("shape-diamond"));
     assert!(of_id("g-ell").contains("shape-ellipse"));
     assert!(of_id("g-nte").contains("shape-note"));
+    assert!(of_id("g-dot").contains("shape-circle"));
     assert!(!of_id("g-cyl").contains("shape-rounded"));
+
+    // The dot's label starts beside it, start-anchored — the only start
+    // anchor in the drawing, and the tell of the beside placement
+    // (`f19-formas.md`, S8).
+    let beside = document
+        .descendants()
+        .find(|node| node.is_element() && node.attribute("text-anchor") == Some("start"))
+        .expect("the dot's label sits beside it");
+    assert!(
+        beside.attribute("x").is_some(),
+        "the beside label has its point"
+    );
 
     let cylinder_geometry = document
         .descendants()

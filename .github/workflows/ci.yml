@@ -77,6 +77,16 @@ jobs:
           fi
           node tools/parity.mjs --chromium "$chromium"
 
+      - name: Frontend equivalence (mounted scenes are the golden SVGs)
+        working-directory: crates/gx-app/frontend
+        run: |
+          chromium="$(command -v google-chrome || command -v chromium-browser || command -v chromium || true)"
+          if [ -z "$chromium" ]; then
+            echo "::error::the equivalence probe needs a Chromium on PATH"
+            exit 1
+          fi
+          node tools/equivalence.mjs --chromium "$chromium"
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 

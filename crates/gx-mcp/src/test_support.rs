@@ -189,6 +189,7 @@ impl SvgRenderer for StubRenderer {
                             style: node.style,
                             center: placed.center,
                             size: placed.size,
+                            label_at: None,
                             rows: node.rows.clone(),
                             meta: node.meta.clone(),
                         })
@@ -320,6 +321,7 @@ fn scene_tokens() -> SceneTokens {
         lifeline_dash: [4.0, 4.0],
         dash_pattern: [6.0, 4.0],
         group_dash: [8.0, 5.0],
+        circle_diameter: 24.0,
     }
 }
 
