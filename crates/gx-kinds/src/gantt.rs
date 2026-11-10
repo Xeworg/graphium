@@ -74,6 +74,7 @@ pub struct GanttKind;
 
 impl DiagramKind for GanttKind {
     const KIND: &'static str = "gantt";
+    const PHASE: &'static str = "F3";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
     const LIMITS: KindLimits = KindLimits::TIMELINE;
 
@@ -235,6 +236,41 @@ impl DiagramKind for GanttKind {
             .collect();
 
         Ir::Timeline(IrTimeline { lanes, events })
+    }
+
+    /// Los tramos, los carriles opcionales y las dependencias: lo que un plan
+    /// declara y el schema no puede atar (S8 de `f18-gantt.md`).
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "Cada tarea es un tramo de tiempo: `start` y `end` la ponen en el eje; `end` igual a `start` dibuja un hito (un punto)."
+                .to_string(),
+            "Los carriles son las filas y son opcionales: sin carriles, todas las tareas caen en el carril único `cronograma`."
+                .to_string(),
+            "`depends_on` declara qué tiene que terminar antes: cada entrada nombra una tarea declarada en `tasks`, no se repite dentro de su tarea y nadie depende de sí mismo. La escena dibuja una flecha por dependencia."
+                .to_string(),
+            "Los ciclos entre tareas se dibujan, no se validan: el orden lo dan las columnas de `start`, no la topología."
+                .to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "gantt",
+            "title": "Mudanza — plan",
+            "lanes": [
+                { "id": "previo", "label": "Previo" },
+                { "id": "dia", "label": "Día" }
+            ],
+            "tasks": [
+                { "id": "cajas", "label": "Empacar cajas", "lane": "previo",
+                  "start": 0, "end": 2 },
+                { "id": "camion", "label": "Camión", "lane": "previo",
+                  "start": 2, "end": 2 },
+                { "id": "mudanza", "label": "Mudanza", "lane": "dia",
+                  "start": 3, "end": 6, "depends_on": ["cajas", "camion"] }
+            ]
+        })
     }
 }
 

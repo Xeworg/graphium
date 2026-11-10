@@ -12,6 +12,7 @@ use gx_core::error::{ErrorCode, ValidationError};
 use gx_core::ir::{
     Direction, Emphasis, IrEdge, IrGraph, IrGroup, IrNode, LayoutHint, Shape, Style,
 };
+use gx_core::kind::Role;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -51,21 +52,6 @@ pub struct FlowEdge {
     /// Whether the edge draws an arrowhead. Defaults to true.
     #[serde(default)]
     pub arrow: Option<bool>,
-}
-
-/// A role a node may take, and the shape it is drawn with.
-#[derive(Debug, Clone, Copy)]
-pub struct Role {
-    /// The name the document writes, e.g. `decision`.
-    pub name: &'static str,
-    /// The shape of [`Shape`] that role is drawn with.
-    pub shape: Shape,
-}
-
-impl Role {
-    pub const fn new(name: &'static str, shape: Shape) -> Self {
-        Self { name, shape }
-    }
 }
 
 /// The shape of a role, or the one of the default role.

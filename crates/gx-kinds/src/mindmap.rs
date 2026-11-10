@@ -73,6 +73,7 @@ impl MindmapKind {
 
 impl DiagramKind for MindmapKind {
     const KIND: &'static str = "mindmap";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Tree;
     const LIMITS: KindLimits = KindLimits::GRAPH;
 
@@ -189,6 +190,18 @@ impl DiagramKind for MindmapKind {
             Vec::new(),
         ))
     }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "mindmap",
+            "title": "Graphium",
+            "root": {
+                "topic": "Graphium",
+                "branches": [ { "topic": "MCP" }, { "topic": "Plano" } ]
+            }
+        })
+    }
 }
 
 /// Registers the kind in the global registry.
@@ -199,12 +212,9 @@ pub fn register() {
 #[cfg(test)]
 mod tests {
     use super::{MindmapInput, MindmapKind, MAX_MINDMAP_DEPTH};
+    use crate::test_support::input;
     use gx_core::ir::{Emphasis, Ir};
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> MindmapInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     const MAP: &str = r#"{
       "version": 1, "kind": "mindmap", "title": "Graphium",

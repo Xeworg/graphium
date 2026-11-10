@@ -75,6 +75,7 @@ impl TreeKind {
 
 impl DiagramKind for TreeKind {
     const KIND: &'static str = "tree";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Tree;
     const LIMITS: KindLimits = KindLimits::GRAPH;
 
@@ -201,6 +202,21 @@ impl DiagramKind for TreeKind {
             Vec::new(),
         ))
     }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "tree",
+            "title": "src",
+            "root": {
+                "name": "src",
+                "children": [
+                    { "name": "main.rs" },
+                    { "name": "lib", "children": [ { "name": "mod.rs" } ] }
+                ]
+            }
+        })
+    }
 }
 
 /// Registers the kind in the global registry.
@@ -211,12 +227,9 @@ pub fn register() {
 #[cfg(test)]
 mod tests {
     use super::{TreeInput, TreeKind, MAX_TREE_DEPTH};
+    use crate::test_support::input;
     use gx_core::ir::Ir;
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> TreeInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     const SRC: &str = r#"{
       "version": 1, "kind": "tree", "title": "src",
