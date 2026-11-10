@@ -112,3 +112,15 @@ heaviest, but their divergence is exactly what equivalence pins).
 - L3 (2026-11-09, scoping): the cut stacks on f19-formas (overlapping files);
   S8 is an intentional flowchart contract change aligned with state's
   initial rule; S14 records the four wontfix findings with reasons.
+- L7 (2026-11-09, execution): the cut ran parallel — T2 by worker A and T3 by
+  worker B in isolated worktrees (t2/t3) with disjoint file-level surfaces,
+  merged sequentially into the base; the orchestrator applied T1 inline and
+  the blocked half of S12 (SceneBand.kind) after both merges. Two of the
+  workers' honest findings turned into fixes: worker A verified that T1's
+  ir_graph TB default silently flipped er's LR contract (fixed at the call
+  site, pinned by a unit test — the er-posts golden caught it), and the
+  revived gates caught the stale-dist trap (parity/equivalence ran green
+  against a bundle built before the merges; after rebuilding, C46 exposed the
+  kind-less band fixture, which now speaks the contract). Final gates on the
+  merged base: fmt OK, clippy 0, cargo test --workspace 42 suites 0 failed,
+  parity 71/71, equivalence 19/19.
