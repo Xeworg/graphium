@@ -203,7 +203,7 @@ impl SvgRendererContract for SvgRenderer {
 
 fn write_style(out: &mut String, palette: &Palette) {
     let border = fmt_num(TOKENS.border_width);
-    let rules: [(&str, String); 25] = [
+    let rules: [(&str, String); 29] = [
         (".bg", format!("fill:{}", palette.bg.css())),
         (".node-fill", format!("fill:{}", palette.node_fill.css())),
         (
@@ -306,6 +306,25 @@ fn write_style(out: &mut String, palette: &Palette) {
         (".row-note", format!("fill:{}", palette.edge_text.css())),
         (".row-key", String::from("font-weight:600")),
         (".row-nullable", String::from("opacity:0.75")),
+        // The UML role glyphs (`f22-dibujo.md`, S3): the initial state is a
+        // solid dot, the final one a dot inside a ring. The rules go after
+        // `.node-fill` so the glyph wins the fill, and the ring stays hollow.
+        (
+            ".shape-dot",
+            format!("fill:{};stroke:none", palette.node_text.css()),
+        ),
+        (".shape-ring_dot", String::from("fill:none")),
+        (
+            ".ring-dot-core",
+            format!("fill:{};stroke:none", palette.node_text.css()),
+        ),
+        // The stereotype of a class role (`f22-dibujo.md`, S4): the word the
+        // role names, drawn above the node name at 0.85× in the edge text
+        // color, exactly what the window CSS paints.
+        (
+            ".node-stereotype",
+            format!("fill:{}", palette.edge_text.css()),
+        ),
     ];
     out.push_str("<style>\n");
     for (selector, body) in rules {
@@ -418,6 +437,8 @@ fn write_shape(out: &mut String, id: &str, classes: &str, shape: Shape, rect: &g
         Shape::Ellipse => write_ellipse(out, id, classes, rect),
         Shape::Note => write_note(out, id, classes, rect),
         Shape::Circle => write_circle(out, id, classes, &geometry::glyph_rect(shape, rect)),
+        Shape::Dot => write_dot(out, id, classes, &geometry::glyph_rect(shape, rect)),
+        Shape::RingDot => write_ring_dot(out, id, classes, &geometry::glyph_rect(shape, rect)),
     }
 }
 
@@ -676,6 +697,35 @@ fn write_circle(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect)
     ));
 }
 
+/// The filled dot: the UML glyph of a state machine's `initial`
+/// (`f22-dibujo.md`, S3). The fill comes from the class, not from here: the
+/// element is the same circle the commit draws, painted solid by CSS.
+fn write_dot(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
+    out.push_str(&format!(
+        "<circle id=\"{id}\" class=\"{classes}\" cx=\"{}\" cy=\"{}\" r=\"{}\"/>\n",
+        fmt_num(rect.center().x),
+        fmt_num(rect.center().y),
+        fmt_num(rect.w / 2.0),
+    ));
+}
+
+/// The dot inside a ring: the UML glyph of a state machine's `final`
+/// (`f22-dibujo.md`, S3). The outer ring keeps the node classes (unfilled,
+/// stroked) and the inner dot carries its own class — its radius is half the
+/// outer one, frozen here and in the painter twin.
+fn write_ring_dot(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
+    let cx = fmt_num(rect.center().x);
+    let cy = fmt_num(rect.center().y);
+    let r = fmt_num(rect.w / 2.0);
+    let core_r = fmt_num(rect.w / 4.0);
+    out.push_str(&format!(
+        "<circle id=\"{id}\" class=\"{classes}\" cx=\"{cx}\" cy=\"{cy}\" r=\"{r}\"/>\n"
+    ));
+    out.push_str(&format!(
+        "<circle class=\"ring-dot-core\" cx=\"{cx}\" cy=\"{cy}\" r=\"{core_r}\"/>\n"
+    ));
+}
+
 fn write_note(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
     let fold = TOKENS.corner_radius.min(rect.w / 4.0).min(rect.h / 4.0);
     let left = fmt_num(rect.x);
@@ -696,12 +746,33 @@ fn write_node_text(out: &mut String, node: &IrNode, placed: &NodeBox) {
     let mut classes = String::from("node-text text");
     push_emphasis(&mut classes, node.emphasis, true);
     let lines = label_lines(&node.label);
+    // The stereotype sits above the label at 0.85× (`f22-dibujo.md`, S4), in
+    // UML guillemets; the label block centers on what is left of the box. The
+    // line height is the one `measure_node` reserved (engine.rs, S4).
+    let stereotype_line = if node.stereotype.is_some() {
+        TOKENS.text_size * 0.85 * TOKENS.line_height
+    } else {
+        0.0
+    };
+    if let Some(word) = &node.stereotype {
+        let rect = node_rect(placed);
+        let baseline = rect.y + TOKENS.node_padding + stereotype_line / 2.0;
+        let mut st_classes = String::from("node-stereotype text");
+        push_emphasis(&mut st_classes, node.emphasis, true);
+        out.push_str(&format!(
+            "<text class=\"{st_classes}\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\">«{}»</text>\n",
+            fmt_num(rect.center().x),
+            fmt_num(baseline),
+            fmt_num(TOKENS.text_size * 0.85),
+            escape_text(word),
+        ));
+    }
     match geometry::label_placement(node.shape, &node_rect(placed)) {
         geometry::LabelPlacement::Inside => write_lines(
             out,
             &classes,
             &lines,
-            TextAt::centered(placed.center.x, placed.center.y),
+            TextAt::centered(placed.center.x, placed.center.y + stereotype_line / 2.0),
         ),
         geometry::LabelPlacement::Beside { at } => {
             write_lines(out, &classes, &lines, TextAt::beside(at));

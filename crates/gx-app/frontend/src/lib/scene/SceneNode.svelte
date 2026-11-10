@@ -91,6 +91,16 @@
     r={paint.circle.r}
     {...hit}
   />
+  {#if paint.ringDotCore !== null}
+    <!-- The inner dot of the final state: same center, half the radius
+         (`f22-dibujo.md`, S3). -->
+    <circle
+      class="ring-dot-core"
+      cx={paint.ringDotCore.cx}
+      cy={paint.ringDotCore.cy}
+      r={paint.ringDotCore.r}
+    />
+  {/if}
 {:else if paint.diamond !== null}
   <polygon id={paint.id} class={shapeClasses} points={paint.diamond} {...hit} />
 {:else if paint.shape === "ellipse"}
@@ -154,5 +164,9 @@
     {/if}
   {/each}
 {:else if paint.label !== null}
+  {#if paint.stereotype !== null && paint.stereotype !== undefined}
+    <!-- The word the role names, above the node name (`f22-dibujo.md`, S4). -->
+    <SceneText paint={paint.stereotype} hot={hot} />
+  {/if}
   <SceneText paint={paint.label} hot={hot} />
 {/if}

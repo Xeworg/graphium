@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="-12.00 -12.00 173.37 482.50" width="173.37" height="482.50">
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="-12.00 -12.00 173.37 495.50" width="173.37" height="495.50">
 <style>
 .bg{fill:rgba(27, 27, 27, 1.00)}
 .node-fill{fill:rgba(42, 42, 48, 1.00)}
@@ -25,6 +25,10 @@
 .row-note{fill:rgba(185, 185, 194, 1.00)}
 .row-key{font-weight:600}
 .row-nullable{opacity:0.75}
+.shape-dot{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.shape-ring_dot{fill:none}
+.ring-dot-core{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.node-stereotype{fill:rgba(185, 185, 194, 1.00)}
 </style>
 <defs>
 <marker id="arrow-normal" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
@@ -34,23 +38,24 @@
 <g class="layer-groups">
 </g>
 <g class="layer-edges">
-<polyline id="m-enviado-cerrado" class="edge-stroke" points="64.81,319.50 64.81,368.25 64.81,417.00" marker-end="url(#arrow-normal)"/>
-<text class="edge-text text" x="102.78" y="368.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">entregar</text>
-<polyline id="m-nuevo-pago" class="edge-stroke" points="76.70,41.50 104.64,90.25 76.70,139.00" marker-end="url(#arrow-normal)"/>
-<text class="edge-text text" x="131.87" y="90.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">crear</text>
-<polyline id="m-pago-enviado" class="edge-stroke" points="64.81,180.50 64.81,229.25 64.81,278.00" marker-end="url(#arrow-normal)"/>
-<text class="edge-text text" x="93.96" y="229.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">pagar</text>
-<polyline id="m-pago-nuevo" class="edge-stroke" points="52.92,139.00 24.99,90.25 52.92,41.50" marker-end="url(#arrow-normal)"/>
-<text class="edge-text text" x="59.81" y="90.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">timeout</text>
+<polyline id="m-enviado-cerrado" class="edge-stroke" points="64.81,326.00 64.81,374.75 64.81,423.50" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="102.78" y="374.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">entregar</text>
+<polyline id="m-nuevo-pago" class="edge-stroke" points="77.95,48.00 104.64,96.75 76.70,145.50" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="131.87" y="96.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">crear</text>
+<polyline id="m-pago-enviado" class="edge-stroke" points="64.81,187.00 64.81,235.75 64.81,284.50" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="93.96" y="235.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">pagar</text>
+<polyline id="m-pago-nuevo" class="edge-stroke" points="52.92,145.50 24.99,96.75 51.68,48.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="59.81" y="96.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">timeout</text>
 </g>
 <g class="layer-nodes">
-<ellipse id="g-cerrado" class="node-fill node-stroke shape-ellipse" cx="64.81" cy="437.75" rx="38.43" ry="20.75"/>
-<text class="node-text text" x="64.81" y="437.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">cerrado</text>
-<rect id="g-enviado" class="node-fill node-stroke shape-rounded" x="25.92" y="278.00" width="77.79" height="41.50" rx="6.00" ry="6.00"/>
-<text class="node-text text" x="64.81" y="298.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">enviado</text>
-<ellipse id="g-nuevo" class="node-fill node-stroke shape-ellipse" cx="64.81" cy="20.75" rx="32.82" ry="20.75"/>
-<text class="node-text text" x="64.81" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">nuevo</text>
-<rect id="g-pago" class="node-fill node-stroke shape-rounded" x="0.00" y="139.00" width="129.63" height="41.50" rx="6.00" ry="6.00"/>
-<text class="node-text text" x="64.81" y="159.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">pago pendiente</text>
+<circle id="g-cerrado" class="node-fill node-stroke shape-ring_dot" cx="32.39" cy="447.50" r="12.00"/>
+<circle class="ring-dot-core" cx="32.39" cy="447.50" r="6.00"/>
+<text class="node-text text" x="50.39" y="447.50" font-size="14.00" text-anchor="start" dominant-baseline="central">cerrado</text>
+<rect id="g-enviado" class="node-fill node-stroke shape-rounded" x="25.92" y="284.50" width="77.79" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="64.81" y="305.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">enviado</text>
+<circle id="g-nuevo" class="node-fill node-stroke shape-dot" cx="38.00" cy="24.00" r="12.00"/>
+<text class="node-text text" x="56.00" y="24.00" font-size="14.00" text-anchor="start" dominant-baseline="central">nuevo</text>
+<rect id="g-pago" class="node-fill node-stroke shape-rounded" x="0.00" y="145.50" width="129.63" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="64.81" y="166.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">pago pendiente</text>
 </g>
 </svg>

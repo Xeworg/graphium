@@ -25,6 +25,10 @@
 .row-note{fill:rgba(185, 185, 194, 1.00)}
 .row-key{font-weight:600}
 .row-nullable{opacity:0.75}
+.shape-dot{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.shape-ring_dot{fill:none}
+.ring-dot-core{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.node-stereotype{fill:rgba(185, 185, 194, 1.00)}
 </style>
 <defs>
 </defs>

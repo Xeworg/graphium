@@ -284,7 +284,19 @@ impl DiagramKind for ClassKind {
     }
 
     fn to_ir(&self, input: &Self::Input) -> Ir {
-        let nodes = to_ir_nodes(&input.nodes, &ROLES, DEFAULT_ROLE);
+        let mut nodes = to_ir_nodes(&input.nodes, &ROLES, DEFAULT_ROLE);
+        // El rol que se dibuja con palabra la lleva sobre el nombre
+        // (`f22-dibujo.md`, S4): UML marca el estereotipo con angulillos. El
+        // `class` y el `enum` no llevan ninguno: el primero es el default y el
+        // segundo ya se distingue por su forma.
+        for (node, input_node) in nodes.iter_mut().zip(&input.nodes) {
+            match input_node.role.as_deref() {
+                Some("abstract") | Some("interface") => {
+                    node.stereotype = input_node.role.clone();
+                }
+                _ => {}
+            }
+        }
         let edges: Vec<IrEdge> = input
             .edges
             .iter()

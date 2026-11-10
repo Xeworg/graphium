@@ -111,6 +111,10 @@ export function shapeClass(shape) {
       return "shape-note";
     case "circle":
       return "shape-circle";
+    case "dot":
+      return "shape-dot";
+    case "ring_dot":
+      return "shape-ring_dot";
     default:
       throw new Error(`the painter does not know the shape: ${shape}`);
   }
@@ -260,6 +264,12 @@ export function circleGeometry(rect, tokens) {
     cy: num(rect.y + rect.h / 2),
     r: num(tokens.circle_diameter / 2),
   };
+}
+
+/** The inner dot of the ring: the same center, half the radius — frozen in
+ * `write_ring_dot` and here (`f22-dibujo.md`, S3). */
+export function ringDotCore(circle) {
+  return { cx: circle.cx, cy: circle.cy, r: num(circle.r / 2) };
 }
 
 export function cylinderGeometry(rect, tokens) {
@@ -486,6 +496,22 @@ export function nodePaint(node, tokens) {
   // The badge column exists only when some row has a key to put in it (S13).
   const hasKeys = node.rows.some((row) => badgeText(row.key) !== null);
   const table = isTable ? tableOf(rect, tokens, hasKeys) : null;
+  // The stereotype sits above the label at 0.85× (`f22-dibujo.md`, S4): the
+  // line height `measure_node` reserved, the UML guillemets written here and
+  // in `write_node_text`. The label center shifts down by the same amount.
+  const stereotypeLine = node.stereotype
+    ? tokens.text_size * 0.85 * tokens.line_height
+    : 0;
+  const stereotype = node.stereotype
+    ? textPaint({
+        lines: [`«${node.stereotype}»`],
+        baselines: [rect.y + tokens.node_padding + stereotypeLine / 2],
+        x: node.center.x,
+        classes: "node-stereotype text",
+        size: tokens.text_size * 0.85,
+        anchor: "middle",
+      })
+    : null;
   return {
     id: node.id,
     shape: node.shape,
@@ -507,7 +533,14 @@ export function nodePaint(node, tokens) {
     },
     center: { x: num(node.center.x), y: num(node.center.y) },
     circle:
-      node.shape === "circle" ? circleGeometry(nodeRect(node), tokens) : null,
+      node.shape === "circle" || node.shape === "dot" || node.shape === "ring_dot"
+        ? circleGeometry(nodeRect(node), tokens)
+        : null,
+    ringDotCore:
+      node.shape === "ring_dot"
+        ? ringDotCore(circleGeometry(nodeRect(node), tokens))
+        : null,
+    stereotype,
     cylinder:
       node.shape === "cylinder" ? cylinderGeometry(rect, tokens) : null,
     note: node.shape === "note" ? noteGeometry(rect, tokens) : null,
@@ -553,7 +586,11 @@ export function nodePaint(node, tokens) {
             })
           : textPaint({
               lines,
-              baselines: centeredBaselines(node.center.y, lines.length, tokens),
+              baselines: centeredBaselines(
+                node.center.y + stereotypeLine / 2,
+                lines.length,
+                tokens,
+              ),
               x: node.center.x,
               classes,
               size: tokens.text_size,

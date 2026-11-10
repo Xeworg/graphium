@@ -35,7 +35,17 @@
 // empty route), so the painter draws exactly the edges the export would.
 
 /** The shapes of `gx-core/src/ir.rs`. */
-const SHAPES = ["box", "rounded", "cylinder", "diamond", "ellipse", "note", "circle"];
+const SHAPES = [
+  "box",
+  "rounded",
+  "cylinder",
+  "diamond",
+  "ellipse",
+  "note",
+  "circle",
+  "dot",
+  "ring_dot",
+];
 
 /** The shape of a node, or the loud end of the run: a shape the painter does
  * not know never paints as a plausible box (`f19-formas.md`, S5). */
@@ -206,6 +216,17 @@ function nodeOf(raw) {
               throw new Error(`the scene names a malformed label_at: ${JSON.stringify(raw.label_at)}`);
             })(),
     rows,
+    // The stereotype word the role names (`f22-dibujo.md`, S4): it travels
+    // verbatim or it does not travel; a wrong one is a loud end, like a
+    // malformed label_at.
+    stereotype:
+      raw.stereotype === undefined || raw.stereotype === null
+        ? null
+        : typeof raw.stereotype === "string" && raw.stereotype !== ""
+          ? raw.stereotype
+          : (() => {
+              throw new Error(`the scene names a malformed stereotype: ${JSON.stringify(raw.stereotype)}`);
+            })(),
     meta: isRecord(raw.meta) ? raw.meta : {},
   };
 }

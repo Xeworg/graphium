@@ -189,6 +189,10 @@ pub struct SceneNode {
     /// node has none: an empty list and no list mean the same thing.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rows: Vec<IrRow>,
+    /// The stereotype word the kind gives the role, drawn above the label
+    /// (`f22-dibujo.md`, S4). Absent when the node has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stereotype: Option<String>,
     /// The free channel of the kind, untouched (S3).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub meta: BTreeMap<String, IrValue>,

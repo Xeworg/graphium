@@ -52,13 +52,22 @@ pub enum Shape {
     /// The dot: a frozen-diameter circle whose label sits beside it, not
     /// inside (`f19-formas.md`, S8). The commit of a `gitgraph`.
     Circle,
+    /// The filled dot: the same frozen-diameter envelope as [`Shape::Circle`]
+    /// but drawn solid — the UML glyph of a state machine's `initial`
+    /// (`f22-dibujo.md`, S3).
+    Dot,
+    /// The dot inside a ring: the same frozen-diameter envelope, an unfilled
+    /// outer ring with a solid inner dot — the UML glyph of a state machine's
+    /// `final` (`f22-dibujo.md`, S3). The inner dot's radius is half the
+    /// outer one.
+    RingDot,
 }
 
 impl Shape {
     /// Every shape, in declaration order: the one list of the wire words
     /// (`f19-formas.md`, S3). A new shape enters here and the compiler walks
     /// the rest of the way.
-    pub const ALL: [Shape; 7] = [
+    pub const ALL: [Shape; 9] = [
         Shape::Box,
         Shape::Rounded,
         Shape::Cylinder,
@@ -66,6 +75,8 @@ impl Shape {
         Shape::Ellipse,
         Shape::Note,
         Shape::Circle,
+        Shape::Dot,
+        Shape::RingDot,
     ];
 
     /// The wire word of the shape: the one spelling every painter, the scene
@@ -79,6 +90,8 @@ impl Shape {
             Shape::Ellipse => "ellipse",
             Shape::Note => "note",
             Shape::Circle => "circle",
+            Shape::Dot => "dot",
+            Shape::RingDot => "ring_dot",
         }
     }
 }
@@ -161,6 +174,11 @@ pub struct IrNode {
     pub meta: BTreeMap<String, IrValue>,
     /// The detail rows of the node, drawn under its label.
     pub rows: Vec<IrRow>,
+    /// The stereotype word the kind gives the node's role, drawn above its
+    /// label («interface», «abstract») — `f22-dibujo.md`, S4. `None` draws
+    /// nothing: a plain node has no stereotype.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stereotype: Option<String>,
     /// Filled by the engine with the single `TextMetrics` implementation
     /// before the layout runs (PRD §8.4.1).
     pub size: Size,
@@ -176,6 +194,7 @@ impl IrNode {
             style: Style::Solid,
             meta: BTreeMap::new(),
             rows: Vec::new(),
+            stereotype: None,
             size: Size::default(),
         }
     }

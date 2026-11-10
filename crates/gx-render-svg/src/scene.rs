@@ -207,6 +207,7 @@ impl<'a> Drawing<'a> {
                             geometry::LabelPlacement::Beside { at } => Some(at),
                         },
                         rows: node.rows.clone(),
+                        stereotype: node.stereotype.clone(),
                         meta: node.meta.clone(),
                     }
                 })

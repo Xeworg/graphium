@@ -106,7 +106,10 @@ pub(crate) fn dependency_route(from: &Rect, to: &Rect) -> Vec<Point> {
 /// edge, so the arrows that arrive do land on it.
 pub(crate) fn glyph_rect(shape: Shape, rect: &Rect) -> Rect {
     match shape {
-        Shape::Circle => {
+        // The dot family shares the envelope of the circle: frozen diameter,
+        // at the left edge of the box, so the arrows land on it (`f19-formas.md`,
+        // S8; `f22-dibujo.md`, L4).
+        Shape::Circle | Shape::Dot | Shape::RingDot => {
             let d = TOKENS.circle_diameter;
             Rect::new(
                 rect.x + TOKENS.node_padding,
@@ -131,7 +134,7 @@ pub(crate) enum LabelPlacement {
 
 pub(crate) fn label_placement(shape: Shape, rect: &Rect) -> LabelPlacement {
     match shape {
-        Shape::Circle => {
+        Shape::Circle | Shape::Dot | Shape::RingDot => {
             let glyph = glyph_rect(shape, rect);
             LabelPlacement::Beside {
                 at: Point::new(glyph.max_x() + TOKENS.node_padding / 2.0, rect.center().y),

@@ -191,6 +191,7 @@ impl SvgRenderer for StubRenderer {
                             size: placed.size,
                             label_at: None,
                             rows: node.rows.clone(),
+                            stereotype: node.stereotype.clone(),
                             meta: node.meta.clone(),
                         })
                     })

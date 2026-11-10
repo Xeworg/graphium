@@ -330,6 +330,29 @@
   opacity: 0.75;
 }
 
+/* The UML role glyphs (`f22-dibujo.md`, S3): the initial state is a solid
+ * dot, the final one a dot inside a ring. These rules go after `.node-fill`
+ * so the glyph wins the fill, and the ring stays hollow. */
+.graphium .shape-dot {
+  fill: var(--node-text);
+  stroke: none;
+}
+
+.graphium .shape-ring_dot {
+  fill: none;
+}
+
+.graphium .ring-dot-core {
+  fill: var(--node-text);
+  stroke: none;
+}
+
+/* The stereotype of a class role (`f22-dibujo.md`, S4): the word the role
+ * names, above the node name at 0.85×. */
+.graphium .node-stereotype {
+  fill: var(--edge-text);
+}
+
 .graphium .cardinality {
   fill: none;
   stroke: var(--edge-stroke);

@@ -194,10 +194,13 @@ fn measure_node(
     };
     let label = metrics.measure(&node.label, &style(TextStyle::semibold(TOKENS.text_size)));
 
-    // A circle carries its label beside it (`f19-formas.md`, S8/S9): the
-    // envelope reserves dot + gap + label, and the rows never apply — a dot
-    // with a compartment is not a dot.
-    if node.shape == crate::ir::Shape::Circle {
+    // A dot-family shape carries its label beside it (`f19-formas.md`, S8/S9;
+    // `f22-dibujo.md`, L4): the envelope reserves dot + gap + label, and the
+    // rows never apply — a dot with a compartment is not a dot.
+    if matches!(
+        node.shape,
+        crate::ir::Shape::Circle | crate::ir::Shape::Dot | crate::ir::Shape::RingDot
+    ) {
         let width =
             TOKENS.circle_diameter + TOKENS.node_padding + label.w + 2.0 * TOKENS.node_padding;
         let height = TOKENS.circle_diameter.max(label.h) + 2.0 * TOKENS.node_padding;
@@ -205,7 +208,31 @@ fn measure_node(
     }
 
     let mut width = label.w;
-    let mut height = label.h + 2.0 * TOKENS.node_padding;
+    // The stereotype sits above the label at 0.85× (`f22-dibujo.md`, S4): the
+    // box grows one line, and the label center shifts down by the same amount
+    // in the renderer.
+    let stereotype_line = node
+        .stereotype
+        .as_ref()
+        .map(|word| {
+            let size = TOKENS.text_size * 0.85;
+            metrics
+                .measure(word, &style(TextStyle::regular(size)))
+                .h
+                .max(size * TOKENS.line_height)
+        })
+        .unwrap_or(0.0);
+    let mut height = label.h + 2.0 * TOKENS.node_padding + stereotype_line;
+    width = width.max(
+        node.stereotype
+            .as_ref()
+            .map(|word| {
+                metrics
+                    .measure(word, &style(TextStyle::regular(TOKENS.text_size * 0.85)))
+                    .w
+            })
+            .unwrap_or(0.0),
+    );
 
     if !node.rows.is_empty() {
         // The badge of the key occupies its own column, and the note is drawn
