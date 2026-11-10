@@ -6,7 +6,7 @@
 //! added.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Emphasis, Ir, IrEdge, IrGraph, IrNode, LayoutHint, Shape, Style};
+use gx_core::ir::{Direction, Emphasis, Ir, IrEdge, IrNode, LayoutHint, Shape, Style};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -82,39 +82,13 @@ pub struct GraphKind;
 impl DiagramKind for GraphKind {
     const KIND: &'static str = "graph";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
 
     type Input = GraphInput;
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
-        let mut errors = Vec::new();
-
-        if input.kind != Self::KIND {
-            errors.push(ValidationError::new(
-                "kind",
-                ErrorCode::InvalidValue,
-                format!("`kind` debe ser `{}`, no `{}`", Self::KIND, input.kind),
-                Some("usá get_diagram_schema para ver los kinds disponibles".to_string()),
-            ));
-        }
-
-        if input.version != SUPPORTED_VERSION {
-            errors.push(ValidationError::new(
-                "version",
-                ErrorCode::InvalidValue,
-                format!(
-                    "versión de contrato no soportada: {} (soportada: {SUPPORTED_VERSION})",
-                    input.version
-                ),
-                Some("actualizá el documento a la versión 1 del contrato".to_string()),
-            ));
-        }
+        let mut errors =
+            crate::flow::validate_header(Self::KIND, &input.kind, SUPPORTED_VERSION, input.version);
 
         let mut seen: Vec<&str> = Vec::new();
         for (index, node) in input.nodes.iter().enumerate() {
@@ -207,13 +181,13 @@ impl DiagramKind for GraphKind {
             })
             .collect();
 
-        Ir::Graph(IrGraph {
-            direction: input.direction.unwrap_or(Direction::TB),
-            layout_hint: Self::LAYOUT_HINT,
+        Ir::Graph(crate::flow::ir_graph(
+            input.direction,
+            Self::LAYOUT_HINT,
             nodes,
             edges,
-            groups: to_ir_groups(&input.groups),
-        })
+            to_ir_groups(&input.groups),
+        ))
     }
 
     fn schema() -> schemars::Schema {

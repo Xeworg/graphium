@@ -11,7 +11,7 @@
 //! puede decir cuál vale.
 
 use gx_core::error::ValidationError;
-use gx_core::ir::{Direction, Ir, IrGraph, LayoutHint, Shape, Style};
+use gx_core::ir::{Direction, Ir, LayoutHint, Shape, Style};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -75,13 +75,7 @@ pub struct ComponentKind;
 impl DiagramKind for ComponentKind {
     const KIND: &'static str = "component";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
 
     type Input = ComponentInput;
 
@@ -119,13 +113,14 @@ impl DiagramKind for ComponentKind {
     }
 
     fn to_ir(&self, input: &Self::Input) -> Ir {
-        let mut graph: IrGraph = to_graph(
+        let mut graph = to_graph(
             &input.nodes,
             &input.edges,
             &ROLES,
             DEFAULT_ROLE,
             input.direction,
             Self::LAYOUT_HINT,
+            to_ir_groups(&input.groups),
         );
 
         // Lo externo se dibuja punteado: no es de este sistema.
@@ -136,8 +131,6 @@ impl DiagramKind for ComponentKind {
                 }
             }
         }
-
-        graph.groups = to_ir_groups(&input.groups);
 
         Ir::Graph(graph)
     }

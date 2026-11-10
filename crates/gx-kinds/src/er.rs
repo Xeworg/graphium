@@ -6,9 +6,7 @@
 //! the diagram answers the question a schema diagram exists for.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{
-    Cardinality, Direction, Ir, IrEdge, IrGraph, IrNode, IrRow, LayoutHint, RowKey, Shape,
-};
+use gx_core::ir::{Cardinality, Direction, Ir, IrEdge, IrNode, IrRow, LayoutHint, RowKey, Shape};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -115,38 +113,13 @@ fn key_of(column: &ErColumn) -> RowKey {
 impl DiagramKind for ErKind {
     const KIND: &'static str = "er";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
 
     type Input = ErInput;
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
-        let mut errors = Vec::new();
-
-        if input.kind != Self::KIND {
-            errors.push(ValidationError::new(
-                "kind",
-                ErrorCode::InvalidValue,
-                format!("`kind` debe ser `{}`, no `{}`", Self::KIND, input.kind),
-                Some("usá get_diagram_schema para ver los kinds disponibles".to_string()),
-            ));
-        }
-        if input.version != SUPPORTED_VERSION {
-            errors.push(ValidationError::new(
-                "version",
-                ErrorCode::UnsupportedVersion,
-                format!(
-                    "versión de contrato no soportada: {} (soportada: {SUPPORTED_VERSION})",
-                    input.version
-                ),
-                Some("actualizá el documento a la versión 1 del contrato".to_string()),
-            ));
-        }
+        let mut errors =
+            crate::flow::validate_header(Self::KIND, &input.kind, SUPPORTED_VERSION, input.version);
 
         // Names of the tables, in order, for the references and uniqueness.
         let mut tables: Vec<&str> = Vec::new();
@@ -171,6 +144,14 @@ impl DiagramKind for ErKind {
 
             let mut columns: Vec<&str> = Vec::new();
             for (column_index, column) in table.columns.iter().enumerate() {
+                if column.name.is_empty() {
+                    errors.push(ValidationError::new(
+                        format!("tables[{index}].columns[{column_index}].name"),
+                        ErrorCode::InvalidValue,
+                        "el nombre de la columna no puede estar vacío",
+                        Some("poné el nombre que la fila muestra, por ejemplo `total`".to_string()),
+                    ));
+                }
                 if columns.contains(&column.name.as_str()) {
                     errors.push(ValidationError::new(
                         format!("tables[{index}].columns[{column_index}].name"),
@@ -277,21 +258,11 @@ impl DiagramKind for ErKind {
             .tables
             .iter()
             .map(|table| {
-                let width = table
-                    .columns
-                    .iter()
-                    .map(|column| column.name.len() + column.r#type.as_deref().unwrap_or("").len())
-                    .max()
-                    .unwrap_or(0)
-                    .max(table.name.len());
                 let mut node = IrNode::new(
                     table.name.clone(),
                     table.label.clone().unwrap_or_else(|| table.name.clone()),
                 );
                 node.shape = Shape::Box;
-                // The width is a hint for the measurer: the real size comes
-                // from `TextMetrics`, which measures the rows too.
-                let _ = width;
                 for column in &table.columns {
                     let mut row = IrRow::new(&column.name);
                     row.key = key_of(column);
@@ -346,13 +317,13 @@ impl DiagramKind for ErKind {
             })
             .collect();
 
-        Ir::Graph(IrGraph {
-            direction: input.direction.unwrap_or(Direction::LR),
-            layout_hint: Self::LAYOUT_HINT,
+        Ir::Graph(crate::flow::ir_graph(
+            input.direction,
+            Self::LAYOUT_HINT,
             nodes,
             edges,
-            groups: Vec::new(),
-        })
+            Vec::new(),
+        ))
     }
 
     fn schema() -> schemars::Schema {

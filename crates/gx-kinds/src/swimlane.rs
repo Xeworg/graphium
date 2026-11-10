@@ -58,13 +58,7 @@ pub struct SwimlaneKind;
 impl DiagramKind for SwimlaneKind {
     const KIND: &'static str = "swimlane";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 200,
-        max_edges: 0,
-        max_density: 0.0,
-        max_lanes: 40,
-        max_events: 200,
-    };
+    const LIMITS: KindLimits = KindLimits::TIMELINE;
 
     type Input = SwimlaneInput;
 
@@ -73,28 +67,8 @@ impl DiagramKind for SwimlaneKind {
     }
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
-        let mut errors = Vec::new();
-
-        if input.kind != Self::KIND {
-            errors.push(ValidationError::new(
-                "kind",
-                ErrorCode::InvalidValue,
-                format!("`kind` debe ser `{}`, no `{}`", Self::KIND, input.kind),
-                Some("usá get_diagram_schema para ver los kinds disponibles".to_string()),
-            ));
-        }
-
-        if input.version != SUPPORTED_VERSION {
-            errors.push(ValidationError::new(
-                "version",
-                ErrorCode::InvalidValue,
-                format!(
-                    "versión de contrato no soportada: {} (soportada: {SUPPORTED_VERSION})",
-                    input.version
-                ),
-                Some("actualizá el documento a la versión 1 del contrato".to_string()),
-            ));
-        }
+        let mut errors =
+            crate::flow::validate_header(Self::KIND, &input.kind, SUPPORTED_VERSION, input.version);
 
         if input.lanes.is_empty() {
             errors.push(ValidationError::new(

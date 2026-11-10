@@ -29,6 +29,29 @@ pub struct KindLimits {
     pub max_events: usize,
 }
 
+impl KindLimits {
+    /// The layered-graph profile: 300 nodes, 600 edges, density 3.0 — the
+    /// ceiling eleven kinds share (`f20-reuso.md`, S4). This is also the
+    /// `Default`: the graph was the first kind.
+    pub const GRAPH: KindLimits = KindLimits {
+        max_nodes: 300,
+        max_edges: 600,
+        max_density: 3.0,
+        max_lanes: 0,
+        max_events: 0,
+    };
+
+    /// The lanes profile: 200 events on 40 lanes, no edges — timeline,
+    /// swimlane and gantt (`f20-reuso.md`, S4).
+    pub const TIMELINE: KindLimits = KindLimits {
+        max_nodes: 200,
+        max_edges: 0,
+        max_density: 0.0,
+        max_lanes: 40,
+        max_events: 200,
+    };
+}
+
 impl Default for KindLimits {
     fn default() -> Self {
         Self {

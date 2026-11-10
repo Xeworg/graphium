@@ -63,13 +63,7 @@ pub struct StateKind;
 impl DiagramKind for StateKind {
     const KIND: &'static str = "state";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
 
     type Input = StateInput;
 
@@ -127,15 +121,15 @@ impl DiagramKind for StateKind {
     }
 
     fn to_ir(&self, input: &Self::Input) -> Ir {
-        let mut graph = to_graph(
+        let graph = to_graph(
             &input.nodes,
             &input.edges,
             &ROLES,
             DEFAULT_ROLE,
             input.direction,
             Self::LAYOUT_HINT,
+            to_ir_groups(&input.groups),
         );
-        graph.groups = to_ir_groups(&input.groups);
         Ir::Graph(graph)
     }
 }

@@ -19,7 +19,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::flow::validate_header;
-use crate::lanes::{duplicate_event, event_id, unknown_lane, validate_lanes, Lane, SeenIds};
+use crate::lanes::{duplicate_event, event_id, validate_lanes, Lane, SeenIds};
 
 /// Contract version supported by this build (PRD §10.1).
 pub const SUPPORTED_VERSION: u32 = 1;
@@ -75,13 +75,7 @@ pub struct GanttKind;
 impl DiagramKind for GanttKind {
     const KIND: &'static str = "gantt";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 200,
-        max_edges: 0,
-        max_density: 0.0,
-        max_lanes: 40,
-        max_events: 200,
-    };
+    const LIMITS: KindLimits = KindLimits::TIMELINE;
 
     type Input = GanttInput;
 
@@ -106,7 +100,7 @@ impl DiagramKind for GanttKind {
             ));
         }
 
-        let lanes_declared = !input.lanes.is_empty();
+        let _lanes_declared = !input.lanes.is_empty();
         let mut ids = SeenIds::new();
         let mut resolved: Vec<String> = Vec::new();
         for (index, task) in input.tasks.iter().enumerate() {
@@ -121,30 +115,12 @@ impl DiagramKind for GanttKind {
 
             // El carril: obligatorio cuando hay carriles, y siempre uno que el
             // documento haya declarado. La regla compartida de `timeline`.
-            match (&task.lane, lanes_declared) {
-                (Some(lane), _) if !input.lanes.iter().any(|known| &known.id == lane) => {
-                    errors.push(unknown_lane(
-                        &format!("tasks[{index}].lane"),
-                        lane,
-                        &input.lanes,
-                    ));
-                }
-                (None, true) => errors.push(ValidationError::new(
-                    format!("tasks[{index}].lane"),
-                    ErrorCode::MissingField,
-                    "la tarea no dice en qué carril va",
-                    Some(format!(
-                        "usá uno de los carriles declarados: {}",
-                        input
-                            .lanes
-                            .iter()
-                            .map(|lane| lane.id.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )),
-                )),
-                _ => {}
-            }
+            errors.extend(crate::lanes::validate_row_lane(
+                &format!("tasks[{index}].lane"),
+                "tarea",
+                &task.lane,
+                &input.lanes,
+            ));
 
             let id = event_id(&task.id, "task-", index);
 

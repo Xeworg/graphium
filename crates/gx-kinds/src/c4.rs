@@ -13,7 +13,7 @@
 //! relación es una arista con su etiqueta: el dibujo dice quién usa qué.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Ir, IrEdge, IrGraph, IrNode, IrRow, LayoutHint, Shape};
+use gx_core::ir::{Direction, Ir, IrEdge, IrNode, IrRow, LayoutHint, Shape};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -102,13 +102,7 @@ pub struct C4Kind;
 impl DiagramKind for C4Kind {
     const KIND: &'static str = "c4";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
 
     type Input = C4Input;
 
@@ -266,16 +260,13 @@ impl DiagramKind for C4Kind {
             })
             .collect();
 
-        Ir::Graph(IrGraph {
-            // El contrato no lleva `direction` (S2): la lectura la fija el
-            // kind. Un contexto se lee de izquierda a derecha, quien pide a la
-            // izquierda y el sistema a la derecha.
-            direction: Direction::LR,
-            layout_hint: Self::LAYOUT_HINT,
+        Ir::Graph(crate::flow::ir_graph(
+            Some(Direction::LR),
+            Self::LAYOUT_HINT,
             nodes,
             edges,
-            groups: Vec::new(),
-        })
+            Vec::new(),
+        ))
     }
 }
 

@@ -12,7 +12,7 @@
 //! esté mal dibujado: es un modelo imposible.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Emphasis, Ir, IrEdge, IrGraph, LayoutHint, Shape, Style};
+use gx_core::ir::{Direction, Emphasis, Ir, IrEdge, LayoutHint, Shape, Style};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -208,13 +208,7 @@ impl ClassKind {
 impl DiagramKind for ClassKind {
     const KIND: &'static str = "class";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
 
     type Input = ClassInput;
 
@@ -311,13 +305,13 @@ impl DiagramKind for ClassKind {
             })
             .collect();
 
-        Ir::Graph(IrGraph {
-            direction: input.direction.unwrap_or(Direction::TB),
-            layout_hint: Self::LAYOUT_HINT,
+        Ir::Graph(crate::flow::ir_graph(
+            input.direction,
+            Self::LAYOUT_HINT,
             nodes,
             edges,
-            groups: to_ir_groups(&input.groups),
-        })
+            to_ir_groups(&input.groups),
+        ))
     }
 }
 
