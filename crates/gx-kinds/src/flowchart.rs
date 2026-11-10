@@ -352,7 +352,7 @@ mod tests {
 
 #[cfg(test)]
 mod start_tests {
-    use super::{FlowchartInput, FlowchartKind, START_ROLE};
+    use super::FlowchartKind;
     use gx_core::error::ErrorCode;
     use gx_core::kind::DiagramKind;
 

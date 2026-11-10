@@ -318,7 +318,10 @@ impl DiagramKind for ErKind {
             .collect();
 
         Ir::Graph(crate::flow::ir_graph(
-            input.direction,
+            // El contrato de `er` defaultea LR: el esquema se lee de izquierda
+            // a derecha. `ir_graph` defaultea TB (el default de la familia
+            // graph), así que el kind fija el suyo acá.
+            Some(input.direction.unwrap_or(Direction::LR)),
             Self::LAYOUT_HINT,
             nodes,
             edges,
@@ -519,5 +522,28 @@ mod tests {
         let input: ErInput = serde_json::from_str(&document).expect("valid");
         let errors = ErKind.validate(&input).expect_err("must fail");
         assert_eq!(errors[0].code, gx_core::error::ErrorCode::InvalidValue);
+    }
+}
+
+#[cfg(test)]
+mod direction_tests {
+    use super::ErKind;
+    use gx_core::ir::{Direction, Ir};
+    use gx_core::kind::DiagramKind;
+
+    /// El default de `er` es LR (el esquema se lee de izquierda a derecha),
+    /// aunque `flow::ir_graph` defaultee TB: el kind fija el suyo.
+    #[test]
+    fn a_schema_without_direction_maps_to_lr() {
+        let parsed: super::ErInput = serde_json::from_str(
+            r#"{ "version": 1, "kind": "er",
+                 "tables": [ { "name": "posts" } ] }"#,
+        )
+        .expect("the document parses");
+
+        let Ir::Graph(graph) = ErKind.to_ir(&parsed) else {
+            panic!("un diagrama de `er` es un grafo");
+        };
+        assert_eq!(graph.direction, Direction::LR);
     }
 }
