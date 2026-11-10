@@ -208,8 +208,12 @@ export function arrowMarkers(scene) {
 /**
  * Where the header, the rule and the rows of a table node sit: the numbers
  * `Table::of` computes in Rust, from the same tokens.
+ *
+ * `keys` says whether some row of the node carries a key role: without one the
+ * table has no badge to draw, so it reserves no badge column and the names
+ * start at the padding (`S13`).
  */
-export function tableOf(rect, tokens) {
+export function tableOf(rect, tokens, keys) {
   const padding = tokens.node_padding;
   const line = tokens.text_size * tokens.line_height;
   const headerY = rect.y + padding + line / 2;
@@ -218,14 +222,15 @@ export function tableOf(rect, tokens) {
     line,
     header_y: headerY,
     rule_y: headerY + line / 2,
-    badge_x: rect.x + padding / 2,
-    name_x: rect.x + padding + tokens.badge_width,
+    badge_x: keys ? rect.x + padding / 2 : null,
+    name_x: rect.x + padding + (keys ? tokens.badge_width : 0),
     note_x: rect.x + rect.w - padding / 2,
     row_y: (index) => headerY + line / 2 + line * (index + 0.5),
   };
 }
 
-/** The text of the key badge of a row: `PK`, `FK`, `PK, FK` or nothing. */
+/** The text of the key badge of a row, or `null` when the row has no key: a
+ * row without a key draws no badge (`S13`). */
 export function badgeText(key) {
   switch (key) {
     case "pk":
@@ -235,7 +240,7 @@ export function badgeText(key) {
     case "pk_fk":
       return "PK, FK";
     default:
-      return "";
+      return null;
   }
 }
 
@@ -478,7 +483,9 @@ export function nodePaint(node, tokens) {
   const lines = textLines(node.label);
   const classes = nodeTextClasses(node.emphasis);
   const isTable = node.rows.length > 0;
-  const table = isTable ? tableOf(rect, tokens) : null;
+  // The badge column exists only when some row has a key to put in it (S13).
+  const hasKeys = node.rows.some((row) => badgeText(row.key) !== null);
+  const table = isTable ? tableOf(rect, tokens, hasKeys) : null;
   return {
     id: node.id,
     shape: node.shape,
@@ -553,35 +560,43 @@ export function nodePaint(node, tokens) {
               anchor: "middle",
             }),
     rows: isTable
-      ? node.rows.map((row, index) => ({
-          badge: textPaint({
-            lines: [badgeText(row.key)],
-            baselines: [table.row_y(index)],
-            x: table.badge_x,
-            classes: "row-badge text",
-            size: tokens.text_size * 0.85,
-            anchor: null,
-          }),
-          name: textPaint({
-            lines: [row.text],
-            baselines: [table.row_y(index)],
-            x: table.name_x,
-            classes: rowNameClasses(row),
-            size: tokens.text_size,
-            anchor: null,
-          }),
-          note:
-            row.note === null
-              ? null
-              : textPaint({
-                  lines: [row.note],
-                  baselines: [table.row_y(index)],
-                  x: table.note_x,
-                  classes: "row-note text",
-                  size: tokens.text_size * 0.9,
-                  anchor: "end",
-                }),
-        }))
+      ? node.rows.map((row, index) => {
+          const badge = badgeText(row.key);
+          return {
+            // A row without a key draws no badge: no empty element is written
+            // (S13).
+            badge:
+              badge === null
+                ? null
+                : textPaint({
+                    lines: [badge],
+                    baselines: [table.row_y(index)],
+                    x: table.badge_x,
+                    classes: "row-badge text",
+                    size: tokens.text_size * 0.85,
+                    anchor: null,
+                  }),
+            name: textPaint({
+              lines: [row.text],
+              baselines: [table.row_y(index)],
+              x: table.name_x,
+              classes: rowNameClasses(row),
+              size: tokens.text_size,
+              anchor: null,
+            }),
+            note:
+              row.note === null
+                ? null
+                : textPaint({
+                    lines: [row.note],
+                    baselines: [table.row_y(index)],
+                    x: table.note_x,
+                    classes: "row-note text",
+                    size: tokens.text_size * 0.9,
+                    anchor: "end",
+                  }),
+          };
+        })
       : [],
   };
 }

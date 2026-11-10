@@ -39,20 +39,16 @@
 <rect id="g-cliente" class="node-fill node-stroke shape-box" x="0.00" y="132.00" width="177.38" height="89.50"/>
 <text class="node-text text" x="88.69" y="152.75" font-size="14.00" text-anchor="middle" dominant-baseline="central" font-weight="600">Cliente</text>
 <line class="node-stroke" x1="0.00" y1="161.50" x2="177.38" y2="161.50" stroke-width="1.00"/>
-<text class="row-badge text" x="6.00" y="170.25" font-size="11.90" dominant-baseline="central"></text>
-<text class="node-text text" x="38.00" y="170.25" font-size="14.00" dominant-baseline="central">person</text>
-<text class="row-badge text" x="6.00" y="187.75" font-size="11.90" dominant-baseline="central"></text>
-<text class="node-text text" x="38.00" y="187.75" font-size="14.00" dominant-baseline="central">hace el pedido</text>
+<text class="node-text text" x="12.00" y="170.25" font-size="14.00" dominant-baseline="central">person</text>
+<text class="node-text text" x="12.00" y="187.75" font-size="14.00" dominant-baseline="central">hace el pedido</text>
 <rect id="g-pedidos" class="node-fill node-stroke shape-box" x="363.82" y="70.38" width="226.84" height="72.00"/>
 <text class="node-text text" x="477.24" y="91.12" font-size="14.00" text-anchor="middle" dominant-baseline="central" font-weight="600">Sistema de pedidos</text>
 <line class="node-stroke" x1="363.82" y1="99.88" x2="590.66" y2="99.88" stroke-width="1.00"/>
-<text class="row-badge text" x="369.82" y="108.62" font-size="11.90" dominant-baseline="central"></text>
-<text class="node-text text" x="401.82" y="108.62" font-size="14.00" dominant-baseline="central">system</text>
+<text class="node-text text" x="375.82" y="108.62" font-size="14.00" dominant-baseline="central">system</text>
 <text class="row-note text" x="584.66" y="108.62" font-size="12.60" text-anchor="end" dominant-baseline="central">Rust + Svelte</text>
 <rect id="g-soporte" class="node-fill node-stroke shape-box" x="25.67" y="0.00" width="126.05" height="72.00"/>
 <text class="node-text text" x="88.69" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central" font-weight="600">Soporte</text>
 <line class="node-stroke" x1="25.67" y1="29.50" x2="151.72" y2="29.50" stroke-width="1.00"/>
-<text class="row-badge text" x="31.67" y="38.25" font-size="11.90" dominant-baseline="central"></text>
-<text class="node-text text" x="63.67" y="38.25" font-size="14.00" dominant-baseline="central">person</text>
+<text class="node-text text" x="37.67" y="38.25" font-size="14.00" dominant-baseline="central">person</text>
 </g>
 </svg>

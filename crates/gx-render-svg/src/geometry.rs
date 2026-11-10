@@ -14,6 +14,7 @@
 //! path.
 
 use gx_core::ir::Span;
+use gx_core::scene::BandKind;
 use gx_core::{
     fmt_num, Emphasis, IrEdge, IrEvent, IrGraph, IrNode, IrRow, LayoutEdge, LayoutGraph,
     LayoutGroup, LayoutHint, NodeBox, Point, Rect, RowKey, Shape, TOKENS,
@@ -310,8 +311,10 @@ pub(crate) struct Table {
     pub(crate) header_y: f64,
     /// The rule that separates the header from the rows.
     pub(crate) rule_y: f64,
-    /// Left edge of the key badge column.
-    pub(crate) badge_x: f64,
+    /// Left edge of the key badge column; `None` when no row of the table has
+    /// a key, because the column is not reserved and nothing is written there
+    /// (S13).
+    pub(crate) badge_x: Option<f64>,
     /// Left edge of the name column.
     pub(crate) name_x: f64,
     /// Right edge of the note column, drawn against the border.
@@ -320,7 +323,11 @@ pub(crate) struct Table {
 
 impl Table {
     /// The table of a node box.
-    pub(crate) fn of(rect: &Rect) -> Self {
+    ///
+    /// `keys` says whether some row of the node carries a key role: without
+    /// one the table has no badge to draw, so it reserves no badge column and
+    /// the names start at the padding (S13).
+    pub(crate) fn of(rect: &Rect, keys: bool) -> Self {
         let padding = TOKENS.node_padding;
         let line = TOKENS.text_size * TOKENS.line_height;
         let header_y = rect.y + padding + line / 2.0;
@@ -329,8 +336,8 @@ impl Table {
             line,
             header_y,
             rule_y: header_y + line / 2.0,
-            badge_x: rect.x + padding / 2.0,
-            name_x: rect.x + padding + BADGE_WIDTH,
+            badge_x: keys.then(|| rect.x + padding / 2.0),
+            name_x: rect.x + padding + if keys { BADGE_WIDTH } else { 0.0 },
             note_x: rect.max_x() - padding / 2.0,
         }
     }
@@ -340,13 +347,14 @@ impl Table {
         self.rule_y + self.line * (index as f64 + 0.5)
     }
 
-    /// The text of the key badge of a row: `PK`, `FK`, `PK, FK` or nothing.
-    pub(crate) fn badge(key: RowKey) -> &'static str {
+    /// The text of the key badge of a row, or `None` when the row has no key:
+    /// a row without a key draws no badge at all (S13).
+    pub(crate) fn badge(key: RowKey) -> Option<&'static str> {
         match key {
-            RowKey::Pk => "PK",
-            RowKey::Fk => "FK",
-            RowKey::PkFk => "PK, FK",
-            RowKey::None => "",
+            RowKey::Pk => Some("PK"),
+            RowKey::Fk => Some("FK"),
+            RowKey::PkFk => Some("PK, FK"),
+            RowKey::None => None,
         }
     }
 }
@@ -468,6 +476,25 @@ pub(crate) fn band_label(group: &LayoutGroup) -> Option<&str> {
         .label
         .as_deref()
         .filter(|label| !label.trim().is_empty())
+}
+
+/// The point where the name of a band sits (`S12`).
+///
+/// A container writes its name at the corner, indented by its depth; a lane
+/// writes it in the gutter the layout reserved, centered on its own height. The
+/// two rules used to live in the two band writers of the emitter; they live
+/// here once, beside [`band_label`], so the painter reads the same numbers.
+pub(crate) fn band_label_at(group: &LayoutGroup, kind: BandKind) -> Point {
+    match kind {
+        BandKind::Cluster => Point::new(
+            group.bbox.x + TOKENS.node_padding * (1.0 + group.depth as f64),
+            group.bbox.y + TOKENS.text_size,
+        ),
+        BandKind::Lane => Point::new(
+            group.bbox.x + TOKENS.node_padding,
+            group.bbox.y + group.bbox.h / 2.0,
+        ),
+    }
 }
 
 /// The point of the canvas the lifeline of a node reaches: the bottom edge.
