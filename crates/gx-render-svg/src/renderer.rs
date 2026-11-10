@@ -203,7 +203,7 @@ impl SvgRendererContract for SvgRenderer {
 
 fn write_style(out: &mut String, palette: &Palette) {
     let border = fmt_num(TOKENS.border_width);
-    let rules: [(&str, String); 21] = [
+    let rules: [(&str, String); 25] = [
         (".bg", format!("fill:{}", palette.bg.css())),
         (".node-fill", format!("fill:{}", palette.node_fill.css())),
         (
@@ -298,6 +298,14 @@ fn write_style(out: &mut String, palette: &Palette) {
                 fmt_num(MUTED_OPACITY)
             ),
         ),
+        // The rows of a table (`f21-roto.md`, S2): the same rules the window
+        // CSS carries (app.css, PRD §6.1), so the exported artifact paints
+        // badges, notes, keys and nullable rows like the window does. Without
+        // them the export drew row text black on the dark background.
+        (".row-badge", format!("fill:{}", palette.edge_text.css())),
+        (".row-note", format!("fill:{}", palette.edge_text.css())),
+        (".row-key", String::from("font-weight:600")),
+        (".row-nullable", String::from("opacity:0.75")),
     ];
     out.push_str("<style>\n");
     for (selector, body) in rules {

@@ -581,9 +581,12 @@ fn the_root_uses_plan_units_and_the_document_has_no_trailing_whitespace() {
     let document = document(&svg);
     let root = document.root_element();
 
-    assert_eq!(root.attribute("viewBox"), Some("0.00 0.00 260.00 170.00"));
-    assert_eq!(root.attribute("width"), Some("260.00"));
-    assert_eq!(root.attribute("height"), Some("170.00"));
+    assert_eq!(
+        root.attribute("viewBox"),
+        Some("-12.00 -12.00 284.00 194.00")
+    );
+    assert_eq!(root.attribute("width"), Some("284.00"));
+    assert_eq!(root.attribute("height"), Some("194.00"));
     assert!(!svg.ends_with('\n'));
     for line in svg.lines() {
         assert_eq!(line.trim_end(), line, "trailing space in `{line}`");

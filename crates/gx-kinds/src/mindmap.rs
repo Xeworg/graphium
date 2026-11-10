@@ -75,7 +75,7 @@ impl DiagramKind for MindmapKind {
     const KIND: &'static str = "mindmap";
     const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Tree;
-    const LIMITS: KindLimits = KindLimits::GRAPH;
+    const LIMITS: KindLimits = KindLimits::TREE;
 
     type Input = MindmapInput;
 

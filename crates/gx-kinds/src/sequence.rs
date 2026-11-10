@@ -65,7 +65,7 @@ impl DiagramKind for SequenceKind {
     const KIND: &'static str = "sequence";
     const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
-    const LIMITS: KindLimits = KindLimits::GRAPH;
+    const LIMITS: KindLimits = KindLimits::SEQUENCE;
 
     type Input = SequenceInput;
 

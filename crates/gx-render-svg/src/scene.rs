@@ -115,22 +115,34 @@ impl<'a> Drawing<'a> {
                 .collect(),
             None => Vec::new(),
         };
+        let edges = match graph {
+            Some(graph) => geometry::routed_edges(graph, layout)
+                .into_iter()
+                .map(|(edge, route)| (edge.clone(), route.clone()))
+                .collect(),
+            // A timeline draws only the arrows its tasks declare: one
+            // dependency arrow per `depends_on` entry (`f18-gantt.md`,
+            // S7), tasks in id order, dependencies in declared order.
+            None => timeline_dependency_edges(timeline.expect("graph or timeline"), layout),
+        };
+        // The label points the canvas has to contain (`f21-roto.md`, S3):
+        // every routed edge that carries a label, at the point the layout
+        // chose for it. A timeline's dependency arrows carry no labels.
+        let labels: Vec<(gx_core::Point, &str)> = edges
+            .iter()
+            .filter_map(|(edge, route)| {
+                let label = edge.label.as_deref()?;
+                let at = route.label_at?;
+                Some((at, label))
+            })
+            .collect();
         Self {
-            canvas: canvas_rect(layout),
+            canvas: canvas_rect(layout, &labels),
             graph,
             timeline,
             nodes: place_nodes(graph),
             events,
-            edges: match graph {
-                Some(graph) => geometry::routed_edges(graph, layout)
-                    .into_iter()
-                    .map(|(edge, route)| (edge.clone(), route.clone()))
-                    .collect(),
-                // A timeline draws only the arrows its tasks declare: one
-                // dependency arrow per `depends_on` entry (`f18-gantt.md`,
-                // S7), tasks in id order, dependencies in declared order.
-                None => timeline_dependency_edges(timeline.expect("graph or timeline"), layout),
-            },
+            edges,
             clusters: match graph {
                 Some(_) => geometry::ordered_clusters(layout),
                 None => Vec::new(),

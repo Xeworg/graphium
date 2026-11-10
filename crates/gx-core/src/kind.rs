@@ -50,6 +50,29 @@ impl KindLimits {
         max_lanes: 40,
         max_events: 200,
     };
+
+    /// The sequence profile: 40 participants and 200 messages — the PRD's
+    /// «40 carriles × 200 eventos» (`f21-roto.md`, S6). Sequence is a graph,
+    /// so its participants are nodes and its messages edges; the density
+    /// ceiling is the PRD maximum (200/40 = 5).
+    pub const SEQUENCE: KindLimits = KindLimits {
+        max_nodes: 40,
+        max_edges: 200,
+        max_density: 5.0,
+        max_lanes: 0,
+        max_events: 0,
+    };
+
+    /// The tree profile: 500 nodes, 499 edges — tree and mindmap, where the
+    /// hierarchy is the whole drawing (PRD §7.3). The density ceiling stays
+    /// the graph family's: a tree only ever reaches ~1 edge per node.
+    pub const TREE: KindLimits = KindLimits {
+        max_nodes: 500,
+        max_edges: 499,
+        max_density: 3.0,
+        max_lanes: 0,
+        max_events: 0,
+    };
 }
 
 impl Default for KindLimits {

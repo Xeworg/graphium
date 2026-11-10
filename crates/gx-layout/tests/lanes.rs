@@ -264,3 +264,94 @@ fn sequence_graph() -> gx_core::ir::IrGraph {
         groups: Vec::new(),
     }
 }
+
+/// S4 (`f21-roto.md`): two tasks of one lane whose spans overlap in time go
+/// to different sub-rows — no two bars of one lane share a region, and the
+/// lane grows to hold them.
+#[test]
+fn overlapping_tasks_of_one_lane_pack_into_sub_rows() {
+    let engine = LanesEngine::new(std::sync::Arc::new(FakeMetrics));
+    let timeline = IrTimeline {
+        lanes: vec![IrLane {
+            id: "diseno".to_string(),
+            label: Some("Diseño".to_string()),
+        }],
+        events: vec![
+            IrEvent {
+                id: "planos".to_string(),
+                lane: "diseno".to_string(),
+                label: "Planos".to_string(),
+                order: 0,
+                span: Some(gx_core::ir::Span {
+                    start: 0.0,
+                    end: 3.0,
+                }),
+                depends_on: Vec::new(),
+                kind_data: Default::default(),
+            },
+            IrEvent {
+                id: "permiso".to_string(),
+                lane: "diseno".to_string(),
+                label: "Permiso municipal".to_string(),
+                order: 2,
+                span: Some(gx_core::ir::Span {
+                    start: 2.0,
+                    end: 5.0,
+                }),
+                depends_on: Vec::new(),
+                kind_data: Default::default(),
+            },
+        ],
+    };
+    let layout = engine.layout_timeline(&timeline, &LayoutOpts::default());
+
+    let planos = layout.nodes.get("planos").expect("planos placed");
+    let permiso = layout.nodes.get("permiso").expect("permiso placed");
+    assert_ne!(planos.center.y, permiso.center.y, "sub-rows, not overlap");
+    let no_vertical_meet =
+        (planos.center.y - permiso.center.y).abs() >= (planos.size.h + permiso.size.h) / 2.0;
+    assert!(no_vertical_meet, "the two bars share a vertical region");
+    // The lane grew to hold both rows.
+    let lane = &layout.groups[0];
+    assert!(lane.bbox.h >= 2.0 * planos.size.h, "the lane did not grow");
+}
+
+/// S5 (`f21-roto.md`): sequential steps of a lane get the gap between boxes,
+/// not the fixed column step minus the box width — the swimlane steps used to
+/// touch (0.33 px).
+#[test]
+fn sequential_steps_keep_air_between_boxes() {
+    let engine = LanesEngine::new(std::sync::Arc::new(FakeMetrics));
+    let timeline = IrTimeline {
+        lanes: vec![IrLane {
+            id: "cliente".to_string(),
+            label: Some("Cliente".to_string()),
+        }],
+        events: vec![
+            IrEvent {
+                id: "s0".to_string(),
+                lane: "cliente".to_string(),
+                label: "reclama el pedido trabado en la aduana".to_string(),
+                order: 0,
+                span: None,
+                depends_on: Vec::new(),
+                kind_data: Default::default(),
+            },
+            IrEvent {
+                id: "s1".to_string(),
+                lane: "cliente".to_string(),
+                label: "vuelve a reclamar el pedido trabado en la aduana".to_string(),
+                order: 1,
+                span: None,
+                depends_on: Vec::new(),
+                kind_data: Default::default(),
+            },
+        ],
+    };
+    let layout = engine.layout_timeline(&timeline, &LayoutOpts::default());
+
+    let first = layout.nodes.get("s0").expect("s0 placed");
+    let second = layout.nodes.get("s1").expect("s1 placed");
+    let gap = second.center.x - second.size.w / 2.0 - (first.center.x + first.size.w / 2.0);
+    assert!(gap >= 2.0 * 16.0 - 0.01, "the steps touch: gap {gap}");
+}

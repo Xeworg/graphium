@@ -215,7 +215,7 @@ fn the_scene_carries_the_canvas_and_the_direction() {
 
     let scene = build_scene(&ir, &layout, &palette());
 
-    assert_eq!(scene.canvas, Rect::new(0.0, 0.0, 260.0, 170.0));
+    assert_eq!(scene.canvas, Rect::new(-12.0, -12.0, 284.0, 194.0));
     assert_eq!(scene.direction, Some(Direction::TB));
     assert_eq!(scene.layout_hint, Some(LayoutHint::Layered));
 }
@@ -537,7 +537,7 @@ fn the_drawing_plan_knows_which_layers_exist() {
     assert!(!drawing.draws_lifelines());
     assert_eq!(drawing.nodes.len(), 3);
     assert_eq!(drawing.edges.len(), 2);
-    assert_eq!(drawing.canvas, Rect::new(0.0, 0.0, 260.0, 170.0));
+    assert_eq!(drawing.canvas, Rect::new(-12.0, -12.0, 284.0, 194.0));
 
     let mut lanes_ir = Ir::Graph(IrGraph {
         direction: Direction::LR,

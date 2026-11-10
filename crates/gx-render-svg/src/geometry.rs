@@ -41,6 +41,10 @@ pub(crate) const CROW_FOOT: f64 = 22.0;
 pub(crate) const CROW_FOOT_SPREAD: f64 = 0.85;
 /// Horizontal space reserved for the `PK` / `FK` badge of a row.
 pub(crate) const BADGE_WIDTH: f64 = 26.0;
+
+/// The air between the drawing and its frame (`f21-roto.md`, S3): strokes sit
+/// half outside their shapes, and a zero-margin canvas clipped them.
+pub(crate) const CANVAS_PADDING: f64 = 12.0;
 /// Height of the bar of an event that lasts, in plan units (`f11-elementos.md`,
 /// T4/D). It is a band, not a second box: it says "this event covers a stretch
 /// of time" without competing with the label inside the box.
@@ -137,24 +141,49 @@ pub(crate) fn label_placement(shape: Shape, rect: &Rect) -> LabelPlacement {
     }
 }
 
-/// The plan rectangle the root element covers.
-pub(crate) fn canvas_rect(layout: &LayoutGraph) -> Rect {
-    let bbox = layout.bbox;
-    if bbox.w > 0.0 && bbox.h > 0.0 {
-        return bbox;
-    }
-    // The layout normalizes the graph so the bounding box starts at `(0, 0)`
-    // (F0 decision L9) and always reports it. If a layout does not, derive one
-    // from the node boxes so the canvas is never degenerate. Safe default.
+/// The plan rectangle the root element covers (`f21-roto.md`, S3): the union
+/// of the node boxes **and** the rendered edge-label boxes, padded — labels
+/// with their center outside the node bbox used to be cut by the frame.
+/// Label boxes are estimated from the text (Inter at the token size is
+/// ~0.5×em per char); the estimate only grows the canvas, never clips.
+pub(crate) fn canvas_rect(layout: &LayoutGraph, labels: &[(Point, &str)]) -> Rect {
+    // The engine's bbox is the seed: it already carries the extents the
+    // drawing needs beyond the nodes (lane bands, group boxes, lifelines).
     let mut bounds: Option<Rect> = None;
-    for placed in layout.nodes.values() {
-        let rect = node_rect(placed);
+    if layout.bbox.w > 0.0 && layout.bbox.h > 0.0 {
+        bounds = Some(layout.bbox);
+    } else {
+        for placed in layout.nodes.values() {
+            let rect = node_rect(placed);
+            bounds = Some(match bounds {
+                Some(union) => union.union(&rect),
+                None => rect,
+            });
+        }
+    }
+    for (at, label) in labels {
+        let lines = label_lines(label);
+        let width = lines
+            .iter()
+            .map(|line| line.chars().count() as f64 * TOKENS.text_size * 0.5)
+            .fold(0.0, f64::max);
+        let height = lines.len() as f64 * TOKENS.text_size * TOKENS.line_height;
+        let rect = Rect::new(at.x - width / 2.0, at.y - height / 2.0, width, height);
         bounds = Some(match bounds {
             Some(union) => union.union(&rect),
             None => rect,
         });
     }
-    bounds.unwrap_or(bbox)
+    let bbox = bounds.unwrap_or(layout.bbox);
+    if bbox.w > 0.0 && bbox.h > 0.0 {
+        return Rect::new(
+            bbox.x - CANVAS_PADDING,
+            bbox.y - CANVAS_PADDING,
+            bbox.w + 2.0 * CANVAS_PADDING,
+            bbox.h + 2.0 * CANVAS_PADDING,
+        );
+    }
+    bbox
 }
 
 /// The rectangle of a placed node, from the center of its measured box.
