@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use gx_core::{
-    Cardinality, CardinalityBound, CardinalityMax, Direction, Ir, IrEdge, IrGraph, IrNode, IrRow,
-    IrTimeline, LayoutEdge, LayoutGraph, LayoutHint, NodeBox, Palette, Point, Rect, Shape, Size,
-    SvgRenderer as SvgRendererContract,
+    fmt_num, Cardinality, CardinalityBound, CardinalityMax, Direction, Ir, IrEdge, IrGraph, IrNode,
+    IrRow, IrTimeline, LayoutEdge, LayoutGraph, LayoutHint, NodeBox, Palette, Point, Rect, RowKey,
+    Shape, Size, SvgRenderer as SvgRendererContract, TOKENS,
 };
 use roxmltree::Document;
 
@@ -415,6 +415,164 @@ fn the_edge_label_is_centered_on_label_at() {
     assert_eq!(label.attribute("x"), Some("90.00"));
     assert_eq!(label.attribute("y"), Some("85.00"));
     assert_eq!(label.attribute("text-anchor"), Some("middle"));
+}
+
+/// S13: a table whose rows have no key has nothing to put in the badge column,
+/// so it reserves no column and writes no badge: the row names start at the
+/// padding, and not one `row-badge` element reaches the drawing.
+///
+/// The header keeps its own place: semibold, centered on the box (S12 folds
+/// the three writers, it does not change what the table reads like).
+#[test]
+fn a_table_without_keys_reserves_no_badge_column() {
+    let mut node = fixture::shaped("roles", "Cliente", Shape::Box);
+    node.rows = vec![IrRow::new("person"), IrRow::new("hace el pedido")];
+    let ir = fixture::graph(vec![node], Vec::new());
+    let layout = fixture::layout(
+        &[("roles", Point::new(100.0, 50.0), Size::new(200.0, 90.0))],
+        Vec::new(),
+        Rect::new(0.0, 0.0, 200.0, 100.0),
+    );
+
+    let svg = render(&ir, &layout, &Palette::plano());
+    let document = document(&svg);
+
+    assert!(
+        element(&document, "text")
+            .iter()
+            .all(|node| !classes(*node).contains("row-badge")),
+        "a table without keys draws no badge: {svg}"
+    );
+    let texts = element(&document, "text");
+    assert_eq!(texts.len(), 3, "header and two row names, nothing else");
+    assert!(
+        texts
+            .iter()
+            .all(|node| !node.text().unwrap_or_default().is_empty()),
+        "no empty text element is written: {svg}"
+    );
+
+    let x_of = |text: &str| {
+        element(&document, "text")
+            .into_iter()
+            .find(|node| node.text() == Some(text))
+            .unwrap_or_else(|| panic!("`{text}` is drawn"))
+            .attribute("x")
+            .expect("a text carries its x")
+            .to_string()
+    };
+    let name_x = fmt_num(TOKENS.node_padding);
+    assert_eq!(x_of("person"), name_x, "the name starts at the padding");
+    assert_eq!(x_of("hace el pedido"), name_x, "no badge column is paid");
+
+    let header = element(&document, "text")
+        .into_iter()
+        .find(|node| node.text() == Some("Cliente"))
+        .expect("the header is drawn");
+    assert_eq!(header.attribute("x"), Some("100.00"), "centered on the box");
+    assert_eq!(header.attribute("text-anchor"), Some("middle"));
+    assert_eq!(
+        header.attribute("font-weight"),
+        Some(TOKENS.semibold_weight.to_string().as_str()),
+        "the header stays semibold"
+    );
+}
+
+/// S13: a key in one row reserves the badge column for the whole table, and
+/// only the rows that carry a key write a badge. The keyless row keeps the
+/// indent (the column exists) and gets no empty element.
+#[test]
+fn only_the_rows_with_a_key_draw_a_badge() {
+    let mut id = IrRow::new("id");
+    id.key = RowKey::Pk;
+    let mut user = IrRow::new("user_id");
+    user.key = RowKey::Fk;
+    user.nullable = true;
+    let title = IrRow::new("title");
+    let mut node = fixture::shaped("posts", "posts", Shape::Box);
+    node.rows = vec![id, user, title];
+    let ir = fixture::graph(vec![node], Vec::new());
+    let layout = fixture::layout(
+        &[("posts", Point::new(150.0, 60.0), Size::new(300.0, 110.0))],
+        Vec::new(),
+        Rect::new(0.0, 0.0, 300.0, 120.0),
+    );
+
+    let svg = render(&ir, &layout, &Palette::plano());
+    let document = document(&svg);
+
+    let badges: Vec<_> = element(&document, "text")
+        .into_iter()
+        .filter(|node| classes(*node).contains("row-badge"))
+        .collect();
+    assert_eq!(badges.len(), 2, "one badge per key, and no other: {svg}");
+    assert_eq!(badges[0].text(), Some("PK"));
+    assert_eq!(badges[1].text(), Some("FK"));
+
+    let texts = element(&document, "text");
+    assert_eq!(
+        texts.len(),
+        6,
+        "header, two badges and three row names, nothing else"
+    );
+
+    let x_of = |text: &str| {
+        texts
+            .iter()
+            .find(|node| node.text() == Some(text))
+            .unwrap_or_else(|| panic!("`{text}` is drawn"))
+            .attribute("x")
+            .expect("a text carries its x")
+            .to_string()
+    };
+    let name_x = fmt_num(TOKENS.node_padding + crate::geometry::BADGE_WIDTH);
+    assert_eq!(x_of("id"), name_x, "the badge column is reserved");
+    assert_eq!(x_of("title"), name_x, "the keyless row keeps the indent");
+}
+
+/// S12: an event is a rounded box, and the emitter draws it with the same
+/// shape writer a rounded node goes through, so the two cannot drift apart.
+#[test]
+fn an_event_is_drawn_as_the_same_rounded_box_as_a_node() {
+    let ir = Ir::Timeline(IrTimeline {
+        lanes: vec![gx_core::IrLane {
+            id: "q1".to_string(),
+            label: Some("Q1".to_string()),
+        }],
+        events: vec![event("event-0", "q1", "spike")],
+    });
+    let layout = LayoutGraph {
+        nodes: [(
+            "event-0".to_string(),
+            NodeBox {
+                center: Point::new(200.0, 70.0),
+                size: Size::new(120.0, 44.0),
+            },
+        )]
+        .into_iter()
+        .collect(),
+        edges: Vec::new(),
+        groups: vec![group("q1", Some("Q1"), Rect::new(0.0, 0.0, 400.0, 150.0))],
+        bbox: Rect::new(0.0, 0.0, 400.0, 150.0),
+    };
+
+    let svg = render(&ir, &layout, &Palette::plano());
+    let document = document(&svg);
+    let box_of_event = element(&document, "rect")
+        .into_iter()
+        .find(|node| node.attribute("id") == Some("g-event-0"))
+        .expect("the event is drawn");
+
+    assert_eq!(
+        classes(box_of_event),
+        "node-fill node-stroke shape-rounded",
+        "an event is a rounded box"
+    );
+    assert_eq!(
+        box_of_event.attribute("rx"),
+        Some(fmt_num(TOKENS.corner_radius).as_str()),
+        "with the corner radius of every rounded box"
+    );
 }
 
 #[test]

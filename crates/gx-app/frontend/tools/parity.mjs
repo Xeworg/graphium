@@ -277,6 +277,7 @@ function timelineScene() {
   scene.bands = [
     {
       id: "lane-q1",
+      kind: "lane",
       label: "Q1",
       bbox: { x: 0, y: 0, w: 500, h: 160 },
       depth: 0,

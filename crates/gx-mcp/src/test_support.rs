@@ -248,6 +248,11 @@ impl SvgRenderer for StubRenderer {
                 depth: group.depth,
                 members: group.members.clone(),
                 gutter: group.gutter,
+                kind: if timeline.is_some() {
+                    gx_core::BandKind::Lane
+                } else {
+                    gx_core::BandKind::Cluster
+                },
             })
             .collect();
 

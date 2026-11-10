@@ -11,14 +11,12 @@
 //! puede decir cuál vale.
 
 use gx_core::error::ValidationError;
-use gx_core::ir::{Direction, Ir, IrGraph, LayoutHint, Shape, Style};
-use gx_core::kind::{DiagramKind, KindLimits};
+use gx_core::ir::{Direction, Ir, LayoutHint, Shape, Style};
+use gx_core::kind::{DiagramKind, KindLimits, Role};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::flow::{
-    to_graph, validate_header, validate_nodes, validate_refs, FlowEdge, FlowNode, Role,
-};
+use crate::flow::{to_graph, validate_header, validate_nodes, validate_refs, FlowEdge, FlowNode};
 use crate::groups::{to_ir_groups, validate_groups};
 
 /// Contract version supported by this build (PRD §10.1).
@@ -74,14 +72,9 @@ pub struct ComponentKind;
 
 impl DiagramKind for ComponentKind {
     const KIND: &'static str = "component";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
 
     type Input = ComponentInput;
 
@@ -91,6 +84,14 @@ impl DiagramKind for ComponentKind {
 
     fn shapes() -> Vec<Shape> {
         crate::flow::shapes_of_roles(&ROLES)
+    }
+
+    fn roles() -> &'static [Role] {
+        &ROLES
+    }
+
+    fn default_role() -> Option<&'static str> {
+        Some(DEFAULT_ROLE)
     }
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
@@ -119,13 +120,14 @@ impl DiagramKind for ComponentKind {
     }
 
     fn to_ir(&self, input: &Self::Input) -> Ir {
-        let mut graph: IrGraph = to_graph(
+        let mut graph = to_graph(
             &input.nodes,
             &input.edges,
             &ROLES,
             DEFAULT_ROLE,
             input.direction,
             Self::LAYOUT_HINT,
+            to_ir_groups(&input.groups),
         );
 
         // Lo externo se dibuja punteado: no es de este sistema.
@@ -137,9 +139,40 @@ impl DiagramKind for ComponentKind {
             }
         }
 
-        graph.groups = to_ir_groups(&input.groups);
-
         Ir::Graph(graph)
+    }
+
+    /// Lo propio de una arquitectura: la frontera es única y lo externo se
+    /// dibuja punteado porque no es de este sistema.
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "Un nodo con `role: \"external\"` se dibuja con borde punteado: no es de este sistema."
+                .to_string(),
+            "Cada `groups[].members` referencia piezas o fronteras declaradas, y **una pieza vive en una sola frontera**."
+                .to_string(),
+            "La etiqueta de la arista es el protocolo o la llamada (`HTTPS`, `SQL`)."
+                .to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "component",
+            "title": "API de pedidos",
+            "nodes": [
+                { "id": "web", "label": "Web", "role": "container" },
+                { "id": "api", "label": "API" },
+                { "id": "db", "label": "Postgres", "role": "database" }
+            ],
+            "groups": [
+                { "id": "backend", "label": "Backend", "members": ["api", "db"] }
+            ],
+            "edges": [
+                { "from": "web", "to": "api", "label": "HTTPS" },
+                { "from": "api", "to": "db", "label": "SQL" }
+            ]
+        })
     }
 }
 
@@ -150,14 +183,11 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::{ComponentInput, ComponentKind, EXTERNAL_ROLE, ROLES};
+    use super::{ComponentKind, EXTERNAL_ROLE, ROLES};
+    use crate::test_support::input;
     use gx_core::error::ErrorCode;
     use gx_core::ir::{Ir, Shape, Style};
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> ComponentInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     const API: &str = r#"{
       "version": 1, "kind": "component", "title": "API de pedidos",

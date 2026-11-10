@@ -105,6 +105,39 @@ pub fn duplicate_event(field: &str, id: &str) -> ValidationError {
     )
 }
 
+/// The lane check every lanes kind repeats per row (`f20-reuso.md`, S7): the
+/// lane is required when the document declares lanes, and always one the
+/// document declared. `noun` is what the row is — `evento`, `tarea` — so the
+/// error speaks the document's language, not the helper's.
+pub fn validate_row_lane(
+    field: &str,
+    noun: &str,
+    lane: &Option<String>,
+    declared: &[Lane],
+) -> Vec<ValidationError> {
+    let mut errors = Vec::new();
+    match (lane, declared.is_empty()) {
+        (Some(lane), _) if !declared.iter().any(|known| &known.id == lane) => {
+            errors.push(unknown_lane(field, lane, declared));
+        }
+        (None, false) => errors.push(ValidationError::new(
+            field,
+            ErrorCode::MissingField,
+            format!("el {noun} no dice en qué carril va"),
+            Some(format!(
+                "usá uno de los carriles declarados: {}",
+                declared
+                    .iter()
+                    .map(|lane| lane.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        )),
+        _ => {}
+    }
+    errors
+}
+
 /// The ids that already exist, so the caller reports the first repeated one.
 pub struct SeenIds(BTreeSet<String>);
 

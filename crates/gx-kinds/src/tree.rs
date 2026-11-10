@@ -10,7 +10,7 @@
 //! dibujo es determinista y una misma rama siempre tiene el mismo id.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Ir, IrEdge, IrGraph, IrNode, LayoutHint};
+use gx_core::ir::{Direction, Ir, IrEdge, IrNode, LayoutHint};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -75,14 +75,9 @@ impl TreeKind {
 
 impl DiagramKind for TreeKind {
     const KIND: &'static str = "tree";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Tree;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
 
     type Input = TreeInput;
 
@@ -91,28 +86,8 @@ impl DiagramKind for TreeKind {
     }
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
-        let mut errors = Vec::new();
-
-        if input.kind != Self::KIND {
-            errors.push(ValidationError::new(
-                "kind",
-                ErrorCode::InvalidValue,
-                format!("`kind` debe ser `{}`, no `{}`", Self::KIND, input.kind),
-                Some("usá get_diagram_schema para ver los kinds disponibles".to_string()),
-            ));
-        }
-
-        if input.version != SUPPORTED_VERSION {
-            errors.push(ValidationError::new(
-                "version",
-                ErrorCode::InvalidValue,
-                format!(
-                    "versión de contrato no soportada: {} (soportada: {SUPPORTED_VERSION})",
-                    input.version
-                ),
-                Some("actualizá el documento a la versión 1 del contrato".to_string()),
-            ));
-        }
+        let mut errors =
+            crate::flow::validate_header(Self::KIND, &input.kind, SUPPORTED_VERSION, input.version);
 
         let mut count = 0usize;
         let mut too_deep = false;
@@ -219,12 +194,27 @@ impl DiagramKind for TreeKind {
             }
         }
 
-        Ir::Graph(IrGraph {
-            direction: Direction::TB,
-            layout_hint: Self::LAYOUT_HINT,
+        Ir::Graph(crate::flow::ir_graph(
+            Some(Direction::TB),
+            Self::LAYOUT_HINT,
             nodes,
             edges,
-            groups: Vec::new(),
+            Vec::new(),
+        ))
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "tree",
+            "title": "src",
+            "root": {
+                "name": "src",
+                "children": [
+                    { "name": "main.rs" },
+                    { "name": "lib", "children": [ { "name": "mod.rs" } ] }
+                ]
+            }
         })
     }
 }
@@ -237,12 +227,9 @@ pub fn register() {
 #[cfg(test)]
 mod tests {
     use super::{TreeInput, TreeKind, MAX_TREE_DEPTH};
+    use crate::test_support::input;
     use gx_core::ir::Ir;
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> TreeInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     const SRC: &str = r#"{
       "version": 1, "kind": "tree", "title": "src",

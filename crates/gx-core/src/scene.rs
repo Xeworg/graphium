@@ -226,6 +226,21 @@ pub struct SceneEdge {
     pub label_at: Option<Point>,
 }
 
+/// The two families of band of a drawing (`f20-reuso.md`, S12).
+///
+/// A container of a graph and a lane of a timeline are the same box behind
+/// elements with a name in a corner, and they are two different things: one is
+/// a boundary, the other is a row. The kind names which one a band is, so a
+/// writer reads it instead of telling them apart by the prefix of the id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BandKind {
+    /// A container of a graph: the id is `cluster-<id>`.
+    Cluster,
+    /// A lane of a timeline: the id is `lane-<id>`.
+    Lane,
+}
+
 /// A container of a graph or a lane of a timeline: `LayoutGroup` (S3).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SceneBand {
@@ -245,6 +260,10 @@ pub struct SceneBand {
     /// plan units; absent for a container, which has no gutter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gutter: Option<f64>,
+    /// Which family the band belongs to (`f20-reuso.md`, S12): the writer
+    /// reads it instead of telling a container from a lane by the prefix of
+    /// the id.
+    pub kind: BandKind,
 }
 
 /// An event of a timeline: `IrEvent` plus the measured box (S3, S4).

@@ -208,7 +208,8 @@
       "members": [
         "web",
         "servicio"
-      ]
+      ],
+      "kind": "cluster"
     },
     {
       "id": "cluster-servicio",
@@ -223,7 +224,8 @@
       "members": [
         "api",
         "db"
-      ]
+      ],
+      "kind": "cluster"
     }
   ],
   "events": []

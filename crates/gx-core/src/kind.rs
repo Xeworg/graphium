@@ -29,6 +29,29 @@ pub struct KindLimits {
     pub max_events: usize,
 }
 
+impl KindLimits {
+    /// The layered-graph profile: 300 nodes, 600 edges, density 3.0 — the
+    /// ceiling eleven kinds share (`f20-reuso.md`, S4). This is also the
+    /// `Default`: the graph was the first kind.
+    pub const GRAPH: KindLimits = KindLimits {
+        max_nodes: 300,
+        max_edges: 600,
+        max_density: 3.0,
+        max_lanes: 0,
+        max_events: 0,
+    };
+
+    /// The lanes profile: 200 events on 40 lanes, no edges — timeline,
+    /// swimlane and gantt (`f20-reuso.md`, S4).
+    pub const TIMELINE: KindLimits = KindLimits {
+        max_nodes: 200,
+        max_edges: 0,
+        max_density: 0.0,
+        max_lanes: 40,
+        max_events: 200,
+    };
+}
+
 impl Default for KindLimits {
     fn default() -> Self {
         Self {
@@ -41,10 +64,34 @@ impl Default for KindLimits {
     }
 }
 
+/// A role a node may take, and the shape it is drawn with.
+///
+/// The vocabulary of a kind lives with the kind, but its shape is the IR's
+/// (`f20-reuso.md`, S11): a role table is a list of these, the contract spells
+/// the line that teaches it and the renderer draws it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Role {
+    /// The name the document writes, e.g. `decision`.
+    pub name: &'static str,
+    /// The shape of [`Shape`] that role is drawn with.
+    pub shape: Shape,
+}
+
+impl Role {
+    pub const fn new(name: &'static str, shape: Shape) -> Self {
+        Self { name, shape }
+    }
+}
+
 /// A diagram kind: its JSON contract, its semantic rules and its translation
 /// to the IR.
 pub trait DiagramKind: Send + Sync + Default {
     const KIND: &'static str;
+    /// The phase of the roadmap the kind ships in (PRD §6). It is a const
+    /// beside `KIND`, not a lookup with a fallback (`f20-reuso.md`, S10): a
+    /// kind that forgets its phase does not compile, and no build ever
+    /// answers for another one.
+    const PHASE: &'static str;
     const LAYOUT_HINT: LayoutHint;
     const LIMITS: KindLimits;
 
@@ -67,17 +114,56 @@ pub trait DiagramKind: Send + Sync + Default {
     fn shapes() -> Vec<Shape> {
         vec![Shape::Rounded]
     }
+
+    /// The roles the kind admits, in the order its rules teach them
+    /// (`f20-reuso.md`, S11). Empty when the kind has no role vocabulary.
+    fn roles() -> &'static [Role] {
+        &[]
+    }
+
+    /// The role a node takes when the document does not declare one.
+    fn default_role() -> Option<&'static str> {
+        None
+    }
+
+    /// The rules JSON Schema cannot express, in the words the agent reads
+    /// (`f20-reuso.md`, S11): what is genuinely the kind's own teaching. The
+    /// contract adds the generic rules and the line of the vocabulary.
+    fn rules(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// A minimal document of the kind that validates and paints (PRD §6.1,
+    /// `f20-reuso.md` S9): the example lives with the kind, so a new kind
+    /// never touches `gx-mcp`. The registry pin catches a kind that forgets
+    /// it.
+    fn min_example() -> Value {
+        Value::Null
+    }
 }
 
 /// Object safe view of a kind, used by the registry.
 pub trait KindHandler: Send + Sync {
     fn kind(&self) -> &'static str;
+    fn phase(&self) -> &'static str;
     fn layout_hint(&self) -> LayoutHint;
     fn limits(&self) -> KindLimits;
     fn schema(&self) -> schemars::Schema;
 
     /// The shapes the kind draws (`f19-formas.md`, S4).
     fn shapes(&self) -> Vec<Shape>;
+
+    /// The roles the kind admits (`f20-reuso.md`, S11).
+    fn roles(&self) -> &'static [Role];
+
+    /// The role of a node that declares none.
+    fn default_role(&self) -> Option<&'static str>;
+
+    /// The kind's own cross rules, in the words the agent reads.
+    fn rules(&self) -> Vec<String>;
+
+    /// The minimal document of the kind (`f20-reuso.md`, S9).
+    fn min_example(&self) -> Value;
 
     /// Validates a document against the kind contract.
     fn validate_json(&self, document: &Value) -> Result<(), Vec<ValidationError>>;
@@ -108,6 +194,10 @@ impl<K: DiagramKind> KindHandler for KindAdapter<K> {
         K::KIND
     }
 
+    fn phase(&self) -> &'static str {
+        K::PHASE
+    }
+
     fn layout_hint(&self) -> LayoutHint {
         K::LAYOUT_HINT
     }
@@ -122,6 +212,22 @@ impl<K: DiagramKind> KindHandler for KindAdapter<K> {
 
     fn shapes(&self) -> Vec<Shape> {
         K::shapes()
+    }
+
+    fn roles(&self) -> &'static [Role] {
+        K::roles()
+    }
+
+    fn default_role(&self) -> Option<&'static str> {
+        K::default_role()
+    }
+
+    fn rules(&self) -> Vec<String> {
+        self.kind.rules()
+    }
+
+    fn min_example(&self) -> Value {
+        K::min_example()
     }
 
     fn validate_json(&self, document: &Value) -> Result<(), Vec<ValidationError>> {
@@ -285,7 +391,7 @@ pub fn kind_names() -> Vec<&'static str> {
 mod tests {
     use super::{for_kind, kind_names, register_kind, DiagramKind, KindLimits};
     use crate::error::ValidationError;
-    use crate::ir::{Direction, Ir, IrGraph, IrNode, LayoutHint};
+    use crate::ir::{Direction, Ir, IrGraph, IrNode, LayoutHint, Shape};
     use schemars::JsonSchema;
     use serde::Deserialize;
 
@@ -300,6 +406,7 @@ mod tests {
 
     impl DiagramKind for DemoKind {
         const KIND: &'static str = "demo";
+        const PHASE: &'static str = "F0";
         const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
         const LIMITS: KindLimits = KindLimits {
             max_nodes: 10,
@@ -327,6 +434,23 @@ mod tests {
         fn schema() -> schemars::Schema {
             schemars::schema_for!(DemoInput)
         }
+
+        fn roles() -> &'static [super::Role] {
+            const ROLES: [super::Role; 1] = [super::Role::new("in", Shape::Rounded)];
+            &ROLES
+        }
+
+        fn default_role() -> Option<&'static str> {
+            Some("in")
+        }
+
+        fn rules(&self) -> Vec<String> {
+            vec!["El ejemplo es un título: el resto lo pone la base.".to_string()]
+        }
+
+        fn min_example() -> serde_json::Value {
+            serde_json::json!({ "version": 1, "kind": "demo", "title": "demo" })
+        }
     }
 
     #[test]
@@ -335,6 +459,67 @@ mod tests {
         assert!(kind_names().contains(&"demo"));
         assert!(for_kind("demo").is_some());
         assert!(for_kind("nope").is_none());
+    }
+
+    /// S9-S11 de `f20-reuso.md`: el registro sirve el contrato del kind tal
+    /// como el kind lo declara —fase, ejemplo, roles y reglas—, que es lo
+    /// que deja a `gx-mcp` fuera del camino de un kind nuevo (O7).
+    #[test]
+    fn the_registry_serves_the_contract_of_the_kind_itself() {
+        register_kind::<DemoKind>();
+        let handler = for_kind("demo").expect("registered");
+        assert_eq!(handler.phase(), "F0", "the phase is the kind's const");
+        assert_eq!(
+            handler.min_example(),
+            serde_json::json!({ "version": 1, "kind": "demo", "title": "demo" }),
+            "the example is the kind's own document"
+        );
+        assert_eq!(handler.roles().len(), 1);
+        assert_eq!(handler.roles()[0].name, "in");
+        assert_eq!(handler.roles()[0].shape, Shape::Rounded);
+        assert_eq!(handler.default_role(), Some("in"));
+        assert_eq!(handler.rules().len(), 1);
+    }
+
+    /// S9: un kind que no declara ejemplo no hereda el de otro: el default es
+    /// `null` y el pin del catálogo lo delata. Lo mismo con el vocabulario:
+    /// un kind sin roles no enseña una línea de roles.
+    #[test]
+    fn the_defaults_of_a_bare_kind_are_empty() {
+        #[derive(Default)]
+        struct BareKind;
+
+        impl DiagramKind for BareKind {
+            const KIND: &'static str = "bare";
+            const PHASE: &'static str = "F0";
+            const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
+            const LIMITS: KindLimits = KindLimits::GRAPH;
+            type Input = DemoInput;
+
+            fn validate(&self, _input: &Self::Input) -> Result<(), Vec<ValidationError>> {
+                Ok(())
+            }
+
+            fn to_ir(&self, _input: &Self::Input) -> Ir {
+                Ir::Graph(IrGraph {
+                    direction: Direction::TB,
+                    layout_hint: LayoutHint::Layered,
+                    nodes: Vec::new(),
+                    edges: Vec::new(),
+                    groups: Vec::new(),
+                })
+            }
+
+            fn schema() -> schemars::Schema {
+                schemars::schema_for!(DemoInput)
+            }
+        }
+
+        assert!(BareKind::min_example().is_null());
+        assert!(BareKind::roles().is_empty());
+        assert_eq!(BareKind::default_role(), None);
+        assert!(BareKind.rules().is_empty());
+        assert_eq!(BareKind::shapes(), vec![Shape::Rounded]);
     }
 
     #[test]

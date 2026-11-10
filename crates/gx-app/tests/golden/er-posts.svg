@@ -42,7 +42,6 @@
 <text class="row-badge text" x="287.84" y="55.75" font-size="11.90" dominant-baseline="central">FK</text>
 <text class="node-text text row-nullable" x="319.84" y="55.75" font-size="14.00" dominant-baseline="central">user_id</text>
 <text class="row-note text" x="444.27" y="55.75" font-size="12.60" text-anchor="end" dominant-baseline="central">uuid</text>
-<text class="row-badge text" x="287.84" y="73.25" font-size="11.90" dominant-baseline="central"></text>
 <text class="node-text text" x="319.84" y="73.25" font-size="14.00" dominant-baseline="central">title</text>
 <text class="row-note text" x="444.27" y="73.25" font-size="12.60" text-anchor="end" dominant-baseline="central">text</text>
 <rect id="g-users" class="node-fill node-stroke shape-box" x="0.00" y="8.75" width="151.84" height="89.50"/>
@@ -51,7 +50,6 @@
 <text class="row-badge text" x="6.00" y="47.00" font-size="11.90" dominant-baseline="central">PK</text>
 <text class="node-text text row-key" x="38.00" y="47.00" font-size="14.00" dominant-baseline="central">id</text>
 <text class="row-note text" x="145.84" y="47.00" font-size="12.60" text-anchor="end" dominant-baseline="central">uuid</text>
-<text class="row-badge text" x="6.00" y="64.50" font-size="11.90" dominant-baseline="central"></text>
 <text class="node-text text" x="38.00" y="64.50" font-size="14.00" dominant-baseline="central">email</text>
 <text class="row-note text" x="145.84" y="64.50" font-size="12.60" text-anchor="end" dominant-baseline="central">text</text>
 </g>

@@ -111,7 +111,8 @@
         "planos",
         "permiso"
       ],
-      "gutter": 150.0
+      "gutter": 150.0,
+      "kind": "lane"
     },
     {
       "id": "lane-obra",
@@ -127,7 +128,8 @@
         "demolicion",
         "apertura"
       ],
-      "gutter": 150.0
+      "gutter": 150.0,
+      "kind": "lane"
     }
   ],
   "events": [

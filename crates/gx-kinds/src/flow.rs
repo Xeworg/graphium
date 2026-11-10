@@ -9,7 +9,10 @@
 //! tocar el motor ni el renderer (O7).
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Emphasis, IrEdge, IrGraph, IrNode, LayoutHint, Shape, Style};
+use gx_core::ir::{
+    Direction, Emphasis, IrEdge, IrGraph, IrGroup, IrNode, LayoutHint, Shape, Style,
+};
+use gx_core::kind::Role;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -49,21 +52,6 @@ pub struct FlowEdge {
     /// Whether the edge draws an arrowhead. Defaults to true.
     #[serde(default)]
     pub arrow: Option<bool>,
-}
-
-/// A role a node may take, and the shape it is drawn with.
-#[derive(Debug, Clone, Copy)]
-pub struct Role {
-    /// The name the document writes, e.g. `decision`.
-    pub name: &'static str,
-    /// The shape of [`Shape`] that role is drawn with.
-    pub shape: Shape,
-}
-
-impl Role {
-    pub const fn new(name: &'static str, shape: Shape) -> Self {
-        Self { name, shape }
-    }
 }
 
 /// The shape of a role, or the one of the default role.
@@ -250,6 +238,7 @@ pub fn to_graph(
     default_role: &str,
     direction: Option<Direction>,
     layout_hint: LayoutHint,
+    groups: Vec<IrGroup>,
 ) -> IrGraph {
     let nodes = to_ir_nodes(nodes, roles, default_role);
 
@@ -271,11 +260,24 @@ pub fn to_graph(
         })
         .collect();
 
+    ir_graph(direction, layout_hint, nodes, edges, groups)
+}
+
+/// The one `IrGraph` assembly (`f20-reuso.md`, S6): the direction with its
+/// default, the hint of the kind, and the pieces the kind mapped. Ten kinds
+/// ended here — nine of them carried the same seven lines by hand.
+pub fn ir_graph(
+    direction: Option<Direction>,
+    layout_hint: LayoutHint,
+    nodes: Vec<IrNode>,
+    edges: Vec<IrEdge>,
+    groups: Vec<IrGroup>,
+) -> IrGraph {
     IrGraph {
         direction: direction.unwrap_or(Direction::TB),
         layout_hint,
         nodes,
         edges,
-        groups: Vec::new(),
+        groups,
     }
 }

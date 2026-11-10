@@ -13,7 +13,7 @@ use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::lanes::{duplicate_event, event_id, unknown_lane, validate_lanes, Lane, SeenIds};
+use crate::lanes::{duplicate_event, event_id, validate_lanes, Lane, SeenIds};
 
 /// Contract version supported by this build (PRD §10.1).
 pub const SUPPORTED_VERSION: u32 = 1;
@@ -74,14 +74,9 @@ pub struct TimelineKind;
 
 impl DiagramKind for TimelineKind {
     const KIND: &'static str = "timeline";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 200,
-        max_edges: 0,
-        max_density: 0.0,
-        max_lanes: 40,
-        max_events: 200,
-    };
+    const LIMITS: KindLimits = KindLimits::TIMELINE;
 
     type Input = TimelineInput;
 
@@ -90,28 +85,8 @@ impl DiagramKind for TimelineKind {
     }
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
-        let mut errors = Vec::new();
-
-        if input.kind != Self::KIND {
-            errors.push(ValidationError::new(
-                "kind",
-                ErrorCode::InvalidValue,
-                format!("`kind` debe ser `{}`, no `{}`", Self::KIND, input.kind),
-                Some("usá get_diagram_schema para ver los kinds disponibles".to_string()),
-            ));
-        }
-
-        if input.version != SUPPORTED_VERSION {
-            errors.push(ValidationError::new(
-                "version",
-                ErrorCode::InvalidValue,
-                format!(
-                    "versión de contrato no soportada: {} (soportada: {SUPPORTED_VERSION})",
-                    input.version
-                ),
-                Some("actualizá el documento a la versión 1 del contrato".to_string()),
-            ));
-        }
+        let mut errors =
+            crate::flow::validate_header(Self::KIND, &input.kind, SUPPORTED_VERSION, input.version);
 
         errors.extend(validate_lanes(&input.lanes, "lanes"));
 
@@ -124,7 +99,7 @@ impl DiagramKind for TimelineKind {
             ));
         }
 
-        let lanes_declared = !input.lanes.is_empty();
+        let _lanes_declared = !input.lanes.is_empty();
         let mut ids = SeenIds::new();
         for (index, event) in input.events.iter().enumerate() {
             if event.label.trim().is_empty() {
@@ -136,33 +111,12 @@ impl DiagramKind for TimelineKind {
                 ));
             }
 
-            // El carril: obligatorio cuando hay carriles, y siempre uno que el
-            // documento haya declarado. Sin carriles, el evento declara uno que
-            // no existe y el error enseña a crearlo.
-            match (&event.lane, lanes_declared) {
-                (Some(lane), _) if !input.lanes.iter().any(|known| &known.id == lane) => {
-                    errors.push(unknown_lane(
-                        &format!("events[{index}].lane"),
-                        lane,
-                        &input.lanes,
-                    ));
-                }
-                (None, true) => errors.push(ValidationError::new(
-                    format!("events[{index}].lane"),
-                    ErrorCode::MissingField,
-                    "el evento no dice en qué carril va",
-                    Some(format!(
-                        "usá uno de los carriles declarados: {}",
-                        input
-                            .lanes
-                            .iter()
-                            .map(|lane| lane.id.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )),
-                )),
-                _ => {}
-            }
+            errors.extend(crate::lanes::validate_row_lane(
+                &format!("events[{index}].lane"),
+                "evento",
+                &event.lane,
+                &input.lanes,
+            ));
 
             let column = event.column(index);
             if let Some(end) = event.end {
@@ -229,6 +183,32 @@ impl DiagramKind for TimelineKind {
 
         Ir::Timeline(IrTimeline { lanes, events })
     }
+
+    /// La línea de tiempo enseña su orden, sus carriles y sus tramos, que es lo
+    /// que el schema no puede decir.
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "Cada `id` de carril es único, y `order` decide la columna: el array de eventos puede venir desordenado."
+                .to_string(),
+            "Si el documento declara `lanes`, cada evento dice su `lane` y referencia uno declarado."
+                .to_string(),
+            "Un evento con `end` es un tramo y `end` tiene que ser posterior a `order`."
+                .to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "timeline",
+            "title": "Roadmap",
+            "lanes": [ { "id": "q1", "label": "Q1" } ],
+            "events": [
+                { "label": "v1.0", "lane": "q1" },
+                { "label": "v1.1", "lane": "q1" }
+            ]
+        })
+    }
 }
 
 /// Registers the kind in the global registry.
@@ -238,14 +218,11 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::{TimelineInput, TimelineKind};
+    use super::TimelineKind;
+    use crate::test_support::input;
     use gx_core::error::ErrorCode;
     use gx_core::ir::Ir;
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> TimelineInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     const ROADMAP: &str = r#"{
       "version": 1, "kind": "timeline", "title": "Roadmap",

@@ -19,7 +19,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::flow::validate_header;
-use crate::lanes::{duplicate_event, event_id, unknown_lane, validate_lanes, Lane, SeenIds};
+use crate::lanes::{duplicate_event, event_id, validate_lanes, Lane, SeenIds};
 
 /// Contract version supported by this build (PRD §10.1).
 pub const SUPPORTED_VERSION: u32 = 1;
@@ -74,14 +74,9 @@ pub struct GanttKind;
 
 impl DiagramKind for GanttKind {
     const KIND: &'static str = "gantt";
+    const PHASE: &'static str = "F3";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 200,
-        max_edges: 0,
-        max_density: 0.0,
-        max_lanes: 40,
-        max_events: 200,
-    };
+    const LIMITS: KindLimits = KindLimits::TIMELINE;
 
     type Input = GanttInput;
 
@@ -106,7 +101,7 @@ impl DiagramKind for GanttKind {
             ));
         }
 
-        let lanes_declared = !input.lanes.is_empty();
+        let _lanes_declared = !input.lanes.is_empty();
         let mut ids = SeenIds::new();
         let mut resolved: Vec<String> = Vec::new();
         for (index, task) in input.tasks.iter().enumerate() {
@@ -121,30 +116,12 @@ impl DiagramKind for GanttKind {
 
             // El carril: obligatorio cuando hay carriles, y siempre uno que el
             // documento haya declarado. La regla compartida de `timeline`.
-            match (&task.lane, lanes_declared) {
-                (Some(lane), _) if !input.lanes.iter().any(|known| &known.id == lane) => {
-                    errors.push(unknown_lane(
-                        &format!("tasks[{index}].lane"),
-                        lane,
-                        &input.lanes,
-                    ));
-                }
-                (None, true) => errors.push(ValidationError::new(
-                    format!("tasks[{index}].lane"),
-                    ErrorCode::MissingField,
-                    "la tarea no dice en qué carril va",
-                    Some(format!(
-                        "usá uno de los carriles declarados: {}",
-                        input
-                            .lanes
-                            .iter()
-                            .map(|lane| lane.id.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )),
-                )),
-                _ => {}
-            }
+            errors.extend(crate::lanes::validate_row_lane(
+                &format!("tasks[{index}].lane"),
+                "tarea",
+                &task.lane,
+                &input.lanes,
+            ));
 
             let id = event_id(&task.id, "task-", index);
 
@@ -259,6 +236,41 @@ impl DiagramKind for GanttKind {
             .collect();
 
         Ir::Timeline(IrTimeline { lanes, events })
+    }
+
+    /// Los tramos, los carriles opcionales y las dependencias: lo que un plan
+    /// declara y el schema no puede atar (S8 de `f18-gantt.md`).
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "Cada tarea es un tramo de tiempo: `start` y `end` la ponen en el eje; `end` igual a `start` dibuja un hito (un punto)."
+                .to_string(),
+            "Los carriles son las filas y son opcionales: sin carriles, todas las tareas caen en el carril único `cronograma`."
+                .to_string(),
+            "`depends_on` declara qué tiene que terminar antes: cada entrada nombra una tarea declarada en `tasks`, no se repite dentro de su tarea y nadie depende de sí mismo. La escena dibuja una flecha por dependencia."
+                .to_string(),
+            "Los ciclos entre tareas se dibujan, no se validan: el orden lo dan las columnas de `start`, no la topología."
+                .to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "gantt",
+            "title": "Mudanza — plan",
+            "lanes": [
+                { "id": "previo", "label": "Previo" },
+                { "id": "dia", "label": "Día" }
+            ],
+            "tasks": [
+                { "id": "cajas", "label": "Empacar cajas", "lane": "previo",
+                  "start": 0, "end": 2 },
+                { "id": "camion", "label": "Camión", "lane": "previo",
+                  "start": 2, "end": 2 },
+                { "id": "mudanza", "label": "Mudanza", "lane": "dia",
+                  "start": 3, "end": 6, "depends_on": ["cajas", "camion"] }
+            ]
+        })
     }
 }
 

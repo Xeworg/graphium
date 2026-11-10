@@ -31,6 +31,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use gx_core::scene::BandKind;
 use gx_core::{
     fmt_num, Cardinality, CardinalityBound, CardinalityMax, Ir, IrEdge, IrEvent, IrNode,
     LayoutEdge, LayoutGraph, LayoutGroup, NodeBox, Palette, Scene, Shape, Style,
@@ -117,7 +118,7 @@ impl SvgRenderer {
         if drawing.draws_clusters() {
             out.push_str("<g class=\"layer-groups\">\n");
             for group in &drawing.clusters {
-                write_group_box(&mut out, group);
+                write_band(&mut out, BandKind::Cluster, group);
             }
             out.push_str("</g>\n");
         }
@@ -128,7 +129,7 @@ impl SvgRenderer {
         if drawing.draws_lanes() {
             out.push_str("<g class=\"layer-lanes\">\n");
             for group in &drawing.lanes {
-                write_lane_band(&mut out, group);
+                write_band(&mut out, BandKind::Lane, group);
             }
             out.push_str("</g>\n");
         }
@@ -387,19 +388,28 @@ fn write_node(out: &mut String, node: &IrNode, placed: &NodeBox) {
     }
     push_emphasis(&mut classes, node.emphasis, false);
 
-    match node.shape {
-        Shape::Box => write_rect(out, &id, &classes, &rect, None),
-        Shape::Rounded => write_rect(out, &id, &classes, &rect, Some(TOKENS.corner_radius)),
-        Shape::Cylinder => write_cylinder(out, &id, &classes, &rect),
-        Shape::Diamond => write_diamond(out, &id, &classes, &rect),
-        Shape::Ellipse => write_ellipse(out, &id, &classes, &rect),
-        Shape::Note => write_note(out, &id, &classes, &rect),
-        Shape::Circle => write_circle(out, &id, &classes, &geometry::glyph_rect(node.shape, &rect)),
-    }
+    write_shape(out, &id, &classes, node.shape, &rect);
     if node.rows.is_empty() || node.shape == Shape::Circle {
         write_node_text(out, node, placed);
     } else {
         write_node_table(out, node, placed);
+    }
+}
+
+/// Draws the glyph of one shape inside its rectangle.
+///
+/// The box of a node and the box of an event are the same drawing — a
+/// rectangle the reader fills with a name — so the dispatch lives here once and
+/// both go through it (S12).
+fn write_shape(out: &mut String, id: &str, classes: &str, shape: Shape, rect: &gx_core::Rect) {
+    match shape {
+        Shape::Box => write_rect(out, id, classes, rect, None),
+        Shape::Rounded => write_rect(out, id, classes, rect, Some(TOKENS.corner_radius)),
+        Shape::Cylinder => write_cylinder(out, id, classes, rect),
+        Shape::Diamond => write_diamond(out, id, classes, rect),
+        Shape::Ellipse => write_ellipse(out, id, classes, rect),
+        Shape::Note => write_note(out, id, classes, rect),
+        Shape::Circle => write_circle(out, id, classes, &geometry::glyph_rect(shape, rect)),
     }
 }
 
@@ -503,19 +513,19 @@ fn write_crow_foot(
 /// rows are its columns).
 fn write_node_table(out: &mut String, node: &IrNode, placed: &NodeBox) {
     let rect = node_rect(placed);
-    let table = Table::of(&rect);
+    // The badge column exists only when some row has a key to put in it (S13).
+    let keys = node.rows.iter().any(|row| Table::badge(row.key).is_some());
+    let table = Table::of(&rect, keys);
 
     // The header: the label, centered, in the first line of the box.
     let mut label_classes = String::from("node-text text");
     push_emphasis(&mut label_classes, node.emphasis, true);
-    out.push_str(&format!(
-        "<text class=\"{label_classes}\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\" font-weight=\"{}\">{}</text>\n",
-        fmt_num(rect.center().x),
-        fmt_num(table.header_y),
-        fmt_num(TOKENS.text_size),
-        TOKENS.semibold_weight,
-        escape_text(&node.label),
-    ));
+    write_lines(
+        out,
+        &label_classes,
+        &[node.label.as_str()],
+        TextAt::header(rect.center().x, table.header_y),
+    );
 
     // The rule that separates the header from the rows.
     out.push_str(&format!(
@@ -530,13 +540,17 @@ fn write_node_table(out: &mut String, node: &IrNode, placed: &NodeBox) {
     // One line per row: the key role on the left, the name, the note right.
     for (index, row) in node.rows.iter().enumerate() {
         let y = table.row_y(index);
-        out.push_str(&format!(
-            "<text class=\"row-badge text\" x=\"{}\" y=\"{}\" font-size=\"{}\" dominant-baseline=\"central\">{}</text>\n",
-            fmt_num(table.badge_x),
-            fmt_num(y),
-            fmt_num(TOKENS.text_size * 0.85),
-            escape_text(Table::badge(row.key)),
-        ));
+        // A row without a key draws no badge: no empty element is written, and
+        // a table without keys has no column to write it in (S13).
+        if let (Some(badge), Some(badge_x)) = (Table::badge(row.key), table.badge_x) {
+            out.push_str(&format!(
+                "<text class=\"row-badge text\" x=\"{}\" y=\"{}\" font-size=\"{}\" dominant-baseline=\"central\">{}</text>\n",
+                fmt_num(badge_x),
+                fmt_num(y),
+                fmt_num(TOKENS.text_size * 0.85),
+                escape_text(badge),
+            ));
+        }
         out.push_str(&format!(
             "<text class=\"{}\" x=\"{}\" y=\"{}\" font-size=\"{}\" dominant-baseline=\"central\">{}</text>\n",
             geometry::row_name_classes(row),
@@ -673,39 +687,114 @@ fn write_note(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
 fn write_node_text(out: &mut String, node: &IrNode, placed: &NodeBox) {
     let mut classes = String::from("node-text text");
     push_emphasis(&mut classes, node.emphasis, true);
+    let lines = label_lines(&node.label);
     match geometry::label_placement(node.shape, &node_rect(placed)) {
-        geometry::LabelPlacement::Inside => {
-            write_centered_text(out, &classes, &node.label, placed);
-        }
+        geometry::LabelPlacement::Inside => write_lines(
+            out,
+            &classes,
+            &lines,
+            TextAt::centered(placed.center.x, placed.center.y),
+        ),
         geometry::LabelPlacement::Beside { at } => {
-            write_beside_text(out, &classes, &node.label, at);
+            write_lines(out, &classes, &lines, TextAt::beside(at));
         }
     }
 }
 
-/// Draws the label beside a dot: start-anchored at the point the placement
-/// computed, vertically centered (`f19-formas.md`, S8).
-fn write_beside_text(out: &mut String, classes: &str, label: &str, at: gx_core::Point) {
-    let lines = label_lines(label);
+/// Where a block of text sits before it is spelled as SVG (S12).
+///
+/// The three writers this replaced differed only in these four numbers: the
+/// column of the lines, the center of the block, which way the lines grow from
+/// that column and, for the header of a table, a weight other than the regular
+/// one.
+#[derive(Clone, Copy)]
+struct TextAt {
+    x: f64,
+    center_y: f64,
+    anchor: Anchor,
+    weight: Option<u16>,
+}
+
+impl TextAt {
+    /// Centered on a box: the label of a node, of an event, of a table.
+    fn centered(x: f64, center_y: f64) -> Self {
+        Self {
+            x,
+            center_y,
+            anchor: Anchor::Middle,
+            weight: None,
+        }
+    }
+
+    /// Starting at a point: the label beside a dot (`f19-formas.md`, S8).
+    fn beside(at: gx_core::Point) -> Self {
+        Self {
+            x: at.x,
+            center_y: at.y,
+            anchor: Anchor::Start,
+            weight: None,
+        }
+    }
+
+    /// The header of a table: centered and semibold (PRD §6.1).
+    fn header(x: f64, center_y: f64) -> Self {
+        Self {
+            weight: Some(TOKENS.semibold_weight),
+            ..Self::centered(x, center_y)
+        }
+    }
+}
+
+/// Which way the lines of a text grow from its column.
+#[derive(Clone, Copy)]
+enum Anchor {
+    Start,
+    Middle,
+}
+
+impl Anchor {
+    fn name(self) -> &'static str {
+        match self {
+            Anchor::Start => "start",
+            Anchor::Middle => "middle",
+        }
+    }
+}
+
+/// Draws one text of the drawing: one `<text>` when it is a single line and one
+/// `<tspan>` per line when it is more (PRD §8.5, S4).
+///
+/// A centered label, a label beside a dot and the header of a table are the
+/// same thing for the reader — text the box holds — so they are written here
+/// once instead of drifting apart (S12).
+fn write_lines(out: &mut String, classes: &str, lines: &[&str], at: TextAt) {
     if lines.is_empty() {
         return;
     }
     let size = fmt_num(TOKENS.text_size);
     let x = fmt_num(at.x);
-    let y = fmt_num(at.y);
+    let anchor = at.anchor.name();
+    let weight = match at.weight {
+        Some(weight) => format!(" font-weight=\"{weight}\""),
+        None => String::new(),
+    };
 
     if lines.len() == 1 {
         out.push_str(&format!(
-            "<text class=\"{classes}\" x=\"{x}\" y=\"{y}\" font-size=\"{size}\" text-anchor=\"start\" dominant-baseline=\"central\">{}</text>\n",
+            "<text class=\"{classes}\" x=\"{x}\" y=\"{}\" font-size=\"{size}\" text-anchor=\"{anchor}\" dominant-baseline=\"central\"{weight}>{}</text>\n",
+            fmt_num(at.center_y),
             escape_text(lines[0]),
         ));
         return;
     }
 
     out.push_str(&format!(
-        "<text class=\"{classes}\" font-size=\"{size}\" text-anchor=\"start\" dominant-baseline=\"central\">\n"
+        "<text class=\"{classes}\" font-size=\"{size}\" text-anchor=\"{anchor}\" dominant-baseline=\"central\"{weight}>\n"
     ));
-    for (line, baseline) in lines.iter().zip(centered_baselines(at.y, lines.len())) {
+    for (line, baseline) in lines
+        .iter()
+        .zip(centered_baselines(at.center_y, lines.len()))
+    {
         out.push_str(&format!(
             "<tspan x=\"{x}\" y=\"{}\">{}</tspan>\n",
             fmt_num(baseline),
@@ -715,85 +804,30 @@ fn write_beside_text(out: &mut String, classes: &str, label: &str, at: gx_core::
     out.push_str("</text>\n");
 }
 
-/// Draws a label centered on its box, one `<text>` per line.
+/// Draws one band of a drawing: a container of a graph or a lane of a timeline.
 ///
-/// A node and a timeline event are the same thing for the reader —a box with
-/// its name— so they share this writer instead of drifting apart.
-fn write_centered_text(out: &mut String, classes: &str, label: &str, placed: &NodeBox) {
-    let lines = label_lines(label);
-    if lines.is_empty() {
-        return;
-    }
-    let size = fmt_num(TOKENS.text_size);
-    let center_x = fmt_num(placed.center.x);
-
-    if lines.len() == 1 {
-        out.push_str(&format!(
-            "<text class=\"{classes}\" x=\"{center_x}\" y=\"{}\" font-size=\"{size}\" text-anchor=\"middle\" dominant-baseline=\"central\">{}</text>\n",
-            fmt_num(placed.center.y),
-            escape_text(lines[0]),
-        ));
-        return;
-    }
-
-    out.push_str(&format!(
-        "<text class=\"{classes}\" font-size=\"{size}\" text-anchor=\"middle\" dominant-baseline=\"central\">\n"
-    ));
-    for (line, baseline) in lines
-        .iter()
-        .zip(centered_baselines(placed.center.y, lines.len()))
-    {
-        out.push_str(&format!(
-            "<tspan x=\"{center_x}\" y=\"{}\">{}</tspan>\n",
-            fmt_num(baseline),
-            escape_text(line)
-        ));
-    }
-    out.push_str("</text>\n");
-}
-
-/// Draws one group of a graph: its container and its name, top left.
-fn write_group_box(out: &mut String, group: &LayoutGroup) {
-    let id = escape_text(&cluster_id(&group.id));
-    write_rect(
-        out,
-        &id,
-        "group-box",
-        &group.bbox,
-        Some(TOKENS.corner_radius),
-    );
+/// Both are a box behind elements plus a name in a corner. They differ in three
+/// things — the classes, the corner radius and the point the name sits at — and
+/// those three are all this writer needs, so the two hand-written copies became
+/// one (S12).
+fn write_band(out: &mut String, kind: BandKind, group: &LayoutGroup) {
+    let (id, classes, radius, label_classes) = match kind {
+        BandKind::Cluster => (
+            cluster_id(&group.id),
+            "group-box",
+            Some(TOKENS.corner_radius),
+            "group-label text",
+        ),
+        BandKind::Lane => (lane_id(&group.id), "lane-band", None, "lane-label text"),
+    };
+    let id = escape_text(&id);
+    write_rect(out, &id, classes, &group.bbox, radius);
 
     let Some(label) = band_label(group) else {
         return;
     };
-    out.push_str(&format!(
-        "<text class=\"group-label text\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"start\" dominant-baseline=\"central\">{}</text>\n",
-        fmt_num(group.bbox.x + TOKENS.node_padding * (1.0 + group.depth as f64)),
-        fmt_num(group.bbox.y + TOKENS.text_size),
-        fmt_num(TOKENS.text_size),
-        escape_text(label),
-    ));
-}
-
-/// Draws one lane of a timeline: its band and its name in the left gutter.
-///
-/// The band is what tells the reader which row an event belongs to; the name
-/// sits in the gutter the layout reserved for it, so it never rides on top of
-/// the first event of the row.
-fn write_lane_band(out: &mut String, group: &LayoutGroup) {
-    let id = escape_text(&lane_id(&group.id));
-    write_rect(out, &id, "lane-band", &group.bbox, None);
-
-    let Some(label) = band_label(group) else {
-        return;
-    };
-    out.push_str(&format!(
-        "<text class=\"lane-label text\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"start\" dominant-baseline=\"central\">{}</text>\n",
-        fmt_num(group.bbox.x + TOKENS.node_padding),
-        fmt_num(group.bbox.y + group.bbox.h / 2.0),
-        fmt_num(TOKENS.text_size),
-        escape_text(label),
-    ));
+    let at = geometry::band_label_at(group, kind);
+    write_lines(out, label_classes, &[label], TextAt::beside(at));
 }
 
 /// Draws one event of a timeline: a box with its label, inside its lane.
@@ -805,12 +839,14 @@ fn write_lane_band(out: &mut String, group: &LayoutGroup) {
 fn write_event(out: &mut String, event: &IrEvent, placed: &NodeBox) {
     let rect = node_rect(placed);
     let id = escape_text(&node_id(&event.id));
-    write_rect(
+    // An event is a rounded box: the glyph a rounded node goes through, so the
+    // two cannot drift apart (S12).
+    write_shape(
         out,
         &id,
         "node-fill node-stroke shape-rounded",
+        Shape::Rounded,
         &rect,
-        Some(TOKENS.corner_radius),
     );
     if let Some(bar) = geometry::event_bar(&rect, event.span) {
         out.push_str(&format!(
@@ -821,7 +857,12 @@ fn write_event(out: &mut String, event: &IrEvent, placed: &NodeBox) {
             fmt_num(bar.h),
         ));
     }
-    write_centered_text(out, "node-text text", &event.label, placed);
+    write_lines(
+        out,
+        "node-text text",
+        &label_lines(&event.label),
+        TextAt::centered(placed.center.x, placed.center.y),
+    );
 }
 
 #[cfg(test)]

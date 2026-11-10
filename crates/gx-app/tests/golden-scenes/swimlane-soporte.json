@@ -61,7 +61,8 @@
       "members": [
         "step-0"
       ],
-      "gutter": 150.0
+      "gutter": 150.0,
+      "kind": "lane"
     },
     {
       "id": "lane-logistica",
@@ -76,7 +77,8 @@
       "members": [
         "step-2"
       ],
-      "gutter": 150.0
+      "gutter": 150.0,
+      "kind": "lane"
     },
     {
       "id": "lane-soporte",
@@ -92,7 +94,8 @@
         "step-1",
         "step-3"
       ],
-      "gutter": 150.0
+      "gutter": 150.0,
+      "kind": "lane"
     }
   ],
   "events": [

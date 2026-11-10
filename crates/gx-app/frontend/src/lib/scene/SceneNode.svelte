@@ -145,7 +145,9 @@
   />
   <!-- One line per row: the key role on the left, the name, the note right. -->
   {#each paint.rows as row, index (index)}
-    <SceneText paint={row.badge} hot={hot} />
+    {#if row.badge !== null}
+      <SceneText paint={row.badge} hot={hot} />
+    {/if}
     <SceneText paint={row.name} hot={hot} />
     {#if row.note !== null}
       <SceneText paint={row.note} hot={hot} />
