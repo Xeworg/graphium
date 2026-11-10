@@ -113,3 +113,11 @@ price for a new shape is exactly this cut.
   `circle_diameter: 24.0` travelling in `SceneTokens`, painter branch reading
   the payload. The golden `shape-gallery` pins all seven shapes in one
   document; terminators stayed `Ellipse` per L3.
+- L6 (2026-11-09, evidence): the gallery's equivalence run caught two more
+  drifts the moment it existed — (1) the painter computed the ellipse halves
+  from the already-rounded `paint.rect` (`rx = rect.w / 2` after `num()`)
+  while the emitter halves the raw width: 32.25 vs 32.26 on the boundary; the
+  paint now carries `rx`/`ry` computed from the raw rect and rounded once;
+  (2) `scene.js` never passed `label_at` through `nodeToScene`, so the
+  painter drew the circle's label centered — the passthrough now travels
+  verbatim and a malformed one throws. Equivalence 19/19, parity 71/71.
