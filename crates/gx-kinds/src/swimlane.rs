@@ -8,7 +8,7 @@
 //! áreas no es un swimlane.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Ir, IrEvent, IrLane, IrTimeline, LayoutHint};
+use gx_core::ir::{Ir, IrEvent, IrLane, IrTimeline, LayoutHint, Shape};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -133,6 +133,7 @@ impl DiagramKind for SwimlaneKind {
             .iter()
             .enumerate()
             .map(|(index, step)| IrEvent {
+                shape: Shape::Rounded,
                 id: event_id(&step.id, "step-", index),
                 lane: step.lane.clone(),
                 label: step.label.clone(),

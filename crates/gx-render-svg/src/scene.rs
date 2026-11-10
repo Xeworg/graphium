@@ -266,6 +266,7 @@ impl<'a> Drawing<'a> {
                     lane: event.lane.clone(),
                     label: event.label.clone(),
                     order: event.order,
+                    shape: event.shape,
                     span: event.span,
                     center: placed.center,
                     size: placed.size,

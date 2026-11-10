@@ -299,6 +299,11 @@ pub struct SceneEvent {
     /// The label, pre-broken with `\n` (S4).
     pub label: String,
     pub order: i64,
+    /// The shape the event's role gives it (`f22-dibujo.md`, S6): the
+    /// painter draws it through the same dispatch as the nodes. The default
+    /// event carries `rounded`.
+    #[serde(default)]
+    pub shape: Shape,
     /// The time span of a `gantt` or a `timeline` bar.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub span: Option<Span>,

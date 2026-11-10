@@ -18,6 +18,8 @@
 // Pure on purpose: no DOM, so the probes can call it from node and compare the
 // numbers with the ones the emitter writes.
 
+import { shapeOf } from "./scene.js";
+
 // --- numbers ---------------------------------------------------------------
 
 /**
@@ -756,7 +758,10 @@ export function eventPaint(event, tokens) {
       {
         id: event.id,
         label: event.label,
-        shape: "rounded",
+        // The shape the event's role gives it (`f22-dibujo.md`, S6): the
+        // default event is the rounded box of always; a `milestone` carries
+        // `diamond`. The scene validator accepts only the known shapes.
+        shape: shapeOf(event.shape),
         emphasis: "normal",
         style: "solid",
         center: event.center,

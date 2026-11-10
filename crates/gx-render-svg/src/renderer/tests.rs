@@ -910,6 +910,7 @@ fn the_timeline_is_written_in_id_order_with_the_bands_underneath() {
 /// Un evento de un timeline.
 fn event(id: &str, lane: &str, label: &str) -> gx_core::IrEvent {
     gx_core::IrEvent {
+        shape: Shape::Rounded,
         id: id.to_string(),
         lane: lane.to_string(),
         label: label.to_string(),

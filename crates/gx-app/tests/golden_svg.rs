@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 19] = [
+const CASES: [(&str, &str); 20] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -41,6 +41,7 @@ const CASES: [(&str, &str); 19] = [
     ("mindmap-feature", MINDMAP),
     ("sequence-order", SEQUENCE),
     ("timeline-roadmap", TIMELINE_ROADMAP),
+    ("timeline-milestone", TIMELINE_MILESTONE),
     ("swimlane-soporte", SWIMLANE_SOPORTE),
     ("flowchart-approval", FLOWCHART_APPROVAL),
     ("state-order", STATE_ORDER),
@@ -181,6 +182,22 @@ const TIMELINE_ROADMAP: &str = r#"{
     { "label": "MVP", "lane": "q1", "end": 2 },
     { "label": "los 10 kinds", "lane": "q2" },
     { "label": "export", "lane": "q2", "end": 4 }
+  ]
+}"#;
+
+const TIMELINE_MILESTONE: &str = r#"{
+  "version": 1,
+  "kind": "timeline",
+  "title": "Lanzamiento — los puntos que mandan",
+  "lanes": [
+    { "id": "pre", "label": "Preparación" },
+    { "id": "ship", "label": "Entrega" }
+  ],
+  "events": [
+    { "label": "código congelado", "lane": "pre", "role": "milestone" },
+    { "label": "beta", "lane": "pre", "end": 2 },
+    { "label": "correcciones", "lane": "pre", "order": 1, "end": 3 },
+    { "label": "v1.0", "lane": "ship", "order": 3, "role": "milestone" }
   ]
 }"#;
 

@@ -49,7 +49,7 @@ const SHAPES = [
 
 /** The shape of a node, or the loud end of the run: a shape the painter does
  * not know never paints as a plausible box (`f19-formas.md`, S5). */
-function shapeOf(shape) {
+export function shapeOf(shape) {
   if (!SHAPES.includes(shape)) {
     throw new Error(`the scene names a shape the painter does not know: ${shape}`);
   }
@@ -376,6 +376,11 @@ function eventOf(raw) {
     lane: raw.lane,
     label: raw.label,
     order: isNumber(raw.order) ? raw.order : 0,
+    // The shape the event's role gives it (`f22-dibujo.md`, S6): the same
+    // validator the nodes go through, and the same fallback? No: the events
+    // never fall back to a plausible box (f19 S5) — a shape the painter does
+    // not know is a loud end.
+    shape: shapeOf(raw.shape ?? "rounded"),
     span: spanOf(raw.span),
     center,
     size: measured,

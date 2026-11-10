@@ -273,6 +273,7 @@ fn the_scene_carries_the_lanes_and_events_of_a_timeline() {
         ],
         events: vec![
             IrEvent {
+                shape: Shape::Rounded,
                 id: "one".to_string(),
                 lane: "a".to_string(),
                 label: "arranca".to_string(),
@@ -282,6 +283,7 @@ fn the_scene_carries_the_lanes_and_events_of_a_timeline() {
                 kind_data: Default::default(),
             },
             IrEvent {
+                shape: Shape::Rounded,
                 id: "two".to_string(),
                 lane: "b".to_string(),
                 label: "barra\nde dos".to_string(),
@@ -376,6 +378,7 @@ fn a_spanned_event_carries_the_numbers_of_its_bar() {
         }],
         events: vec![
             IrEvent {
+                shape: Shape::Rounded,
                 id: "point".to_string(),
                 lane: "q1".to_string(),
                 label: "punto".to_string(),
@@ -385,6 +388,7 @@ fn a_spanned_event_carries_the_numbers_of_its_bar() {
                 kind_data: Default::default(),
             },
             IrEvent {
+                shape: Shape::Rounded,
                 id: "bar".to_string(),
                 lane: "q1".to_string(),
                 label: "dura".to_string(),
@@ -584,6 +588,7 @@ fn a_declared_dependency_draws_one_arrow_from_the_dependency_to_the_task() {
         ],
         events: vec![
             IrEvent {
+                shape: Shape::Rounded,
                 id: "one".to_string(),
                 lane: "a".to_string(),
                 label: "planos".to_string(),
@@ -596,6 +601,7 @@ fn a_declared_dependency_draws_one_arrow_from_the_dependency_to_the_task() {
                 kind_data: Default::default(),
             },
             IrEvent {
+                shape: Shape::Rounded,
                 id: "two".to_string(),
                 lane: "b".to_string(),
                 label: "demolición".to_string(),

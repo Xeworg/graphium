@@ -363,6 +363,13 @@ pub struct IrEvent {
     pub lane: String,
     pub label: String,
     pub order: i64,
+    /// The shape the event's role gives it (`f22-dibujo.md`, S6): the kinds
+    /// resolve it with their role table (`shape_of`), and a kind without
+    /// roles leaves the default. `Rounded` is the event box of always.
+    #[serde(default = "crate::ir::default_event_shape")]
+    pub shape: Shape,
+    /// The time span of a `gantt` or a `timeline` bar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub span: Option<Span>,
     pub kind_data: BTreeMap<String, IrValue>,
     /// Task ids this event depends on (`gantt`, feature doc `f18-gantt.md`):
@@ -378,6 +385,12 @@ pub struct IrEvent {
 pub struct IrTimeline {
     pub lanes: Vec<IrLane>,
     pub events: Vec<IrEvent>,
+}
+
+/// The shape an event draws when its kind has no role for it: the rounded
+/// box of always (`f22-dibujo.md`, S6).
+fn default_event_shape() -> Shape {
+    Shape::Rounded
 }
 
 /// The two IRs of Graphium.

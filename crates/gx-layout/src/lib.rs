@@ -1423,6 +1423,7 @@ mod tests {
     use std::sync::Arc;
 
     use gx_core::geom::{Point, Size};
+    use gx_core::ir::Shape;
     use gx_core::ir::{
         Direction, IrEvent, IrGraph, IrGroup, IrLane, IrNode, IrTimeline, LayoutHint,
     };
@@ -1567,6 +1568,7 @@ mod tests {
             ],
             events: vec![
                 IrEvent {
+                    shape: Shape::Rounded,
                     id: "e1".to_string(),
                     lane: "now".to_string(),
                     label: "motor".to_string(),
@@ -1576,6 +1578,7 @@ mod tests {
                     kind_data: Default::default(),
                 },
                 IrEvent {
+                    shape: Shape::Rounded,
                     id: "e2".to_string(),
                     lane: "next".to_string(),
                     label: "elementos".to_string(),

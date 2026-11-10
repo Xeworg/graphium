@@ -5,7 +5,7 @@
 //! leerse de izquierda a derecha sin adivinar.
 
 use gx_core::geom::Size;
-use gx_core::ir::{Direction, IrEvent, IrGraph, IrLane, IrNode, IrTimeline, LayoutHint};
+use gx_core::ir::{Direction, IrEvent, IrGraph, IrLane, IrNode, IrTimeline, LayoutHint, Shape};
 use gx_core::layout::{LayoutEngine, LayoutOpts};
 use gx_layout::LanesEngine;
 
@@ -41,6 +41,7 @@ fn lane(id: &str, label: &str) -> IrLane {
 
 fn event(id: &str, lane: &str, label: &str, order: i64) -> IrEvent {
     IrEvent {
+        shape: Shape::Rounded,
         id: id.to_string(),
         lane: lane.to_string(),
         label: label.to_string(),
@@ -284,6 +285,7 @@ fn overlapping_tasks_of_one_lane_pack_into_sub_rows() {
         }],
         events: vec![
             IrEvent {
+                shape: Shape::Rounded,
                 id: "planos".to_string(),
                 lane: "diseno".to_string(),
                 label: "Planos".to_string(),
@@ -296,6 +298,7 @@ fn overlapping_tasks_of_one_lane_pack_into_sub_rows() {
                 kind_data: Default::default(),
             },
             IrEvent {
+                shape: Shape::Rounded,
                 id: "permiso".to_string(),
                 lane: "diseno".to_string(),
                 label: "Permiso municipal".to_string(),
@@ -335,6 +338,7 @@ fn sequential_steps_keep_air_between_boxes() {
         }],
         events: vec![
             IrEvent {
+                shape: Shape::Rounded,
                 id: "s0".to_string(),
                 lane: "cliente".to_string(),
                 label: "reclama el pedido trabado en la aduana".to_string(),
@@ -344,6 +348,7 @@ fn sequential_steps_keep_air_between_boxes() {
                 kind_data: Default::default(),
             },
             IrEvent {
+                shape: Shape::Rounded,
                 id: "s1".to_string(),
                 lane: "cliente".to_string(),
                 label: "vuelve a reclamar el pedido trabado en la aduana".to_string(),

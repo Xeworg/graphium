@@ -13,7 +13,7 @@
 //! campo propio `IrEvent.depends_on`.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Ir, IrEvent, IrLane, IrTimeline, LayoutHint, Span};
+use gx_core::ir::{Ir, IrEvent, IrLane, IrTimeline, LayoutHint, Shape, Span};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -213,6 +213,7 @@ impl DiagramKind for GanttKind {
             .enumerate()
             .map(|(index, task)| {
                 IrEvent {
+                    shape: Shape::Rounded,
                     id: tasks[index].clone(),
                     lane: match &task.lane {
                         Some(lane) => lane.clone(),

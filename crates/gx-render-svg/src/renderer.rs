@@ -952,13 +952,15 @@ fn write_band(out: &mut String, kind: BandKind, group: &LayoutGroup) {
 fn write_event(out: &mut String, event: &IrEvent, placed: &NodeBox) {
     let rect = node_rect(placed);
     let id = escape_text(&node_id(&event.id));
-    // An event is a rounded box: the glyph a rounded node goes through, so the
-    // two cannot drift apart (S12).
+    // An event is the shape its role gives it (`f22-dibujo.md`, S6): the
+    // default is the rounded box of always, and a `milestone` draws its
+    // diamond. The glyph dispatch is the same one every shape goes through
+    // (S12).
     write_shape(
         out,
         &id,
-        "node-fill node-stroke shape-rounded",
-        Shape::Rounded,
+        &format!("node-fill node-stroke shape-{}", event.shape.as_str()),
+        event.shape,
         &rect,
     );
     if let Some(bar) = geometry::event_bar(&rect, event.span) {

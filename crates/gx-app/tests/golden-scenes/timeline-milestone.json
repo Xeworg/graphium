@@ -1,0 +1,187 @@
+{
+  "canvas": {
+    "x": -12.0,
+    "y": -12.0,
+    "w": 672.904296875,
+    "h": 387.5
+  },
+  "tokens": {
+    "text_size": 14.0,
+    "node_padding": 12.0,
+    "corner_radius": 6.0,
+    "border_width": 1.0,
+    "line_height": 1.25,
+    "regular_weight": 400,
+    "semibold_weight": 600,
+    "arrow_length": 10.0,
+    "crow_foot": 22.0,
+    "crow_foot_spread": 0.85,
+    "badge_width": 26.0,
+    "muted_opacity": 0.55,
+    "lifeline_dash": [
+      4.0,
+      4.0
+    ],
+    "dash_pattern": [
+      6.0,
+      4.0
+    ],
+    "group_dash": [
+      8.0,
+      5.0
+    ],
+    "circle_diameter": 24.0
+  },
+  "direction": null,
+  "layout_hint": null,
+  "palette": {
+    "source": "css-vars",
+    "theme": "dark",
+    "bg": "var(--bg)",
+    "node_fill": "var(--node-fill)",
+    "node_stroke": "var(--node-stroke)",
+    "node_text": "var(--node-text)",
+    "edge_stroke": "var(--edge-stroke)",
+    "edge_text": "var(--edge-text)",
+    "accent": "var(--accent)"
+  },
+  "nodes": [],
+  "edges": [],
+  "bands": [
+    {
+      "id": "lane-pre",
+      "label": "Preparación",
+      "bbox": {
+        "x": 0.0,
+        "y": 0.0,
+        "w": 648.904296875,
+        "h": 220.0
+      },
+      "depth": 0,
+      "members": [
+        "event-0",
+        "event-1",
+        "event-2"
+      ],
+      "gutter": 150.0,
+      "kind": "lane"
+    },
+    {
+      "id": "lane-ship",
+      "label": "Entrega",
+      "bbox": {
+        "x": 0.0,
+        "y": 220.0,
+        "w": 648.904296875,
+        "h": 110.0
+      },
+      "depth": 0,
+      "members": [
+        "event-3"
+      ],
+      "gutter": 150.0,
+      "kind": "lane"
+    }
+  ],
+  "events": [
+    {
+      "id": "g-event-0",
+      "lane": "pre",
+      "label": "código congelado",
+      "order": 0,
+      "shape": "diamond",
+      "center": {
+        "x": 225.4521484375,
+        "y": 110.0
+      },
+      "size": {
+        "w": 150.904296875,
+        "h": 49.5
+      }
+    },
+    {
+      "id": "g-event-1",
+      "lane": "pre",
+      "label": "beta",
+      "order": 1,
+      "shape": "rounded",
+      "span": {
+        "start": 1.0,
+        "end": 2.0
+      },
+      "center": {
+        "x": 391.904296875,
+        "y": 110.0
+      },
+      "size": {
+        "w": 118.0,
+        "h": 49.5
+      },
+      "bar": {
+        "x": 333.904296875,
+        "y": 128.75,
+        "w": 116.0,
+        "h": 5.0
+      }
+    },
+    {
+      "id": "g-event-2",
+      "lane": "pre",
+      "label": "correcciones",
+      "order": 1,
+      "shape": "rounded",
+      "span": {
+        "start": 1.0,
+        "end": 3.0
+      },
+      "center": {
+        "x": 466.904296875,
+        "y": 165.0
+      },
+      "size": {
+        "w": 268.0,
+        "h": 49.5
+      },
+      "bar": {
+        "x": 333.904296875,
+        "y": 183.75,
+        "w": 266.0,
+        "h": 5.0
+      }
+    },
+    {
+      "id": "g-event-3",
+      "lane": "ship",
+      "label": "v1.0",
+      "order": 3,
+      "shape": "diamond",
+      "center": {
+        "x": 573.904296875,
+        "y": 275.0
+      },
+      "size": {
+        "w": 118.0,
+        "h": 49.5
+      }
+    }
+  ],
+  "axis": {
+    "y": 346.0,
+    "x1": 225.0,
+    "x2": 589.904296875,
+    "ticks": [
+      [
+        225.0,
+        0
+      ],
+      [
+        407.904296875,
+        1
+      ],
+      [
+        589.904296875,
+        3
+      ]
+    ]
+  }
+}

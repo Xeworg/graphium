@@ -7,9 +7,10 @@
 //! de un plan— y son opcionales: una cronología de una sola línea no necesita
 //! declarar ninguno y el documento no repite el carril en cada evento.
 
+use crate::flow::shape_of;
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Ir, IrEvent, IrLane, IrTimeline, LayoutHint, Span};
-use gx_core::kind::{DiagramKind, KindLimits};
+use gx_core::ir::{Ir, IrEvent, IrLane, IrTimeline, LayoutHint, Shape, Span};
+use gx_core::kind::{DiagramKind, KindLimits, Role};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -21,6 +22,11 @@ pub const SUPPORTED_VERSION: u32 = 1;
 /// El carril que se usa cuando el documento no declara ninguno: una cronología
 /// de una sola línea.
 pub const SINGLE_LANE: &str = "cronologia";
+
+/// Los roles que un evento puede declarar (`f22-dibujo.md`, S6). Un evento sin
+/// rol es un evento: su caja redondeada de siempre. El `milestone` es el punto
+/// del tiempo que se lee distinto: su rombo lo dice sin leer el texto.
+pub const ROLES: [Role; 1] = [Role::new("milestone", Shape::Diamond)];
 
 /// One event of the chronology.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -41,6 +47,11 @@ pub struct TimelineEvent {
     /// point. Draws the event as a bar from `order` to `end`.
     #[serde(default)]
     pub end: Option<i64>,
+    /// Role of the event: it decides the shape (`f22-dibujo.md`, S6). The
+    /// kind lists the roles it admits; the default event declares none and
+    /// draws as its rounded box.
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 impl TimelineEvent {
@@ -119,6 +130,31 @@ impl DiagramKind for TimelineKind {
             ));
 
             let column = event.column(index);
+            if let Some(role) = &event.role {
+                if !ROLES.iter().any(|known| known.name == role) {
+                    let known = ROLES
+                        .iter()
+                        .map(|known| format!("`{}`", known.name))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    errors.push(ValidationError::new(
+                        format!("events[{index}].role"),
+                        ErrorCode::InvalidValue,
+                        format!("el rol `{role}` no es un rol de un evento"),
+                        Some(format!("los roles que un evento puede llevar son: {known}")),
+                    ));
+                }
+            }
+            // Un hito es un punto (`f22-dibujo.md`, S6): un hito con tramo es
+            // dos cosas a la vez, y el documento que lo escribe se confundió.
+            if event.role.as_deref() == Some("milestone") && event.end.is_some() {
+                errors.push(ValidationError::new(
+                    format!("events[{index}].end"),
+                    ErrorCode::InvalidValue,
+                    "un `milestone` es un punto del tiempo: no puede llevar `end`",
+                    Some("quitá el `end`, o quitá el `role` si el evento es un tramo".to_string()),
+                ));
+            }
             if let Some(end) = event.end {
                 if end <= column {
                     errors.push(ValidationError::new(
@@ -162,6 +198,10 @@ impl DiagramKind for TimelineKind {
             .map(|(index, event)| {
                 let column = event.column(index);
                 IrEvent {
+                    // El rol decide la forma (`f22-dibujo.md`, S6): un evento
+                    // sin rol es la caja redondeada de siempre; un `milestone`
+                    // dibuja su rombo.
+                    shape: shape_of(&ROLES, event.role.as_deref().unwrap_or("")),
                     id: event_id(&event.id, "event-", index),
                     lane: match &event.lane {
                         Some(lane) => lane.clone(),
@@ -258,6 +298,71 @@ mod tests {
         assert_eq!(span.start, 1.0);
         assert_eq!(span.end, 2.0);
         assert!(timeline.events[0].span.is_none());
+    }
+
+    /// S6 (`f22-dibujo.md`): el evento que declara el rol `milestone` se
+    /// traduce con su rombo, y el que no declara rol queda como siempre.
+    #[test]
+    fn a_milestone_draws_its_diamond() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "timeline",
+              "lanes": [ { "id": "q1", "label": "Q1" } ],
+              "events": [
+                { "label": "v1.0", "lane": "q1", "order": 0, "role": "milestone" },
+                { "label": "spike", "lane": "q1", "order": 1 }
+              ] }"#,
+        );
+        TimelineKind
+            .validate(&parsed)
+            .expect("la timeline es válida");
+
+        let Ir::Timeline(timeline) = TimelineKind.to_ir(&parsed) else {
+            panic!("una timeline va a la IR de timeline");
+        };
+
+        use gx_core::ir::Shape;
+        assert_eq!(timeline.events[0].shape, Shape::Diamond);
+        assert_eq!(timeline.events[1].shape, Shape::Rounded);
+    }
+
+    /// S6: un hito es un punto del tiempo — un `milestone` con `end` es dos
+    /// cosas a la vez y el kind lo rechaza.
+    #[test]
+    fn a_milestone_with_an_end_is_rejected() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "timeline",
+              "lanes": [ { "id": "q1", "label": "Q1" } ],
+              "events": [
+                { "label": "v1.0", "lane": "q1", "order": 0, "role": "milestone", "end": 2 }
+              ] }"#,
+        );
+
+        let errors = TimelineKind.validate(&parsed).expect_err("rechazado");
+        assert!(errors.iter().any(|error| error.path == "events[0].end"));
+    }
+
+    /// S6: un rol que el kind no conoce se rechaza con la lista completa —
+    /// la misma disciplina que los roles de los nodos.
+    #[test]
+    fn an_unknown_event_role_is_rejected_with_the_list() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "timeline",
+              "lanes": [ { "id": "q1", "label": "Q1" } ],
+              "events": [
+                { "label": "v1.0", "lane": "q1", "order": 0, "role": "crown" }
+              ] }"#,
+        );
+
+        let errors = TimelineKind.validate(&parsed).expect_err("rechazado");
+        let role_error = errors
+            .iter()
+            .find(|error| error.path == "events[0].role")
+            .expect("el error del rol");
+        let hint = role_error.hint.as_deref().expect("el error lleva su hint");
+        assert!(
+            hint.contains("milestone"),
+            "el hint nombra los roles conocidos"
+        );
     }
 
     /// S1: sin carriles declarados, el documento no repite el carril en cada

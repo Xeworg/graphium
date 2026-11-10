@@ -104,6 +104,7 @@
       "lane": "cliente",
       "label": "reclama el pedido",
       "order": 0,
+      "shape": "rounded",
       "center": {
         "x": 224.83349609375,
         "y": 55.0
@@ -118,6 +119,7 @@
       "lane": "soporte",
       "label": "abre el ticket",
       "order": 1,
+      "shape": "rounded",
       "center": {
         "x": 391.0,
         "y": 165.0
@@ -132,6 +134,7 @@
       "lane": "logistica",
       "label": "consulta el envío",
       "order": 2,
+      "shape": "rounded",
       "center": {
         "x": 585.87353515625,
         "y": 275.0
@@ -146,6 +149,7 @@
       "lane": "soporte",
       "label": "responde",
       "order": 3,
+      "shape": "rounded",
       "center": {
         "x": 755.0,
         "y": 165.0
