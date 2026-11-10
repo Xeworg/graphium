@@ -1229,9 +1229,13 @@ impl LayoutEngine for LanesEngine {
 
     fn layout_timeline(&self, timeline: &IrTimeline, opts: &LayoutOpts) -> LayoutGraph {
         let scale = opts.spacing_scale;
-        let lane_height = LANE_HEIGHT * scale;
+        let base_lane_height = LANE_HEIGHT * scale;
         let step = TIME_STEP * scale;
         let padding = LANE_PADDING;
+        // The air between two boxes of the same lane row (`f21-roto.md`, S5):
+        // the swimlane steps used to touch (0.33 px) because the pitch was
+        // the fixed column step, not the box widths.
+        let gap = 2.0 * padding;
 
         // The widest lane label decides the left gutter, so the label of a
         // lane never rides on top of its first event.
@@ -1247,39 +1251,119 @@ impl LayoutEngine for LanesEngine {
             })
             .fold(TIME_STEP * scale, f64::max);
 
-        let mut nodes: BTreeMap<String, NodeBox> = BTreeMap::new();
         let mut events: Vec<&IrEvent> = timeline.events.iter().collect();
         events.sort_by_key(|event| (event.order, event.id.clone()));
 
+        // The size of every event first: the column lefts depend on the
+        // widest box that starts in each column.
+        let sizes: BTreeMap<&str, Size> = events
+            .iter()
+            .map(|event| (event.id.as_str(), self.event_size(event, step, padding)))
+            .collect();
+
+        // The column lefts (S5): every order the document mentions is a
+        // column, advancing by the step — a **point** event that is wider
+        // than the step widens its own column (its label must be readable
+        // next to it), while a span event (a gantt task covering several
+        // columns) does not stretch the axis: its width is time, and
+        // overlapping time goes to sub-rows.
+        let mut width_of_column: BTreeMap<i64, f64> = BTreeMap::new();
+        for event in &events {
+            let column = width_of_column.entry(event.order).or_insert(0.0);
+            if event.span.is_none() {
+                let size = sizes[event.id.as_str()];
+                *column = (*column).max(size.w);
+            }
+        }
+        let mut known: BTreeMap<i64, f64> = BTreeMap::new();
+        let mut cursor = gutter;
+        for (&order, point_width) in &width_of_column {
+            known.insert(order, cursor);
+            cursor += point_width.max(step) + gap;
+        }
+        let column_left_of = |order: i64, known: &BTreeMap<i64, f64>| -> f64 {
+            match known.range(..=order).next_back() {
+                Some((known_order, left)) => {
+                    let skipped = (order - known_order) as f64;
+                    left + skipped * (step + gap)
+                }
+                None => gutter,
+            }
+        };
+
+        // Per lane: sub-row packing by real interval overlap (S4). A task
+        // whose span overlaps another's goes one row down — the lane grows,
+        // no two bars of one lane share a region.
+        let mut nodes: BTreeMap<String, NodeBox> = BTreeMap::new();
+        let mut sub_rows_of_lane: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
+        let mut sub_row_count: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut slots: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
         let mut last_right = gutter;
-        for event in events {
+        for event in &events {
             let row = Self::lane_index(&timeline.lanes, &event.lane);
-            let size = self.event_size(event, step, padding);
-            let left = gutter + (event.order.max(0) as f64) * step;
+            let size = sizes[event.id.as_str()];
+            let left = column_left_of(event.order, &known);
             let right = left + size.w;
+            let sub_rows = sub_rows_of_lane.entry(event.lane.as_str()).or_default();
+            let mut chosen = None;
+            for (index, row_right) in sub_rows.iter().enumerate() {
+                if *row_right + gap <= left {
+                    chosen = Some(index);
+                    break;
+                }
+            }
+            let sub_row = match chosen {
+                Some(index) => {
+                    sub_rows[index] = right;
+                    index
+                }
+                None => {
+                    sub_rows.push(right);
+                    sub_rows.len() - 1
+                }
+            };
+            let count = sub_rows.len();
+            sub_row_count.insert(event.lane.as_str(), count);
             last_right = last_right.max(right);
             nodes.insert(
                 event.id.clone(),
                 NodeBox {
-                    center: Point::new(
-                        left + size.w / 2.0,
-                        row as f64 * lane_height + lane_height / 2.0,
-                    ),
+                    center: Point::new(left + size.w / 2.0, 0.0),
                     size,
                 },
             );
+            // The vertical slot is filled after the lane heights are known.
+            slots.insert(event.id.clone(), (row, sub_row, count));
+        }
+
+        // Lane heights: one base row, one more per sub-row the lane needed.
+        let mut lane_heights: Vec<f64> = Vec::with_capacity(timeline.lanes.len());
+        for lane in &timeline.lanes {
+            let count = sub_row_count
+                .get(lane.id.as_str())
+                .copied()
+                .unwrap_or(1)
+                .max(1);
+            lane_heights.push(base_lane_height * count as f64);
+        }
+        for (event_id, (row, sub_row, count)) in &slots {
+            let top: f64 = lane_heights.iter().take(*row).sum();
+            let height = lane_heights[*row];
+            let slot = height / *count as f64;
+            if let Some(box_) = nodes.get_mut(event_id) {
+                box_.center.y = top + (*sub_row as f64 + 0.5) * slot;
+            }
         }
 
         let width = last_right + padding;
-        let lane_count = timeline.lanes.len().max(1);
-        let groups: Vec<LayoutGroup> = timeline
-            .lanes
-            .iter()
-            .enumerate()
-            .map(|(index, lane)| LayoutGroup {
+        let mut groups: Vec<LayoutGroup> = Vec::with_capacity(timeline.lanes.len());
+        let mut top = 0.0;
+        for (index, lane) in timeline.lanes.iter().enumerate() {
+            let height = lane_heights[index];
+            groups.push(LayoutGroup {
                 id: lane.id.clone(),
                 label: lane.label.clone(),
-                bbox: Rect::new(0.0, index as f64 * lane_height, width, lane_height),
+                bbox: Rect::new(0.0, top, width, height),
                 depth: 0,
                 // A lane owns its events, and the gutter it reserved for its
                 // name is the same one for every lane (`f11-elementos.md`, T1).
@@ -1290,9 +1374,10 @@ impl LayoutEngine for LanesEngine {
                     .map(|event| event.id.clone())
                     .collect(),
                 gutter: Some(gutter),
-            })
-            .collect();
-        let bbox = Rect::new(0.0, 0.0, width, lane_count as f64 * lane_height);
+            });
+            top += height;
+        }
+        let bbox = Rect::new(0.0, 0.0, width, top);
 
         LayoutGraph {
             nodes,
