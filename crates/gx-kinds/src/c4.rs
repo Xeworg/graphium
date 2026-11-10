@@ -40,6 +40,32 @@ pub fn types_of(level: &str) -> &'static [&'static str] {
     }
 }
 
+/// La línea que ata cada nivel a los tipos que admite (`f20-reuso.md`, S11):
+/// se escribe una vez, desde [`types_of`], así que un nivel o un tipo nuevo
+/// entra en la tabla y el texto del agente lo sigue sin otra copia.
+pub fn level_types_rule() -> String {
+    let levels: Vec<String> = LEVELS
+        .iter()
+        .map(|level| {
+            let types: Vec<String> = types_of(level)
+                .iter()
+                .map(|name| format!("`{name}`"))
+                .collect();
+            let types = match types.split_last() {
+                Some((last, rest)) if !rest.is_empty() => {
+                    format!("{} y {last}", rest.join(", "))
+                }
+                _ => types.join(""),
+            };
+            format!("`{level}` → {types}")
+        })
+        .collect();
+    format!(
+        "El `level` decide qué `type` admite cada elemento: {}.",
+        levels.join("; ")
+    )
+}
+
 /// Un elemento del diagrama: una persona, un sistema, un contenedor o un
 /// componente.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -101,6 +127,7 @@ pub struct C4Kind;
 
 impl DiagramKind for C4Kind {
     const KIND: &'static str = "c4";
+    const PHASE: &'static str = "F3";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
     const LIMITS: KindLimits = KindLimits::GRAPH;
 
@@ -268,6 +295,40 @@ impl DiagramKind for C4Kind {
             Vec::new(),
         ))
     }
+
+    /// El nivel manda sobre el vocabulario y v1 no anida: lo que el agente
+    /// tiene que saber antes de escribir un `c4`.
+    fn rules(&self) -> Vec<String> {
+        vec![
+            level_types_rule(),
+            "Cada elemento tiene un `id` único y una `label`; `description` y `technology` son opcionales."
+                .to_string(),
+            "Cada relación referencia con `from` y `to` elementos declarados en `elements`, y su `label` es el verbo (`usa`, `lee`, `cobra`)."
+                .to_string(),
+            "No hay anidamiento en v1: la lectura sale de los tipos, del `level` y de las relaciones."
+                .to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "c4",
+            "title": "Pedidos — contexto",
+            "level": "context",
+            "elements": [
+                { "id": "cliente", "type": "person", "label": "Cliente",
+                  "description": "hace el pedido" },
+                { "id": "operador", "type": "person", "label": "Operador" },
+                { "id": "pedidos", "type": "system", "label": "Sistema de pedidos",
+                  "technology": "Rust" }
+            ],
+            "relations": [
+                { "from": "cliente", "to": "pedidos", "label": "hace un pedido" },
+                { "from": "operador", "to": "pedidos", "label": "despacha" }
+            ]
+        })
+    }
 }
 
 /// El texto del campo, o nada cuando está vacío: un campo opcional vacío no
@@ -291,4 +352,30 @@ fn quoted(names: &[&str]) -> String {
 /// Registers the `c4` kind in the global registry.
 pub fn register() {
     gx_core::kind::register_kind::<C4Kind>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{level_types_rule, types_of, LEVELS};
+
+    /// S11 (`f20-reuso.md`): la frase level→types se escribe una vez, desde
+    /// `types_of`, así que cada nivel enseña sus tipos y un nivel nuevo entra
+    /// en la tabla y en el texto sin una segunda copia.
+    #[test]
+    fn the_level_types_rule_is_spelled_from_the_table() {
+        let rule = level_types_rule();
+        assert!(
+            rule.contains("`context` → `person` y `system`"),
+            "la frase no es la del contrato: {rule}"
+        );
+        for level in LEVELS {
+            assert!(rule.contains(&format!("`{level}`")), "{level}: {rule}");
+            for name in types_of(level) {
+                assert!(
+                    rule.contains(&format!("`{name}`")),
+                    "{level}/{name}: {rule}"
+                );
+            }
+        }
+    }
 }

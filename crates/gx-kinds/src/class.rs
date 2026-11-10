@@ -13,11 +13,11 @@
 
 use gx_core::error::{ErrorCode, ValidationError};
 use gx_core::ir::{Direction, Emphasis, Ir, IrEdge, LayoutHint, Shape, Style};
-use gx_core::kind::{DiagramKind, KindLimits};
+use gx_core::kind::{DiagramKind, KindLimits, Role};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::flow::{to_ir_nodes, validate_header, validate_nodes, validate_refs, FlowNode, Role};
+use crate::flow::{to_ir_nodes, validate_header, validate_nodes, validate_refs, FlowNode};
 use crate::groups::{to_ir_groups, validate_groups, Group};
 
 /// Contract version supported by this build (PRD §10.1).
@@ -207,6 +207,7 @@ impl ClassKind {
 
 impl DiagramKind for ClassKind {
     const KIND: &'static str = "class";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
     const LIMITS: KindLimits = KindLimits::GRAPH;
 
@@ -218,6 +219,14 @@ impl DiagramKind for ClassKind {
 
     fn shapes() -> Vec<Shape> {
         crate::flow::shapes_of_roles(&ROLES)
+    }
+
+    fn roles() -> &'static [Role] {
+        &ROLES
+    }
+
+    fn default_role() -> Option<&'static str> {
+        Some(DEFAULT_ROLE)
     }
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
@@ -313,6 +322,35 @@ impl DiagramKind for ClassKind {
             to_ir_groups(&input.groups),
         ))
     }
+
+    /// Lo que el kind enseña y el schema no puede: la relación decide la línea
+    /// y la herencia no puede cerrar un ciclo.
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "`relation` decide la línea: `association` (sólida con flecha, por defecto), `extends` (sólida, se nombra), `implements` (punteada, se nombra), `composition` (sólida sin flecha), `dependency` (punteada)."
+                .to_string(),
+            "La herencia no puede tener ciclos: una clase no es su propio padre.".to_string(),
+            "Si la arista no lleva `label`, la línea se nombra con su relación; la asociación no, porque no afirma nada."
+                .to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "class",
+            "title": "pedidos",
+            "nodes": [
+                { "id": "Base", "label": "Base", "role": "abstract" },
+                { "id": "Order", "label": "Order" },
+                { "id": "Payable", "label": "Payable", "role": "interface" }
+            ],
+            "edges": [
+                { "from": "Order", "to": "Base", "relation": "extends" },
+                { "from": "Order", "to": "Payable", "relation": "implements" }
+            ]
+        })
+    }
 }
 
 /// Registers the kind in the global registry.
@@ -322,59 +360,32 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClassInput, ClassKind};
+    use super::ClassKind;
+    use crate::test_support::{an_unknown_group_member_is_rejected, groups_reach_the_ir, input};
     use gx_core::error::ErrorCode;
     use gx_core::ir::{Ir, Shape, Style};
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> ClassInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     /// RF15: `groups` existe en `class` y anida: un miembro es un nodo o
     /// otro grupo, y el documento no cambia de version.
     #[test]
     fn the_groups_of_a_diagram_reach_the_ir() {
-        let parsed = input(
+        groups_reach_the_ir::<ClassKind>(
             r#"{ "version": 1, "kind": "class",
                  "nodes": [ { "id": "read" } ],
                  "groups": [
                    { "id": "io", "label": "I/O", "members": ["disk"] },
                    { "id": "disk", "members": ["read"] } ] }"#,
         );
-
-        ClassKind
-            .validate(&parsed)
-            .expect("un grupo puede contener otro grupo");
-
-        let Ir::Graph(graph) = ClassKind.to_ir(&parsed) else {
-            panic!("un diagrama de `class` es un grafo");
-        };
-        assert_eq!(graph.groups.len(), 2);
-        assert_eq!(graph.groups[0].id, "io");
-        assert_eq!(graph.groups[0].label.as_deref(), Some("I/O"));
-        assert_eq!(graph.groups[0].members, vec!["disk"]);
-        assert_eq!(graph.groups[1].members, vec!["read"]);
     }
 
     /// Un miembro que no existe se reporta antes de dibujar.
     #[test]
     fn a_group_member_that_does_not_exist_is_rejected() {
-        let parsed = input(
+        an_unknown_group_member_is_rejected::<ClassKind>(
             r#"{ "version": 1, "kind": "class",
                  "nodes": [ { "id": "read" } ],
                  "groups": [ { "id": "io", "members": ["fantasma"] } ] }"#,
-        );
-
-        let errors = ClassKind
-            .validate(&parsed)
-            .expect_err("el miembro no existe");
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.code == ErrorCode::UnknownRef
-                    && error.path == "groups[0].members[0]"),
-            "{errors:?}"
         );
     }
 

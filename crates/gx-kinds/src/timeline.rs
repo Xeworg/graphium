@@ -74,6 +74,7 @@ pub struct TimelineKind;
 
 impl DiagramKind for TimelineKind {
     const KIND: &'static str = "timeline";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
     const LIMITS: KindLimits = KindLimits::TIMELINE;
 
@@ -182,6 +183,32 @@ impl DiagramKind for TimelineKind {
 
         Ir::Timeline(IrTimeline { lanes, events })
     }
+
+    /// La línea de tiempo enseña su orden, sus carriles y sus tramos, que es lo
+    /// que el schema no puede decir.
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "Cada `id` de carril es único, y `order` decide la columna: el array de eventos puede venir desordenado."
+                .to_string(),
+            "Si el documento declara `lanes`, cada evento dice su `lane` y referencia uno declarado."
+                .to_string(),
+            "Un evento con `end` es un tramo y `end` tiene que ser posterior a `order`."
+                .to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "timeline",
+            "title": "Roadmap",
+            "lanes": [ { "id": "q1", "label": "Q1" } ],
+            "events": [
+                { "label": "v1.0", "lane": "q1" },
+                { "label": "v1.1", "lane": "q1" }
+            ]
+        })
+    }
 }
 
 /// Registers the kind in the global registry.
@@ -191,14 +218,11 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::{TimelineInput, TimelineKind};
+    use super::TimelineKind;
+    use crate::test_support::input;
     use gx_core::error::ErrorCode;
     use gx_core::ir::Ir;
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> TimelineInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     const ROADMAP: &str = r#"{
       "version": 1, "kind": "timeline", "title": "Roadmap",

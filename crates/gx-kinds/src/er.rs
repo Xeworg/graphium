@@ -112,6 +112,7 @@ fn key_of(column: &ErColumn) -> RowKey {
 
 impl DiagramKind for ErKind {
     const KIND: &'static str = "er";
+    const PHASE: &'static str = "F1";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
     const LIMITS: KindLimits = KindLimits::GRAPH;
 
@@ -332,6 +333,35 @@ impl DiagramKind for ErKind {
 
     fn shapes() -> Vec<Shape> {
         vec![Shape::Box]
+    }
+
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "Cada tabla tiene un `name` único dentro del diagrama.".to_string(),
+            "Cada relación referencia tablas y columnas declaradas.".to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "er",
+            "title": "Schema — posts",
+            "tables": [
+                { "name": "users", "columns": [ { "name": "id", "type": "uuid", "key": "pk" } ] },
+                { "name": "posts", "columns": [
+                    { "name": "id", "type": "uuid", "key": "pk" },
+                    { "name": "user_id", "type": "uuid", "key": "fk" }
+                ] }
+            ],
+            "relations": [
+                {
+                    "from": { "table": "users", "column": "id" },
+                    "to": { "table": "posts", "column": "user_id" },
+                    "cardinality": "1:N"
+                }
+            ]
+        })
     }
 }
 

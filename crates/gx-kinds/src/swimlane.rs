@@ -57,6 +57,7 @@ pub struct SwimlaneKind;
 
 impl DiagramKind for SwimlaneKind {
     const KIND: &'static str = "swimlane";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
     const LIMITS: KindLimits = KindLimits::TIMELINE;
 
@@ -146,6 +147,29 @@ impl DiagramKind for SwimlaneKind {
 
         Ir::Timeline(IrTimeline { lanes, events })
     }
+
+    /// El carril es la fila y el orden de los pasos es el orden del proceso:
+    /// las dos cosas que un proceso declara y el schema no puede atar.
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "Un proceso necesita al menos un carril y al menos un paso.".to_string(),
+            "Cada paso referencia con `lane` un carril declarado, y el orden de `steps` es el orden del proceso."
+                .to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "swimlane",
+            "title": "soporte",
+            "lanes": [ { "id": "cliente" }, { "id": "soporte" } ],
+            "steps": [
+                { "label": "reclama", "lane": "cliente" },
+                { "label": "responde", "lane": "soporte" }
+            ]
+        })
+    }
 }
 
 /// Registers the kind in the global registry.
@@ -155,14 +179,11 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::{SwimlaneInput, SwimlaneKind};
+    use super::SwimlaneKind;
+    use crate::test_support::input;
     use gx_core::error::ErrorCode;
     use gx_core::ir::Ir;
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> SwimlaneInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     const SOPORTE: &str = r#"{
       "version": 1, "kind": "swimlane", "title": "pedido trabado",

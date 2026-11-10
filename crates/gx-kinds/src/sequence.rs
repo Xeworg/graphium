@@ -63,6 +63,7 @@ pub struct SequenceKind;
 
 impl DiagramKind for SequenceKind {
     const KIND: &'static str = "sequence";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
     const LIMITS: KindLimits = KindLimits::GRAPH;
 
@@ -179,6 +180,22 @@ impl DiagramKind for SequenceKind {
             Vec::new(),
         ))
     }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "sequence",
+            "title": "pedido",
+            "participants": [
+                { "id": "cliente", "label": "Cliente" },
+                { "id": "api", "label": "API" }
+            ],
+            "messages": [
+                { "from": "cliente", "to": "api", "label": "POST /orders" },
+                { "from": "api", "to": "cliente", "label": "201", "reply": true }
+            ]
+        })
+    }
 }
 
 /// Registers the kind in the global registry.
@@ -188,13 +205,10 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::{SequenceInput, SequenceKind};
+    use super::SequenceKind;
+    use crate::test_support::input;
     use gx_core::ir::Ir;
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> SequenceInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     const FLOW: &str = r#"{
       "version": 1, "kind": "sequence", "title": "pedido",
