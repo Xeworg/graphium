@@ -191,3 +191,22 @@ ola first).
   the last pure-module lesson; this time `activationsOf` went into
   `scene.js` first and `DiagramScene.svelte` reads the paint plan, not the
   module.
+
+- L9 (2026-11-10, design + execution, T5): the members reuse the rows
+  machinery whole — no new table writer. (a) The kind owns its contract:
+  `ClassNode` carries the flow fields plus `attributes`/`methods` (opt-in,
+  `deny_unknown_fields` keeps guarding; the shared `FlowNode` is untouched —
+  `#[serde(flatten)]` cannot carry it). A blank member is rejected the way a
+  blank label is. (b) The IR row gained `divider: bool` (serde default
+  false): the compartment rule is the line above the first method, and the
+  header rule is the first compartment's on its own — methods without
+  attributes divide nothing. (c) Zero measurement change: the rule sits on
+  the row's top edge, no extra line. (d) Both painters spell it: the emitter
+  in `write_node_table`, the twin in the paint plan (`rowsOf` passes the
+  flag, `SceneNode.svelte` draws the line) — same `node-stroke` class, no
+  new CSS. Evidence: visual read of the regenerated `class-shop` golden
+  (Order: attributes over methods under two rules; Payable: methods only,
+  no divider; no overflow), gates fmt/clippy 0, 836 tests, parity 73/73
+  (C48), equivalence 21/21. Test-authoring lesson (twice in one task): the
+  second node of a renderer test must match the layout's ids — a node the
+  layout does not name draws nothing, silently.

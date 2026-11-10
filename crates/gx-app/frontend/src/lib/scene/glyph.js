@@ -602,6 +602,17 @@ export function nodePaint(node, tokens) {
       ? node.rows.map((row, index) => {
           const badge = badgeText(row.key);
           return {
+            // The compartment rule (S7): the line the row's compartment
+            // starts with, on its top edge. The header rule is its own.
+            divider: row.divider
+              ? {
+                  x1: num(rect.x),
+                  y1: num(table.rule_y + table.line * index),
+                  x2: num(rect.x + rect.w),
+                  y2: num(table.rule_y + table.line * index),
+                  width: num(tokens.border_width),
+                }
+              : null,
             // A row without a key draws no badge: no empty element is written
             // (S13).
             badge:

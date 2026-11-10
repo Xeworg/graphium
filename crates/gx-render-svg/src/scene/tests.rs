@@ -458,6 +458,7 @@ fn the_scene_never_carries_a_path() {
                 note: Some("uuid".to_string()),
                 key: gx_core::RowKey::Pk,
                 nullable: false,
+                divider: false,
             },
             IrRow::new("email"),
         ];

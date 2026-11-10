@@ -150,6 +150,12 @@ pub struct IrRow {
     pub key: RowKey,
     /// Whether the row admits `NULL` (PRD §6.1, kind `er`).
     pub nullable: bool,
+    /// Whether a compartment rule draws above this row (`f22-dibujo.md`,
+    /// S7): the class kind marks the first method, so the attributes and the
+    /// methods read as the two compartments of UML. The header rule is the
+    /// first compartment's on its own, so a first row never divides.
+    #[serde(default)]
+    pub divider: bool,
 }
 
 impl IrRow {
@@ -159,6 +165,7 @@ impl IrRow {
             note: None,
             key: RowKey::None,
             nullable: false,
+            divider: false,
         }
     }
 }

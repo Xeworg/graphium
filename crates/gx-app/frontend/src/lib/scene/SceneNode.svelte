@@ -155,6 +155,18 @@
   />
   <!-- One line per row: the key role on the left, the name, the note right. -->
   {#each paint.rows as row, index (index)}
+    {#if row.divider !== null}
+      <!-- The compartment rule (`f22-dibujo.md`, S7): where the row's
+           compartment starts. -->
+      <line
+        class="node-stroke"
+        x1={row.divider.x1}
+        y1={row.divider.y1}
+        x2={row.divider.x2}
+        y2={row.divider.y2}
+        stroke-width={row.divider.width}
+      />
+    {/if}
     {#if row.badge !== null}
       <SceneText paint={row.badge} hot={hot} />
     {/if}

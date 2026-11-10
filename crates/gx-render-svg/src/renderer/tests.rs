@@ -1397,3 +1397,51 @@ fn an_activation_is_a_rect_on_the_lifeline_of_its_actor() {
         "la regla del tema viaja igual"
     );
 }
+
+/// S7 (`f22-dibujo.md`): the compartment rule — a row that divides draws the
+/// line its compartment starts with, full width, on the row's top edge. The
+/// header rule is drawn once either way: a table without dividers has
+/// exactly one rule.
+#[test]
+fn a_divider_row_draws_the_compartment_rule() {
+    let mut node = fixture::shaped("pedido", "Pedido", Shape::Box);
+    let first = IrRow::new("id: uuid");
+    let mut second = IrRow::new("cobrar()");
+    second.divider = true;
+    node.rows = vec![first, second];
+    let ir = fixture::graph(vec![node], Vec::new());
+    let layout = fixture::layout(
+        &[("pedido", Point::new(100.0, 60.0), Size::new(200.0, 110.0))],
+        Vec::new(),
+        Rect::new(0.0, 0.0, 200.0, 120.0),
+    );
+
+    let svg = render(&ir, &layout, &Palette::plano());
+
+    // Two rules: the header's and the compartment's. The compartment rule
+    // sits on the top edge of the dividing row: rule_y + line * 1.
+    let line_h = TOKENS.text_size * TOKENS.line_height;
+    let header_rule_y = 60.0 - 110.0 / 2.0 + TOKENS.node_padding + line_h;
+    let divider_y = header_rule_y + line_h;
+    assert_eq!(
+        svg.matches("<line class=\"node-stroke\"").count(),
+        2,
+        "la regla del encabezado y la del compartimento: {svg}"
+    );
+    assert!(
+        svg.contains(&format!("y1=\"{}\"", fmt_num(divider_y))),
+        "la regla vive en el borde superior de la fila: {svg}"
+    );
+
+    // Without a divider the table keeps its one rule: the existing behavior
+    // of every er table is untouched.
+    let mut node = fixture::shaped("pedido", "Pedido", Shape::Box);
+    node.rows = vec![IrRow::new("person"), IrRow::new("hace el pedido")];
+    let ir = fixture::graph(vec![node], Vec::new());
+    let svg = render(&ir, &layout, &Palette::plano());
+    assert_eq!(
+        svg.matches("<line class=\"node-stroke\"").count(),
+        1,
+        "sin divisores la tabla tiene su única regla: {svg}"
+    );
+}

@@ -623,6 +623,20 @@ fn write_node_table(out: &mut String, node: &IrNode, placed: &NodeBox) {
     // One line per row: the key role on the left, the name, the note right.
     for (index, row) in node.rows.iter().enumerate() {
         let y = table.row_y(index);
+        // The compartment rule (S7): a row that divides draws the line its
+        // compartment starts with — the attributes from the methods of a
+        // class. The header rule above is drawn on its own.
+        if row.divider {
+            let divider_y = table.rule_y + table.line * index as f64;
+            out.push_str(&format!(
+                "<line class=\"node-stroke\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke-width=\"{}\"/>\n",
+                fmt_num(rect.x),
+                fmt_num(divider_y),
+                fmt_num(rect.max_x()),
+                fmt_num(divider_y),
+                fmt_num(TOKENS.border_width),
+            ));
+        }
         // A row without a key draws no badge: no empty element is written, and
         // a table without keys has no column to write it in (S13).
         if let (Some(badge), Some(badge_x)) = (Table::badge(row.key), table.badge_x) {

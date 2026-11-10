@@ -181,6 +181,7 @@ function rowsOf(raw) {
       note: isText(row.note) ? row.note : null,
       key: ROW_KEYS.includes(row.key) ? row.key : "none",
       nullable: row.nullable === true,
+      divider: row.divider === true,
     });
   }
   return rows;

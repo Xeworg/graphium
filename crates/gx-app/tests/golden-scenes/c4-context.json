@@ -66,13 +66,15 @@
           "text": "person",
           "note": null,
           "key": "none",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         },
         {
           "text": "hace el pedido",
           "note": null,
           "key": "none",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         }
       ]
     },
@@ -95,7 +97,8 @@
           "text": "system",
           "note": "Rust + Svelte",
           "key": "none",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         }
       ]
     },
@@ -118,7 +121,8 @@
           "text": "person",
           "note": null,
           "key": "none",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         }
       ]
     }

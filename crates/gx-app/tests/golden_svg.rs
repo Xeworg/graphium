@@ -306,9 +306,9 @@ const CLASS_SHOP: &str = r#"{
   "title": "pedidos",
   "nodes": [
     { "id": "Base", "label": "Base", "role": "abstract" },
-    { "id": "Order", "label": "Order" },
+    { "id": "Order", "label": "Order", "attributes": ["id: uuid", "total: Money"], "methods": ["cobrar(pago)"] },
     { "id": "Refund", "label": "Refund" },
-    { "id": "Payable", "label": "Payable", "role": "interface" },
+    { "id": "Payable", "label": "Payable", "role": "interface", "methods": ["total(): Money"] },
     { "id": "Money", "label": "Money" }
   ],
   "edges": [
