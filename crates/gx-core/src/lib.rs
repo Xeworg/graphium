@@ -33,6 +33,8 @@ pub use ir::{
 pub use kind::{for_kind, kind_names, register_kind, DiagramKind, KindHandler, KindLimits};
 pub use layout::{LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, NodeBox};
 pub use render::{Color, Palette, RenderMetrics, RenderOpts, RenderOutcome, SvgRenderer, Theme};
-pub use scene::{Scene, SceneBand, SceneEdge, SceneEvent, SceneNode, ScenePalette, SceneTokens};
+pub use scene::{
+    BandKind, Scene, SceneBand, SceneEdge, SceneEvent, SceneNode, ScenePalette, SceneTokens,
+};
 pub use text::{TextMetrics, TextStyle};
 pub use tokens::{Tokens, TOKENS};

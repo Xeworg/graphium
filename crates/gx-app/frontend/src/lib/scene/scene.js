@@ -289,11 +289,10 @@ function bandOf(raw) {
   if (!isRecord(raw) || !isId(raw.id)) {
     return null;
   }
-  const kind = raw.id.startsWith("cluster-")
-    ? "cluster"
-    : raw.id.startsWith("lane-")
-      ? "lane"
-      : null;
+  // The kind travels in the payload (S12): a band the scene did not name is
+  // not a band the painter can place — loud, never guessed from the id.
+  const kind =
+    raw.kind === "cluster" || raw.kind === "lane" ? raw.kind : null;
   const bbox = box(raw.bbox);
   if (kind === null || bbox === null) {
     return null;

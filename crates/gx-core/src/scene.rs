@@ -260,6 +260,10 @@ pub struct SceneBand {
     /// plan units; absent for a container, which has no gutter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gutter: Option<f64>,
+    /// Which family the band belongs to (`f20-reuso.md`, S12): the writer
+    /// reads it instead of telling a container from a lane by the prefix of
+    /// the id.
+    pub kind: BandKind,
 }
 
 /// An event of a timeline: `IrEvent` plus the measured box (S3, S4).

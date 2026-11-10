@@ -230,6 +230,7 @@ impl<'a> Drawing<'a> {
                     depth: group.depth,
                     members: group.members.clone(),
                     gutter: group.gutter,
+                    kind: gx_core::BandKind::Cluster,
                 })
                 .chain(self.lanes.iter().map(|group| SceneBand {
                     id: lane_id(&group.id),
@@ -238,6 +239,7 @@ impl<'a> Drawing<'a> {
                     depth: group.depth,
                     members: group.members.clone(),
                     gutter: group.gutter,
+                    kind: gx_core::BandKind::Lane,
                 }))
                 .collect(),
             events: self

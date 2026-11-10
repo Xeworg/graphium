@@ -251,7 +251,8 @@
         "api",
         "db",
         "jobs"
-      ]
+      ],
+      "kind": "cluster"
     }
   ],
   "events": []

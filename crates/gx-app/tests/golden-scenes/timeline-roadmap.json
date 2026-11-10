@@ -62,7 +62,8 @@
         "event-0",
         "event-1"
       ],
-      "gutter": 150.0
+      "gutter": 150.0,
+      "kind": "lane"
     },
     {
       "id": "lane-q2",
@@ -78,7 +79,8 @@
         "event-2",
         "event-3"
       ],
-      "gutter": 150.0
+      "gutter": 150.0,
+      "kind": "lane"
     }
   ],
   "events": [
