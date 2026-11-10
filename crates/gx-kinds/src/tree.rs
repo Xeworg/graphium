@@ -77,7 +77,7 @@ impl DiagramKind for TreeKind {
     const KIND: &'static str = "tree";
     const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Tree;
-    const LIMITS: KindLimits = KindLimits::GRAPH;
+    const LIMITS: KindLimits = KindLimits::TREE;
 
     type Input = TreeInput;
 
