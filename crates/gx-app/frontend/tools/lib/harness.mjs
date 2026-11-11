@@ -5,7 +5,7 @@
 // No dependency is added to `package.json`: Node 22 carries `node:http`,
 // `node:fs` and a global `WebSocket`, which is all a CDP client needs.
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -101,6 +101,13 @@ export class Cdp {
 
 // --- the browser -----------------------------------------------------------
 
+/** The version of the browser, so a failed launch says which one it was. */
+function chromiumVersion(chromium) {
+  const probe = spawnSync(chromium, ["--version"], { encoding: "utf8" });
+  const text = `${probe.stdout || ""}${probe.stderr || ""}`.trim();
+  return text === "" ? `${chromium}: unknown version` : text;
+}
+
 export async function launch(chromium = process.env.CHROMIUM || "chromium-browser") {
   const profile = await mkdtemp(path.join(tmpdir(), "gx-parity-chromium-"));
   const child = spawn(
@@ -131,10 +138,38 @@ export async function launch(chromium = process.env.CHROMIUM || "chromium-browse
     stderr += chunk.toString();
   });
   const portFile = path.join(profile, "DevToolsActivePort");
-  const deadline = Date.now() + 20000;
+  // A cold CI runner takes its time to start the first browser, and a process
+  // that already exited is never going to open a port: the wait watches both,
+  // says which browser it was and kills what it started (f26, the CI flake).
+  const timeout = Number(process.env.CHROMIUM_PORT_TIMEOUT_MS || 60000);
+  const deadline = Date.now() + timeout;
+  let exited = null;
+  child.on("exit", (code, signal) => {
+    exited = { code, signal };
+  });
+  child.on("error", (error) => {
+    exited = { code: null, signal: null, error };
+  });
+  const giveUp = async (error) => {
+    child.kill("SIGKILL");
+    await rm(profile, { recursive: true, force: true });
+    throw error;
+  };
   while (!existsSync(portFile)) {
+    if (exited !== null) {
+      const how = exited.error
+        ? `${exited.error.message}`
+        : `exit ${exited.code}${exited.signal ? ` (${exited.signal})` : ""}`;
+      await giveUp(
+        new Error(`chromium exited before opening a devtools port: ${how}\n${chromiumVersion(chromium)}\n${stderr}`),
+      );
+    }
     if (Date.now() > deadline) {
-      throw new Error(`chromium did not open a devtools port\n${stderr}`);
+      await giveUp(
+        new Error(
+          `chromium did not open a devtools port in ${timeout} ms\n${chromiumVersion(chromium)}\n${stderr}`,
+        ),
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -149,7 +184,9 @@ export async function launch(chromium = process.env.CHROMIUM || "chromium-browse
       browserPath = second.trim();
       break;
     }
-    if (Date.now() > deadline) throw new Error("devtools port file never completed");
+    if (Date.now() > deadline) {
+      await giveUp(new Error(`devtools port file never completed\n${chromiumVersion(chromium)}`));
+    }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   const cdp = await Cdp.connect(`ws://127.0.0.1:${port}${browserPath}`);

@@ -183,3 +183,15 @@ contract and covered by the equivalence gate **the moment a kind uses it**; toda
 no document does, so the gate cannot see it. The first kind that puts a glyph on
 a source end — `component`'s navigability, or a gantt dependency — pays for it
 with its golden. Nothing else in the twin is unexercised: 21/21 documents agree.
+
+L8 (2026-11-11, delivery, not f26 scope): the required check on PR #57 failed on
+the first run and **not** because of this cut: `chromium did not open a devtools
+port` — the flake already recorded when `f24-catalogo` closed (one run in two,
+the relaunch green). It blocked the required check, so it was paid instead of
+retried: `tools/lib/harness.mjs` now watches the child as well as the port file,
+so a browser that exits says so in a quarter of a second with the exit code, the
+binary version and its stderr, and the profile and the process are cleaned up;
+the wait is 60 s by default (`CHROMIUM_PORT_TIMEOUT_MS` overrides it) instead of
+20 s, because a cold runner pays the first launch. Observed: with
+`CHROMIUM=/bin/false` the harness fails in 0,24 s naming `exit 1` and the
+version; parity 73/73 and equivalence 21/21 still green with the real browser.
