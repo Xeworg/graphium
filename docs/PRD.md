@@ -99,7 +99,7 @@ Priorizados por frecuencia de uso real en desarrollo de software. Cada kind decl
 | 13 | `block` | Diagrama de bloques: cadena, hardware, tubería | layered | F3 |
 | 14 | `api` | Mapa de endpoints, verbos, contratos y dependencias | layered | F3 |
 | 15 | `trust` | Trust boundaries y threat model (STRIDE-lite) | layered | F3 |
-| 16 | `activity` | Activity/BPMN-lite: acciones, gateways, eventos | lanes | F3 |
+| 16 | `activity` | Actividad: acciones, decisiones, fork/join y particiones | layered | F3 |
 | 17 | `journey` | User journey: pasos, puntos de fricción, emociones | lanes | F3 |
 | 18 | `deployment` | Topología de infra: servicios, redes, LBs, K8s | layered | F3 |
 | 19 | `network` | Topología de red L3: hosts, subnets, firewalls | layered | F3 |
@@ -110,9 +110,11 @@ Priorizados por frecuencia de uso real en desarrollo de software. Cada kind decl
 | 24 | `neural` | Arquitectura de modelo: capas, tensores, loops | layered | F3 |
 | 25 | `c4` | Arquitectura C4: contexto, contenedores y componentes con su nivel declarado | layered | F3 |
 
-**Lectura:** de los **24 kinds**, **13 usan `layered`**, **6 usan `lanes`**, **3 usan `tree`** y **2 son especializados** (`sankey`, `gitgraph`). El motor implementa **5 motores de layout** — layered (Sugiyama vía `dagre` open source), lanes, tree, sankey y git — y **la IR no crece**: 13 kinds comparten `IrGraph`, 6 usan `IrTimeline` y los 2 especializados se distinguen por `layout_hint`. Agregar un kind es *schema + traducción a la IR*, no motor nuevo (O7).
+**Lectura:** de los **24 kinds**, **14 usan `layered`**, **5 usan `lanes`**, **3 usan `tree`** y **2 son especializados** (`sankey`, `gitgraph`). El motor implementa **5 motores de layout** — layered (Sugiyama vía `dagre` open source), lanes, tree, sankey y git — y **la IR no crece**: 14 kinds comparten `IrGraph`, 5 usan `IrTimeline` y los 2 especializados se distinguen por `layout_hint`. Agregar un kind es *schema + traducción a la IR*, no motor nuevo (O7).
 
 **Fases:** F1 = 2 kinds (`graph`, `er`) · F2 = 10 kinds · F3 = 12 kinds. Ampliar el catálogo después **no mueve fases ya cerradas**: un kind nuevo entra en la fase que esté abierta, sin tocar las anteriores.
+
+**Estado medido (2026-11-11):** el binario registra **14** de los kinds de esta tabla —`graph`, `er`, `flowchart`, `sequence`, `class`, `state`, `component`, `dataflow`, `tree`, `mindmap`, `timeline`, `swimlane`, `c4`, `gantt` (`crates/gx-kinds/src/lib.rs::register_all`)—; los once restantes siguen sin construir. El catálogo adaptado del documento de referencia del dueño, con el faltante de cada diagrama contra su fuente oficial y la ruta que los cierra, vive en **`docs/CATALOGO-DIAGRAMAS.md`**.
 
 ### 6.1 Con cuáles iniciamos
 
@@ -343,18 +345,18 @@ struct IrEvent  { id, lane, label, order, span: Option<Span>, kind_data: BTreeMa
 
 - `get_diagram_schema` se autogenera con `schemars` desde `Self::Input` (con `deny_unknown_fields`): lo que la IA lee y lo que validamos son la misma definición.
 - `gx-layout` no conoce kinds; `gx-kinds` no conoce layout.
-- **La IR no crece por kind:** 13 kinds comparten `IrGraph` (con `layout_hint`), 6 usan `IrTimeline`, y los 2 especializados (`sankey`, `gitgraph`) son un `layout_hint` más. Ampliar el catálogo no agranda la superficie del motor.
+- **La IR no crece por kind:** 14 kinds comparten `IrGraph` (con `layout_hint`), 5 usan `IrTimeline`, y los 2 especializados (`sankey`, `gitgraph`) son un `layout_hint` más. Ampliar el catálogo no agranda la superficie del motor.
 
 ### 8.3.1 Mapeo kind → IR (normativo)
 
 | IR | Kinds | Notas |
 |---|---|---|
-| `IrGraph` + `LayoutHint::Layered` | `graph`, `er`, `flowchart`, `class`, `state`, `component`, `dataflow`, `block`, `api`, `trust`, `deployment`, `network`, `neural` | 13 kinds |
+| `IrGraph` + `LayoutHint::Layered` | `graph`, `er`, `flowchart`, `class`, `state`, `component`, `dataflow`, `activity`, `block`, `api`, `trust`, `deployment`, `network`, `neural` | 14 kinds |
 | `IrGraph` + `LayoutHint::Tree` | `tree`, `mindmap`, `orgchart` | 3 kinds |
 | `IrGraph` + `LayoutHint::Sankey` / `::Git` | `sankey`, `gitgraph` | 2 kinds |
-| `IrTimeline` (lanes) | `sequence`, `timeline`, `swimlane`, `activity`, `journey`, `gantt` | 6 kinds |
+| `IrTimeline` (lanes) | `sequence`, `timeline`, `swimlane`, `journey`, `gantt` | 5 kinds |
 
-- **La IR no gana variantes**: sigue `Ir::Graph | Ir::Timeline`. Lo específico de cada kind viaja en `kind_data: BTreeMap<&'static str, IrValue>` (ordenado; nunca se renderiza directo): `sequence` → `{role, reply_to, activation}` · `gantt` → `{start, end, depends_on}` · `journey` → `{score}` · `activity` → `{gateway}`.
+- **La IR no gana variantes**: sigue `Ir::Graph | Ir::Timeline`. Lo específico de cada kind viaja en `kind_data: BTreeMap<&'static str, IrValue>` (ordenado; nunca se renderiza directo): `sequence` → `{role, reply_to, activation}` · `gantt` → `{start, end, depends_on}` · `journey` → `{score}`.
 - Cada kind **documenta sus claves de `kind_data`** en `rules[]` de `get_diagram_schema` (§11.1).
 - La resolución IR → motor es **una sola función**: `gx_core::layout_for(&Ir) -> Layout`. Ni `gx-mcp` ni `gx-app` hacen `match` sobre kinds.
 
@@ -362,7 +364,7 @@ struct IrEvent  { id, lane, label, order, span: Option<Span>, kind_data: BTreeMa
 
 - **Grafo dirigido:** crate `dagre` (port completo de dagre.js a Rust, Apache-2.0): cycle removal, network simplex, Brandes-Kopf, crossing minimization, **clusters**, 4 direcciones.
 - **Aislamiento:** `trait LayoutEngine { fn layout(&self, g: &IrGraph) -> LayoutGraph }` con `DagreEngine` (F1). Reemplazos (vendor/fork, `rust-sugiyama`, propio) no tocan nada más.
-- **Motores de layout (5) y qué kinds los usan:** `DagreEngine`/layered — 13 kinds (F1); `LanesEngine` — 6 kinds (F2); `TreeEngine` — 3 kinds (F2); `SankeyEngine` y `GitEngine` — 1 kind cada uno (F3). Solo los dos últimos obligan a motor nuevo; el resto reusa layered/lanes/tree.
+- **Motores de layout (5) y qué kinds los usan:** `DagreEngine`/layered — 14 kinds (F1); `LanesEngine` — 5 kinds (F2); `TreeEngine` — 3 kinds (F2); `SankeyEngine` y `GitEngine` — 1 kind cada uno (F3). Solo los dos últimos obligan a motor nuevo; el resto reusa layered/lanes/tree.
 - **Plan operativo dagre (riesgo de juventud):** pin de versión exacta en `Cargo.toml`; F0 incluye una **matriz de capacidades** verificada por test (clusters, TB/BT/LR/RL, labels en edges, self-loops, nodos desconectados); trigger de vendoring: bloqueo F1 sin fix upstream en 2 semanas → vendor al workspace con atribución NOTICE.
 - **Clusters anidados (RF15, medido en F2).** `dagre` 0.1.2 pierde posiciones de nodo cuando las capas de un cluster se rankean a través de dummies transitorios (`build_layer_matrix` escribe el slot sin buscar hueco libre), así que el motor recibe **solo los clusters hoja** —grupos cuyos miembros son nodos— y la caja de un grupo que contiene otros grupos se calcula en `gx-layout` como la unión de las cajas de sus miembros más padding. Si aun así el layout devolviera menos nodos que la IR, se reintenta en plano y nunca se devuelve un `LayoutGraph` incompleto. Consecuencia asumida: dos cajas **hermanas** pueden superponerse si el motor intercala sus clusters hoja; la caja es fondo translúcido, así que es costo de legibilidad y no dibujo roto.
 - **Timeline (F2):** motor propio de lanes (trivial frente al layered).
@@ -492,7 +494,7 @@ graphium/
 
 ## 10. Contrato de intercambio (formato `graphium.json` v1)
 
-Común a todos los `kind`: `version`, `kind`, `title`, `emphasis?` (heredable), `notes[]`. **Campos desconocidos rechazados** con did-you-mean.
+Común a todos los `kind`: `kind` (obligatorio) y `version` (opcional; ausente vale `1`), más `title?`. `emphasis` y `notes[]` **no** son campos comunes del documento: `emphasis` vive en los nodos y las aristas que lo admiten, y `notes[]` está en el backlog F3+ hasta que exista su lectura renderizada (ver §10.1). **Campos desconocidos rechazados** con did-you-mean.
 
 ### `kind: "graph"`
 
@@ -552,7 +554,7 @@ Común a todos los `kind`: `version`, `kind`, `title`, `emphasis?` (heredable), 
 }
 ```
 
-- **Reglas de integridad del `er`.** Todo `relations[].from.table` y `relations[].to.table` debe existir en `tables[]` (`unknown_ref`, con did-you-mean de tabla); toda `relations[].column` debe existir en esa tabla; toda tabla necesita al menos una columna con `key: "pk"` (`missing_field`, `path: "tables[i]"`).
+- **Reglas de integridad del `er`.** Todo `relations[].from.table` y `relations[].to.table` debe existir en `tables[]` (`unknown_ref`, con did-you-mean de tabla) y toda `relations[].column` debe existir en esa tabla. Una tabla **sin** columna con `key: "pk"` **no es un error**: se dibuja igual, sin badge de clave, y la respuesta trae un único aviso agregado `code: "tables_without_key"` que nombra esas tablas y dice qué cuesta la ausencia (esa tabla no puede ser el origen de una relación —el origen debe ser una `pk`— y el puente de SQL omite las claves foráneas que apuntan a una columna que no es primaria). La razón: una tabla sin clave primaria es legal en una base real (tablas de unión, logs, tablas que el parser no supo leer), así que rechazar el dibujo sería hostil; el dibujo se hace y declara qué no puede anclar.
 
 (Schemas de `sequence`/`class`/`state`/`component`: mismo patrón, se congelan al iniciar F2.)
 
@@ -560,7 +562,8 @@ Común a todos los `kind`: `version`, `kind`, `title`, `emphasis?` (heredable), 
 
 ### 10.1 Campos comunes y evolución del contrato
 
-- **Campos comunes a todos los kinds:** `version` (**requerido**, entero) · `kind` (**requerido**) · `title` (**requerido**, 1–120 caracteres, visible en el panel lateral) · `description?` (string) · `notes?: [{ text: string, anchor?: string }]` (máx. 20; `anchor` = id de nodo o tabla; el render textual de las notas es F3+) · `emphasis?: "highlight" | "muted"` (heredable) · `direction?: "TB"|"BT"|"LR"|"RL"` (**solo** kinds con `IrGraph`; default `"TB"`; en `er` es `unknown_field`).
+- **Campos comunes a todos los kinds:** `kind` (**requerido**) · `version` (**opcional**; tiene un único valor legal, `1`, y ausente vale `1`) · `title?` (1–120 caracteres cuando se escribe; el panel lateral lo muestra, y sin título usa el kind) · `direction?: "TB"|"BT"|"LR"|"RL"` (**solo** kinds con `IrGraph`; en `er` **se acepta** y ausente vale `"LR"`, porque el esquema se lee en horizontal —`crates/gx-kinds/src/er.rs:89`, pruebas en `:561`—; en los demás kinds con `IrGraph` ausente vale `"TB"`).
+- **Postergados a F3+ (no son campos comunes hoy):** `notes?: [{ text, anchor? }]`, `description?` y `emphasis?` de documento. Ninguno de los tres llega a los kinds: escribirlos hoy es `unknown_field`. La razón de `notes[]` es su lectura renderizada (panel de notas, §19 fila 5); `emphasis` ya existe **por nodo y por arista**, que es donde el dibujo lo usa.
 - **`groups?: [{ id, label?, members[] }]`** — **solo** kinds con documento de nodos y aristas (`graph`, `flow`, `state`, `class`, `dataflow` y `component`; en el resto es `unknown_field`). Los grupos **anidan** (RF15): un miembro es el id de un nodo o de otro grupo. Un miembro vive en un solo grupo, un grupo tiene un solo padre (`duplicate_id`), el id de un grupo no puede coincidir con el de un nodo (`duplicate_id`) y ninguno se contiene a sí mismo, directa o transitivamente (`invalid_value`).
 - **`rendered_kind`** = el `kind` efectivamente usado tras resolver el registry (hoy siempre igual al enviado; reservado para inferencia futura). `render_diagram` lo devuelve para que el agente sepa qué schema se aplicó.
 - **Evolución del contrato (RF5-bis).** `version` es la versión del **documento**, no del kind. Agregar un campo opcional con default es **aditivo y NO sube `version`** (sigue en `1`). Un campo obligatorio nuevo, un cambio de tipo o el borrado de un campo **sí** suben `version`. Cada campo declara `"x-graphium-since": "<n>"`; `get_diagram_schema` devuelve `supported_versions` y, si el kind tiene versión propia, `fields_ignored_in_this_version[]`. Un campo opcional desconocido de un kind conocido se rechaza igual (`unknown_field`), pero el `hint` dice «campo agregado en la versión N; actualizá Graphium o quitá el campo» y la respuesta incluye `min_version_required: N`. Un `kind` que esta versión no implementa → `ok: false, code: "unknown_kind"` + `available_kinds[]`.

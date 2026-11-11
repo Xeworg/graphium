@@ -13,7 +13,7 @@
 //! relación es una arista con su etiqueta: el dibujo dice quién usa qué.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Ir, IrEdge, IrGraph, IrNode, IrRow, LayoutHint, Shape};
+use gx_core::ir::{Direction, Ir, IrEdge, IrNode, IrRow, LayoutHint, Shape};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -38,6 +38,32 @@ pub fn types_of(level: &str) -> &'static [&'static str] {
         "components" => &["container", "component"],
         _ => &[],
     }
+}
+
+/// La línea que ata cada nivel a los tipos que admite (`f20-reuso.md`, S11):
+/// se escribe una vez, desde [`types_of`], así que un nivel o un tipo nuevo
+/// entra en la tabla y el texto del agente lo sigue sin otra copia.
+pub fn level_types_rule() -> String {
+    let levels: Vec<String> = LEVELS
+        .iter()
+        .map(|level| {
+            let types: Vec<String> = types_of(level)
+                .iter()
+                .map(|name| format!("`{name}`"))
+                .collect();
+            let types = match types.split_last() {
+                Some((last, rest)) if !rest.is_empty() => {
+                    format!("{} y {last}", rest.join(", "))
+                }
+                _ => types.join(""),
+            };
+            format!("`{level}` → {types}")
+        })
+        .collect();
+    format!(
+        "El `level` decide qué `type` admite cada elemento: {}.",
+        levels.join("; ")
+    )
 }
 
 /// Un elemento del diagrama: una persona, un sistema, un contenedor o un
@@ -78,7 +104,8 @@ pub struct C4Relation {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct C4Input {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `c4`.
     pub kind: String,
@@ -101,19 +128,19 @@ pub struct C4Kind;
 
 impl DiagramKind for C4Kind {
     const KIND: &'static str = "c4";
+    const PHASE: &'static str = "F3";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = C4Input;
 
     fn schema() -> schemars::Schema {
         schemars::schema_for!(C4Input)
+    }
+
+    fn shapes() -> Vec<Shape> {
+        vec![Shape::Box]
     }
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
@@ -155,7 +182,7 @@ impl DiagramKind for C4Kind {
                     format!("elements[{index}].id"),
                     ErrorCode::InvalidValue,
                     "el id del elemento no puede estar vacío",
-                    None,
+                    Some("escribí un id único, por ejemplo `api`".to_string()),
                 ));
             }
             if ids.contains(&element.id.as_str()) {
@@ -262,15 +289,46 @@ impl DiagramKind for C4Kind {
             })
             .collect();
 
-        Ir::Graph(IrGraph {
-            // El contrato no lleva `direction` (S2): la lectura la fija el
-            // kind. Un contexto se lee de izquierda a derecha, quien pide a la
-            // izquierda y el sistema a la derecha.
-            direction: Direction::LR,
-            layout_hint: Self::LAYOUT_HINT,
+        Ir::Graph(crate::flow::ir_graph(
+            Some(Direction::LR),
+            Self::LAYOUT_HINT,
             nodes,
             edges,
-            groups: Vec::new(),
+            Vec::new(),
+        ))
+    }
+
+    /// El nivel manda sobre el vocabulario y v1 no anida: lo que el agente
+    /// tiene que saber antes de escribir un `c4`.
+    fn rules(&self) -> Vec<String> {
+        vec![
+            level_types_rule(),
+            "Cada elemento tiene un `id` único y una `label`; `description` y `technology` son opcionales."
+                .to_string(),
+            "Cada relación referencia con `from` y `to` elementos declarados en `elements`, y su `label` es el verbo (`usa`, `lee`, `cobra`)."
+                .to_string(),
+            "No hay anidamiento en v1: la lectura sale de los tipos, del `level` y de las relaciones."
+                .to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "c4",
+            "title": "Pedidos — contexto",
+            "level": "context",
+            "elements": [
+                { "id": "cliente", "type": "person", "label": "Cliente",
+                  "description": "hace el pedido" },
+                { "id": "operador", "type": "person", "label": "Operador" },
+                { "id": "pedidos", "type": "system", "label": "Sistema de pedidos",
+                  "technology": "Rust" }
+            ],
+            "relations": [
+                { "from": "cliente", "to": "pedidos", "label": "hace un pedido" },
+                { "from": "operador", "to": "pedidos", "label": "despacha" }
+            ]
         })
     }
 }
@@ -296,4 +354,30 @@ fn quoted(names: &[&str]) -> String {
 /// Registers the `c4` kind in the global registry.
 pub fn register() {
     gx_core::kind::register_kind::<C4Kind>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{level_types_rule, types_of, LEVELS};
+
+    /// S11 (`f20-reuso.md`): la frase level→types se escribe una vez, desde
+    /// `types_of`, así que cada nivel enseña sus tipos y un nivel nuevo entra
+    /// en la tabla y en el texto sin una segunda copia.
+    #[test]
+    fn the_level_types_rule_is_spelled_from_the_table() {
+        let rule = level_types_rule();
+        assert!(
+            rule.contains("`context` → `person` y `system`"),
+            "la frase no es la del contrato: {rule}"
+        );
+        for level in LEVELS {
+            assert!(rule.contains(&format!("`{level}`")), "{level}: {rule}");
+            for name in types_of(level) {
+                assert!(
+                    rule.contains(&format!("`{name}`")),
+                    "{level}/{name}: {rule}"
+                );
+            }
+        }
+    }
 }

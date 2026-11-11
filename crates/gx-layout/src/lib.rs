@@ -14,7 +14,10 @@ use dagre::graph::{Graph, GraphOptions};
 use dagre::{layout, EdgeLabel, LayoutOptions, NodeLabel, RankDir, Ranker};
 use gx_core::geom::{Point, Rect, Size};
 use gx_core::ir::{Direction, IrEvent, IrGraph, IrGroup, IrLane, IrTimeline};
-use gx_core::layout::{LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, LayoutOpts, NodeBox};
+use gx_core::layout::{
+    connector_route, LayoutActivation, LayoutAxis, LayoutEdge, LayoutEngine, LayoutGraph,
+    LayoutGroup, LayoutOpts, NodeBox,
+};
 use gx_core::text::{TextMetrics, TextStyle};
 use gx_core::tokens::TOKENS;
 
@@ -82,6 +85,58 @@ struct Pass {
     cluster_boxes: BTreeMap<String, Rect>,
 }
 
+/// The flowchart stubs (T6b, `f22-dibujo.md` S10/L3b): a branch edge of a
+/// diamond anchors at the vertex the flow direction names — the bottom one
+/// for `TB` — and an edge that arrives anchors at the opposite vertex. No
+/// diagonal stub hangs off a slanted edge; a box keeps its border anchoring.
+fn anchor_diamond_edges(
+    graph: &IrGraph,
+    nodes: &BTreeMap<String, NodeBox>,
+    edges: &mut [LayoutEdge],
+) {
+    let shape_of = |id: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.id == id)
+            .map(|node| node.shape)
+    };
+    let vertex = |placed: &NodeBox, out: bool| {
+        let half_w = placed.size.w / 2.0;
+        let half_h = placed.size.h / 2.0;
+        match (graph.direction, out) {
+            (Direction::TB, true) | (Direction::BT, false) => {
+                Point::new(placed.center.x, placed.center.y + half_h)
+            }
+            (Direction::TB, false) | (Direction::BT, true) => {
+                Point::new(placed.center.x, placed.center.y - half_h)
+            }
+            (Direction::LR, true) | (Direction::RL, false) => {
+                Point::new(placed.center.x + half_w, placed.center.y)
+            }
+            (Direction::LR, false) | (Direction::RL, true) => {
+                Point::new(placed.center.x - half_w, placed.center.y)
+            }
+        }
+    };
+    for edge in edges {
+        if edge.points.is_empty() {
+            continue;
+        }
+        if shape_of(&edge.from) == Some(gx_core::ir::Shape::Diamond) {
+            if let Some(placed) = nodes.get(&edge.from) {
+                edge.points[0] = vertex(placed, true);
+            }
+        }
+        if shape_of(&edge.to) == Some(gx_core::ir::Shape::Diamond) {
+            if let Some(placed) = nodes.get(&edge.to) {
+                let last = edge.points.len() - 1;
+                edge.points[last] = vertex(placed, false);
+            }
+        }
+    }
+}
+
 impl LayoutEngine for DagreEngine {
     fn layout(&self, graph: &IrGraph, opts: &LayoutOpts) -> LayoutGraph {
         let mut pass = self.run(graph, opts, true);
@@ -121,10 +176,13 @@ impl LayoutEngine for DagreEngine {
         }
 
         let bbox = drawing_bbox(&pass.nodes, &pass.edges, &groups);
+        anchor_diamond_edges(graph, &pass.nodes, &mut pass.edges);
         LayoutGraph {
+            activations: Vec::new(),
             nodes: pass.nodes,
             edges: pass.edges,
             groups,
+            axis: None,
             bbox,
         }
     }
@@ -1024,9 +1082,11 @@ impl LayoutEngine for TreeEngine {
         let bbox = bbox.unwrap_or_default();
 
         LayoutGraph {
+            activations: Vec::new(),
             nodes: placed,
             edges,
             groups: Vec::new(),
+            axis: None,
             bbox,
         }
     }
@@ -1102,7 +1162,10 @@ impl LanesEngine {
     }
 
     /// The size of the box of an event: its label plus padding, and the width
-    /// of the span it covers when it has one.
+    /// of the span it covers when it has one. A diamond event (a milestone,
+    /// `f22-dibujo.md`, S6) is measured against the diamond's usable width at
+    /// the label's extreme rows (S9): the width grows until the label fits
+    /// the slanted edges, and its own column widens with it (S5).
     fn event_size(&self, event: &IrEvent, step: f64, padding: f64) -> Size {
         let label = self
             .metrics
@@ -1113,8 +1176,15 @@ impl LanesEngine {
             Some(span) if span.end > span.start => (span.end - span.start).max(1.0),
             _ => 1.0,
         };
-        let width = (label.w + 2.0 * padding).max(columns * step - 2.0 * padding);
-        Size::new(width, label.h + 2.0 * padding)
+        let height = label.h + 2.0 * padding;
+        let mut width = (label.w + 2.0 * padding).max(columns * step - 2.0 * padding);
+        if event.shape == gx_core::ir::Shape::Diamond {
+            let body = height - label.h;
+            if body > 0.0 {
+                width = width.max(label.w * height / body);
+            }
+        }
+        Size::new(width, height)
     }
 
     /// The row of a lane, or the last one for an event without a lane.
@@ -1168,10 +1238,17 @@ impl LayoutEngine for LanesEngine {
         }
 
         // The messages: one row each, in the order of the document, as a
-        // horizontal arrow between the two columns.
+        // horizontal arrow between the two columns. Every processed row is
+        // remembered: what each message says decides how long an activation
+        // holds (S5).
+        let mut sequence_rows: Vec<(&str, &str, bool)> = Vec::new();
         let mut edges: Vec<LayoutEdge> = Vec::new();
         let mut row = 1.0;
         for edge in &graph.edges {
+            let activating = matches!(
+                edge.kind_data.get("activation"),
+                Some(gx_core::ir::IrValue::Bool(true))
+            );
             let (Some(from), Some(to)) = (
                 column_of.get(edge.from.as_str()),
                 column_of.get(edge.to.as_str()),
@@ -1209,7 +1286,43 @@ impl LayoutEngine for LanesEngine {
                 }),
             });
             row += 1.0;
+            sequence_rows.push((edge.from.as_str(), edge.to.as_str(), activating));
         }
+
+        // The activation bars (S5, `f22-dibujo.md` L7c): a message that hands
+        // control draws a thin rectangle over its `to` actor's lifeline,
+        // held until the actor's next outgoing message — control leaves with
+        // the answer. Bars of one actor merge when they touch, so a second
+        // activation inside a held control extends the bar and never doubles
+        // it. Actors without an activation carry nothing.
+        let mut bars: BTreeMap<&str, Vec<(f64, f64)>> = BTreeMap::new();
+        for (index, (_, actor, activating)) in sequence_rows.iter().enumerate() {
+            if !activating {
+                continue;
+            }
+            let row = (index + 1) as f64;
+            let end = sequence_rows[index..]
+                .iter()
+                .position(|(sender, ..)| sender == actor)
+                .map_or(row, |offset| (index + offset + 1) as f64);
+            let y = |r: f64| header + r * step;
+            let actor_bars = bars.entry(actor).or_default();
+            match actor_bars.last_mut() {
+                Some(last) if y(row) - step * 0.35 <= last.1 => {
+                    last.1 = last.1.max(y(end) + step * 0.35);
+                }
+                _ => actor_bars.push((y(row) - step * 0.35, y(end) + step * 0.35)),
+            }
+        }
+        let activations = bars
+            .into_iter()
+            .flat_map(|(actor, actor_bars)| {
+                let x = column_of[actor].0;
+                actor_bars
+                    .into_iter()
+                    .map(move |(y1, y2)| LayoutActivation { x, y1, y2 })
+            })
+            .collect();
 
         let bbox = bounds_of(&nodes);
         let bbox = Rect::new(
@@ -1223,15 +1336,21 @@ impl LayoutEngine for LanesEngine {
             nodes,
             edges,
             groups: Vec::new(),
+            axis: None,
+            activations,
             bbox,
         }
     }
 
     fn layout_timeline(&self, timeline: &IrTimeline, opts: &LayoutOpts) -> LayoutGraph {
         let scale = opts.spacing_scale;
-        let lane_height = LANE_HEIGHT * scale;
+        let base_lane_height = LANE_HEIGHT * scale;
         let step = TIME_STEP * scale;
         let padding = LANE_PADDING;
+        // The air between two boxes of the same lane row (`f21-roto.md`, S5):
+        // the swimlane steps used to touch (0.33 px) because the pitch was
+        // the fixed column step, not the box widths.
+        let gap = 2.0 * padding;
 
         // The widest lane label decides the left gutter, so the label of a
         // lane never rides on top of its first event.
@@ -1247,39 +1366,119 @@ impl LayoutEngine for LanesEngine {
             })
             .fold(TIME_STEP * scale, f64::max);
 
-        let mut nodes: BTreeMap<String, NodeBox> = BTreeMap::new();
         let mut events: Vec<&IrEvent> = timeline.events.iter().collect();
         events.sort_by_key(|event| (event.order, event.id.clone()));
 
+        // The size of every event first: the column lefts depend on the
+        // widest box that starts in each column.
+        let sizes: BTreeMap<&str, Size> = events
+            .iter()
+            .map(|event| (event.id.as_str(), self.event_size(event, step, padding)))
+            .collect();
+
+        // The column lefts (S5): every order the document mentions is a
+        // column, advancing by the step — a **point** event that is wider
+        // than the step widens its own column (its label must be readable
+        // next to it), while a span event (a gantt task covering several
+        // columns) does not stretch the axis: its width is time, and
+        // overlapping time goes to sub-rows.
+        let mut width_of_column: BTreeMap<i64, f64> = BTreeMap::new();
+        for event in &events {
+            let column = width_of_column.entry(event.order).or_insert(0.0);
+            if event.span.is_none() {
+                let size = sizes[event.id.as_str()];
+                *column = (*column).max(size.w);
+            }
+        }
+        let mut known: BTreeMap<i64, f64> = BTreeMap::new();
+        let mut cursor = gutter;
+        for (&order, point_width) in &width_of_column {
+            known.insert(order, cursor);
+            cursor += point_width.max(step) + gap;
+        }
+        let column_left_of = |order: i64, known: &BTreeMap<i64, f64>| -> f64 {
+            match known.range(..=order).next_back() {
+                Some((known_order, left)) => {
+                    let skipped = (order - known_order) as f64;
+                    left + skipped * (step + gap)
+                }
+                None => gutter,
+            }
+        };
+
+        // Per lane: sub-row packing by real interval overlap (S4). A task
+        // whose span overlaps another's goes one row down — the lane grows,
+        // no two bars of one lane share a region.
+        let mut nodes: BTreeMap<String, NodeBox> = BTreeMap::new();
+        let mut sub_rows_of_lane: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
+        let mut sub_row_count: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut slots: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
         let mut last_right = gutter;
-        for event in events {
+        for event in &events {
             let row = Self::lane_index(&timeline.lanes, &event.lane);
-            let size = self.event_size(event, step, padding);
-            let left = gutter + (event.order.max(0) as f64) * step;
+            let size = sizes[event.id.as_str()];
+            let left = column_left_of(event.order, &known);
             let right = left + size.w;
+            let sub_rows = sub_rows_of_lane.entry(event.lane.as_str()).or_default();
+            let mut chosen = None;
+            for (index, row_right) in sub_rows.iter().enumerate() {
+                if *row_right + gap <= left {
+                    chosen = Some(index);
+                    break;
+                }
+            }
+            let sub_row = match chosen {
+                Some(index) => {
+                    sub_rows[index] = right;
+                    index
+                }
+                None => {
+                    sub_rows.push(right);
+                    sub_rows.len() - 1
+                }
+            };
+            let count = sub_rows.len();
+            sub_row_count.insert(event.lane.as_str(), count);
             last_right = last_right.max(right);
             nodes.insert(
                 event.id.clone(),
                 NodeBox {
-                    center: Point::new(
-                        left + size.w / 2.0,
-                        row as f64 * lane_height + lane_height / 2.0,
-                    ),
+                    center: Point::new(left + size.w / 2.0, 0.0),
                     size,
                 },
             );
+            // The vertical slot is filled after the lane heights are known.
+            slots.insert(event.id.clone(), (row, sub_row, count));
+        }
+
+        // Lane heights: one base row, one more per sub-row the lane needed.
+        let mut lane_heights: Vec<f64> = Vec::with_capacity(timeline.lanes.len());
+        for lane in &timeline.lanes {
+            let count = sub_row_count
+                .get(lane.id.as_str())
+                .copied()
+                .unwrap_or(1)
+                .max(1);
+            lane_heights.push(base_lane_height * count as f64);
+        }
+        for (event_id, (row, sub_row, count)) in &slots {
+            let top: f64 = lane_heights.iter().take(*row).sum();
+            let height = lane_heights[*row];
+            let slot = height / *count as f64;
+            if let Some(box_) = nodes.get_mut(event_id) {
+                box_.center.y = top + (*sub_row as f64 + 0.5) * slot;
+            }
         }
 
         let width = last_right + padding;
-        let lane_count = timeline.lanes.len().max(1);
-        let groups: Vec<LayoutGroup> = timeline
-            .lanes
-            .iter()
-            .enumerate()
-            .map(|(index, lane)| LayoutGroup {
+        let mut groups: Vec<LayoutGroup> = Vec::with_capacity(timeline.lanes.len());
+        let mut top = 0.0;
+        for (index, lane) in timeline.lanes.iter().enumerate() {
+            let height = lane_heights[index];
+            groups.push(LayoutGroup {
                 id: lane.id.clone(),
                 label: lane.label.clone(),
-                bbox: Rect::new(0.0, index as f64 * lane_height, width, lane_height),
+                bbox: Rect::new(0.0, top, width, height),
                 depth: 0,
                 // A lane owns its events, and the gutter it reserved for its
                 // name is the same one for every lane (`f11-elementos.md`, T1).
@@ -1290,14 +1489,59 @@ impl LayoutEngine for LanesEngine {
                     .map(|event| event.id.clone())
                     .collect(),
                 gutter: Some(gutter),
+            });
+            top += height;
+        }
+        // The time axis (`f22-dibujo.md`, S2, L5): under the last lane, one
+        // tick per known column. The known columns are the ones the document
+        // mentioned; their left edges are `known`, and the tick sits at the
+        // center of the step the column advances by — the column's time
+        // position, not an event box's center.
+        let axis_y = top + padding;
+        let tick_xs: Vec<(f64, i64)> = known
+            .iter()
+            .map(|(&order, &left)| (left + step / 2.0, order))
+            .collect();
+        let axis = (!tick_xs.is_empty()).then(|| LayoutAxis {
+            y: axis_y,
+            x1: tick_xs.first().expect("first tick").0,
+            x2: tick_xs.last().expect("last tick").0,
+            ticks: tick_xs,
+        });
+        // The bbox grows by the axis band: the line and one text line under
+        // it, plus its own padding, so no tick value clips.
+        let axis_band = if axis.is_some() {
+            padding + TOKENS.text_size * TOKENS.line_height
+        } else {
+            0.0
+        };
+        let bbox = Rect::new(0.0, 0.0, width, top + axis_band);
+
+        // The connectors (S8): the lanes engine routes them — one orthogonal
+        // route per connection whose both ends are placed. The layout is the
+        // authority, as everywhere else: a connection with an end it did not
+        // place draws nothing.
+        let edges: Vec<LayoutEdge> = timeline
+            .connections
+            .iter()
+            .filter_map(|connection| {
+                let from = nodes.get(&connection.from)?;
+                let to = nodes.get(&connection.to)?;
+                Some(LayoutEdge {
+                    from: connection.from.clone(),
+                    to: connection.to.clone(),
+                    points: connector_route(from, to),
+                    label_at: None,
+                })
             })
             .collect();
-        let bbox = Rect::new(0.0, 0.0, width, lane_count as f64 * lane_height);
 
         LayoutGraph {
+            activations: Vec::new(),
             nodes,
-            edges: Vec::new(),
+            edges,
             groups,
+            axis,
             bbox,
         }
     }
@@ -1309,6 +1553,7 @@ mod tests {
     use std::sync::Arc;
 
     use gx_core::geom::{Point, Size};
+    use gx_core::ir::Shape;
     use gx_core::ir::{
         Direction, IrEvent, IrGraph, IrGroup, IrLane, IrNode, IrTimeline, LayoutHint,
     };
@@ -1441,6 +1686,7 @@ mod tests {
     #[test]
     fn a_lane_travels_with_its_events_and_its_gutter() {
         let timeline = IrTimeline {
+            connections: Vec::new(),
             lanes: vec![
                 IrLane {
                     id: "now".to_string(),
@@ -1453,19 +1699,23 @@ mod tests {
             ],
             events: vec![
                 IrEvent {
+                    shape: Shape::Rounded,
                     id: "e1".to_string(),
                     lane: "now".to_string(),
                     label: "motor".to_string(),
                     order: 0,
                     span: None,
+                    depends_on: Vec::new(),
                     kind_data: Default::default(),
                 },
                 IrEvent {
+                    shape: Shape::Rounded,
                     id: "e2".to_string(),
                     lane: "next".to_string(),
                     label: "elementos".to_string(),
                     order: 1,
                     span: None,
+                    depends_on: Vec::new(),
                     kind_data: Default::default(),
                 },
             ],

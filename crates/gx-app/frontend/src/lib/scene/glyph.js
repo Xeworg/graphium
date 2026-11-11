@@ -18,6 +18,8 @@
 // Pure on purpose: no DOM, so the probes can call it from node and compare the
 // numbers with the ones the emitter writes.
 
+import { shapeOf } from "./scene.js";
+
 // --- numbers ---------------------------------------------------------------
 
 /**
@@ -26,8 +28,22 @@
  * float tail.
  */
 export function num(value) {
-  const rounded = Math.round(value * 100) / 100;
-  return Object.is(rounded, -0) ? 0 : rounded;
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  const scaled = value * 100;
+  const lower = Math.floor(scaled);
+  const remainder = scaled - lower;
+  // Round-half-to-even at two decimals: the canonical rule of
+  // `gx-core/src/fmt.rs` (PRD §8.5.1). `Math.round` rounds every .5 up, so
+  // 91.125 became 91.13 while the export wrote 91.12 — the exact drift the
+  // equivalence gate caught on the baselines of the c4 golden.
+  let rounded;
+  if (remainder > 0.5) rounded = lower + 1;
+  else if (remainder < 0.5) rounded = lower;
+  else rounded = lower % 2 === 0 ? lower : lower + 1;
+  const result = rounded / 100;
+  return Object.is(result, -0) ? 0 : result;
 }
 
 /** A list of points as the `points` attribute of a polyline or a polygon. */
@@ -79,9 +95,12 @@ export function nodeRect(node) {
 
 // --- classes (S3) -----------------------------------------------------------
 
-/** The class of a shape: the names the emitter writes. */
+/** The class of a shape: the names the emitter writes. An unknown shape is a
+ * loud end of the run, never a plausible box (`f19-formas.md`, S5). */
 export function shapeClass(shape) {
   switch (shape) {
+    case "box":
+      return "shape-box";
     case "rounded":
       return "shape-rounded";
     case "cylinder":
@@ -92,8 +111,14 @@ export function shapeClass(shape) {
       return "shape-ellipse";
     case "note":
       return "shape-note";
+    case "circle":
+      return "shape-circle";
+    case "dot":
+      return "shape-dot";
+    case "ring_dot":
+      return "shape-ring_dot";
     default:
-      return "shape-box";
+      throw new Error(`the painter does not know the shape: ${shape}`);
   }
 }
 
@@ -189,8 +214,12 @@ export function arrowMarkers(scene) {
 /**
  * Where the header, the rule and the rows of a table node sit: the numbers
  * `Table::of` computes in Rust, from the same tokens.
+ *
+ * `keys` says whether some row of the node carries a key role: without one the
+ * table has no badge to draw, so it reserves no badge column and the names
+ * start at the padding (`S13`).
  */
-export function tableOf(rect, tokens) {
+export function tableOf(rect, tokens, keys) {
   const padding = tokens.node_padding;
   const line = tokens.text_size * tokens.line_height;
   const headerY = rect.y + padding + line / 2;
@@ -199,14 +228,15 @@ export function tableOf(rect, tokens) {
     line,
     header_y: headerY,
     rule_y: headerY + line / 2,
-    badge_x: rect.x + padding / 2,
-    name_x: rect.x + padding + tokens.badge_width,
+    badge_x: keys ? rect.x + padding / 2 : null,
+    name_x: rect.x + padding + (keys ? tokens.badge_width : 0),
     note_x: rect.x + rect.w - padding / 2,
     row_y: (index) => headerY + line / 2 + line * (index + 0.5),
   };
 }
 
-/** The text of the key badge of a row: `PK`, `FK`, `PK, FK` or nothing. */
+/** The text of the key badge of a row, or `null` when the row has no key: a
+ * row without a key draws no badge (`S13`). */
 export function badgeText(key) {
   switch (key) {
     case "pk":
@@ -216,7 +246,7 @@ export function badgeText(key) {
     case "pk_fk":
       return "PK, FK";
     default:
-      return "";
+      return null;
   }
 }
 
@@ -227,6 +257,23 @@ export function badgeText(key) {
  * closes the top. The rim height is the corner radius, capped to a quarter of
  * the box so a short node still has a readable body.
  */
+/** The circle dot inside the envelope: the frozen diameter, at the left edge
+ * of the envelope, so the arrows that arrive land on it (`f19-formas.md`,
+ * S8/S9). The twin of `geometry::glyph_rect` in `gx-render-svg`. */
+export function circleGeometry(rect, tokens) {
+  return {
+    cx: num(rect.x + tokens.node_padding + tokens.circle_diameter / 2),
+    cy: num(rect.y + rect.h / 2),
+    r: num(tokens.circle_diameter / 2),
+  };
+}
+
+/** The inner dot of the ring: the same center, half the radius — frozen in
+ * `write_ring_dot` and here (`f22-dibujo.md`, S3). */
+export function ringDotCore(circle) {
+  return { cx: circle.cx, cy: circle.cy, r: num(circle.r / 2) };
+}
+
 export function cylinderGeometry(rect, tokens) {
   const rim = Math.min(tokens.corner_radius, rect.h / 4);
   // Cubics instead of elliptical arcs: an arc flag is a bare `0`/`1`, which
@@ -448,7 +495,25 @@ export function nodePaint(node, tokens) {
   const lines = textLines(node.label);
   const classes = nodeTextClasses(node.emphasis);
   const isTable = node.rows.length > 0;
-  const table = isTable ? tableOf(rect, tokens) : null;
+  // The badge column exists only when some row has a key to put in it (S13).
+  const hasKeys = node.rows.some((row) => badgeText(row.key) !== null);
+  const table = isTable ? tableOf(rect, tokens, hasKeys) : null;
+  // The stereotype sits above the label at 0.85× (`f22-dibujo.md`, S4): the
+  // line height `measure_node` reserved, the UML guillemets written here and
+  // in `write_node_text`. The label center shifts down by the same amount.
+  const stereotypeLine = node.stereotype
+    ? tokens.text_size * 0.85 * tokens.line_height
+    : 0;
+  const stereotype = node.stereotype
+    ? textPaint({
+        lines: [`«${node.stereotype}»`],
+        baselines: [rect.y + tokens.node_padding + stereotypeLine / 2],
+        x: node.center.x,
+        classes: "node-stereotype text",
+        size: tokens.text_size * 0.85,
+        anchor: "middle",
+      })
+    : null;
   return {
     id: node.id,
     shape: node.shape,
@@ -462,8 +527,22 @@ export function nodePaint(node, tokens) {
       w: num(rect.w),
       h: num(rect.h),
       radius: node.shape === "rounded" ? num(tokens.corner_radius) : null,
+      // The ellipse halves, computed from the raw rect and rounded once: the
+      // emitter writes fmt_num(w / 2) from the raw width, and rounding before
+      // dividing drifts exactly on the boundary (`f19-formas.md`, L6).
+      rx: node.shape === "ellipse" ? num(rect.w / 2) : null,
+      ry: node.shape === "ellipse" ? num(rect.h / 2) : null,
     },
     center: { x: num(node.center.x), y: num(node.center.y) },
+    circle:
+      node.shape === "circle" || node.shape === "dot" || node.shape === "ring_dot"
+        ? circleGeometry(nodeRect(node), tokens)
+        : null,
+    ringDotCore:
+      node.shape === "ring_dot"
+        ? ringDotCore(circleGeometry(nodeRect(node), tokens))
+        : null,
+    stereotype,
     cylinder:
       node.shape === "cylinder" ? cylinderGeometry(rect, tokens) : null,
     note: node.shape === "note" ? noteGeometry(rect, tokens) : null,
@@ -496,44 +575,78 @@ export function nodePaint(node, tokens) {
     label:
       isTable || lines.length === 0
         ? null
-        : textPaint({
-            lines,
-            baselines: centeredBaselines(node.center.y, lines.length, tokens),
-            x: node.center.x,
-            classes,
-            size: tokens.text_size,
-            anchor: "middle",
-          }),
+        : node.label_at !== undefined && node.label_at !== null
+          ? // The beside placement of the circle (`f19-formas.md`, S8): the
+            // scene computed the point; the painter only spells it.
+            textPaint({
+              lines,
+              baselines: [node.label_at.y],
+              x: node.label_at.x,
+              classes,
+              size: tokens.text_size,
+              anchor: "start",
+            })
+          : textPaint({
+              lines,
+              baselines: centeredBaselines(
+                node.center.y + stereotypeLine / 2,
+                lines.length,
+                tokens,
+              ),
+              x: node.center.x,
+              classes,
+              size: tokens.text_size,
+              anchor: "middle",
+            }),
     rows: isTable
-      ? node.rows.map((row, index) => ({
-          badge: textPaint({
-            lines: [badgeText(row.key)],
-            baselines: [table.row_y(index)],
-            x: table.badge_x,
-            classes: "row-badge text",
-            size: tokens.text_size * 0.85,
-            anchor: null,
-          }),
-          name: textPaint({
-            lines: [row.text],
-            baselines: [table.row_y(index)],
-            x: table.name_x,
-            classes: rowNameClasses(row),
-            size: tokens.text_size,
-            anchor: null,
-          }),
-          note:
-            row.note === null
-              ? null
-              : textPaint({
-                  lines: [row.note],
-                  baselines: [table.row_y(index)],
-                  x: table.note_x,
-                  classes: "row-note text",
-                  size: tokens.text_size * 0.9,
-                  anchor: "end",
-                }),
-        }))
+      ? node.rows.map((row, index) => {
+          const badge = badgeText(row.key);
+          return {
+            // The compartment rule (S7): the line the row's compartment
+            // starts with, on its top edge. The header rule is its own.
+            divider: row.divider
+              ? {
+                  x1: num(rect.x),
+                  y1: num(table.rule_y + table.line * index),
+                  x2: num(rect.x + rect.w),
+                  y2: num(table.rule_y + table.line * index),
+                  width: num(tokens.border_width),
+                }
+              : null,
+            // A row without a key draws no badge: no empty element is written
+            // (S13).
+            badge:
+              badge === null
+                ? null
+                : textPaint({
+                    lines: [badge],
+                    baselines: [table.row_y(index)],
+                    x: table.badge_x,
+                    classes: "row-badge text",
+                    size: tokens.text_size * 0.85,
+                    anchor: null,
+                  }),
+            name: textPaint({
+              lines: [row.text],
+              baselines: [table.row_y(index)],
+              x: table.name_x,
+              classes: rowNameClasses(row),
+              size: tokens.text_size,
+              anchor: null,
+            }),
+            note:
+              row.note === null
+                ? null
+                : textPaint({
+                    lines: [row.note],
+                    baselines: [table.row_y(index)],
+                    x: table.note_x,
+                    classes: "row-note text",
+                    size: tokens.text_size * 0.9,
+                    anchor: "end",
+                  }),
+          };
+        })
       : [],
   };
 }
@@ -656,7 +769,10 @@ export function eventPaint(event, tokens) {
       {
         id: event.id,
         label: event.label,
-        shape: "rounded",
+        // The shape the event's role gives it (`f22-dibujo.md`, S6): the
+        // default event is the rounded box of always; a `milestone` carries
+        // `diamond`. The scene validator accepts only the known shapes.
+        shape: shapeOf(event.shape),
         emphasis: "normal",
         style: "solid",
         center: event.center,
@@ -701,6 +817,23 @@ export function diagramPaint(scene) {
           return { x: num(line.x), y1: num(line.y1), y2: num(line.y2) };
         })
       : [],
+    // The activation bars (`f22-dibujo.md`, S5): the x centers the bar on
+    // the lifeline with the tokens' width, y is the layout's.
+    activations: (scene.activations ?? []).map((bar) => ({
+      x: num(bar.x - tokens.activation_width / 2),
+      y: num(bar.y1),
+      w: num(tokens.activation_width),
+      h: num(Math.max(0, bar.y2 - bar.y1)),
+    })),
+    axis:
+      scene.axis === null || scene.axis === undefined
+        ? null
+        : {
+            y: num(scene.axis.y),
+            x1: num(scene.axis.x1),
+            x2: num(scene.axis.x2),
+            ticks: scene.axis.ticks.map(([x, value]) => ({ x: num(x), value })),
+          },
     edges: scene.edges.map((edge) => edgePaint(edge, tokens)),
     nodes: [
       ...scene.nodes.map((node) => nodePaint(node, tokens)),

@@ -7,7 +7,7 @@
 //! y el schema tiene que hacerlo evidente.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Emphasis, Ir, IrEdge, IrGraph, IrNode, LayoutHint};
+use gx_core::ir::{Direction, Emphasis, Ir, IrEdge, IrNode, LayoutHint};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -36,7 +36,8 @@ pub struct MindmapBranch {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MindmapInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `mindmap`.
     pub kind: String,
@@ -73,14 +74,10 @@ impl MindmapKind {
 
 impl DiagramKind for MindmapKind {
     const KIND: &'static str = "mindmap";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Tree;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::TREE;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = MindmapInput;
 
@@ -89,28 +86,8 @@ impl DiagramKind for MindmapKind {
     }
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
-        let mut errors = Vec::new();
-
-        if input.kind != Self::KIND {
-            errors.push(ValidationError::new(
-                "kind",
-                ErrorCode::InvalidValue,
-                format!("`kind` debe ser `{}`, no `{}`", Self::KIND, input.kind),
-                Some("usá get_diagram_schema para ver los kinds disponibles".to_string()),
-            ));
-        }
-
-        if input.version != SUPPORTED_VERSION {
-            errors.push(ValidationError::new(
-                "version",
-                ErrorCode::InvalidValue,
-                format!(
-                    "versión de contrato no soportada: {} (soportada: {SUPPORTED_VERSION})",
-                    input.version
-                ),
-                Some("actualizá el documento a la versión 1 del contrato".to_string()),
-            ));
-        }
+        let mut errors =
+            crate::flow::validate_header(Self::KIND, &input.kind, SUPPORTED_VERSION, input.version);
 
         let mut count = 0usize;
         let mut too_deep = false;
@@ -207,12 +184,24 @@ impl DiagramKind for MindmapKind {
             }
         }
 
-        Ir::Graph(IrGraph {
-            direction: Direction::TB,
-            layout_hint: Self::LAYOUT_HINT,
+        Ir::Graph(crate::flow::ir_graph(
+            Some(Direction::TB),
+            Self::LAYOUT_HINT,
             nodes,
             edges,
-            groups: Vec::new(),
+            Vec::new(),
+        ))
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "mindmap",
+            "title": "Graphium",
+            "root": {
+                "topic": "Graphium",
+                "branches": [ { "topic": "MCP" }, { "topic": "Plano" } ]
+            }
         })
     }
 }
@@ -225,12 +214,9 @@ pub fn register() {
 #[cfg(test)]
 mod tests {
     use super::{MindmapInput, MindmapKind, MAX_MINDMAP_DEPTH};
+    use crate::test_support::input;
     use gx_core::ir::{Emphasis, Ir};
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> MindmapInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     const MAP: &str = r#"{
       "version": 1, "kind": "mindmap", "title": "Graphium",

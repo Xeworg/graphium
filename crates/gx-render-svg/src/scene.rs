@@ -17,14 +17,17 @@
 use std::collections::BTreeMap;
 
 use gx_core::{
-    Ir, IrEdge, IrEvent, IrGraph, IrNode, IrTimeline, LayoutEdge, LayoutGraph, LayoutGroup,
-    NodeBox, Palette, Rect, Scene, SceneBand, SceneEdge, SceneEvent, SceneNode, ScenePalette,
-    SceneTokens, TOKENS,
+    Ir, IrEdge, IrEvent, IrGraph, IrNode, IrTimeline, LayoutAxis, LayoutEdge, LayoutGraph,
+    LayoutGroup, NodeBox, Palette, Rect, Scene, SceneActivation, SceneAxis, SceneBand, SceneEdge,
+    SceneEvent, SceneNode, ScenePalette, SceneTokens, TOKENS,
 };
 
+use gx_core::layout::LayoutActivation;
+
 use crate::geometry::{
-    self, canvas_rect, cluster_id, edge_id, lane_id, node_id, ARROW_LENGTH, BADGE_WIDTH, CROW_FOOT,
-    CROW_FOOT_SPREAD, DASH_PATTERN, GROUP_DASH, LIFELINE_DASH, MUTED_OPACITY,
+    self, canvas_rect, cluster_id, edge_id, lane_id, node_id, node_rect, ACTIVATION_WIDTH,
+    ARROW_LENGTH, BADGE_WIDTH, CROW_FOOT, CROW_FOOT_SPREAD, DASH_PATTERN, GROUP_DASH,
+    LIFELINE_DASH, MUTED_OPACITY,
 };
 
 /// The drawing plan both emitters walk (`f11-elementos.md`, T1).
@@ -41,12 +44,88 @@ pub(crate) struct Drawing<'a> {
     pub(crate) nodes: Vec<(&'a IrNode, &'a NodeBox)>,
     /// The events of a timeline, in id order and paired with their box.
     pub(crate) events: Vec<(&'a IrEvent, &'a NodeBox)>,
-    /// The routed edges, in id order.
-    pub(crate) edges: Vec<(&'a IrEdge, &'a LayoutEdge)>,
+    /// The routed edges, in id order. A graph routes its own edges; a
+    /// timeline routes the dependency arrows its tasks declare.
+    pub(crate) edges: Vec<(IrEdge, LayoutEdge)>,
     /// The containers of a graph, outermost first.
     pub(crate) clusters: Vec<&'a LayoutGroup>,
     /// The lane bands of a timeline, in id order.
     pub(crate) lanes: Vec<&'a LayoutGroup>,
+    /// The time axis of a timeline (`f22-dibujo.md`, S2).
+    pub(crate) axis: Option<LayoutAxis>,
+    /// The activation bars of a sequence (`f22-dibujo.md`, S5), in the order
+    /// the layout computed them.
+    pub(crate) activations: Vec<LayoutActivation>,
+}
+
+/// The dependency arrows of a timeline (`f18-gantt.md`, S7): one edge per
+/// declared `depends_on` entry, from the dependency's event box to the
+/// waiting task's box. Events missing from the layout draw nothing — the
+/// layout is the authority, as everywhere else.
+fn timeline_dependency_edges(
+    timeline: &IrTimeline,
+    layout: &LayoutGraph,
+) -> Vec<(IrEdge, LayoutEdge)> {
+    let placed: BTreeMap<&str, &NodeBox> = timeline
+        .events
+        .iter()
+        .filter_map(|event| {
+            layout
+                .nodes
+                .get(&event.id)
+                .map(|placed| (event.id.as_str(), placed))
+        })
+        .collect();
+    let mut edges = Vec::new();
+    for event in geometry::ordered_events(timeline) {
+        let target = match placed.get(event.id.as_str()) {
+            Some(placed) => *placed,
+            None => continue,
+        };
+        for dep in &event.depends_on {
+            let source = match placed.get(dep.as_str()) {
+                Some(placed) => *placed,
+                None => continue,
+            };
+            edges.push((
+                IrEdge::new(dep.clone(), event.id.clone()),
+                LayoutEdge {
+                    from: dep.clone(),
+                    to: event.id.clone(),
+                    points: geometry::dependency_route(
+                        &geometry::node_rect(source),
+                        &geometry::node_rect(target),
+                    ),
+                    label_at: None,
+                },
+            ));
+        }
+    }
+    edges
+}
+
+/// The connector arrows of a swimlane (`f22-dibujo.md`, S8): one edge per
+/// connection whose both ends the layout placed, in connection order — the
+/// same filter the layout applies, so the routes pair one to one. The arrow
+/// is a plain one: a connector says nothing but "this flows to that".
+fn connector_edges(timeline: &IrTimeline, layout: &LayoutGraph) -> Vec<(IrEdge, LayoutEdge)> {
+    let mut routes = layout.edges.iter();
+    timeline
+        .connections
+        .iter()
+        .filter(|connection| {
+            layout.nodes.contains_key(&connection.from) && layout.nodes.contains_key(&connection.to)
+        })
+        .map(|connection| {
+            let route = routes
+                .next()
+                .expect("the layout routed every placed connection");
+            (
+                IrEdge::new(connection.from.clone(), connection.to.clone()),
+                route.clone(),
+            )
+        })
+        .collect()
 }
 
 impl<'a> Drawing<'a> {
@@ -68,18 +147,40 @@ impl<'a> Drawing<'a> {
                 .collect(),
             None => Vec::new(),
         };
+        let edges = match graph {
+            Some(graph) => geometry::routed_edges(graph, layout)
+                .into_iter()
+                .map(|(edge, route)| (edge.clone(), route.clone()))
+                .collect(),
+            // A timeline draws the arrows its tasks declare: one dependency
+            // arrow per `depends_on` entry (`f18-gantt.md`, S7), tasks in id
+            // order, dependencies in declared order — plus the connectors of
+            // a swimlane (S8), whose routes the layout computed.
+            None => {
+                let timeline = timeline.expect("graph or timeline");
+                let mut edges = timeline_dependency_edges(timeline, layout);
+                edges.extend(connector_edges(timeline, layout));
+                edges
+            }
+        };
+        // The label points the canvas has to contain (`f21-roto.md`, S3):
+        // every routed edge that carries a label, at the point the layout
+        // chose for it. A timeline's dependency arrows carry no labels.
+        let labels: Vec<(gx_core::Point, &str)> = edges
+            .iter()
+            .filter_map(|(edge, route)| {
+                let label = edge.label.as_deref()?;
+                let at = route.label_at?;
+                Some((at, label))
+            })
+            .collect();
         Self {
-            canvas: canvas_rect(layout),
+            canvas: canvas_rect(layout, &labels),
             graph,
             timeline,
             nodes: place_nodes(graph),
             events,
-            edges: match graph {
-                Some(graph) => geometry::routed_edges(graph, layout),
-                // A timeline has no edges: every order of events is the order
-                // of the columns, never a line between two boxes.
-                None => Vec::new(),
-            },
+            edges,
             clusters: match graph {
                 Some(_) => geometry::ordered_clusters(layout),
                 None => Vec::new(),
@@ -88,6 +189,8 @@ impl<'a> Drawing<'a> {
                 Some(_) => geometry::ordered_groups(layout),
                 None => Vec::new(),
             },
+            axis: layout.axis.clone(),
+            activations: layout.activations.clone(),
         }
     }
 
@@ -124,19 +227,29 @@ impl<'a> Drawing<'a> {
             nodes: self
                 .nodes
                 .iter()
-                .map(|(node, placed)| SceneNode {
-                    id: node_id(&node.id),
-                    // The label travels exactly as the IR has it: the `\n` is
-                    // the wrap (S4), there is nothing to compute here.
-                    label: node.label.clone(),
-                    shape: node.shape,
-                    emphasis: node.emphasis,
-                    style: node.style,
-                    // The size is the measured one, never `IrNode.size` (S4).
-                    center: placed.center,
-                    size: placed.size,
-                    rows: node.rows.clone(),
-                    meta: node.meta.clone(),
+                .map(|(node, placed)| {
+                    let rect = node_rect(placed);
+                    SceneNode {
+                        id: node_id(&node.id),
+                        // The label travels exactly as the IR has it: the `\n` is
+                        // the wrap (S4), there is nothing to compute here.
+                        label: node.label.clone(),
+                        shape: node.shape,
+                        emphasis: node.emphasis,
+                        style: node.style,
+                        // The size is the measured one, never `IrNode.size` (S4).
+                        center: placed.center,
+                        size: placed.size,
+                        // The beside placement of the circle; `None` keeps the
+                        // centered default of every other shape (S8).
+                        label_at: match geometry::label_placement(node.shape, &rect) {
+                            geometry::LabelPlacement::Inside => None,
+                            geometry::LabelPlacement::Beside { at } => Some(at),
+                        },
+                        rows: node.rows.clone(),
+                        stereotype: node.stereotype.clone(),
+                        meta: node.meta.clone(),
+                    }
                 })
                 .collect(),
             edges: self
@@ -170,6 +283,7 @@ impl<'a> Drawing<'a> {
                     depth: group.depth,
                     members: group.members.clone(),
                     gutter: group.gutter,
+                    kind: gx_core::BandKind::Cluster,
                 })
                 .chain(self.lanes.iter().map(|group| SceneBand {
                     id: lane_id(&group.id),
@@ -178,6 +292,7 @@ impl<'a> Drawing<'a> {
                     depth: group.depth,
                     members: group.members.clone(),
                     gutter: group.gutter,
+                    kind: gx_core::BandKind::Lane,
                 }))
                 .collect(),
             events: self
@@ -188,6 +303,7 @@ impl<'a> Drawing<'a> {
                     lane: event.lane.clone(),
                     label: event.label.clone(),
                     order: event.order,
+                    shape: event.shape,
                     span: event.span,
                     center: placed.center,
                     size: placed.size,
@@ -195,6 +311,27 @@ impl<'a> Drawing<'a> {
                     // `event_bar` decides is the one the exported markup draws
                     // (S5, T4/D).
                     bar: geometry::event_bar(&geometry::node_rect(placed), event.span),
+                })
+                .collect(),
+            // The axis travels verbatim (`f22-dibujo.md`, L5): the layout
+            // computed it, the scene carries the numbers, the painter spells
+            // them — no path ships in the payload (S5).
+            axis: self.axis.as_ref().map(|axis| SceneAxis {
+                y: axis.y,
+                x1: axis.x1,
+                x2: axis.x2,
+                ticks: axis.ticks.clone(),
+            }),
+            // The bars travel verbatim (`f22-dibujo.md`, L7): the layout
+            // computed them, the scene carries the numbers, the width is a
+            // token.
+            activations: self
+                .activations
+                .iter()
+                .map(|bar| SceneActivation {
+                    x: bar.x,
+                    y1: bar.y1,
+                    y2: bar.y2,
                 })
                 .collect(),
         }
@@ -246,6 +383,8 @@ pub fn scene_tokens() -> SceneTokens {
         lifeline_dash: [LIFELINE_DASH.0, LIFELINE_DASH.1],
         dash_pattern: [DASH_PATTERN.0, DASH_PATTERN.1],
         group_dash: [GROUP_DASH.0, GROUP_DASH.1],
+        circle_diameter: TOKENS.circle_diameter,
+        activation_width: ACTIVATION_WIDTH,
     }
 }
 

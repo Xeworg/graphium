@@ -133,14 +133,25 @@ pub fn validate_diagram(document: &str) -> ValidateResponse {
         return ValidateResponse {
             ok: true,
             errors: Vec::new(),
-            warnings: Some(size_warnings(
-                count(&parsed, "nodes"),
-                count(&parsed, "edges"),
-                kind.limits(),
-            )),
+            warnings: Some({
+                let mut warnings = size_warnings(
+                    count(&parsed, "nodes"),
+                    count(&parsed, "edges"),
+                    kind.limits(),
+                );
+                // El kind dice qué no puede anclar el documento
+                // (`f25-arreglos.md`, S2): el dry run da el mismo aviso que
+                // el render, en las mismas palabras (PRD §7 RF20).
+                warnings.extend(
+                    kind.warnings(&parsed)
+                        .into_iter()
+                        .map(|warning| Warning::new(warning.code, warning.message)),
+                );
+                warnings
+            }),
             projected_svg_bytes: Some(projected_svg_bytes(kind.limits(), &parsed)),
             errors_truncated: false,
-            supported_versions: Vec::new(),
+            supported_versions: supported_versions(),
         };
     }
 
@@ -154,7 +165,7 @@ pub fn validate_diagram(document: &str) -> ValidateResponse {
         warnings: None,
         projected_svg_bytes: None,
         errors_truncated: truncated,
-        supported_versions: Vec::new(),
+        supported_versions: supported_versions(),
     }
 }
 
@@ -233,6 +244,10 @@ pub struct SchemaResponse {
     /// The kind that was asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+    /// The contract version the kind serves (`f23-contrato.md`, S2): the
+    /// generation the schema below describes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind_version: Option<u32>,
     /// The JSON Schema of the kind.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<Value>,
@@ -281,6 +296,10 @@ pub struct LimitsPayload {
     pub max_nodes: usize,
     pub max_edges: usize,
     pub max_density: f64,
+    /// The lanes a lanes-diagram admits; `0` when the kind has no lanes.
+    pub max_lanes: usize,
+    /// The events a lanes-diagram admits; `0` when the kind has no events.
+    pub max_events: usize,
 }
 
 /// Returns the index of the kinds or the schema of one kind (PRD §11.1).
@@ -294,10 +313,10 @@ pub fn get_diagram_schema(kind: Option<&str>) -> SchemaResponse {
             .into_iter()
             .map(|handler| KindIndexEntry {
                 kind: handler.kind().to_string(),
-                phase: phase_of(handler.kind()),
+                phase: handler.phase().to_string(),
                 engine: engine_of(handler.layout_hint()).to_string(),
                 limits: limits_of(handler.limits()),
-                min_example: min_example_of(handler.kind()),
+                min_example: handler.min_example(),
                 disponible: true,
             })
             .collect();
@@ -305,6 +324,7 @@ pub fn get_diagram_schema(kind: Option<&str>) -> SchemaResponse {
             ok: true,
             kinds: Some(kinds),
             kind: None,
+            kind_version: None,
             schema: None,
             rules: None,
             shapes: None,
@@ -323,6 +343,7 @@ pub fn get_diagram_schema(kind: Option<&str>) -> SchemaResponse {
             ok: false,
             kinds: None,
             kind: Some(kind_name.to_string()),
+            kind_version: None,
             schema: None,
             rules: None,
             shapes: None,
@@ -362,7 +383,8 @@ pub fn get_diagram_schema(kind: Option<&str>) -> SchemaResponse {
         ok: true,
         kinds: None,
         kind: Some(kind_name.to_string()),
-        schema: Some(schema),
+        kind_version: Some(handler.kind_version()),
+        schema: Some(annotate_since(schema, handler.kind_version())),
         rules: Some(rules_of(kind_name)),
         shapes: Some(shapes_of(kind_name)),
         required: Some(required),
@@ -379,14 +401,40 @@ fn supported_versions() -> Vec<u32> {
     vec![1]
 }
 
-/// The phase of the roadmap a kind belongs to (PRD §6).
-fn phase_of(kind: &str) -> String {
-    match kind {
-        "graph" | "er" => "F1".to_string(),
-        "flowchart" | "sequence" | "class" | "state" | "component" | "dataflow" | "tree"
-        | "mindmap" | "timeline" | "swimlane" => "F2".to_string(),
-        _ => "F3".to_string(),
+/// Stamps every field of the schema with the version it exists since
+/// (`f23-contrato.md`, S2): the promise PRD §10.1 makes
+/// (`x-graphium-since`, `docs/PRD.md:566`) that the code never published.
+/// Every field of the current generation exists since 1 — f22's opt-in
+/// fields included — so the default is uniform and a future field declares
+/// its own later by carrying the key already.
+fn annotate_since(schema: Value, version: u32) -> Value {
+    fn walk(value: &mut Value, version: u32) {
+        let Value::Object(map) = value else {
+            return;
+        };
+        // Every field of a `properties` map — at the top of the schema or
+        // inside `$defs` — is a field of the contract: it says its since.
+        if let Some(Value::Object(props)) = map.get_mut("properties") {
+            for (_name, prop) in props.iter_mut() {
+                if prop.is_object() {
+                    if let Value::Object(prop_map) = prop {
+                        prop_map
+                            .entry("x-graphium-since")
+                            .or_insert_with(|| Value::from(version));
+                    }
+                    walk(prop, version);
+                }
+            }
+        }
+        for (key, child) in map.iter_mut() {
+            if key != "properties" {
+                walk(child, version);
+            }
+        }
     }
+    let mut schema = schema;
+    walk(&mut schema, version);
+    schema
 }
 
 /// The layout engine of a kind (PRD §8.3.1).
@@ -406,316 +454,40 @@ fn limits_of(limits: gx_core::kind::KindLimits) -> LimitsPayload {
         max_nodes: limits.max_nodes,
         max_edges: limits.max_edges,
         max_density: limits.max_density,
+        max_lanes: limits.max_lanes,
+        max_events: limits.max_events,
     }
 }
 
-/// The minimal example of a kind (PRD §6.1).
+/// The minimal example of a kind (PRD §6.1), as the kind itself declares it
+/// (`f20-reuso.md`, S9): `gx-mcp` owns no example, so a kind that enters the
+/// registry shows its own without touching this crate (O7) and a name outside
+/// the registry inherits none.
 fn min_example_of(kind: &str) -> Value {
-    match kind {
-        "c4" => serde_json::json!({
-            "version": 1,
-            "kind": "c4",
-            "title": "Pedidos — contexto",
-            "level": "context",
-            "elements": [
-                { "id": "cliente", "type": "person", "label": "Cliente",
-                  "description": "hace el pedido" },
-                { "id": "operador", "type": "person", "label": "Operador" },
-                { "id": "pedidos", "type": "system", "label": "Sistema de pedidos",
-                  "technology": "Rust" }
-            ],
-            "relations": [
-                { "from": "cliente", "to": "pedidos", "label": "hace un pedido" },
-                { "from": "operador", "to": "pedidos", "label": "despacha" }
-            ]
-        }),
-        "component" => serde_json::json!({
-            "version": 1,
-            "kind": "component",
-            "title": "API de pedidos",
-            "nodes": [
-                { "id": "web", "label": "Web", "role": "container" },
-                { "id": "api", "label": "API" },
-                { "id": "db", "label": "Postgres", "role": "database" }
-            ],
-            "groups": [
-                { "id": "backend", "label": "Backend", "members": ["api", "db"] }
-            ],
-            "edges": [
-                { "from": "web", "to": "api", "label": "HTTPS" },
-                { "from": "api", "to": "db", "label": "SQL" }
-            ]
-        }),
-        "dataflow" => serde_json::json!({
-            "version": 1,
-            "kind": "dataflow",
-            "title": "ETL",
-            "nodes": [
-                { "id": "crm", "label": "CRM", "role": "external" },
-                { "id": "ingesta", "label": "ingesta", "role": "process" },
-                { "id": "crudo", "label": "pedidos crudos", "role": "store" }
-            ],
-            "edges": [
-                { "from": "crm", "to": "ingesta", "label": "pedidos" },
-                { "from": "ingesta", "to": "crudo", "label": "pedidos crudos" }
-            ]
-        }),
-        "er" => serde_json::json!({
-            "version": 1,
-            "kind": "er",
-            "title": "Schema — posts",
-            "tables": [
-                { "name": "users", "columns": [ { "name": "id", "type": "uuid", "key": "pk" } ] },
-                { "name": "posts", "columns": [
-                    { "name": "id", "type": "uuid", "key": "pk" },
-                    { "name": "user_id", "type": "uuid", "key": "fk" }
-                ] }
-            ],
-            "relations": [
-                {
-                    "from": { "table": "users", "column": "id" },
-                    "to": { "table": "posts", "column": "user_id" },
-                    "cardinality": "1:N"
-                }
-            ]
-        }),
-        "tree" => serde_json::json!({
-            "version": 1,
-            "kind": "tree",
-            "title": "src",
-            "root": {
-                "name": "src",
-                "children": [
-                    { "name": "main.rs" },
-                    { "name": "lib", "children": [ { "name": "mod.rs" } ] }
-                ]
-            }
-        }),
-        "mindmap" => serde_json::json!({
-            "version": 1,
-            "kind": "mindmap",
-            "title": "Graphium",
-            "root": {
-                "topic": "Graphium",
-                "branches": [ { "topic": "MCP" }, { "topic": "Plano" } ]
-            }
-        }),
-        "sequence" => serde_json::json!({
-            "version": 1,
-            "kind": "sequence",
-            "title": "pedido",
-            "participants": [
-                { "id": "cliente", "label": "Cliente" },
-                { "id": "api", "label": "API" }
-            ],
-            "messages": [
-                { "from": "cliente", "to": "api", "label": "POST /orders" },
-                { "from": "api", "to": "cliente", "label": "201", "reply": true }
-            ]
-        }),
-        "timeline" => serde_json::json!({
-            "version": 1,
-            "kind": "timeline",
-            "title": "Roadmap",
-            "lanes": [ { "id": "q1", "label": "Q1" } ],
-            "events": [
-                { "label": "v1.0", "lane": "q1" },
-                { "label": "v1.1", "lane": "q1" }
-            ]
-        }),
-        "class" => serde_json::json!({
-            "version": 1,
-            "kind": "class",
-            "title": "pedidos",
-            "nodes": [
-                { "id": "Base", "label": "Base", "role": "abstract" },
-                { "id": "Order", "label": "Order" },
-                { "id": "Payable", "label": "Payable", "role": "interface" }
-            ],
-            "edges": [
-                { "from": "Order", "to": "Base", "relation": "extends" },
-                { "from": "Order", "to": "Payable", "relation": "implements" }
-            ]
-        }),
-        "flowchart" => serde_json::json!({
-            "version": 1,
-            "kind": "flowchart",
-            "title": "aprobación",
-            "nodes": [
-                { "id": "inicio", "label": "pedido", "role": "start" },
-                { "id": "limite", "label": "¿supera el límite?", "role": "decision" },
-                { "id": "fin", "label": "fin", "role": "end" }
-            ],
-            "edges": [
-                { "from": "inicio", "to": "limite" },
-                { "from": "limite", "to": "fin", "label": "sí" }
-            ]
-        }),
-        "state" => serde_json::json!({
-            "version": 1,
-            "kind": "state",
-            "title": "pedido",
-            "nodes": [
-                { "id": "nuevo", "label": "nuevo", "role": "initial" },
-                { "id": "pago", "label": "pago pendiente" },
-                { "id": "cerrado", "label": "cerrado", "role": "final" }
-            ],
-            "edges": [
-                { "from": "nuevo", "to": "pago", "label": "crear" },
-                { "from": "pago", "to": "cerrado", "label": "cancelar" }
-            ]
-        }),
-        "swimlane" => serde_json::json!({
-            "version": 1,
-            "kind": "swimlane",
-            "title": "soporte",
-            "lanes": [ { "id": "cliente" }, { "id": "soporte" } ],
-            "steps": [
-                { "label": "reclama", "lane": "cliente" },
-                { "label": "responde", "lane": "soporte" }
-            ]
-        }),
-        _ => serde_json::json!({
-            "version": 1,
-            "kind": "graph",
-            "title": "parse_config() — flujo",
-            "direction": "TB",
-            "nodes": [
-                { "id": "read", "label": "read file" },
-                { "id": "ok", "label": "Config" }
-            ],
-            "edges": [
-                { "from": "read", "to": "ok", "label": "utf-8" }
-            ],
-            "groups": [
-                { "id": "io", "label": "I/O", "members": ["read"] }
-            ]
-        }),
-    }
+    gx_core::kind::for_kind(kind)
+        .map(|handler| handler.min_example())
+        .unwrap_or(Value::Null)
 }
 
-/// The cross rules of a kind, written for the agent (PRD §11.1).
+/// The cross rules of a kind, written for the agent (PRD §11.1): the generic
+/// rules every kind enforces, the line of its vocabulary and the rules the kind
+/// itself teaches (`f20-reuso.md`, S11). `gx-mcp` owns only what is generic.
 fn rules_of(kind: &str) -> Vec<String> {
+    let Some(handler) = gx_core::kind::for_kind(kind) else {
+        return Vec::new();
+    };
+
     let mut rules = vec![
-        "`version` debe ser 1 (soportadas: 1).".to_string(),
+        "`version` es opcional y vale 1 (soportadas: 1); `kind` sí es obligatorio.".to_string(),
         "Los campos desconocidos se rechazan con `unknown_field`.".to_string(),
+        // The line-break convention (`f23-contrato.md`, S4), the one thing no
+        // schema could say: the drawing never wraps on its own.
+        "Una etiqueta larga se corta con `\\n`: el dibujo no envuelve solo y la caja crece hasta la línea más ancha."
+            .to_string(),
     ];
-    match kind {
-        "graph" => {
-            rules.push("Cada nodo tiene un `id` único dentro del diagrama.".to_string());
-            rules.push(
-                "Cada arista referencia nodos declarados en `nodes` con `from` y `to`.".to_string(),
-            );
-        }
-        "er" => {
-            rules.push("Cada tabla tiene un `name` único dentro del diagrama.".to_string());
-            rules.push("Cada relación referencia tablas y columnas declaradas.".to_string());
-        }
-        "timeline" => {
-            rules.push(
-                "Cada `id` de carril es único, y `order` decide la columna: el array de eventos puede venir desordenado."
-                    .to_string(),
-            );
-            rules.push(
-                "Si el documento declara `lanes`, cada evento dice su `lane` y referencia uno declarado."
-                    .to_string(),
-            );
-            rules.push(
-                "Un evento con `end` es un tramo y `end` tiene que ser posterior a `order`."
-                    .to_string(),
-            );
-        }
-        "class" => {
-            rules.push(
-                "El `role` de un nodo decide su forma: `class` (redondeado, por defecto), `abstract`, `interface`, `enum` (caja)."
-                    .to_string(),
-            );
-            rules.push(
-                "`relation` decide la línea: `association` (sólida con flecha, por defecto), `extends` (sólida, se nombra), `implements` (punteada, se nombra), `composition` (sólida sin flecha), `dependency` (punteada)."
-                    .to_string(),
-            );
-            rules.push(
-                "La herencia no puede tener ciclos: una clase no es su propio padre.".to_string(),
-            );
-            rules.push(
-                "Si la arista no lleva `label`, la línea se nombra con su relación; la asociación no, porque no afirma nada."
-                    .to_string(),
-            );
-        }
-        "component" => {
-            rules.push(
-                "El `role` de un nodo decide su forma: `container` (caja), `component` (redondeado, por defecto), `database` (cilindro), `external` (caja punteada)."
-                    .to_string(),
-            );
-            rules.push(
-                "Cada `groups[].members` referencia piezas o fronteras declaradas, y **una pieza vive en una sola frontera**."
-                    .to_string(),
-            );
-            rules.push(
-                "La etiqueta de la arista es el protocolo o la llamada (`HTTPS`, `SQL`)."
-                    .to_string(),
-            );
-        }
-        "dataflow" => {
-            rules.push(
-                "El `role` de un nodo decide su forma: `process` (redondeado, por defecto), `store` (cilindro), `external` (caja)."
-                    .to_string(),
-            );
-            rules.push("Un flujo no puede ir de un depósito a otro ni de una entidad externa a otra: en el medio va un proceso.".to_string());
-            rules.push("La etiqueta del flujo es el dato que viaja.".to_string());
-        }
-        "flowchart" => {
-            rules.push(
-                "El `role` de un nodo decide su forma: `start`, `end`, `process` (por defecto), `decision`, `data`, `note`."
-                    .to_string(),
-            );
-            rules.push(
-                "La etiqueta de una arista es la condición del camino, por ejemplo `sí` / `no`."
-                    .to_string(),
-            );
-        }
-        "state" => {
-            rules.push(
-                "El `role` de un nodo decide su forma: `initial` (elipse), `state` (redondeado, por defecto), `final` (elipse)."
-                    .to_string(),
-            );
-            rules.push(
-                "Una máquina tiene **un solo** estado `initial`: dos entradas son dos máquinas."
-                    .to_string(),
-            );
-            rules.push(
-                "La etiqueta de una transición es el evento que la dispara, por ejemplo `pagar`."
-                    .to_string(),
-            );
-        }
-        "swimlane" => {
-            rules.push("Un proceso necesita al menos un carril y al menos un paso.".to_string());
-            rules.push(
-                "Cada paso referencia con `lane` un carril declarado, y el orden de `steps` es el orden del proceso."
-                    .to_string(),
-            );
-        }
-        "c4" => {
-            rules.push(
-                "El `level` decide qué `type` admite cada elemento: `context` → `person` y `system`; `containers` → `system` y `container`; `components` → `container` y `component`."
-                    .to_string(),
-            );
-            rules.push(
-                "Cada elemento tiene un `id` único y una `label`; `description` y `technology` son opcionales."
-                    .to_string(),
-            );
-            rules.push(
-                "Cada relación referencia con `from` y `to` elementos declarados en `elements`, y su `label` es el verbo (`usa`, `lee`, `cobra`)."
-                    .to_string(),
-            );
-            rules.push(
-                "No hay anidamiento en v1: la lectura sale de los tipos, del `level` y de las relaciones."
-                    .to_string(),
-            );
-        }
-        _ => {}
-    }
-    if admits_groups(kind) {
+    rules.extend(role_rule(handler.roles(), handler.default_role()));
+    rules.extend(handler.rules());
+    if admits_groups(handler) {
         rules.push(
             "Un miembro de `groups[].members` es un nodo o **otro grupo**: los grupos anidan. Un miembro vive en un solo grupo y un grupo no puede contenerse a si mismo."
                 .to_string(),
@@ -724,29 +496,72 @@ fn rules_of(kind: &str) -> Vec<String> {
     rules
 }
 
-/// The kinds whose document is nodes and edges, so they admit `groups`
-/// (PRD §7 RF15).
-fn admits_groups(kind: &str) -> bool {
-    matches!(
-        kind,
-        "graph" | "flowchart" | "state" | "class" | "component" | "dataflow"
-    )
+/// The line that teaches the vocabulary of a kind (`f20-reuso.md`, S11): every
+/// role with the shape it draws and which one is the default. It is derived
+/// from the kind's own table, so a new role enters the agent's rules without
+/// another copy here.
+fn role_rule(roles: &[gx_core::kind::Role], default: Option<&str>) -> Option<String> {
+    if roles.is_empty() {
+        return None;
+    }
+    let named: Vec<String> = roles
+        .iter()
+        .map(|role| {
+            let shape = shape_in_words(role.shape);
+            if Some(role.name) == default {
+                format!("`{}` ({shape}, por defecto)", role.name)
+            } else {
+                format!("`{}` ({shape})", role.name)
+            }
+        })
+        .collect();
+    Some(format!(
+        "El `role` de un nodo decide su forma: {}.",
+        named.join(", ")
+    ))
 }
 
-/// The shapes valid for a kind (PRD §11.1).
-fn shapes_of(kind: &str) -> Vec<String> {
-    match kind {
-        "graph" => vec![
-            "box".to_string(),
-            "rounded".to_string(),
-            "cylinder".to_string(),
-            "diamond".to_string(),
-            "ellipse".to_string(),
-            "note".to_string(),
-        ],
-        "er" => vec!["table".to_string(), "column".to_string()],
-        _ => vec![],
+/// The Spanish word of a shape, as the rules teach it.
+fn shape_in_words(shape: gx_core::ir::Shape) -> &'static str {
+    match shape {
+        gx_core::ir::Shape::Box => "caja",
+        gx_core::ir::Shape::Rounded => "redondeado",
+        gx_core::ir::Shape::Cylinder => "cilindro",
+        gx_core::ir::Shape::Diamond => "rombo",
+        gx_core::ir::Shape::Ellipse => "elipse",
+        gx_core::ir::Shape::Note => "nota",
+        gx_core::ir::Shape::Circle => "círculo",
+        gx_core::ir::Shape::Dot => "punto lleno",
+        gx_core::ir::Shape::RingDot => "punto dentro de un anillo",
     }
+}
+
+/// Whether the kind admits `groups`, read from its own schema
+/// (`f20-reuso.md`, S10): the rule is written when the document shape declares
+/// the field, never from a hand list here.
+fn admits_groups(handler: &dyn gx_core::kind::KindHandler) -> bool {
+    handler
+        .schema()
+        .get("properties")
+        .and_then(|properties| properties.get("groups"))
+        .is_some()
+}
+
+/// The shapes valid for a kind (PRD §11.1): the truth of the kind — what its
+/// roles draw (`f19-formas.md`, S4) — read from the registry, never a hand
+/// list here.
+fn shapes_of(kind: &str) -> Vec<String> {
+    gx_core::kind::handlers()
+        .iter()
+        .find(|handler| handler.kind() == kind)
+        .map(|handler| {
+            handler
+                .shapes()
+                .iter()
+                .map(|shape| shape.as_str().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -1637,6 +1452,50 @@ mod tests {
         assert_eq!(target["extra"], true);
     }
 
+    /// `f25-arreglos.md` S2: la puerta seca da el mismo aviso que el render
+    /// (PRD §7 RF20). Una tabla sin clave se valida igual, con **un**
+    /// `tables_without_key`; un esquema con claves no lo recibe.
+    #[test]
+    fn the_dry_run_reports_the_tables_without_a_primary_key() {
+        let keyless = r#"{
+          "version": 1, "kind": "er",
+          "tables": [
+            { "name": "audit_log", "columns": [ { "name": "at", "type": "timestamptz" } ] }
+          ]
+        }"#;
+        let response = validate_diagram(keyless);
+        assert!(
+            response.ok,
+            "el aviso no rechaza el documento: {response:?}"
+        );
+        let warnings = response.warnings.expect("el dry run informa avisos");
+        let keyless_warnings: Vec<_> = warnings
+            .iter()
+            .filter(|warning| warning.code == "tables_without_key")
+            .collect();
+        assert_eq!(keyless_warnings.len(), 1, "un solo aviso: {warnings:?}");
+        assert!(
+            keyless_warnings[0].message.contains("audit_log"),
+            "el aviso nombra la tabla: {warnings:?}"
+        );
+
+        let keyed = r#"{
+          "version": 1, "kind": "er",
+          "tables": [
+            { "name": "users", "columns": [ { "name": "id", "type": "uuid", "key": "pk" } ] }
+          ]
+        }"#;
+        let response = validate_diagram(keyed);
+        assert!(response.ok, "{response:?}");
+        let warnings = response.warnings.expect("el dry run informa avisos");
+        assert!(
+            warnings
+                .iter()
+                .all(|warning| warning.code != "tables_without_key"),
+            "un esquema con claves no lleva el aviso: {warnings:?}"
+        );
+    }
+
     #[test]
     fn a_valid_document_validates_without_touching_the_window() {
         let response = validate_diagram(MINIMAL);
@@ -1767,7 +1626,54 @@ mod tests {
         let shapes = response.shapes.unwrap();
         assert!(shapes.contains(&"rounded".to_string()));
         assert!(!shapes.is_empty());
-        assert_eq!(response.required.unwrap(), vec!["version", "kind"]);
+        // `version` stopped being required when it gained its default
+        // (`f23-contrato.md`, S5).
+        assert_eq!(response.required.unwrap(), vec!["kind"]);
+    }
+
+    /// S11 de `f20-reuso.md`: la línea del vocabulario se deriva de `roles()`
+    /// —cada rol con la forma con que se dibuja— y marca el rol por defecto.
+    #[test]
+    fn the_role_line_derives_from_the_roles_of_the_kind() {
+        let rules = get_diagram_schema(Some("flowchart")).rules.expect("rules");
+        let line = rules
+            .iter()
+            .find(|rule| rule.contains("decide su forma"))
+            .expect("la línea del vocabulario");
+        assert!(line.contains("`start` (elipse)"), "{line}");
+        assert!(
+            line.contains("`process` (redondeado, por defecto)"),
+            "{line}"
+        );
+        assert!(line.contains("`note` (nota)"), "{line}");
+    }
+
+    /// S4 de `f19-formas.md`: `shapes[]` es la verdad del kind — lo que sus
+    /// roles dibujan, no una lista escrita a mano en gx-mcp. El er que
+    /// anunciaba `table`/`column` (que nunca fueron variantes de `Shape`) y
+    /// los kinds que anunciaban una lista vacía mienten al agente.
+    #[test]
+    fn the_shapes_of_a_kind_are_its_own_truth() {
+        let flowchart = get_diagram_schema(Some("flowchart"));
+        assert!(flowchart.ok);
+        let shapes = flowchart.shapes.expect("shapes");
+        assert!(shapes.contains(&"diamond".to_string()), "{shapes:?}");
+        assert!(shapes.contains(&"ellipse".to_string()), "{shapes:?}");
+        assert!(shapes.contains(&"note".to_string()), "{shapes:?}");
+
+        let er = get_diagram_schema(Some("er"));
+        assert_eq!(
+            er.shapes.expect("shapes"),
+            vec!["box".to_string()],
+            "er draws boxes: the table/column fiction dies"
+        );
+
+        let gantt = get_diagram_schema(Some("gantt"));
+        assert_eq!(
+            gantt.shapes.expect("shapes"),
+            vec!["rounded".to_string()],
+            "a kind without a role table draws its default"
+        );
     }
 
     /// El índice de kinds le da al agente un ejemplo mínimo de cada kind: si
@@ -1819,6 +1725,167 @@ mod tests {
                 .any(|rule| rule.contains("level") && rule.contains("context")),
             "the rules teach the level discipline: {rules:?}"
         );
+    }
+
+    /// S8 de `f18-gantt.md`: el índice le da al agente el kind `gantt` con
+    /// sus techos y sus reglas, y el ejemplo mínimo que trae válida y pinta.
+    #[test]
+    fn the_gantt_kind_is_listed_with_its_limits_and_its_rules() {
+        let index = get_diagram_schema(None).kinds.expect("index");
+        let entry = index
+            .iter()
+            .find(|entry| entry.kind == "gantt")
+            .expect("gantt is in the index");
+        assert_eq!(entry.engine, "lanes");
+        assert_eq!(entry.phase, "F3");
+        assert_eq!(entry.limits.max_nodes, 200);
+        assert!(entry.disponible);
+
+        let example = entry.min_example.to_string();
+        let validated = validate_diagram(&example);
+        assert!(validated.ok, "{:?}", validated.errors);
+
+        let schema = get_diagram_schema(Some("gantt"));
+        assert!(schema.ok);
+        assert_eq!(schema.limits.expect("limits").max_nodes, 200);
+        let rules = schema.rules.expect("rules");
+        assert!(
+            rules.iter().any(|rule| rule.contains("depends_on"))
+                && rules.iter().any(|rule| rule.contains("`start`")),
+            "the rules teach the spans and the dependencies: {rules:?}"
+        );
+    }
+
+    /// S10 de `f20-reuso.md`: los límites que el kind declara y gx-core hace
+    /// cumplir llegan al agente tal como son: un diagrama de carriles dice
+    /// cuántos carriles y cuántos eventos admite, no solo cuántos nodos.
+    #[test]
+    fn the_limits_payload_carries_the_lanes_and_events_ceilings() {
+        let index = get_diagram_schema(None).kinds.expect("index");
+        let gantt = index
+            .iter()
+            .find(|entry| entry.kind == "gantt")
+            .expect("gantt is in the index");
+        let limits = serde_json::to_value(gantt.limits).expect("limits");
+        assert_eq!(limits["max_lanes"], 40, "{limits}");
+        assert_eq!(limits["max_events"], 200, "{limits}");
+
+        let graph = index
+            .iter()
+            .find(|entry| entry.kind == "graph")
+            .expect("graph is in the index");
+        let limits = serde_json::to_value(graph.limits).expect("limits");
+        assert_eq!(
+            limits["max_lanes"], 0,
+            "un grafo no tiene carriles: {limits}"
+        );
+        assert_eq!(limits["max_events"], 0, "{limits}");
+    }
+
+    /// S9 de `f20-reuso.md`: el ejemplo mínimo lo declara el kind, no una
+    /// lista en gx-mcp. El catálogo y el schema de un kind sirven exactamente
+    /// el documento del kind, ese documento valida, y un nombre que el
+    /// registro no conoce no hereda el ejemplo de `graph`: el catálogo no
+    /// puede inventarle un documento al agente.
+    #[test]
+    fn only_a_registered_kind_has_an_example() {
+        gx_kinds::register_all();
+        let index = get_diagram_schema(None).kinds.expect("index");
+        for kind in gx_core::kind::kind_names() {
+            let handler = gx_core::kind::for_kind(kind).expect("registered");
+            let own = handler.min_example();
+            assert_eq!(
+                super::min_example_of(kind),
+                own,
+                "gx-mcp sirve otro ejemplo que el del kind `{kind}`"
+            );
+            let entry = index
+                .iter()
+                .find(|entry| entry.kind == kind)
+                .unwrap_or_else(|| panic!("`{kind}` no está en el índice"));
+            assert_eq!(
+                entry.min_example, own,
+                "el índice inventa el ejemplo de `{kind}`"
+            );
+            assert_eq!(
+                get_diagram_schema(Some(kind)).examples.expect("examples"),
+                vec![own.clone()],
+                "el schema de `{kind}` sirve otro ejemplo"
+            );
+            let validated = validate_diagram(&own.to_string());
+            assert!(
+                validated.ok,
+                "el ejemplo de `{kind}` no valida: {:?}",
+                validated.errors
+            );
+        }
+        assert!(
+            super::min_example_of("nope").is_null(),
+            "un kind fuera del registro no hereda el ejemplo de otro: {}",
+            super::min_example_of("nope")
+        );
+    }
+
+    /// S10 de `f20-reuso.md`: la fase sale del kind, y el índice sigue
+    /// contando el roadmap que el producto promete.
+    #[test]
+    fn the_index_reports_the_phase_of_every_kind() {
+        gx_kinds::register_all();
+        let index = get_diagram_schema(None).kinds.expect("index");
+        for (kind, phase) in [
+            ("graph", "F1"),
+            ("er", "F1"),
+            ("flowchart", "F2"),
+            ("sequence", "F2"),
+            ("class", "F2"),
+            ("state", "F2"),
+            ("component", "F2"),
+            ("dataflow", "F2"),
+            ("tree", "F2"),
+            ("mindmap", "F2"),
+            ("timeline", "F2"),
+            ("swimlane", "F2"),
+            ("c4", "F3"),
+            ("gantt", "F3"),
+        ] {
+            let entry = index
+                .iter()
+                .find(|entry| entry.kind == kind)
+                .unwrap_or_else(|| panic!("`{kind}` no está en el índice"));
+            assert_eq!(entry.phase, phase, "la fase de `{kind}`");
+        }
+    }
+
+    /// S10 de `f20-reuso.md`: la regla de grupos se escribe para los kinds
+    /// cuyo schema declara `groups` —los seis que dibujan grupos—, leída del
+    /// kind y no de una lista en gx-mcp.
+    #[test]
+    fn the_groups_rule_follows_the_kinds_that_admit_groups() {
+        gx_kinds::register_all();
+        let with_groups = [
+            "class",
+            "component",
+            "dataflow",
+            "flowchart",
+            "graph",
+            "state",
+        ];
+        for kind in gx_core::kind::kind_names() {
+            let admits = with_groups.contains(&kind);
+            let handler = gx_core::kind::for_kind(kind).expect("registered");
+            let declares = handler
+                .schema()
+                .get("properties")
+                .and_then(|properties| properties.get("groups"))
+                .is_some();
+            assert_eq!(declares, admits, "`{kind}` declara `groups`");
+            let rules = get_diagram_schema(Some(kind)).rules.expect("rules");
+            assert_eq!(
+                rules.iter().any(|rule| rule.contains("groups[].members")),
+                admits,
+                "`{kind}` enseña la regla de grupos: {rules:?}"
+            );
+        }
     }
 
     #[test]
@@ -1997,5 +2064,264 @@ mod tests {
         for key in ["ok", "diagrams", "session"] {
             assert!(object.contains_key(key), "falta `{key}`: {object:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod version_truth {
+    use super::{get_diagram_schema, validate_diagram};
+    use serde_json::json; // (queda para el assert)
+
+    // T1 (`f23-contrato.md`, S2): the schema answers WHEN a field exists —
+    // the kind's contract version travels in the response, and every field
+    // of the schema carries `x-graphium-since`.
+    #[test]
+    fn the_schema_publishes_the_kind_version_and_the_field_since() {
+        let response = get_diagram_schema(Some("sequence"));
+        assert!(response.ok);
+        assert_eq!(response.kind_version, Some(1), "la versión del kind viaja");
+
+        let schema = response.schema.expect("el schema del kind");
+        // schemars parks the structs in $defs: the opt-in field of f22 lives
+        // there, and the stamp reaches it through the same walk.
+        let activation = &schema["$defs"]["Message"]["properties"]["activation"];
+        assert_eq!(
+            activation["x-graphium-since"],
+            json!(1),
+            "el campo opt-in dice desde cuándo existe: {activation}"
+        );
+        assert_eq!(
+            schema["properties"]["participants"]["x-graphium-since"],
+            json!(1),
+            "todo campo declara su since: {schema}"
+        );
+    }
+
+    // T1: `validate_diagram` answers with the versions this build supports —
+    // it always returned an empty list (contract.rs:97-157).
+    #[test]
+    fn validate_diagram_carries_the_supported_versions() {
+        crate::bootstrap();
+        let document = r#"{
+            "version": 1, "kind": "graph",
+            "nodes": [ { "id": "a" }, { "id": "b" } ],
+            "edges": [ { "from": "a", "to": "b" } ]
+        }"#;
+        let response = validate_diagram(document);
+        assert!(response.ok, "{response:?}");
+        assert_eq!(response.supported_versions, vec![1]);
+    }
+}
+
+#[cfg(test)]
+mod error_paths {
+    use crate::contract::validate_diagram;
+    use gx_core::error::ErrorCode;
+
+    /// The first error of a document the tool rejects.
+    fn first(document: &str) -> crate::contract::ErrorPayload {
+        let response = validate_diagram(document);
+        assert!(!response.ok, "el documento debe ser inválido: {document}");
+        response.errors.into_iter().next().expect("un error")
+    }
+
+    // T2 (`f23-contrato.md`, S3): an unknown field says WHERE it is, with the
+    // index style every other error uses (`nodes[0].labl`), not a bare name.
+    #[test]
+    fn an_unknown_field_reports_its_place_in_the_document() {
+        let error = first(
+            r#"{ "version": 1, "kind": "graph",
+                 "nodes": [ { "id": "a", "labl": "A" } ], "edges": [] }"#,
+        );
+        assert_eq!(error.code, ErrorCode::UnknownField.as_str());
+        assert_eq!(
+            error.path, "nodes[0].labl",
+            "el path dice dónde está el campo: {}",
+            error.path
+        );
+        let hint = error.hint.expect("el hint propone el campo correcto");
+        assert!(hint.contains("label"), "did you mean label: {hint}");
+    }
+
+    // T2: a field with the wrong type — or a missing required field — reports
+    // the path instead of the empty string the schema failure used to return.
+    #[test]
+    fn a_schema_failure_reports_the_field_it_failed_in() {
+        let wrong_type = first(
+            r#"{ "version": 1, "kind": "graph",
+                 "nodes": "no soy una lista", "edges": [] }"#,
+        );
+        assert_eq!(wrong_type.path, "nodes", "{}", wrong_type.message);
+        assert_eq!(wrong_type.code, ErrorCode::InvalidSchema.as_str());
+
+        // A nested required field: the node owes its `id`.
+        let missing = first(
+            r#"{ "version": 1, "kind": "graph", "nodes": [ { "label": "sin id" } ], "edges": [] }"#,
+        );
+        assert_eq!(missing.path, "nodes[0].id", "{}", missing.message);
+        assert_eq!(missing.code, ErrorCode::MissingField.as_str());
+        assert!(
+            missing.hint.is_some(),
+            "todo error dice cómo arreglarse: {missing:?}"
+        );
+
+        // Nested: a message without its label.
+        let nested = first(
+            r#"{ "version": 1, "kind": "sequence",
+                 "participants": [ { "id": "api" } ], "messages": [ { "from": "api", "to": "api" } ] }"#,
+        );
+        assert_eq!(nested.path, "messages[0].label", "{}", nested.message);
+    }
+
+    // T2: the empty id — a rule every writer breaks at least once — carries a
+    // hint in the kinds that had `None`.
+    #[test]
+    fn an_empty_id_says_what_to_write() {
+        for (kind, document) in [
+            (
+                "sequence",
+                r#"{ "version": 1, "kind": "sequence", "participants": [ { "id": "  " } ] }"#,
+            ),
+            (
+                "graph",
+                r#"{ "version": 1, "kind": "graph", "nodes": [ { "id": "" } ], "edges": [] }"#,
+            ),
+        ] {
+            let error = first(document);
+            assert_eq!(
+                error.path,
+                "participants[0].id".replace(
+                    "participants",
+                    if kind == "graph" {
+                        "nodes"
+                    } else {
+                        "participants"
+                    }
+                )
+            );
+            let hint = error
+                .hint
+                .unwrap_or_else(|| panic!("{kind}: el id vacío dice qué escribir"));
+            assert!(!hint.is_empty(), "{kind}: {hint}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod teaching_truth {
+    use super::get_diagram_schema;
+
+    // T3 (`f23-contrato.md`, S4): the example of a kind shows its opt-in
+    // fields — what f22 added is not a secret an agent has to read the whole
+    // `$defs` to discover.
+    #[test]
+    fn the_examples_show_the_fields_the_kinds_added() {
+        /// Whether a key appears anywhere in the example.
+        fn mentions(value: &serde_json::Value, key: &str) -> bool {
+            match value {
+                serde_json::Value::Object(map) => {
+                    map.contains_key(key) || map.values().any(|child| mentions(child, key))
+                }
+                serde_json::Value::Array(items) => items.iter().any(|item| mentions(item, key)),
+                _ => false,
+            }
+        }
+
+        for (kind, what) in [
+            ("sequence", "activation"),
+            ("class", "attributes"),
+            ("class", "methods"),
+            ("swimlane", "connects"),
+            ("timeline", "role"),
+        ] {
+            let response = get_diagram_schema(Some(kind));
+            let example = &response.examples.expect("el ejemplo del kind")[0];
+            assert!(
+                mentions(example, what),
+                "{kind}: el ejemplo no muestra `{what}`: {example}"
+            );
+        }
+    }
+
+    // T3: every kind teaches its own rules — `sequence`, `tree` and `mindmap`
+    // answered only the two generic lines.
+    #[test]
+    fn every_kind_publishes_its_own_rules() {
+        let mut thin = Vec::new();
+        for kind in gx_core::kind::kind_names() {
+            let response = get_diagram_schema(Some(kind));
+            let rules = response.rules.unwrap_or_default();
+            if rules.len() < 3 {
+                thin.push((kind, rules.len()));
+            }
+        }
+        assert!(thin.is_empty(), "kinds sin reglas propias: {thin:?}");
+    }
+
+    // T3: the line-break convention is written where the writer reads it —
+    // the generic rules of every kind.
+    #[test]
+    fn the_generic_rules_say_how_a_label_breaks() {
+        let response = get_diagram_schema(Some("graph"));
+        let rules = response.rules.expect("las reglas del kind");
+        assert!(
+            rules.iter().any(|rule| rule.contains("\\n")),
+            "las reglas dicen cómo se corta una etiqueta: {rules:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod cheap_decisions {
+    use super::validate_diagram;
+    use gx_core::error::ErrorCode;
+
+    // T4 (`f23-contrato.md`, S5): `version` has one legal value, so it stops
+    // being boilerplate — absent means 1.
+    #[test]
+    fn a_document_without_version_is_version_one() {
+        let response = validate_diagram(
+            r#"{ "kind": "graph", "title": "sin versión",
+                 "nodes": [ { "id": "a" }, { "id": "b" } ],
+                 "edges": [ { "from": "a", "to": "b" } ] }"#,
+        );
+        assert!(response.ok, "la versión es opcional: {:?}", response.errors);
+    }
+
+    // T4: `title`, when present, is what the panel shows — 1 to 120 visible
+    // characters, the length the PRD already promised (§10.1).
+    #[test]
+    fn a_title_out_of_range_is_reported() {
+        let long = "x".repeat(121);
+        let response = validate_diagram(&format!(
+            r#"{{ "kind": "graph", "title": "{long}",
+                  "nodes": [ {{ "id": "a" }} ], "edges": [] }}"#
+        ));
+        assert!(!response.ok, "121 caracteres no entran en el panel");
+        assert_eq!(response.errors[0].path, "title");
+        assert_eq!(
+            response.errors[0].code,
+            ErrorCode::InvalidValue.as_str(),
+            "{:?}",
+            response.errors[0]
+        );
+        assert!(response.errors[0].hint.is_some(), "y dice cuánto entra");
+
+        let blank = validate_diagram(
+            r#"{ "kind": "graph", "title": "   ", "nodes": [ { "id": "a" } ], "edges": [] }"#,
+        );
+        assert!(!blank.ok, "un título en blanco no dice nada");
+        assert_eq!(blank.errors[0].path, "title");
+
+        // 120 exactly is inside, and so is no title at all.
+        let limit = "y".repeat(120);
+        let ok = validate_diagram(&format!(
+            r#"{{ "kind": "graph", "title": "{limit}",
+                  "nodes": [ {{ "id": "a" }} ], "edges": [] }}"#
+        ));
+        assert!(ok.ok, "{:?}", ok.errors);
+        let absent =
+            validate_diagram(r#"{ "kind": "graph", "nodes": [ { "id": "a" } ], "edges": [] }"#);
+        assert!(absent.ok, "{:?}", absent.errors);
     }
 }

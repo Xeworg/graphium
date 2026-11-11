@@ -12,11 +12,11 @@
 
 use gx_core::error::{ErrorCode, ValidationError};
 use gx_core::ir::{Direction, Ir, LayoutHint, Shape};
-use gx_core::kind::{DiagramKind, KindLimits};
+use gx_core::kind::{DiagramKind, KindLimits, Role};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::flow::{to_graph, validate_flow, validate_header, FlowEdge, FlowNode, Role};
+use crate::flow::{to_graph, validate_flow, validate_header, FlowEdge, FlowNode};
 use crate::groups::{to_ir_groups, validate_groups, Group};
 
 /// Contract version supported by this build (PRD §10.1).
@@ -27,16 +27,17 @@ pub const DEFAULT_ROLE: &str = "state";
 
 /// Los roles de una máquina de estados y su forma.
 pub const ROLES: [Role; 3] = [
-    Role::new("initial", Shape::Ellipse),
+    Role::new("initial", Shape::Dot),
     Role::new("state", Shape::Rounded),
-    Role::new("final", Shape::Ellipse),
+    Role::new("final", Shape::RingDot),
 ];
 
 /// The JSON contract of the `state` kind.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StateInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `state`.
     pub kind: String,
@@ -62,19 +63,27 @@ pub struct StateKind;
 
 impl DiagramKind for StateKind {
     const KIND: &'static str = "state";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = StateInput;
 
     fn schema() -> schemars::Schema {
         schemars::schema_for!(StateInput)
+    }
+
+    fn shapes() -> Vec<Shape> {
+        crate::flow::shapes_of_roles(&ROLES)
+    }
+
+    fn roles() -> &'static [Role] {
+        &ROLES
+    }
+
+    fn default_role() -> Option<&'static str> {
+        Some(DEFAULT_ROLE)
     }
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
@@ -123,16 +132,44 @@ impl DiagramKind for StateKind {
     }
 
     fn to_ir(&self, input: &Self::Input) -> Ir {
-        let mut graph = to_graph(
+        let graph = to_graph(
             &input.nodes,
             &input.edges,
             &ROLES,
             DEFAULT_ROLE,
             input.direction,
             Self::LAYOUT_HINT,
+            to_ir_groups(&input.groups),
         );
-        graph.groups = to_ir_groups(&input.groups);
         Ir::Graph(graph)
+    }
+
+    /// La regla propia de una máquina, en las palabras que el agente lee: dos
+    /// estados iniciales son dos máquinas.
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "Una máquina tiene **un solo** estado `initial`: dos entradas son dos máquinas."
+                .to_string(),
+            "La etiqueta de una transición es el evento que la dispara, por ejemplo `pagar`."
+                .to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "state",
+            "title": "pedido",
+            "nodes": [
+                { "id": "nuevo", "label": "nuevo", "role": "initial" },
+                { "id": "pago", "label": "pago pendiente" },
+                { "id": "cerrado", "label": "cerrado", "role": "final" }
+            ],
+            "edges": [
+                { "from": "nuevo", "to": "pago", "label": "crear" },
+                { "from": "pago", "to": "cerrado", "label": "cancelar" }
+            ]
+        })
     }
 }
 
@@ -143,59 +180,32 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::{StateInput, StateKind, DEFAULT_ROLE, ROLES};
+    use super::{StateKind, DEFAULT_ROLE, ROLES};
+    use crate::test_support::{an_unknown_group_member_is_rejected, groups_reach_the_ir, input};
     use gx_core::error::ErrorCode;
     use gx_core::ir::{Ir, Shape};
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> StateInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     /// RF15: `groups` existe en `state` y anida: un miembro es un nodo o
     /// otro grupo, y el documento no cambia de version.
     #[test]
     fn the_groups_of_a_diagram_reach_the_ir() {
-        let parsed = input(
+        groups_reach_the_ir::<StateKind>(
             r#"{ "version": 1, "kind": "state",
                  "nodes": [ { "id": "read" } ],
                  "groups": [
                    { "id": "io", "label": "I/O", "members": ["disk"] },
                    { "id": "disk", "members": ["read"] } ] }"#,
         );
-
-        StateKind
-            .validate(&parsed)
-            .expect("un grupo puede contener otro grupo");
-
-        let Ir::Graph(graph) = StateKind.to_ir(&parsed) else {
-            panic!("un diagrama de `state` es un grafo");
-        };
-        assert_eq!(graph.groups.len(), 2);
-        assert_eq!(graph.groups[0].id, "io");
-        assert_eq!(graph.groups[0].label.as_deref(), Some("I/O"));
-        assert_eq!(graph.groups[0].members, vec!["disk"]);
-        assert_eq!(graph.groups[1].members, vec!["read"]);
     }
 
     /// Un miembro que no existe se reporta antes de dibujar.
     #[test]
     fn a_group_member_that_does_not_exist_is_rejected() {
-        let parsed = input(
+        an_unknown_group_member_is_rejected::<StateKind>(
             r#"{ "version": 1, "kind": "state",
                  "nodes": [ { "id": "read" } ],
                  "groups": [ { "id": "io", "members": ["fantasma"] } ] }"#,
-        );
-
-        let errors = StateKind
-            .validate(&parsed)
-            .expect_err("el miembro no existe");
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.code == ErrorCode::UnknownRef
-                    && error.path == "groups[0].members[0]"),
-            "{errors:?}"
         );
     }
 
@@ -238,9 +248,9 @@ mod tests {
                 .unwrap_or_else(|| panic!("falta `{id}`"))
                 .shape
         };
-        assert_eq!(shape_of("nuevo"), Shape::Ellipse);
+        assert_eq!(shape_of("nuevo"), Shape::Dot);
         assert_eq!(shape_of("pago"), Shape::Rounded);
-        assert_eq!(shape_of("cerrado"), Shape::Ellipse);
+        assert_eq!(shape_of("cerrado"), Shape::RingDot);
 
         let transition = graph
             .edges

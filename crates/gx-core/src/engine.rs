@@ -193,8 +193,65 @@ fn measure_node(
         }
     };
     let label = metrics.measure(&node.label, &style(TextStyle::semibold(TOKENS.text_size)));
+
+    // A dot-family shape carries its label beside it (`f19-formas.md`, S8/S9;
+    // `f22-dibujo.md`, L4): the envelope reserves dot + gap + label, and the
+    // rows never apply — a dot with a compartment is not a dot.
+    if matches!(
+        node.shape,
+        crate::ir::Shape::Circle | crate::ir::Shape::Dot | crate::ir::Shape::RingDot
+    ) {
+        let width =
+            TOKENS.circle_diameter + TOKENS.node_padding + label.w + 2.0 * TOKENS.node_padding;
+        let height = TOKENS.circle_diameter.max(label.h) + 2.0 * TOKENS.node_padding;
+        return Size::new(width, height);
+    }
+
     let mut width = label.w;
-    let mut height = label.h + 2.0 * TOKENS.node_padding;
+    // The stereotype sits above the label at 0.85× (`f22-dibujo.md`, S4): the
+    // box grows one line, and the label center shifts down by the same amount
+    // in the renderer.
+    let stereotype_line = node
+        .stereotype
+        .as_ref()
+        .map(|word| {
+            let size = TOKENS.text_size * 0.85;
+            metrics
+                .measure(word, &style(TextStyle::regular(size)))
+                .h
+                .max(size * TOKENS.line_height)
+        })
+        .unwrap_or(0.0);
+    let mut height = label.h + 2.0 * TOKENS.node_padding + stereotype_line;
+    width = width.max(
+        node.stereotype
+            .as_ref()
+            .map(|word| {
+                metrics
+                    .measure(word, &style(TextStyle::regular(TOKENS.text_size * 0.85)))
+                    .w
+            })
+            .unwrap_or(0.0),
+    );
+
+    // The label fits the drawn shape, not just the rect (`f22-dibujo.md`,
+    // S9, L3a). A cylinder's label insets by the rim: one rim of air at each
+    // end, so the text never rides on the rim bulge the painter draws. The
+    // drawn rim caps at a quarter of the box; the measured one is the token,
+    // which is the cap the box this measure produces always clears.
+    if node.shape == crate::ir::Shape::Cylinder {
+        height += 2.0 * TOKENS.corner_radius;
+    }
+    // A diamond inscribes the rect: at the label's extreme rows its usable
+    // width is `w * (1 - label_h / h)`, so the width is the one that makes
+    // the widest line fit there — the padded rect of always is what let the
+    // label overflow the slanted edges.
+    if node.shape == crate::ir::Shape::Diamond {
+        let body = height - label.h;
+        if body > 0.0 {
+            width = width.max(label.w * height / body);
+        }
+    }
 
     if !node.rows.is_empty() {
         // The badge of the key occupies its own column, and the note is drawn
@@ -301,5 +358,80 @@ fn check_limits(limits: KindLimits, graph: &IrGraph) -> Result<(), Vec<Validatio
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::measure_node;
+    use crate::geom::Size;
+    use crate::ir::{IrNode, Shape};
+    use crate::text::{TextMetrics, TextStyle};
+    use crate::tokens::TOKENS;
+
+    /// Un medidor con ancho fijo por carácter: la medición no depende de la
+    /// fuente.
+    struct FakeMetrics;
+
+    impl TextMetrics for FakeMetrics {
+        fn measure(&self, text: &str, style: &TextStyle) -> Size {
+            let lines = text.lines().count().max(1) as f64;
+            Size::new(
+                text.chars().count() as f64 * style.size * 0.5,
+                lines * style.size * style.line_height,
+            )
+        }
+    }
+
+    fn node(shape: Shape, label: &str) -> IrNode {
+        let mut node = IrNode::new("a", label);
+        node.shape = shape;
+        node
+    }
+
+    /// S9 (`f22-dibujo.md`): the label fits the drawn shape, not just the
+    /// rect. A diamond's usable width at the label's extreme rows is
+    /// `w * (1 - label_h / h)`, so the box must be wide enough that the
+    /// widest line fits there.
+    #[test]
+    fn a_diamond_is_wide_enough_for_its_label_at_the_slanted_edges() {
+        let metrics = FakeMetrics;
+        let node = node(Shape::Diamond, "código congelado");
+        let measured = measure_node(&metrics, &node, false);
+
+        let line = TOKENS.text_size * TOKENS.line_height;
+        let height = measured.h;
+        // The usable width at the top and bottom rows of the label.
+        let usable = measured.w * (1.0 - line / height);
+        let label_w = "código congelado".chars().count() as f64 * TOKENS.text_size * 0.5;
+        assert!(
+            usable >= label_w,
+            "la etiqueta cabe en el rombo: usable {usable} ≥ texto {label_w} (caja {:?})",
+            measured
+        );
+        // And the old rule is gone: the diamond is wider than the padded
+        // rect of always, which is what let the label overflow (L3a).
+        assert!(
+            measured.w > label_w + 2.0 * TOKENS.node_padding,
+            "el rombo ya no es la caja con padding: {:?}",
+            measured
+        );
+    }
+
+    /// S9: a cylinder's label insets by the rim — the box grows one rim at
+    /// each end, so the label never rides on the rim bulge.
+    #[test]
+    fn a_cylinder_grows_one_rim_at_each_end() {
+        let metrics = FakeMetrics;
+        let node = node(Shape::Cylinder, "Postgres");
+        let measured = measure_node(&metrics, &node, false);
+
+        let line = TOKENS.text_size * TOKENS.line_height;
+        let expected = line + 2.0 * TOKENS.node_padding + 2.0 * TOKENS.corner_radius;
+        assert!(
+            (measured.h - expected).abs() < 1e-6,
+            "el cilindro mide su contenido más los dos rims: {} vs {expected}",
+            measured.h
+        );
     }
 }

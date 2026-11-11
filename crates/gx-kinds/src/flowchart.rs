@@ -5,13 +5,13 @@
 //! decisión, caja para un dato— y la etiqueta de la arista dice por qué camino
 //! se va (`sí`, `no`). Agregar un kind no toca el motor ni el renderer (O7).
 
-use gx_core::error::ValidationError;
+use gx_core::error::{ErrorCode, ValidationError};
 use gx_core::ir::{Direction, Ir, LayoutHint, Shape};
-use gx_core::kind::{DiagramKind, KindLimits};
+use gx_core::kind::{DiagramKind, KindLimits, Role};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::flow::{to_graph, validate_flow, validate_header, FlowEdge, FlowNode, Role};
+use crate::flow::{to_graph, validate_flow, validate_header, FlowEdge, FlowNode};
 use crate::groups::{to_ir_groups, validate_groups, Group};
 
 /// Contract version supported by this build (PRD §10.1).
@@ -19,6 +19,10 @@ pub const SUPPORTED_VERSION: u32 = 1;
 
 /// El rol de un nodo que no declara ninguno: un paso.
 pub const DEFAULT_ROLE: &str = "process";
+
+/// El rol de la única entrada del diagrama (`f20-reuso.md`, S8): exactamente
+/// un nodo lo declara, como `initial` en `state`.
+pub const START_ROLE: &str = "start";
 
 /// Los roles de un flowchart y la forma con la que se dibuja cada uno.
 pub const ROLES: [Role; 6] = [
@@ -34,7 +38,8 @@ pub const ROLES: [Role; 6] = [
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FlowchartInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `flowchart`.
     pub kind: String,
@@ -60,19 +65,27 @@ pub struct FlowchartKind;
 
 impl DiagramKind for FlowchartKind {
     const KIND: &'static str = "flowchart";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = FlowchartInput;
 
     fn schema() -> schemars::Schema {
         schemars::schema_for!(FlowchartInput)
+    }
+
+    fn shapes() -> Vec<Shape> {
+        crate::flow::shapes_of_roles(&ROLES)
+    }
+
+    fn roles() -> &'static [Role] {
+        &ROLES
+    }
+
+    fn default_role() -> Option<&'static str> {
+        Some(DEFAULT_ROLE)
     }
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
@@ -85,6 +98,36 @@ impl DiagramKind for FlowchartKind {
             DEFAULT_ROLE,
         ));
 
+        // Exactly one way in (`f20-reuso.md`, S8): the rule `state` enforces
+        // for `initial`, now shared. A drawing without a start has no way in;
+        // two starts are two ways into one drawing.
+        let starts: Vec<&str> = input
+            .nodes
+            .iter()
+            .filter(|node| node.role.as_deref().unwrap_or(DEFAULT_ROLE) == START_ROLE)
+            .map(|node| node.id.as_str())
+            .collect();
+        match starts.len() {
+            0 => errors.push(ValidationError::new(
+                "nodes",
+                ErrorCode::MissingField,
+                "un diagrama de `flowchart` necesita exactamente un nodo con rol `start`",
+                Some(format!(
+                    "declará uno, por ejemplo `{{ \"id\": \"inicio\", \"role\": \"{START_ROLE}\" }}`"
+                )),
+            )),
+            1 => {}
+            _ => errors.push(ValidationError::new(
+                "nodes",
+                ErrorCode::InvalidValue,
+                format!(
+                    "hay {} nodos con rol `{START_ROLE}`: exactamente uno",
+                    starts.len()
+                ),
+                Some("quitá todos menos uno, o bajá los demás a `process`".to_string()),
+            )),
+        }
+
         let node_ids: Vec<&str> = input.nodes.iter().map(|node| node.id.as_str()).collect();
         errors.extend(validate_groups(&node_ids, &input.groups));
 
@@ -96,16 +139,44 @@ impl DiagramKind for FlowchartKind {
     }
 
     fn to_ir(&self, input: &Self::Input) -> Ir {
-        let mut graph = to_graph(
+        let graph = to_graph(
             &input.nodes,
             &input.edges,
             &ROLES,
             DEFAULT_ROLE,
             input.direction,
             Self::LAYOUT_HINT,
+            to_ir_groups(&input.groups),
         );
-        graph.groups = to_ir_groups(&input.groups);
         Ir::Graph(graph)
+    }
+
+    /// S8 de `f20-reuso.md`: la regla del arranque es contrato, no estilo, y el
+    /// agente la lee antes de escribir el documento.
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "Un diagrama de `flowchart` declara **exactamente un** nodo con `role: \"start\"`: un dibujo sin entrada no tiene por dónde empezar y dos son dos flujos."
+                .to_string(),
+            "La etiqueta de una arista es la condición del camino, por ejemplo `sí` / `no`."
+                .to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "flowchart",
+            "title": "aprobación",
+            "nodes": [
+                { "id": "inicio", "label": "pedido", "role": "start" },
+                { "id": "limite", "label": "¿supera el límite?", "role": "decision" },
+                { "id": "fin", "label": "fin", "role": "end" }
+            ],
+            "edges": [
+                { "from": "inicio", "to": "limite" },
+                { "from": "limite", "to": "fin", "label": "sí" }
+            ]
+        })
     }
 }
 
@@ -116,59 +187,33 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::{FlowchartInput, FlowchartKind, DEFAULT_ROLE, ROLES};
+    use super::{FlowchartKind, DEFAULT_ROLE, ROLES};
+    use crate::test_support::{an_unknown_group_member_is_rejected, groups_reach_the_ir, input};
     use gx_core::error::ErrorCode;
     use gx_core::ir::{Ir, Shape};
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> FlowchartInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     /// RF15: `groups` existe en `flowchart` y anida: un miembro es un nodo o
     /// otro grupo, y el documento no cambia de version.
     #[test]
     fn the_groups_of_a_diagram_reach_the_ir() {
-        let parsed = input(
+        groups_reach_the_ir::<FlowchartKind>(
             r#"{ "version": 1, "kind": "flowchart",
-                 "nodes": [ { "id": "read" } ],
+                 "nodes": [ { "id": "iniciar", "role": "start" }, { "id": "read" } ],
+                 "edges": [ { "from": "iniciar", "to": "read" } ],
                  "groups": [
                    { "id": "io", "label": "I/O", "members": ["disk"] },
                    { "id": "disk", "members": ["read"] } ] }"#,
         );
-
-        FlowchartKind
-            .validate(&parsed)
-            .expect("un grupo puede contener otro grupo");
-
-        let Ir::Graph(graph) = FlowchartKind.to_ir(&parsed) else {
-            panic!("un diagrama de `flowchart` es un grafo");
-        };
-        assert_eq!(graph.groups.len(), 2);
-        assert_eq!(graph.groups[0].id, "io");
-        assert_eq!(graph.groups[0].label.as_deref(), Some("I/O"));
-        assert_eq!(graph.groups[0].members, vec!["disk"]);
-        assert_eq!(graph.groups[1].members, vec!["read"]);
     }
 
     /// Un miembro que no existe se reporta antes de dibujar.
     #[test]
     fn a_group_member_that_does_not_exist_is_rejected() {
-        let parsed = input(
+        an_unknown_group_member_is_rejected::<FlowchartKind>(
             r#"{ "version": 1, "kind": "flowchart",
                  "nodes": [ { "id": "read" } ],
                  "groups": [ { "id": "io", "members": ["fantasma"] } ] }"#,
-        );
-
-        let errors = FlowchartKind
-            .validate(&parsed)
-            .expect_err("el miembro no existe");
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.code == ErrorCode::UnknownRef
-                    && error.path == "groups[0].members[0]"),
-            "{errors:?}"
         );
     }
 
@@ -234,7 +279,9 @@ mod tests {
     /// El rol es opcional: sin rol, el nodo es un paso.
     #[test]
     fn a_node_without_a_role_is_a_process() {
-        let parsed = input(r#"{ "version": 1, "kind": "flowchart", "nodes": [ { "id": "a" } ] }"#);
+        let parsed = input(
+            r#"{ "version": 1, "kind": "flowchart", "nodes": [ { "id": "inicio", "role": "start" }, { "id": "a" } ] }"#,
+        );
         FlowchartKind.validate(&parsed).expect("es válido");
 
         let Ir::Graph(graph) = FlowchartKind.to_ir(&parsed) else {
@@ -246,9 +293,14 @@ mod tests {
             .find(|role| role.name == DEFAULT_ROLE)
             .expect("el rol por defecto está en la lista")
             .shape;
-        assert_eq!(graph.nodes[0].shape, expected);
+        let without_role = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == "a")
+            .expect("el nodo sin rol está");
+        assert_eq!(without_role.shape, expected);
         // Y la etiqueta cae al id cuando no hay ninguna.
-        assert_eq!(graph.nodes[0].label, "a");
+        assert_eq!(without_role.label, "a");
     }
 
     #[test]
@@ -307,5 +359,73 @@ mod tests {
         assert_eq!(errors[0].code, ErrorCode::InvalidValue);
         assert_eq!(errors[0].path, "kind");
         assert_eq!(errors[1].path, "version");
+    }
+}
+
+#[cfg(test)]
+mod start_tests {
+    use super::FlowchartKind;
+    use crate::test_support::input;
+    use gx_core::error::ErrorCode;
+    use gx_core::kind::DiagramKind;
+
+    /// S8 (`f20-reuso.md`): a flowchart declares exactly one `start` — the
+    /// rule `state` already enforces for `initial`. A document without one is
+    /// rejected, with the hint naming the rule.
+    #[test]
+    fn a_flowchart_without_a_start_is_rejected() {
+        let document = input(
+            r#"{ "version": 1, "kind": "flowchart",
+                 "nodes": [ { "id": "paso", "role": "process" },
+                            { "id": "fin", "role": "end" } ],
+                 "edges": [ { "from": "paso", "to": "fin" } ] }"#,
+        );
+
+        let errors = FlowchartKind
+            .validate(&document)
+            .expect_err("no start: the drawing has no way in");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.code == ErrorCode::MissingField
+                    && error.message.contains("start")),
+            "{errors:?}"
+        );
+    }
+
+    /// Two starts are two ways into one drawing: rejected.
+    #[test]
+    fn a_flowchart_with_two_starts_is_rejected() {
+        let document = input(
+            r#"{ "version": 1, "kind": "flowchart",
+                 "nodes": [ { "id": "a", "role": "start" },
+                            { "id": "b", "role": "start" } ],
+                 "edges": [] }"#,
+        );
+
+        let errors = FlowchartKind
+            .validate(&document)
+            .expect_err("two starts: which one is the way in?");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.code == ErrorCode::InvalidValue),
+            "{errors:?}"
+        );
+    }
+
+    /// One start validates, and the approval document of the suite still does.
+    #[test]
+    fn a_flowchart_with_exactly_one_start_is_valid() {
+        let document = input(
+            r#"{ "version": 1, "kind": "flowchart",
+                 "nodes": [ { "id": "inicio", "role": "start" },
+                            { "id": "fin", "role": "end" } ],
+                 "edges": [ { "from": "inicio", "to": "fin" } ] }"#,
+        );
+
+        FlowchartKind
+            .validate(&document)
+            .expect("one start is the rule");
     }
 }

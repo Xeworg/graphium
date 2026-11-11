@@ -1,9 +1,9 @@
 {
   "canvas": {
-    "x": 0.0,
-    "y": 0.0,
-    "w": 376.990234375,
-    "h": 41.5
+    "x": -12.0,
+    "y": -12.0,
+    "w": 400.990234375,
+    "h": 65.5
   },
   "tokens": {
     "text_size": 14.0,
@@ -29,7 +29,9 @@
     "group_dash": [
       8.0,
       5.0
-    ]
+    ],
+    "circle_diameter": 24.0,
+    "activation_width": 10.0
   },
   "direction": "LR",
   "layout_hint": "layered",

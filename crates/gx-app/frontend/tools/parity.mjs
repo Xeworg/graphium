@@ -47,6 +47,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { evaluate, launch, openPage, serve } from "./lib/harness.mjs";
+import { shapeClass } from "../src/lib/scene/glyph.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, ".."); // crates/gx-app/frontend
@@ -144,6 +145,8 @@ function sceneFixture(marker, width = 320, height = 180) {
       crow_foot_spread: 0.85,
       badge_width: 26,
       muted_opacity: 0.55,
+      circle_diameter: 24,
+      activation_width: 10,
       lifeline_dash: [4, 4],
       dash_pattern: [6, 4],
       group_dash: [8, 5],
@@ -179,6 +182,33 @@ function sceneFixture(marker, width = 320, height = 180) {
     events: [],
   };
 }
+
+/**
+ * One render payload per shape of `gx-core/src/ir.rs` (`f19-formas.md`, S6):
+ * the probe mounts each one and expects the glyph with its own class. A shape
+ * the painter does not know fails loud (scene.js `shapeOf`), so a forgotten
+ * painter branch is a red run, never a plausible box.
+ */
+const SHAPES_OF_THE_IR = ["box", "rounded", "cylinder", "diamond", "ellipse", "note", "circle"];
+const SHAPE_PAYLOADS = SHAPES_OF_THE_IR.map((shape) => {
+  const scene = sceneFixture(shape, 200, 120);
+  scene.nodes[0].shape = shape;
+  return {
+    req_id: `r-shape-${shape}`,
+    diagram_id: `d-shape-${shape}`,
+    session_id: "s1",
+    elements: scene,
+    placement: { x: 40, y: 40 },
+    camera: { tx: 0, ty: 0, zoom: 1 },
+  };
+});
+/** What the probe needs per shape: the case and the object it will land on.
+ * The payload itself travels separately — the window reads known fields
+ * only. */
+const SHAPE_CASES = SHAPES_OF_THE_IR.map((shape) => ({
+  shape,
+  diagram_id: `d-shape-${shape}`,
+}));
 
 const RENDER = {
   req_id: "r1",
@@ -248,6 +278,7 @@ function timelineScene() {
   scene.bands = [
     {
       id: "lane-q1",
+      kind: "lane",
       label: "Q1",
       bbox: { x: 0, y: 0, w: 500, h: 160 },
       depth: 0,
@@ -274,6 +305,36 @@ function timelineScene() {
       size: { w: 118, h: 49.5 },
       bar: { x: 301, y: 73.75, w: 116, h: 5 },
     },
+  ];
+  return scene;
+}
+
+/** The scene of a sequence with activations (`f22-dibujo.md`, S5): two
+ * actors with their lifelines, one bar per actor at different spans. */
+function sequenceScene() {
+  const scene = sceneFixture("sequence", 320, 220);
+  scene.layout_hint = "lanes";
+  const actor = (id, label, x) => ({
+    ...scene.nodes[0],
+    id: `g-${id}`,
+    label,
+    center: { x, y: 30 },
+  });
+  scene.nodes = [actor("cliente", "Cliente", 80), actor("api", "API", 240)];
+  scene.activations = [
+    { x: 240, y1: 100, y2: 160 },
+    { x: 80, y1: 120, y2: 140 },
+  ];
+  return scene;
+}
+
+/** The scene of a table node with a compartment rule (`f22-dibujo.md`, S7):
+ * one row of attributes, then the dividing row of the methods. */
+function tableScene() {
+  const scene = sceneFixture("table", 320, 220);
+  scene.nodes[0].rows = [
+    { text: "id: uuid", note: null, key: "none", nullable: false, divider: false },
+    { text: "cobrar()", note: null, key: "none", nullable: false, divider: true },
   ];
   return scene;
 }
@@ -1091,6 +1152,60 @@ const scenarios = [
           __t.expect(point !== null, 'the point in time did not mount');
           __t.expect(point.nextElementSibling === null || point.nextElementSibling.getAttribute('class') !== 'accent', 'a point in time carries a bar');
           return { bars: bars.length, numbers };
+        })()`,
+      },
+      {
+        id: ["C47"],
+        name: "a sequence activation yields a bar on the lifeline with the numbers of the scene",
+        js: `(async () => {
+          __t.rust('graphium://render', ${JSON.stringify({
+            req_id: "r-seq",
+            diagram_id: "d-seq",
+            session_id: "s1",
+            elements: sequenceScene(),
+            placement: { x: 100, y: 100 },
+            camera: { tx: 0, ty: 0, zoom: 1 },
+          })});
+          await __t.wait(220);
+          const object = __t.byId('d-seq');
+          __t.expect(object !== null, 'the sequence did not mount');
+          const content = object.querySelector('.content');
+          const bars = content.querySelectorAll('rect.activation');
+          __t.expect(bars.length === 2, 'bars mounted: ' + bars.length);
+          // The bar centers on the lifeline with the tokens' width: x is the
+          // left edge (240 - 10 / 2), y and height are the layout's.
+          const numbers = ['x', 'y', 'width', 'height'].map((name) => Number(bars[0].getAttribute(name)));
+          __t.expect(numbers.join(',') === '235,100,10,60', 'the bar is not the geometry of the scene: ' + numbers.join(','));
+          const lifelines = content.querySelector('.layer-lifelines');
+          __t.expect(lifelines !== null && lifelines.contains(bars[0]), 'the bar is not in the lifelines layer');
+          return { bars: bars.length, numbers };
+        })()`,
+      },
+      {
+        id: ["C48"],
+        name: "a divider row draws the compartment rule on the row's top edge",
+        js: `(async () => {
+          __t.rust('graphium://render', ${JSON.stringify({
+            req_id: "r-table",
+            diagram_id: "d-table",
+            session_id: "s1",
+            elements: tableScene(),
+            placement: { x: 100, y: 100 },
+            camera: { tx: 0, ty: 0, zoom: 1 },
+          })});
+          await __t.wait(220);
+          const object = __t.byId('d-table');
+          __t.expect(object !== null, 'the table did not mount');
+          const content = object.querySelector('.content');
+          // Two rules inside the node: the header's and the compartment's.
+          const rules = content.querySelectorAll('line.node-stroke');
+          __t.expect(rules.length === 2, 'rules mounted: ' + rules.length);
+          // The divider sits exactly one line below the header rule: the
+          // top edge of the dividing row.
+          const ys = [...rules].map((rule) => Number(rule.getAttribute('y1')));
+          const line = 14 * 1.25;
+          __t.expect(Math.abs(ys[1] - ys[0] - line) < 0.01, 'the rule is not on the top edge: ' + ys.join(','));
+          return { rules: rules.length, ys };
         })()`,
       },
     ],
@@ -2043,11 +2158,80 @@ async function staticChecks() {
 
 // --- main ------------------------------------------------------------------
 
+/**
+ * S6 (`f19-formas.md`): every shape paints its own class. One fresh page per
+ * shape — the window bounds the mounted SVGs on its canvas and follows the
+ * newest diagram, so stacking all six in one page makes the later ones cull
+ * out. A shape the painter does not know fails loud (S5), so this gate is
+ * what turns a forgotten painter branch into a red run instead of a
+ * plausible box.
+ */
+async function runShapeProbes(browser) {
+  const server = await serve(SVELTE_DIR);
+  const results = [];
+  try {
+    for (const shape of SHAPES_OF_THE_IR) {
+      const payload = SHAPE_PAYLOADS.find((candidate) => candidate.req_id === `r-shape-${shape}`);
+      const page = await openPage(browser, server.url, "global");
+      try {
+        const expression = `(async () => {
+          __t.rust('graphium://render', ${JSON.stringify(payload)});
+          for (let attempt = 0; attempt < 30; attempt++) {
+            await __t.wait(100);
+            const object = document.querySelector('#plan .diagram');
+            if (object !== null && object.querySelector('.shape-${shape}') !== null) {
+              return { painted: true };
+            }
+          }
+          const object = document.querySelector('#plan .diagram');
+          const content = object === null ? null : object.querySelector('.content');
+          return { painted: false, content: content === null ? 'null' : content.innerHTML.slice(0, 300) };
+        })()`;
+        const value = await evaluate(browser.cdp, page.session.sessionId, expression);
+        results.push({
+          scenario: "shapes",
+          build: "svelte",
+          id: ["S6"],
+          name: `${shape} paints its own class`,
+          compare: "report",
+          ok: value.painted === true,
+          value,
+          error: value.painted === true ? undefined : `content: ${value.content}`,
+        });
+      } finally {
+        await page.close();
+      }
+    }
+  } finally {
+    await server.close();
+  }
+  return results;
+}
+
 async function main() {
   if (!existsSync(path.join(SVELTE_DIR, "index.html"))) {
     console.error("parity: no bundle at dist/ — run scripts/build.sh (or `npm run build`) first");
     process.exit(2);
   }
+
+  // The shape vocabulary gate (`f19-formas.md`, S5): the class of every shape
+  // is its own word, and an unknown shape is a loud end, never a plausible
+  // box.
+  for (const shape of SHAPES_OF_THE_IR) {
+    const cls = shapeClass(shape);
+    if (cls !== `shape-${shape}`) {
+      console.error(`parity: shapeClass("${shape}") returned ${cls}`);
+      process.exit(1);
+    }
+  }
+  try {
+    shapeClass("hexagon");
+    console.error("parity: shapeClass accepted an unknown shape — the painter still fails soft");
+    process.exit(1);
+  } catch {
+    // loud is right
+  }
+
   const builds = [["svelte", SVELTE_DIR]];
 
   const browser = await launch(CHROMIUM);
@@ -2057,6 +2241,7 @@ async function main() {
       const results = await runBuild(browser, name, root, 0);
       all.push(...results);
     }
+    all.push(...(await runShapeProbes(browser)));
   } finally {
     await browser.close();
   }

@@ -1,9 +1,9 @@
 {
   "canvas": {
-    "x": 0.0,
-    "y": 0.0,
-    "w": 450.2734375,
-    "h": 107.0
+    "x": -12.0,
+    "y": -12.0,
+    "w": 474.2734375,
+    "h": 131.0
   },
   "tokens": {
     "text_size": 14.0,
@@ -29,7 +29,9 @@
     "group_dash": [
       8.0,
       5.0
-    ]
+    ],
+    "circle_diameter": 24.0,
+    "activation_width": 10.0
   },
   "direction": "LR",
   "layout_hint": "layered",
@@ -64,19 +66,22 @@
           "text": "id",
           "note": "uuid",
           "key": "pk",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         },
         {
           "text": "user_id",
           "note": "uuid",
           "key": "fk",
-          "nullable": true
+          "nullable": true,
+          "divider": false
         },
         {
           "text": "title",
           "note": "text",
           "key": "none",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         }
       ]
     },
@@ -99,13 +104,15 @@
           "text": "id",
           "note": "uuid",
           "key": "pk",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         },
         {
           "text": "email",
           "note": "text",
           "key": "none",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         }
       ]
     }

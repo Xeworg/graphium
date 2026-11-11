@@ -27,12 +27,19 @@ pub use export::{
 pub use fmt::fmt_num;
 pub use geom::{Point, Rect, Size};
 pub use ir::{
-    Cardinality, CardinalityBound, CardinalityMax, Direction, Emphasis, Ir, IrEdge, IrEvent,
-    IrGraph, IrGroup, IrLane, IrNode, IrRow, IrTimeline, IrValue, LayoutHint, RowKey, Shape, Style,
+    Cardinality, CardinalityBound, CardinalityMax, Direction, Emphasis, Ir, IrConnection, IrEdge,
+    IrEvent, IrGraph, IrGroup, IrLane, IrNode, IrRow, IrTimeline, IrValue, LayoutHint, RowKey,
+    Shape, Style,
 };
 pub use kind::{for_kind, kind_names, register_kind, DiagramKind, KindHandler, KindLimits};
-pub use layout::{LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, NodeBox};
+pub use layout::{
+    connector_route, LayoutActivation, LayoutAxis, LayoutEdge, LayoutEngine, LayoutGraph,
+    LayoutGroup, NodeBox,
+};
 pub use render::{Color, Palette, RenderMetrics, RenderOpts, RenderOutcome, SvgRenderer, Theme};
-pub use scene::{Scene, SceneBand, SceneEdge, SceneEvent, SceneNode, ScenePalette, SceneTokens};
+pub use scene::{
+    BandKind, Scene, SceneActivation, SceneAxis, SceneBand, SceneEdge, SceneEvent, SceneNode,
+    ScenePalette, SceneTokens,
+};
 pub use text::{TextMetrics, TextStyle};
 pub use tokens::{Tokens, TOKENS};

@@ -14,6 +14,7 @@
 //! path.
 
 use gx_core::ir::Span;
+use gx_core::scene::BandKind;
 use gx_core::{
     fmt_num, Emphasis, IrEdge, IrEvent, IrGraph, IrNode, IrRow, LayoutEdge, LayoutGraph,
     LayoutGroup, LayoutHint, NodeBox, Point, Rect, RowKey, Shape, TOKENS,
@@ -21,6 +22,12 @@ use gx_core::{
 
 /// Length of the arrowhead, in plan units (`markerUnits="userSpaceOnUse"`).
 pub(crate) const ARROW_LENGTH: f64 = 10.0;
+
+/// The width of an activation bar of a sequence (`f22-dibujo.md`, S5): the
+/// thin rectangle over the lifeline. It travels in the tokens
+/// (`SceneTokens.activation_width`) so the painter twin spells the same
+/// number.
+pub(crate) const ACTIVATION_WIDTH: f64 = 10.0;
 /// Opacity of a muted node or edge.
 pub(crate) const MUTED_OPACITY: f64 = 0.55;
 /// Dash pattern of a lifeline, in plan units: shorter than the one of an
@@ -40,6 +47,10 @@ pub(crate) const CROW_FOOT: f64 = 22.0;
 pub(crate) const CROW_FOOT_SPREAD: f64 = 0.85;
 /// Horizontal space reserved for the `PK` / `FK` badge of a row.
 pub(crate) const BADGE_WIDTH: f64 = 26.0;
+
+/// The air between the drawing and its frame (`f21-roto.md`, S3): strokes sit
+/// half outside their shapes, and a zero-margin canvas clipped them.
+pub(crate) const CANVAS_PADDING: f64 = 12.0;
 /// Height of the bar of an event that lasts, in plan units (`f11-elementos.md`,
 /// T4/D). It is a band, not a second box: it says "this event covers a stretch
 /// of time" without competing with the label inside the box.
@@ -77,24 +88,111 @@ pub(crate) fn event_bar(rect: &Rect, span: Option<Span>) -> Option<Rect> {
     ))
 }
 
-/// The plan rectangle the root element covers.
-pub(crate) fn canvas_rect(layout: &LayoutGraph) -> Rect {
-    let bbox = layout.bbox;
-    if bbox.w > 0.0 && bbox.h > 0.0 {
-        return bbox;
+/// The frozen elbow of a dependency arrow (`f18-gantt.md`, S7): out of the
+/// right edge of the task that finishes, across the gap between the two
+/// boxes, down (or up) into the lane of the task that waits, and into its
+/// left edge. The same two boxes always yield the same points.
+pub(crate) fn dependency_route(from: &Rect, to: &Rect) -> Vec<Point> {
+    let exit = Point::new(from.max_x(), from.center().y);
+    let entry = Point::new(to.min_x(), to.center().y);
+    let mid_x = (from.max_x() + to.min_x()) / 2.0;
+    let mut points = vec![
+        exit,
+        Point::new(mid_x, exit.y),
+        Point::new(mid_x, entry.y),
+        entry,
+    ];
+    points.dedup();
+    points
+}
+
+/// The glyph rect of a shape inside the measured envelope (`f19-formas.md`,
+/// S9): the two-box model of the `event_bar` precedent. Everything but the
+/// circle fills its envelope; the dot is the frozen diameter, at the left
+/// edge, so the arrows that arrive do land on it.
+pub(crate) fn glyph_rect(shape: Shape, rect: &Rect) -> Rect {
+    match shape {
+        // The dot family shares the envelope of the circle: frozen diameter,
+        // at the left edge of the box, so the arrows land on it (`f19-formas.md`,
+        // S8; `f22-dibujo.md`, L4).
+        Shape::Circle | Shape::Dot | Shape::RingDot => {
+            let d = TOKENS.circle_diameter;
+            Rect::new(
+                rect.x + TOKENS.node_padding,
+                rect.center().y - d / 2.0,
+                d,
+                d,
+            )
+        }
+        _ => *rect,
     }
-    // The layout normalizes the graph so the bounding box starts at `(0, 0)`
-    // (F0 decision L9) and always reports it. If a layout does not, derive one
-    // from the node boxes so the canvas is never degenerate. Safe default.
+}
+
+/// Where the label of a shape sits (`f19-formas.md`, S8): inside, centered,
+/// for every shape but the circle — whose label starts beside the dot,
+/// vertically centered.
+pub(crate) enum LabelPlacement {
+    /// Centered inside the box: the writer computes the baselines.
+    Inside,
+    /// The label starts at this point, vertically centered.
+    Beside { at: Point },
+}
+
+pub(crate) fn label_placement(shape: Shape, rect: &Rect) -> LabelPlacement {
+    match shape {
+        Shape::Circle | Shape::Dot | Shape::RingDot => {
+            let glyph = glyph_rect(shape, rect);
+            LabelPlacement::Beside {
+                at: Point::new(glyph.max_x() + TOKENS.node_padding / 2.0, rect.center().y),
+            }
+        }
+        _ => LabelPlacement::Inside,
+    }
+}
+
+/// The plan rectangle the root element covers (`f21-roto.md`, S3): the union
+/// of the node boxes **and** the rendered edge-label boxes, padded — labels
+/// with their center outside the node bbox used to be cut by the frame.
+/// Label boxes are estimated from the text (Inter at the token size is
+/// ~0.5×em per char); the estimate only grows the canvas, never clips.
+pub(crate) fn canvas_rect(layout: &LayoutGraph, labels: &[(Point, &str)]) -> Rect {
+    // The engine's bbox is the seed: it already carries the extents the
+    // drawing needs beyond the nodes (lane bands, group boxes, lifelines).
     let mut bounds: Option<Rect> = None;
-    for placed in layout.nodes.values() {
-        let rect = node_rect(placed);
+    if layout.bbox.w > 0.0 && layout.bbox.h > 0.0 {
+        bounds = Some(layout.bbox);
+    } else {
+        for placed in layout.nodes.values() {
+            let rect = node_rect(placed);
+            bounds = Some(match bounds {
+                Some(union) => union.union(&rect),
+                None => rect,
+            });
+        }
+    }
+    for (at, label) in labels {
+        let lines = label_lines(label);
+        let width = lines
+            .iter()
+            .map(|line| line.chars().count() as f64 * TOKENS.text_size * 0.5)
+            .fold(0.0, f64::max);
+        let height = lines.len() as f64 * TOKENS.text_size * TOKENS.line_height;
+        let rect = Rect::new(at.x - width / 2.0, at.y - height / 2.0, width, height);
         bounds = Some(match bounds {
             Some(union) => union.union(&rect),
             None => rect,
         });
     }
-    bounds.unwrap_or(bbox)
+    let bbox = bounds.unwrap_or(layout.bbox);
+    if bbox.w > 0.0 && bbox.h > 0.0 {
+        return Rect::new(
+            bbox.x - CANVAS_PADDING,
+            bbox.y - CANVAS_PADDING,
+            bbox.w + 2.0 * CANVAS_PADDING,
+            bbox.h + 2.0 * CANVAS_PADDING,
+        );
+    }
+    bbox
 }
 
 /// The rectangle of a placed node, from the center of its measured box.
@@ -211,15 +309,8 @@ pub(crate) fn push_emphasis(classes: &mut String, emphasis: Emphasis, for_text: 
 
 /// The class of a shape: the painter mounts the same names, so the CSS rules of
 /// the page and the stylesheet of the export say the same thing.
-pub(crate) fn shape_class(shape: Shape) -> &'static str {
-    match shape {
-        Shape::Box => "shape-box",
-        Shape::Rounded => "shape-rounded",
-        Shape::Cylinder => "shape-cylinder",
-        Shape::Diamond => "shape-diamond",
-        Shape::Ellipse => "shape-ellipse",
-        Shape::Note => "shape-note",
-    }
+pub(crate) fn shape_class(shape: Shape) -> String {
+    format!("shape-{}", shape.as_str())
 }
 
 /// The lines a label breaks into.
@@ -258,8 +349,10 @@ pub(crate) struct Table {
     pub(crate) header_y: f64,
     /// The rule that separates the header from the rows.
     pub(crate) rule_y: f64,
-    /// Left edge of the key badge column.
-    pub(crate) badge_x: f64,
+    /// Left edge of the key badge column; `None` when no row of the table has
+    /// a key, because the column is not reserved and nothing is written there
+    /// (S13).
+    pub(crate) badge_x: Option<f64>,
     /// Left edge of the name column.
     pub(crate) name_x: f64,
     /// Right edge of the note column, drawn against the border.
@@ -268,7 +361,11 @@ pub(crate) struct Table {
 
 impl Table {
     /// The table of a node box.
-    pub(crate) fn of(rect: &Rect) -> Self {
+    ///
+    /// `keys` says whether some row of the node carries a key role: without
+    /// one the table has no badge to draw, so it reserves no badge column and
+    /// the names start at the padding (S13).
+    pub(crate) fn of(rect: &Rect, keys: bool) -> Self {
         let padding = TOKENS.node_padding;
         let line = TOKENS.text_size * TOKENS.line_height;
         let header_y = rect.y + padding + line / 2.0;
@@ -277,8 +374,8 @@ impl Table {
             line,
             header_y,
             rule_y: header_y + line / 2.0,
-            badge_x: rect.x + padding / 2.0,
-            name_x: rect.x + padding + BADGE_WIDTH,
+            badge_x: keys.then(|| rect.x + padding / 2.0),
+            name_x: rect.x + padding + if keys { BADGE_WIDTH } else { 0.0 },
             note_x: rect.max_x() - padding / 2.0,
         }
     }
@@ -288,13 +385,14 @@ impl Table {
         self.rule_y + self.line * (index as f64 + 0.5)
     }
 
-    /// The text of the key badge of a row: `PK`, `FK`, `PK, FK` or nothing.
-    pub(crate) fn badge(key: RowKey) -> &'static str {
+    /// The text of the key badge of a row, or `None` when the row has no key:
+    /// a row without a key draws no badge at all (S13).
+    pub(crate) fn badge(key: RowKey) -> Option<&'static str> {
         match key {
-            RowKey::Pk => "PK",
-            RowKey::Fk => "FK",
-            RowKey::PkFk => "PK, FK",
-            RowKey::None => "",
+            RowKey::Pk => Some("PK"),
+            RowKey::Fk => Some("FK"),
+            RowKey::PkFk => Some("PK, FK"),
+            RowKey::None => None,
         }
     }
 }
@@ -416,6 +514,25 @@ pub(crate) fn band_label(group: &LayoutGroup) -> Option<&str> {
         .label
         .as_deref()
         .filter(|label| !label.trim().is_empty())
+}
+
+/// The point where the name of a band sits (`S12`).
+///
+/// A container writes its name at the corner, indented by its depth; a lane
+/// writes it in the gutter the layout reserved, centered on its own height. The
+/// two rules used to live in the two band writers of the emitter; they live
+/// here once, beside [`band_label`], so the painter reads the same numbers.
+pub(crate) fn band_label_at(group: &LayoutGroup, kind: BandKind) -> Point {
+    match kind {
+        BandKind::Cluster => Point::new(
+            group.bbox.x + TOKENS.node_padding * (1.0 + group.depth as f64),
+            group.bbox.y + TOKENS.text_size,
+        ),
+        BandKind::Lane => Point::new(
+            group.bbox.x + TOKENS.node_padding,
+            group.bbox.y + group.bbox.h / 2.0,
+        ),
+    }
 }
 
 /// The point of the canvas the lifeline of a node reaches: the bottom edge.

@@ -5,7 +5,7 @@
 //! necesita numerar nada y el layout no tiene que adivinar.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Ir, IrEdge, IrGraph, IrNode, LayoutHint};
+use gx_core::ir::{Direction, Ir, IrEdge, IrNode, LayoutHint};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -37,13 +37,19 @@ pub struct Message {
     /// Whether the arrow is dashed, for a reply that does not start an action.
     #[serde(default)]
     pub reply: bool,
+    /// Whether the receiving actor takes control here (`f22-dibujo.md`, S5):
+    /// opt-in, it draws a thin rectangle over the `to` actor's lifeline while
+    /// the actor holds the control — until its next outgoing message.
+    #[serde(default)]
+    pub activation: bool,
 }
 
 /// The JSON contract of the `sequence` kind.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SequenceInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `sequence`.
     pub kind: String,
@@ -63,14 +69,10 @@ pub struct SequenceKind;
 
 impl DiagramKind for SequenceKind {
     const KIND: &'static str = "sequence";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::SEQUENCE;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = SequenceInput;
 
@@ -79,28 +81,8 @@ impl DiagramKind for SequenceKind {
     }
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
-        let mut errors = Vec::new();
-
-        if input.kind != Self::KIND {
-            errors.push(ValidationError::new(
-                "kind",
-                ErrorCode::InvalidValue,
-                format!("`kind` debe ser `{}`, no `{}`", Self::KIND, input.kind),
-                Some("usá get_diagram_schema para ver los kinds disponibles".to_string()),
-            ));
-        }
-
-        if input.version != SUPPORTED_VERSION {
-            errors.push(ValidationError::new(
-                "version",
-                ErrorCode::InvalidValue,
-                format!(
-                    "versión de contrato no soportada: {} (soportada: {SUPPORTED_VERSION})",
-                    input.version
-                ),
-                Some("actualizá el documento a la versión 1 del contrato".to_string()),
-            ));
-        }
+        let mut errors =
+            crate::flow::validate_header(Self::KIND, &input.kind, SUPPORTED_VERSION, input.version);
 
         if input.participants.is_empty() {
             errors.push(ValidationError::new(
@@ -120,7 +102,7 @@ impl DiagramKind for SequenceKind {
                     format!("participants[{index}].id"),
                     ErrorCode::InvalidValue,
                     "el id del participante no puede estar vacío",
-                    None,
+                    Some("escribí un id único, por ejemplo `cliente`".to_string()),
                 ));
             }
             if seen.contains(&actor.id.as_str()) {
@@ -193,16 +175,36 @@ impl DiagramKind for SequenceKind {
                 if message.reply {
                     edge.style = gx_core::ir::Style::Dashed;
                 }
+                if message.activation {
+                    edge.kind_data
+                        .insert("activation".to_string(), gx_core::ir::IrValue::Bool(true));
+                }
                 edge
             })
             .collect();
 
-        Ir::Graph(IrGraph {
-            direction: Direction::TB,
-            layout_hint: Self::LAYOUT_HINT,
+        Ir::Graph(crate::flow::ir_graph(
+            Some(Direction::TB),
+            Self::LAYOUT_HINT,
             nodes,
             edges,
-            groups: Vec::new(),
+            Vec::new(),
+        ))
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "sequence",
+            "title": "pedido",
+            "participants": [
+                { "id": "cliente", "label": "Cliente" },
+                { "id": "api", "label": "API" }
+            ],
+            "messages": [
+                { "from": "cliente", "to": "api", "label": "POST /orders", "activation": true },
+                { "from": "api", "to": "cliente", "label": "201", "reply": true }
+            ]
         })
     }
 }
@@ -214,13 +216,10 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::{SequenceInput, SequenceKind};
+    use super::SequenceKind;
+    use crate::test_support::input;
     use gx_core::ir::Ir;
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> SequenceInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     const FLOW: &str = r#"{
       "version": 1, "kind": "sequence", "title": "pedido",
@@ -258,6 +257,46 @@ mod tests {
         // Las respuestas van punteadas.
         assert_eq!(graph.edges[0].style, gx_core::ir::Style::Solid);
         assert_eq!(graph.edges[2].style, gx_core::ir::Style::Dashed);
+    }
+
+    #[test]
+    fn an_activation_travels_on_the_edge_and_the_schema_admits_it() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "sequence",
+                 "participants": [ { "id": "cliente" }, { "id": "api" } ],
+                 "messages": [
+                   { "from": "cliente", "to": "api", "label": "POST /orders", "activation": true },
+                   { "from": "api", "to": "cliente", "label": "201", "reply": true }
+                 ] }"#,
+        );
+
+        // S5 (`f22-dibujo.md`): the field is opt-in and additive — a document
+        // that names it validates, and `deny_unknown_fields` keeps guarding
+        // everything else.
+        SequenceKind
+            .validate(&parsed)
+            .expect("la activación es parte del contrato");
+
+        let Ir::Graph(graph) = SequenceKind.to_ir(&parsed) else {
+            panic!("una secuencia es un grafo");
+        };
+        // The flag rides the edge's kind_data: the scalar channel the IR
+        // reserves for kind-specific data (L7b).
+        assert_eq!(
+            graph.edges[0].kind_data.get("activation"),
+            Some(&gx_core::ir::IrValue::Bool(true)),
+        );
+        assert!(
+            !graph.edges[1].kind_data.contains_key("activation"),
+            "un mensaje sin activación no marca nada"
+        );
+
+        // The schema publishes the field, so the JSON schema is the contract.
+        let schema = SequenceKind::schema().to_value().to_string();
+        assert!(
+            schema.contains("activation"),
+            "el esquema no nombra la activación"
+        );
     }
 
     #[test]

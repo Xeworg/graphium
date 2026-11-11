@@ -12,12 +12,12 @@
 //! esté mal dibujado: es un modelo imposible.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Emphasis, Ir, IrEdge, IrGraph, LayoutHint, Shape, Style};
-use gx_core::kind::{DiagramKind, KindLimits};
+use gx_core::ir::{Direction, Emphasis, Ir, IrEdge, IrRow, LayoutHint, Shape, Style};
+use gx_core::kind::{DiagramKind, KindLimits, Role};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::flow::{to_ir_nodes, validate_header, validate_nodes, validate_refs, FlowNode, Role};
+use crate::flow::{to_ir_nodes, validate_header, validate_nodes, validate_refs, FlowNode};
 use crate::groups::{to_ir_groups, validate_groups, Group};
 
 /// Contract version supported by this build (PRD §10.1).
@@ -115,11 +115,52 @@ pub struct ClassEdge {
     pub arrow: Option<bool>,
 }
 
+/// A node of the class diagram: the flow fields plus the members
+/// (`f22-dibujo.md`, S7) — the attributes and the methods a class carries,
+/// each one a line of its own compartment. Opt-in: a node without members
+/// is the plain box of always.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClassNode {
+    /// Unique identifier inside the diagram.
+    pub id: String,
+    /// Text of the node. Defaults to the id.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Role of the node: it decides the shape and the stereotype.
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub emphasis: Option<Emphasis>,
+    #[serde(default)]
+    pub style: Option<Style>,
+    /// The attributes, the lines of the first compartment.
+    #[serde(default)]
+    pub attributes: Vec<String>,
+    /// The methods, the lines of the second compartment.
+    #[serde(default)]
+    pub methods: Vec<String>,
+}
+
+impl ClassNode {
+    /// The flow node the shared machinery reads.
+    fn flow(&self) -> FlowNode {
+        FlowNode {
+            id: self.id.clone(),
+            label: self.label.clone(),
+            role: self.role.clone(),
+            emphasis: self.emphasis,
+            style: self.style,
+        }
+    }
+}
+
 /// The JSON contract of the `class` kind.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ClassInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `class`.
     pub kind: String,
@@ -130,7 +171,7 @@ pub struct ClassInput {
     #[serde(default)]
     pub direction: Option<Direction>,
     /// The classes, interfaces, abstract classes and enums.
-    pub nodes: Vec<FlowNode>,
+    pub nodes: Vec<ClassNode>,
     /// The relations between them.
     #[serde(default)]
     pub edges: Vec<ClassEdge>,
@@ -207,14 +248,10 @@ impl ClassKind {
 
 impl DiagramKind for ClassKind {
     const KIND: &'static str = "class";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = ClassInput;
 
@@ -222,20 +259,49 @@ impl DiagramKind for ClassKind {
         schemars::schema_for!(ClassInput)
     }
 
+    fn shapes() -> Vec<Shape> {
+        crate::flow::shapes_of_roles(&ROLES)
+    }
+
+    fn roles() -> &'static [Role] {
+        &ROLES
+    }
+
+    fn default_role() -> Option<&'static str> {
+        Some(DEFAULT_ROLE)
+    }
+
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
         let mut errors = validate_header(Self::KIND, &input.kind, SUPPORTED_VERSION, input.version);
+        let flow_nodes: Vec<FlowNode> = input.nodes.iter().map(|node| node.flow()).collect();
         errors.extend(validate_nodes(
             Self::KIND,
-            &input.nodes,
+            &flow_nodes,
             &ROLES,
             DEFAULT_ROLE,
         ));
+        // The members are the lines of the compartments (S7): a blank one
+        // would draw an empty line, so it says nothing.
+        for (index, node) in input.nodes.iter().enumerate() {
+            for (field, members) in [("attributes", &node.attributes), ("methods", &node.methods)] {
+                for (member_index, member) in members.iter().enumerate() {
+                    if member.trim().is_empty() {
+                        errors.push(ValidationError::new(
+                            format!("nodes[{index}].{field}[{member_index}]"),
+                            ErrorCode::InvalidValue,
+                            "un miembro no puede estar vacío",
+                            Some("escribí la línea tal como se lee en la clase".to_string()),
+                        ));
+                    }
+                }
+            }
+        }
         let pairs: Vec<(&str, &str)> = input
             .edges
             .iter()
             .map(|edge| (edge.from.as_str(), edge.to.as_str()))
             .collect();
-        errors.extend(validate_refs(&pairs, &input.nodes));
+        errors.extend(validate_refs(&pairs, &flow_nodes));
 
         let admitted: Vec<&str> = RELATIONS.iter().map(|relation| relation.name).collect();
         for (index, edge) in input.edges.iter().enumerate() {
@@ -277,7 +343,36 @@ impl DiagramKind for ClassKind {
     }
 
     fn to_ir(&self, input: &Self::Input) -> Ir {
-        let nodes = to_ir_nodes(&input.nodes, &ROLES, DEFAULT_ROLE);
+        let flow_nodes: Vec<FlowNode> = input.nodes.iter().map(|node| node.flow()).collect();
+        let mut nodes = to_ir_nodes(&flow_nodes, &ROLES, DEFAULT_ROLE);
+        // El rol que se dibuja con palabra la lleva sobre el nombre
+        // (`f22-dibujo.md`, S4): UML marca el estereotipo con angulillos. El
+        // `class` y el `enum` no llevan ninguno: el primero es el default y el
+        // segundo ya se distingue por su forma.
+        for (node, input_node) in nodes.iter_mut().zip(&input.nodes) {
+            match input_node.role.as_deref() {
+                Some("abstract") | Some("interface") => {
+                    node.stereotype = input_node.role.clone();
+                }
+                _ => {}
+            }
+            // The members are the rows the table machinery already draws
+            // (S7, L9): the attributes are the first compartment, the methods
+            // the second, and the rule above the first method is what makes
+            // them two. The header rule is the first compartment's on its
+            // own, so a node without attributes divides nothing.
+            let mut rows: Vec<IrRow> = input_node
+                .attributes
+                .iter()
+                .map(|attribute| IrRow::new(attribute.clone()))
+                .collect();
+            for (index, method) in input_node.methods.iter().enumerate() {
+                let mut row = IrRow::new(method.clone());
+                row.divider = index == 0 && !rows.is_empty();
+                rows.push(row);
+            }
+            node.rows = rows;
+        }
         let edges: Vec<IrEdge> = input
             .edges
             .iter()
@@ -307,12 +402,41 @@ impl DiagramKind for ClassKind {
             })
             .collect();
 
-        Ir::Graph(IrGraph {
-            direction: input.direction.unwrap_or(Direction::TB),
-            layout_hint: Self::LAYOUT_HINT,
+        Ir::Graph(crate::flow::ir_graph(
+            input.direction,
+            Self::LAYOUT_HINT,
             nodes,
             edges,
-            groups: to_ir_groups(&input.groups),
+            to_ir_groups(&input.groups),
+        ))
+    }
+
+    /// Lo que el kind enseña y el schema no puede: la relación decide la línea
+    /// y la herencia no puede cerrar un ciclo.
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "`relation` decide la línea: `association` (sólida con flecha, por defecto), `extends` (sólida, se nombra), `implements` (punteada, se nombra), `composition` (sólida sin flecha), `dependency` (punteada)."
+                .to_string(),
+            "La herencia no puede tener ciclos: una clase no es su propio padre.".to_string(),
+            "Si la arista no lleva `label`, la línea se nombra con su relación; la asociación no, porque no afirma nada."
+                .to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "class",
+            "title": "pedidos",
+            "nodes": [
+                { "id": "Base", "label": "Base", "role": "abstract" },
+                { "id": "Order", "label": "Order", "attributes": ["id: uuid"], "methods": ["cobrar()"] },
+                { "id": "Payable", "label": "Payable", "role": "interface" }
+            ],
+            "edges": [
+                { "from": "Order", "to": "Base", "relation": "extends" },
+                { "from": "Order", "to": "Payable", "relation": "implements" }
+            ]
         })
     }
 }
@@ -324,59 +448,32 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClassInput, ClassKind};
+    use super::ClassKind;
+    use crate::test_support::{an_unknown_group_member_is_rejected, groups_reach_the_ir, input};
     use gx_core::error::ErrorCode;
     use gx_core::ir::{Ir, Shape, Style};
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> ClassInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     /// RF15: `groups` existe en `class` y anida: un miembro es un nodo o
     /// otro grupo, y el documento no cambia de version.
     #[test]
     fn the_groups_of_a_diagram_reach_the_ir() {
-        let parsed = input(
+        groups_reach_the_ir::<ClassKind>(
             r#"{ "version": 1, "kind": "class",
                  "nodes": [ { "id": "read" } ],
                  "groups": [
                    { "id": "io", "label": "I/O", "members": ["disk"] },
                    { "id": "disk", "members": ["read"] } ] }"#,
         );
-
-        ClassKind
-            .validate(&parsed)
-            .expect("un grupo puede contener otro grupo");
-
-        let Ir::Graph(graph) = ClassKind.to_ir(&parsed) else {
-            panic!("un diagrama de `class` es un grafo");
-        };
-        assert_eq!(graph.groups.len(), 2);
-        assert_eq!(graph.groups[0].id, "io");
-        assert_eq!(graph.groups[0].label.as_deref(), Some("I/O"));
-        assert_eq!(graph.groups[0].members, vec!["disk"]);
-        assert_eq!(graph.groups[1].members, vec!["read"]);
     }
 
     /// Un miembro que no existe se reporta antes de dibujar.
     #[test]
     fn a_group_member_that_does_not_exist_is_rejected() {
-        let parsed = input(
+        an_unknown_group_member_is_rejected::<ClassKind>(
             r#"{ "version": 1, "kind": "class",
                  "nodes": [ { "id": "read" } ],
                  "groups": [ { "id": "io", "members": ["fantasma"] } ] }"#,
-        );
-
-        let errors = ClassKind
-            .validate(&parsed)
-            .expect_err("el miembro no existe");
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.code == ErrorCode::UnknownRef
-                    && error.path == "groups[0].members[0]"),
-            "{errors:?}"
         );
     }
 
@@ -551,5 +648,86 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.path == "edges[0].to" && error.code == ErrorCode::UnknownRef));
+    }
+
+    #[test]
+    fn class_members_fill_the_rows_and_the_schema_admits_them() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "class",
+                 "nodes": [ { "id": "pedido", "label": "Pedido", "attributes": ["id: uuid"], "methods": ["cobrar()", "total(): din"] } ],
+                 "edges": [] }"#,
+        );
+
+        // S7 (`f22-dibujo.md`): the members are opt-in and additive — a node
+        // that declares them validates, and the plain node of always stays.
+        ClassKind
+            .validate(&parsed)
+            .expect("los miembros son parte del contrato");
+
+        let Ir::Graph(graph) = ClassKind.to_ir(&parsed) else {
+            panic!("una clase es un grafo");
+        };
+        let rows = &graph.nodes[0].rows;
+        assert_eq!(rows.len(), 3, "una línea por miembro");
+        assert_eq!(rows[0].text, "id: uuid");
+        assert_eq!(rows[1].text, "cobrar()");
+        assert_eq!(rows[2].text, "total(): din");
+        // The compartment rule sits above the first method: attributes and
+        // methods read as the two compartments of UML. The first row never
+        // divides — the header rule is its compartment's on its own.
+        assert!(!rows[0].divider, "la primera fila no divide");
+        assert!(rows[1].divider, "la regla separa atributos de métodos");
+        assert!(!rows[2].divider, "solo la primera de su compartimento");
+
+        // Methods without attributes divide nothing: the header rule is the
+        // compartment's rule already.
+        let parsed = input(
+            r#"{ "version": 1, "kind": "class",
+                 "nodes": [ { "id": "p", "methods": ["cobrar()"] } ],
+                 "edges": [] }"#,
+        );
+        let Ir::Graph(graph) = ClassKind.to_ir(&parsed) else {
+            panic!("una clase es un grafo");
+        };
+        assert!(!graph.nodes[0].rows[0].divider);
+
+        // The schema publishes the members, so the schema is the contract.
+        let schema = ClassKind::schema().to_value().to_string();
+        assert!(
+            schema.contains("attributes"),
+            "el esquema no nombra atributos"
+        );
+        assert!(schema.contains("methods"), "el esquema no nombra métodos");
+    }
+
+    #[test]
+    fn an_empty_member_is_reported() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "class",
+                 "nodes": [ { "id": "p", "attributes": ["   "] } ],
+                 "edges": [] }"#,
+        );
+
+        let errors = ClassKind
+            .validate(&parsed)
+            .expect_err("una línea en blanco no dice nada");
+
+        assert_eq!(errors[0].path, "nodes[0].attributes[0]");
+        assert_eq!(errors[0].code, ErrorCode::InvalidValue);
+    }
+
+    #[test]
+    fn a_class_node_rejects_unknown_fields_still() {
+        use crate::class::ClassInput;
+
+        // The rejection is serde's `deny_unknown_fields`, at parse time —
+        // before any validation runs.
+        let error = serde_json::from_str::<ClassInput>(
+            r#"{ "version": 1, "kind": "class",
+                 "nodes": [ { "id": "p", "atributos": ["x"] } ],
+                 "edges": [] }"#,
+        )
+        .expect_err("deny_unknown_fields sigue guardando el contrato");
+        assert!(error.to_string().contains("atributos"));
     }
 }

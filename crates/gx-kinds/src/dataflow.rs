@@ -13,11 +13,11 @@
 
 use gx_core::error::{ErrorCode, ValidationError};
 use gx_core::ir::{Direction, Ir, LayoutHint, Shape};
-use gx_core::kind::{DiagramKind, KindLimits};
+use gx_core::kind::{DiagramKind, KindLimits, Role};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::flow::{to_graph, validate_flow, validate_header, FlowEdge, FlowNode, Role};
+use crate::flow::{to_graph, validate_flow, validate_header, FlowEdge, FlowNode};
 use crate::groups::{to_ir_groups, validate_groups, Group};
 
 /// Contract version supported by this build (PRD §10.1).
@@ -37,7 +37,8 @@ pub const ROLES: [Role; 3] = [
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DataflowInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `dataflow`.
     pub kind: String,
@@ -118,19 +119,27 @@ impl DataflowKind {
 
 impl DiagramKind for DataflowKind {
     const KIND: &'static str = "dataflow";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = DataflowInput;
 
     fn schema() -> schemars::Schema {
         schemars::schema_for!(DataflowInput)
+    }
+
+    fn shapes() -> Vec<Shape> {
+        crate::flow::shapes_of_roles(&ROLES)
+    }
+
+    fn roles() -> &'static [Role] {
+        &ROLES
+    }
+
+    fn default_role() -> Option<&'static str> {
+        Some(DEFAULT_ROLE)
     }
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
@@ -155,16 +164,43 @@ impl DiagramKind for DataflowKind {
     }
 
     fn to_ir(&self, input: &Self::Input) -> Ir {
-        let mut graph = to_graph(
+        let graph = to_graph(
             &input.nodes,
             &input.edges,
             &ROLES,
             DEFAULT_ROLE,
             input.direction,
             Self::LAYOUT_HINT,
+            to_ir_groups(&input.groups),
         );
-        graph.groups = to_ir_groups(&input.groups);
         Ir::Graph(graph)
+    }
+
+    /// La regla del diagrama de flujo de datos: los datos se mueven por un
+    /// proceso, nunca de depósito a depósito ni de externo a externo.
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "Un flujo no puede ir de un depósito a otro ni de una entidad externa a otra: en el medio va un proceso."
+                .to_string(),
+            "La etiqueta del flujo es el dato que viaja.".to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "dataflow",
+            "title": "ETL",
+            "nodes": [
+                { "id": "crm", "label": "CRM", "role": "external" },
+                { "id": "ingesta", "label": "ingesta", "role": "process" },
+                { "id": "crudo", "label": "pedidos crudos", "role": "store" }
+            ],
+            "edges": [
+                { "from": "crm", "to": "ingesta", "label": "pedidos" },
+                { "from": "ingesta", "to": "crudo", "label": "pedidos crudos" }
+            ]
+        })
     }
 }
 
@@ -175,59 +211,32 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::{DataflowInput, DataflowKind};
+    use super::DataflowKind;
+    use crate::test_support::{an_unknown_group_member_is_rejected, groups_reach_the_ir, input};
     use gx_core::error::ErrorCode;
     use gx_core::ir::{Ir, Shape};
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> DataflowInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     /// RF15: `groups` existe en `dataflow` y anida: un miembro es un nodo o
     /// otro grupo, y el documento no cambia de version.
     #[test]
     fn the_groups_of_a_diagram_reach_the_ir() {
-        let parsed = input(
+        groups_reach_the_ir::<DataflowKind>(
             r#"{ "version": 1, "kind": "dataflow",
                  "nodes": [ { "id": "read" } ],
                  "groups": [
                    { "id": "io", "label": "I/O", "members": ["disk"] },
                    { "id": "disk", "members": ["read"] } ] }"#,
         );
-
-        DataflowKind
-            .validate(&parsed)
-            .expect("un grupo puede contener otro grupo");
-
-        let Ir::Graph(graph) = DataflowKind.to_ir(&parsed) else {
-            panic!("un diagrama de `dataflow` es un grafo");
-        };
-        assert_eq!(graph.groups.len(), 2);
-        assert_eq!(graph.groups[0].id, "io");
-        assert_eq!(graph.groups[0].label.as_deref(), Some("I/O"));
-        assert_eq!(graph.groups[0].members, vec!["disk"]);
-        assert_eq!(graph.groups[1].members, vec!["read"]);
     }
 
     /// Un miembro que no existe se reporta antes de dibujar.
     #[test]
     fn a_group_member_that_does_not_exist_is_rejected() {
-        let parsed = input(
+        an_unknown_group_member_is_rejected::<DataflowKind>(
             r#"{ "version": 1, "kind": "dataflow",
                  "nodes": [ { "id": "read" } ],
                  "groups": [ { "id": "io", "members": ["fantasma"] } ] }"#,
-        );
-
-        let errors = DataflowKind
-            .validate(&parsed)
-            .expect_err("el miembro no existe");
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.code == ErrorCode::UnknownRef
-                    && error.path == "groups[0].members[0]"),
-            "{errors:?}"
         );
     }
 

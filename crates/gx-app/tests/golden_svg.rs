@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 16] = [
+const CASES: [(&str, &str); 21] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -40,7 +40,9 @@ const CASES: [(&str, &str); 16] = [
     ("tree-src", TREE_SRC),
     ("mindmap-feature", MINDMAP),
     ("sequence-order", SEQUENCE),
+    ("sequence-activation", SEQUENCE_ACTIVATION),
     ("timeline-roadmap", TIMELINE_ROADMAP),
+    ("timeline-milestone", TIMELINE_MILESTONE),
     ("swimlane-soporte", SWIMLANE_SOPORTE),
     ("flowchart-approval", FLOWCHART_APPROVAL),
     ("state-order", STATE_ORDER),
@@ -49,6 +51,9 @@ const CASES: [(&str, &str); 16] = [
     ("component-api", COMPONENT_API),
     ("component-nested", COMPONENT_NESTED),
     ("c4-context", C4_CONTEXT),
+    ("gantt-plan", GANTT_PLAN),
+    ("graph-note", GRAPH_NOTE),
+    ("shape-gallery", SHAPE_GALLERY),
 ];
 
 const MINIMAL: &str = r#"{
@@ -165,6 +170,26 @@ const SEQUENCE: &str = r#"{
   ]
 }"#;
 
+/// S5 (`f22-dibujo.md`): the activation — the control the `to` actor holds
+/// from the message that hands it over until its next outgoing message. Two
+/// bars of different spans: API holds rows 1-2, Base rows 2-3.
+const SEQUENCE_ACTIVATION: &str = r#"{
+  "version": 1,
+  "kind": "sequence",
+  "title": "pedido con control",
+  "participants": [
+    { "id": "cliente", "label": "Cliente" },
+    { "id": "api", "label": "API" },
+    { "id": "db", "label": "Base" }
+  ],
+  "messages": [
+    { "from": "cliente", "to": "api", "label": "POST /orders", "activation": true },
+    { "from": "api", "to": "db", "label": "INSERT", "activation": true },
+    { "from": "db", "to": "api", "label": "ok", "reply": true },
+    { "from": "api", "to": "cliente", "label": "201", "reply": true }
+  ]
+}"#;
+
 const TIMELINE_ROADMAP: &str = r#"{
   "version": 1,
   "kind": "timeline",
@@ -181,6 +206,22 @@ const TIMELINE_ROADMAP: &str = r#"{
   ]
 }"#;
 
+const TIMELINE_MILESTONE: &str = r#"{
+  "version": 1,
+  "kind": "timeline",
+  "title": "Lanzamiento — los puntos que mandan",
+  "lanes": [
+    { "id": "pre", "label": "Preparación" },
+    { "id": "ship", "label": "Entrega" }
+  ],
+  "events": [
+    { "label": "código congelado", "lane": "pre", "role": "milestone" },
+    { "label": "beta", "lane": "pre", "end": 2 },
+    { "label": "correcciones", "lane": "pre", "order": 1, "end": 3 },
+    { "label": "v1.0", "lane": "ship", "order": 3, "role": "milestone" }
+  ]
+}"#;
+
 const SWIMLANE_SOPORTE: &str = r#"{
   "version": 1,
   "kind": "swimlane",
@@ -191,10 +232,10 @@ const SWIMLANE_SOPORTE: &str = r#"{
     { "id": "logistica", "label": "Logística" }
   ],
   "steps": [
-    { "label": "reclama el pedido", "lane": "cliente" },
-    { "label": "abre el ticket", "lane": "soporte" },
-    { "label": "consulta el envío", "lane": "logistica" },
-    { "label": "responde", "lane": "soporte" }
+    { "id": "reclama", "label": "reclama el pedido", "lane": "cliente", "connects": ["ticket"] },
+    { "id": "ticket", "label": "abre el ticket", "lane": "soporte", "connects": ["consulta"] },
+    { "id": "consulta", "label": "consulta el envío", "lane": "logistica", "connects": ["responde"] },
+    { "id": "responde", "label": "responde", "lane": "soporte", "connects": ["reclama"] }
   ]
 }"#;
 
@@ -265,9 +306,9 @@ const CLASS_SHOP: &str = r#"{
   "title": "pedidos",
   "nodes": [
     { "id": "Base", "label": "Base", "role": "abstract" },
-    { "id": "Order", "label": "Order" },
+    { "id": "Order", "label": "Order", "attributes": ["id: uuid", "total: Money"], "methods": ["cobrar(pago)"] },
     { "id": "Refund", "label": "Refund" },
-    { "id": "Payable", "label": "Payable", "role": "interface" },
+    { "id": "Payable", "label": "Payable", "role": "interface", "methods": ["total(): Money"] },
     { "id": "Money", "label": "Money" }
   ],
   "edges": [
@@ -506,3 +547,53 @@ fn the_same_document_renders_the_same_bytes_twice() {
         assert_eq!(first.svg, second.svg, "{name} is not deterministic");
     }
 }
+
+const GANTT_PLAN: &str = r#"{
+  "version": 1,
+  "kind": "gantt",
+  "title": "Restauración — plan",
+  "lanes": [
+    { "id": "diseno", "label": "Diseño" },
+    { "id": "obra", "label": "Obra" }
+  ],
+  "tasks": [
+    { "id": "planos", "label": "Planos", "lane": "diseno",
+      "start": 0, "end": 3 },
+    { "id": "permiso", "label": "Permiso municipal", "lane": "diseno",
+      "start": 2, "end": 5 },
+    { "id": "demolicion", "label": "Demolición", "lane": "obra",
+      "start": 5, "end": 9, "depends_on": ["permiso"] },
+    { "id": "apertura", "label": "Apertura", "lane": "obra",
+      "start": 9, "end": 9, "depends_on": ["demolicion"] }
+  ]
+}"#;
+
+const GRAPH_NOTE: &str = r#"{
+  "version": 1,
+  "kind": "graph",
+  "title": "Nota al margen",
+  "nodes": [
+    { "id": "idea", "label": "La idea" },
+    { "id": "margen", "label": "el margen la anota", "shape": "note" }
+  ],
+  "edges": [ { "from": "idea", "to": "margen", "label": "anota" } ]
+}"#;
+
+const SHAPE_GALLERY: &str = r#"{
+  "version": 1,
+  "kind": "graph",
+  "title": "Las siete formas",
+  "nodes": [
+    { "id": "caja", "label": "Caja", "shape": "box" },
+    { "id": "redondeada", "label": "Redondeada", "shape": "rounded" },
+    { "id": "cilindro", "label": "Cilindro", "shape": "cylinder" },
+    { "id": "rombo", "label": "Rombo", "shape": "diamond" },
+    { "id": "elipse", "label": "Elipse", "shape": "ellipse" },
+    { "id": "nota", "label": "Nota", "shape": "note" },
+    { "id": "punto", "label": "el punto, su etiqueta al lado", "shape": "circle" }
+  ],
+  "edges": [
+    { "from": "caja", "to": "rombo", "label": "decide" },
+    { "from": "rombo", "to": "punto", "label": "commit" }
+  ]
+}"#;

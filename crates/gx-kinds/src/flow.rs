@@ -9,7 +9,10 @@
 //! tocar el motor ni el renderer (O7).
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Emphasis, IrEdge, IrGraph, IrNode, LayoutHint, Shape, Style};
+use gx_core::ir::{
+    Direction, Emphasis, IrEdge, IrGraph, IrGroup, IrNode, LayoutHint, Shape, Style,
+};
+use gx_core::kind::Role;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -51,28 +54,27 @@ pub struct FlowEdge {
     pub arrow: Option<bool>,
 }
 
-/// A role a node may take, and the shape it is drawn with.
-#[derive(Debug, Clone, Copy)]
-pub struct Role {
-    /// The name the document writes, e.g. `decision`.
-    pub name: &'static str,
-    /// The shape of [`Shape`] that role is drawn with.
-    pub shape: Shape,
-}
-
-impl Role {
-    pub const fn new(name: &'static str, shape: Shape) -> Self {
-        Self { name, shape }
-    }
-}
-
-/// The shape of a role, or the one of the default role.
-fn shape_of(roles: &[Role], role: &str) -> Shape {
+/// The shape of a role, or the one of the default role. The kinds whose
+/// events carry roles (`timeline`, `f22-dibujo.md` S6) resolve their shape
+/// with this same table, so a role means one shape across the catalog.
+pub fn shape_of(roles: &[Role], role: &str) -> Shape {
     roles
         .iter()
         .find(|candidate| candidate.name == role)
         .map(|candidate| candidate.shape)
         .unwrap_or(Shape::Rounded)
+}
+
+/// The shapes a role table draws, in table order, without repeats
+/// (`f19-formas.md`, S4): the truth of the kind, derived once.
+pub fn shapes_of_roles(roles: &[Role]) -> Vec<Shape> {
+    let mut shapes: Vec<Shape> = Vec::new();
+    for role in roles {
+        if !shapes.contains(&role.shape) {
+            shapes.push(role.shape);
+        }
+    }
+    shapes
 }
 
 /// Validates a flow document: the rules JSON Schema cannot express.
@@ -122,7 +124,10 @@ pub fn validate_nodes(
                 format!("nodes[{index}].id"),
                 ErrorCode::InvalidValue,
                 "el id del nodo no puede estar vacío",
-                None,
+                Some(format!(
+                    "escribí un id único, por ejemplo `nodo{}`",
+                    if index == 0 { "" } else { "2" }
+                )),
             ));
         }
         if seen.contains(&node.id.as_str()) {
@@ -178,6 +183,13 @@ pub fn validate_refs(pairs: &[(&str, &str)], nodes: &[FlowNode]) -> Vec<Validati
     errors
 }
 
+/// The version every document means when it does not say one
+/// (`f23-contrato.md`, S5): there is exactly one legal value today, so the
+/// field stopped being boilerplate.
+pub fn default_version() -> u32 {
+    1
+}
+
 /// The `kind` and the `version` checks every kind shares.
 pub fn validate_header(
     kind: &str,
@@ -197,7 +209,7 @@ pub fn validate_header(
     if version != supported_version {
         errors.push(ValidationError::new(
             "version",
-            ErrorCode::InvalidValue,
+            ErrorCode::UnsupportedVersion,
             format!("versión de contrato no soportada: {version} (soportada: {supported_version})"),
             Some("actualizá el documento a la versión 1 del contrato".to_string()),
         ));
@@ -238,6 +250,7 @@ pub fn to_graph(
     default_role: &str,
     direction: Option<Direction>,
     layout_hint: LayoutHint,
+    groups: Vec<IrGroup>,
 ) -> IrGraph {
     let nodes = to_ir_nodes(nodes, roles, default_role);
 
@@ -259,11 +272,24 @@ pub fn to_graph(
         })
         .collect();
 
+    ir_graph(direction, layout_hint, nodes, edges, groups)
+}
+
+/// The one `IrGraph` assembly (`f20-reuso.md`, S6): the direction with its
+/// default, the hint of the kind, and the pieces the kind mapped. Ten kinds
+/// ended here — nine of them carried the same seven lines by hand.
+pub fn ir_graph(
+    direction: Option<Direction>,
+    layout_hint: LayoutHint,
+    nodes: Vec<IrNode>,
+    edges: Vec<IrEdge>,
+    groups: Vec<IrGroup>,
+) -> IrGraph {
     IrGraph {
         direction: direction.unwrap_or(Direction::TB),
         layout_hint,
         nodes,
         edges,
-        groups: Vec::new(),
+        groups,
     }
 }

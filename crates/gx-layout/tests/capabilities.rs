@@ -644,3 +644,71 @@ fn a_relation_between_rows_at_the_same_height_is_one_segment() {
     let layout = DagreEngine::new(Arc::new(FakeMetrics)).layout(&graph, &LayoutOpts::default());
     assert_eq!(layout.edges[0].points.len(), 2);
 }
+
+// T6b (`f22-dibujo.md`, S10/L3b): the flowchart stubs — a branch edge of a
+// diamond anchors at the vertex the flow direction names (the bottom one for
+// `TB`), and an edge that arrives anchors at the opposite vertex. No diagonal
+// stub hangs off a slanted edge; a box keeps its border anchoring.
+#[test]
+fn a_diamond_branches_from_its_bottom_vertex_and_is_entered_at_its_top() {
+    let mut decision = node("d", "¿supera el límite?");
+    decision.shape = gx_core::ir::Shape::Diamond;
+    let graph = IrGraph {
+        direction: Direction::TB,
+        layout_hint: gx_core::ir::LayoutHint::Layered,
+        nodes: vec![
+            node("a", "monto"),
+            decision,
+            node("f", "fin"),
+            node("g", "acto"),
+        ],
+        edges: vec![
+            IrEdge::new("a", "d"),
+            IrEdge::new("d", "f"),
+            IrEdge::new("d", "g"),
+        ],
+        groups: Vec::new(),
+    };
+
+    let layout = engine().layout(&graph, &LayoutOpts::default());
+    let d = &layout.nodes["d"];
+
+    let outgoing = layout
+        .edges
+        .iter()
+        .find(|edge| edge.from == "d")
+        .expect("the branch leaves the decision");
+    let start = outgoing.points[0];
+    assert!(
+        (start.x - d.center.x).abs() < 1e-6
+            && (start.y - (d.center.y + d.size.h / 2.0)).abs() < 1e-6,
+        "the branch leaves the bottom vertex: {start:?} vs {:?}",
+        (d.center.x, d.center.y + d.size.h / 2.0)
+    );
+
+    let incoming = layout
+        .edges
+        .iter()
+        .find(|edge| edge.to == "d")
+        .expect("the edge arrives at the decision");
+    let end = incoming.points.last().copied().unwrap();
+    assert!(
+        (end.x - d.center.x).abs() < 1e-6 && (end.y - (d.center.y - d.size.h / 2.0)).abs() < 1e-6,
+        "the edge enters at the top vertex: {end:?}"
+    );
+
+    // A box keeps its border anchoring: the rule is the shape's, not every
+    // edge's.
+    let plain = &layout.nodes["a"];
+    let from_box = layout
+        .edges
+        .iter()
+        .find(|edge| edge.from == "a")
+        .expect("the edge leaves the box");
+    let start = from_box.points[0];
+    assert!(
+        start.y <= plain.center.y + plain.size.h / 2.0 + 1e-6
+            && start.y >= plain.center.y - plain.size.h / 2.0 - 1e-6,
+        "the box anchor rides its border: {start:?}"
+    );
+}

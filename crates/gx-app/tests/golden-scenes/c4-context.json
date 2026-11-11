@@ -1,9 +1,9 @@
 {
   "canvas": {
-    "x": 0.0,
-    "y": 0.0,
-    "w": 590.66015625,
-    "h": 221.5
+    "x": -12.0,
+    "y": -12.0,
+    "w": 614.66015625,
+    "h": 245.5
   },
   "tokens": {
     "text_size": 14.0,
@@ -29,7 +29,9 @@
     "group_dash": [
       8.0,
       5.0
-    ]
+    ],
+    "circle_diameter": 24.0,
+    "activation_width": 10.0
   },
   "direction": "LR",
   "layout_hint": "layered",
@@ -64,13 +66,15 @@
           "text": "person",
           "note": null,
           "key": "none",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         },
         {
           "text": "hace el pedido",
           "note": null,
           "key": "none",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         }
       ]
     },
@@ -93,7 +97,8 @@
           "text": "system",
           "note": "Rust + Svelte",
           "key": "none",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         }
       ]
     },
@@ -116,7 +121,8 @@
           "text": "person",
           "note": null,
           "key": "none",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         }
       ]
     }

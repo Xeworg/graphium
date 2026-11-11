@@ -56,6 +56,42 @@ pub struct Scene {
     pub bands: Vec<SceneBand>,
     /// The events of a timeline, in id order.
     pub events: Vec<SceneEvent>,
+    /// The time axis of a timeline (`f22-dibujo.md`, S2): the line under the
+    /// last lane and one tick per known column. `None` draws nothing — the
+    /// graphs and the sequence have no time axis (L5).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub axis: Option<SceneAxis>,
+    /// The activation bars of a sequence (`f22-dibujo.md`, S5), in the order
+    /// the layout computed them: empty draws nothing, and the key is absent
+    /// from payloads that carry none (additive, like the axis).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub activations: Vec<SceneActivation>,
+}
+
+/// An activation bar of a sequence, as the painter spells it
+/// (`f22-dibujo.md`, S5): the numbers are the layout's (`LayoutActivation`),
+/// the width travels in the tokens (`SceneTokens.activation_width`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SceneActivation {
+    /// The x of the lifeline: the center of the actor.
+    pub x: f64,
+    /// Where the bar starts and ends, bracketing the rows it spans.
+    pub y1: f64,
+    pub y2: f64,
+}
+
+/// The time axis of a timeline, as the painter spells it (`f22-dibujo.md`,
+/// S2): the numbers are the layout's (`LayoutAxis`), the payload carries no
+/// path.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SceneAxis {
+    /// The y of the axis line.
+    pub y: f64,
+    /// Where the line starts and ends.
+    pub x1: f64,
+    pub x2: f64,
+    /// One tick per known column: its x and the column value it names.
+    pub ticks: Vec<(f64, i64)>,
 }
 
 /// The frozen numbers of the drawing (`f11-elementos.md`, S5).
@@ -97,6 +133,11 @@ pub struct SceneTokens {
     pub dash_pattern: [f64; 2],
     /// Dash pattern of the border of a container, in plan units.
     pub group_dash: [f64; 2],
+    /// Diameter of the circle dot, in plan units (`f19-formas.md`, S8).
+    pub circle_diameter: f64,
+    /// Width of an activation bar of a sequence, in plan units
+    /// (`f22-dibujo.md`, S5).
+    pub activation_width: f64,
 }
 
 /// Where the paint takes its colours from (`f11-elementos.md`, S3).
@@ -177,10 +218,20 @@ pub struct SceneNode {
     pub center: Point,
     /// Size of the measured box, never `IrNode.size` recomputed in the JS (S4).
     pub size: Size,
+    /// Where the label sits (`f19-formas.md`, S8). `None` is the default:
+    /// centered inside the box, middle-anchored, as every shape but the
+    /// circle draws it. `Some(point)` is the beside placement — the label
+    /// starts at that point, vertically centered (`f19-formas.md`, S8).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label_at: Option<Point>,
     /// The detail rows of the node, drawn under its label. Absent when the
     /// node has none: an empty list and no list mean the same thing.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rows: Vec<IrRow>,
+    /// The stereotype word the kind gives the role, drawn above the label
+    /// (`f22-dibujo.md`, S4). Absent when the node has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stereotype: Option<String>,
     /// The free channel of the kind, untouched (S3).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub meta: BTreeMap<String, IrValue>,
@@ -218,6 +269,21 @@ pub struct SceneEdge {
     pub label_at: Option<Point>,
 }
 
+/// The two families of band of a drawing (`f20-reuso.md`, S12).
+///
+/// A container of a graph and a lane of a timeline are the same box behind
+/// elements with a name in a corner, and they are two different things: one is
+/// a boundary, the other is a row. The kind names which one a band is, so a
+/// writer reads it instead of telling them apart by the prefix of the id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BandKind {
+    /// A container of a graph: the id is `cluster-<id>`.
+    Cluster,
+    /// A lane of a timeline: the id is `lane-<id>`.
+    Lane,
+}
+
 /// A container of a graph or a lane of a timeline: `LayoutGroup` (S3).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SceneBand {
@@ -237,6 +303,10 @@ pub struct SceneBand {
     /// plan units; absent for a container, which has no gutter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gutter: Option<f64>,
+    /// Which family the band belongs to (`f20-reuso.md`, S12): the writer
+    /// reads it instead of telling a container from a lane by the prefix of
+    /// the id.
+    pub kind: BandKind,
 }
 
 /// An event of a timeline: `IrEvent` plus the measured box (S3, S4).
@@ -249,6 +319,11 @@ pub struct SceneEvent {
     /// The label, pre-broken with `\n` (S4).
     pub label: String,
     pub order: i64,
+    /// The shape the event's role gives it (`f22-dibujo.md`, S6): the
+    /// painter draws it through the same dispatch as the nodes. The default
+    /// event carries `rounded`.
+    #[serde(default)]
+    pub shape: Shape,
     /// The time span of a `gantt` or a `timeline` bar.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub span: Option<Span>,
@@ -332,6 +407,8 @@ mod tests {
             lifeline_dash: [4.0, 4.0],
             dash_pattern: [6.0, 4.0],
             group_dash: [8.0, 5.0],
+            circle_diameter: 24.0,
+            activation_width: 10.0,
         };
         assert_eq!(tokens.text_size, TOKENS.text_size);
         let json = serde_json::to_value(tokens).expect("the tokens serialise");
@@ -351,6 +428,7 @@ mod tests {
             "lifeline_dash",
             "dash_pattern",
             "group_dash",
+            "activation_width",
         ] {
             assert!(json.get(key).is_some(), "the token {key} travels");
         }

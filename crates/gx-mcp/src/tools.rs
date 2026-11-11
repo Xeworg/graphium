@@ -674,11 +674,23 @@ fn render_inner(request: &RenderRequest, opts: &RenderOptions) -> RenderResponse
     // The size of what was just painted is reported, never hidden: the same
     // warning the dry run gives, in the same words (PRD §7 RF20, S6).
     let mut warnings = match gx_core::kind::for_kind(&kind) {
-        Some(registered) => crate::contract::size_warnings(
-            outcome.metrics.nodes,
-            outcome.metrics.edges,
-            registered.limits(),
-        ),
+        Some(registered) => {
+            let mut warnings = crate::contract::size_warnings(
+                outcome.metrics.nodes,
+                outcome.metrics.edges,
+                registered.limits(),
+            );
+            // El kind dice qué no puede anclar el dibujo (`f25-arreglos.md`,
+            // S2): el aviso no rechaza el documento ni cambia la pintura, y
+            // viaja con los avisos de tamaño en `warnings[]`.
+            warnings.extend(
+                registered
+                    .warnings(&document)
+                    .into_iter()
+                    .map(|warning| Warning::new(warning.code, warning.message)),
+            );
+            warnings
+        }
         None => Vec::new(),
     };
     if !applied.is_empty() {
@@ -2057,6 +2069,44 @@ mod tests {
         assert_eq!(response.metrics.expect("metrics").nodes, 2);
     }
 
+    /// `f25-arreglos.md` S2: una tabla sin columna `pk` se dibuja igual —el
+    /// render no cambia— y la respuesta trae **un** aviso agregado
+    /// `tables_without_key` que nombra las tablas ofensoras.
+    #[test]
+    fn the_er_kind_warns_about_tables_without_a_primary_key() {
+        let _guard = lock_renders_blocking();
+
+        let document = r#"{
+          "version": 1, "kind": "er", "title": "Schema — sin claves",
+          "tables": [
+            { "name": "audit_log", "columns": [ { "name": "at", "type": "timestamptz" } ] },
+            { "name": "joins", "columns": [
+                { "name": "left_id", "type": "uuid", "key": "fk" },
+                { "name": "right_id", "type": "uuid", "key": "fk" }
+            ] }
+          ]
+        }"#;
+        let response = render(document);
+
+        assert!(
+            response.ok,
+            "el aviso no rechaza el documento: {response:?}"
+        );
+        assert_eq!(response.rendered_kind.as_deref(), Some("er"));
+        assert_eq!(response.metrics.expect("metrics").nodes, 2);
+        let keyless: Vec<_> = response
+            .warnings
+            .iter()
+            .filter(|warning| warning.code == "tables_without_key")
+            .collect();
+        assert_eq!(keyless.len(), 1, "un solo aviso agregado: {response:?}");
+        let message = &keyless[0].message;
+        assert!(
+            message.contains("audit_log") && message.contains("joins"),
+            "el aviso nombra las tablas: {message}"
+        );
+    }
+
     /// `f17-c4-kind.md` (S4, S5): el kind `c4` entra por la misma puerta que
     /// los demás —registro, validación, layout y dibujo— sin tocar el motor:
     /// el contexto se pinta como un grafo `layered` de tres cajas y dos
@@ -2088,6 +2138,40 @@ mod tests {
         assert_eq!(metrics.nodes, 3);
         assert_eq!(metrics.edges, 2);
         assert!(metrics.svg_bytes > 0, "{metrics:?}");
+    }
+
+    /// `f18-gantt.md` (S4, S7): el kind `gantt` entra por la misma puerta que
+    /// los demás —registro, validación, layout y dibujo— sin tocar el motor:
+    /// el plan se pinta como un cronograma de carriles con sus flechas de
+    /// dependencia.
+    #[test]
+    fn the_gantt_kind_renders_a_plan() {
+        let _guard = lock_renders_blocking();
+
+        let document = r#"{
+          "version": 1, "kind": "gantt", "title": "Mudanza — plan",
+          "lanes": [
+            { "id": "previo", "label": "Previo" },
+            { "id": "dia", "label": "Día" }
+          ],
+          "tasks": [
+            { "id": "cajas", "label": "Empacar cajas", "lane": "previo",
+              "start": 0, "end": 2 },
+            { "id": "camion", "label": "Camión", "lane": "previo",
+              "start": 2, "end": 2 },
+            { "id": "mudanza", "label": "Mudanza", "lane": "dia",
+              "start": 3, "end": 6, "depends_on": ["cajas", "camion"] }
+          ]
+        }"#;
+        let response = render(document);
+
+        assert!(response.ok, "{:?}", response.errors);
+        assert_eq!(response.rendered_kind.as_deref(), Some("gantt"));
+        let metrics = response.metrics.expect("metrics");
+        assert_eq!(metrics.nodes, 3);
+        // El stub del harness devuelve un SVG vacío para timelines (el render
+        // real lo prueban los goldens de gx-app): el tramo que importa acá es
+        // la puerta completa registro→validación→layout.
     }
 
     #[test]

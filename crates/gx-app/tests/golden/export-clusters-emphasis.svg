@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="0.00 0.00 488.39 444.50" width="488.39" height="444.50">
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="-12.00 -12.00 512.39 480.50" width="512.39" height="480.50">
 <style>
 .bg{fill:rgba(27, 27, 27, 1.00)}
 .node-fill{fill:rgba(42, 42, 48, 1.00)}
@@ -15,14 +15,25 @@
 .lane-band{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.35;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
 .lane-label{fill:rgba(185, 185, 194, 1.00)}
 .lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
+.activation{fill:rgba(42, 42, 48, 1.00);stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
 .stroke-dashed{stroke-dasharray:6.00 4.00}
 .text{font-family:Inter, sans-serif}
 .cardinality{fill:none;stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00}
 .arrow-normal{fill:rgba(138, 138, 150, 1.00)}
 .arrow-highlight{fill:rgba(110, 168, 254, 1.00)}
 .arrow-muted{fill:rgba(138, 138, 150, 1.00);opacity:0.55}
+.row-badge{fill:rgba(185, 185, 194, 1.00)}
+.row-note{fill:rgba(185, 185, 194, 1.00)}
+.row-key{font-weight:600}
+.row-nullable{opacity:0.75}
+.shape-dot{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.shape-ring_dot{fill:none}
+.ring-dot-core{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.node-stereotype{fill:rgba(185, 185, 194, 1.00)}
+.axis-line{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.axis-value{fill:rgba(185, 185, 194, 1.00)}
 </style>
-<rect class="bg" x="0.00" y="0.00" width="488.39" height="444.50"/>
+<rect class="bg" x="-12.00" y="-12.00" width="512.39" height="480.50"/>
 <defs>
 <marker id="arrow-highlight" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
 <path class="arrow-highlight" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00 Z"/>
@@ -35,17 +46,17 @@
 </marker>
 </defs>
 <g class="layer-groups">
-<rect id="cluster-plataforma" class="group-box" x="93.92" y="0.00" width="394.47" height="444.50" rx="6.00" ry="6.00"/>
+<rect id="cluster-plataforma" class="group-box" x="93.92" y="0.00" width="394.47" height="456.50" rx="6.00" ry="6.00"/>
 <text class="group-label text" x="105.92" y="14.00" font-size="14.00" text-anchor="start" dominant-baseline="central">Plataforma</text>
-<rect id="cluster-servicio" class="group-box" x="105.92" y="172.00" width="370.47" height="260.50" rx="6.00" ry="6.00"/>
+<rect id="cluster-servicio" class="group-box" x="105.92" y="172.00" width="370.47" height="272.50" rx="6.00" ry="6.00"/>
 <text class="group-label text" x="129.92" y="186.00" font-size="14.00" text-anchor="start" dominant-baseline="central">Servicio</text>
 </g>
 <g class="layer-edges">
 <polyline id="m-api-db" class="edge-stroke emphasis-highlight" points="194.32,253.50 194.32,302.25 194.32,351.00" marker-end="url(#arrow-highlight)"/>
 <text class="edge-text text emphasis-highlight-text" x="218.12" y="302.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">SQL</text>
-<polyline id="m-api-jobs" class="edge-stroke emphasis-muted" points="217.86,242.26 366.33,302.25 366.33,351.00" marker-end="url(#arrow-muted)"/>
+<polyline id="m-api-jobs" class="edge-stroke emphasis-muted" points="217.86,242.26 366.33,302.25 366.33,357.00" marker-end="url(#arrow-muted)"/>
 <text class="edge-text text emphasis-muted" x="398.37" y="302.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">encola</text>
-<polyline id="m-api-pagos" class="edge-stroke" points="173.89,253.50 125.92,302.25 60.71,351.00" marker-end="url(#arrow-normal)"/>
+<polyline id="m-api-pagos" class="edge-stroke" points="173.89,253.50 125.92,302.25 58.51,357.00" marker-end="url(#arrow-normal)"/>
 <text class="edge-text text" x="155.12" y="302.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">cobro</text>
 <polyline id="m-web-api" class="edge-stroke" points="194.32,74.50 194.32,123.25 194.32,172.00 194.32,212.00" marker-end="url(#arrow-normal)"/>
 <text class="edge-text text" x="227.52" y="123.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">HTTPS</text>
@@ -53,13 +64,13 @@
 <g class="layer-nodes">
 <rect id="g-api" class="node-fill node-stroke shape-rounded emphasis-highlight" x="170.77" y="212.00" width="47.09" height="41.50" rx="6.00" ry="6.00"/>
 <text class="node-text text emphasis-highlight-text" x="194.32" y="232.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">API</text>
-<path id="g-db" class="node-fill node-stroke shape-cylinder" d="M 152.35 357.00 C 152.35 349.00 236.28 349.00 236.28 357.00 L 236.28 386.50 C 236.28 394.50 152.35 394.50 152.35 386.50 Z"/>
+<path id="g-db" class="node-fill node-stroke shape-cylinder" d="M 152.35 357.00 C 152.35 349.00 236.28 349.00 236.28 357.00 L 236.28 398.50 C 236.28 406.50 152.35 406.50 152.35 398.50 Z"/>
 <path class="node-stroke shape-cylinder" fill="none" d="M 152.35 357.00 C 152.35 365.00 236.28 365.00 236.28 357.00"/>
-<text class="node-text text" x="194.32" y="371.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Postgres</text>
-<rect id="g-jobs" class="node-fill node-stroke shape-rounded" x="296.28" y="351.00" width="140.11" height="41.50" rx="6.00" ry="6.00"/>
-<text class="node-text text" x="366.33" y="371.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">worker de envíos</text>
-<rect id="g-pagos" class="node-fill node-stroke shape-box stroke-dashed emphasis-muted" x="0.00" y="351.00" width="65.92" height="41.50"/>
-<text class="node-text text emphasis-muted" x="32.96" y="371.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Pagos</text>
+<text class="node-text text" x="194.32" y="377.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Postgres</text>
+<rect id="g-jobs" class="node-fill node-stroke shape-rounded" x="296.28" y="357.00" width="140.11" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="366.33" y="377.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">worker de envíos</text>
+<rect id="g-pagos" class="node-fill node-stroke shape-box stroke-dashed emphasis-muted" x="0.00" y="357.00" width="65.92" height="41.50"/>
+<text class="node-text text emphasis-muted" x="32.96" y="377.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Pagos</text>
 <rect id="g-web" class="node-fill node-stroke shape-box" x="167.02" y="33.00" width="54.59" height="41.50"/>
 <text class="node-text text" x="194.32" y="53.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Web</text>
 </g>

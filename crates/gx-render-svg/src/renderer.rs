@@ -31,6 +31,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use gx_core::scene::BandKind;
 use gx_core::{
     fmt_num, Cardinality, CardinalityBound, CardinalityMax, Ir, IrEdge, IrEvent, IrNode,
     LayoutEdge, LayoutGraph, LayoutGroup, NodeBox, Palette, Scene, Shape, Style,
@@ -41,7 +42,7 @@ use crate::escape::escape_text;
 use crate::geometry::{
     self, band_label, centered_baselines, cluster_id, crow_foot_mark, edge_id, label_lines,
     lane_id, marker_id, node_id, node_rect, points_text, push_emphasis, shape_class, CrowFoot,
-    Table, ARROW_LENGTH, DASH_PATTERN, GROUP_DASH, LIFELINE_DASH, MUTED_OPACITY,
+    Table, ACTIVATION_WIDTH, ARROW_LENGTH, DASH_PATTERN, GROUP_DASH, LIFELINE_DASH, MUTED_OPACITY,
 };
 use crate::scene::Drawing;
 
@@ -117,7 +118,7 @@ impl SvgRenderer {
         if drawing.draws_clusters() {
             out.push_str("<g class=\"layer-groups\">\n");
             for group in &drawing.clusters {
-                write_group_box(&mut out, group);
+                write_band(&mut out, BandKind::Cluster, group);
             }
             out.push_str("</g>\n");
         }
@@ -128,7 +129,7 @@ impl SvgRenderer {
         if drawing.draws_lanes() {
             out.push_str("<g class=\"layer-lanes\">\n");
             for group in &drawing.lanes {
-                write_lane_band(&mut out, group);
+                write_band(&mut out, BandKind::Lane, group);
             }
             out.push_str("</g>\n");
         }
@@ -146,6 +147,42 @@ impl SvgRenderer {
                     fmt_num(geometry::lifeline_start(placed)),
                     fmt_num(geometry::lifeline_x(placed)),
                     fmt_num(geometry::lifeline_end(&canvas)),
+                ));
+            }
+            // The activation bars (S5): on the lifeline, after the lines and
+            // under the arrows the edge layer paints later. The x centers the
+            // bar the tokens' width announces; y is the layout's.
+            for bar in &drawing.activations {
+                out.push_str(&format!(
+                    "<rect class=\"activation\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>\n",
+                    fmt_num(bar.x - ACTIVATION_WIDTH / 2.0),
+                    fmt_num(bar.y1),
+                    fmt_num(ACTIVATION_WIDTH),
+                    fmt_num((bar.y2 - bar.y1).max(0.0)),
+                ));
+            }
+            out.push_str("</g>\n");
+        }
+
+        // El eje de tiempo (`f22-dibujo.md`, S2, L5a): debajo de los carriles
+        // y antes de las aristas, para que la línea no pase sobre una caja.
+        // Solo un timeline lo lleva: `None` no dibuja capa.
+        if let Some(axis) = &drawing.axis {
+            out.push_str("<g class=\"layer-axis\">\n");
+            out.push_str(&format!(
+                "<line class=\"axis-line\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>\n",
+                fmt_num(axis.x1),
+                fmt_num(axis.y),
+                fmt_num(axis.x2),
+                fmt_num(axis.y),
+            ));
+            for (x, value) in &axis.ticks {
+                out.push_str(&format!(
+                    "<text class=\"axis-value text\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"middle\" dominant-baseline=\"hanging\">{}</text>\n",
+                    fmt_num(*x),
+                    fmt_num(axis.y + TOKENS.node_padding / 2.0),
+                    fmt_num(TOKENS.text_size * 0.85),
+                    value,
                 ));
             }
             out.push_str("</g>\n");
@@ -202,7 +239,7 @@ impl SvgRendererContract for SvgRenderer {
 
 fn write_style(out: &mut String, palette: &Palette) {
     let border = fmt_num(TOKENS.border_width);
-    let rules: [(&str, String); 21] = [
+    let rules: [(&str, String); 32] = [
         (".bg", format!("fill:{}", palette.bg.css())),
         (".node-fill", format!("fill:{}", palette.node_fill.css())),
         (
@@ -269,6 +306,14 @@ fn write_style(out: &mut String, palette: &Palette) {
             ),
         ),
         (
+            ".activation",
+            format!(
+                "fill:{};stroke:{};stroke-width:{border}",
+                palette.node_fill.css(),
+                palette.node_stroke.css(),
+            ),
+        ),
+        (
             ".stroke-dashed",
             format!(
                 "stroke-dasharray:{} {}",
@@ -297,6 +342,43 @@ fn write_style(out: &mut String, palette: &Palette) {
                 fmt_num(MUTED_OPACITY)
             ),
         ),
+        // The rows of a table (`f21-roto.md`, S2): the same rules the window
+        // CSS carries (app.css, PRD §6.1), so the exported artifact paints
+        // badges, notes, keys and nullable rows like the window does. Without
+        // them the export drew row text black on the dark background.
+        (".row-badge", format!("fill:{}", palette.edge_text.css())),
+        (".row-note", format!("fill:{}", palette.edge_text.css())),
+        (".row-key", String::from("font-weight:600")),
+        (".row-nullable", String::from("opacity:0.75")),
+        // The UML role glyphs (`f22-dibujo.md`, S3): the initial state is a
+        // solid dot, the final one a dot inside a ring. The rules go after
+        // `.node-fill` so the glyph wins the fill, and the ring stays hollow.
+        (
+            ".shape-dot",
+            format!("fill:{};stroke:none", palette.node_text.css()),
+        ),
+        (".shape-ring_dot", String::from("fill:none")),
+        (
+            ".ring-dot-core",
+            format!("fill:{};stroke:none", palette.node_text.css()),
+        ),
+        // The stereotype of a class role (`f22-dibujo.md`, S4): the word the
+        // role names, drawn above the node name at 0.85× in the edge text
+        // color, exactly what the window CSS paints.
+        (
+            ".node-stereotype",
+            format!("fill:{}", palette.edge_text.css()),
+        ),
+        // The time axis (`f22-dibujo.md`, S2): the line under the lanes and
+        // the value each known column names.
+        (
+            ".axis-line",
+            format!(
+                "stroke:{};stroke-width:{border};fill:none",
+                palette.edge_stroke.css(),
+            ),
+        ),
+        (".axis-value", format!("fill:{}", palette.edge_text.css())),
     ];
     out.push_str("<style>\n");
     for (selector, body) in rules {
@@ -308,7 +390,7 @@ fn write_style(out: &mut String, palette: &Palette) {
     out.push_str("</style>\n");
 }
 
-fn write_defs(out: &mut String, routed: &[(&IrEdge, &LayoutEdge)]) {
+fn write_defs(out: &mut String, routed: &[(IrEdge, LayoutEdge)]) {
     // Only the markers the document references, sorted by id and never by
     // insertion order (PRD §8.5.1).
     let mut used: BTreeSet<&'static str> = BTreeSet::new();
@@ -381,24 +463,36 @@ fn write_node(out: &mut String, node: &IrNode, placed: &NodeBox) {
     let rect = node_rect(placed);
     let id = escape_text(&node_id(&node.id));
     let mut classes = String::from("node-fill node-stroke ");
-    classes.push_str(shape_class(node.shape));
+    classes.push_str(&shape_class(node.shape));
     if node.style == Style::Dashed {
         classes.push_str(" stroke-dashed");
     }
     push_emphasis(&mut classes, node.emphasis, false);
 
-    match node.shape {
-        Shape::Box => write_rect(out, &id, &classes, &rect, None),
-        Shape::Rounded => write_rect(out, &id, &classes, &rect, Some(TOKENS.corner_radius)),
-        Shape::Cylinder => write_cylinder(out, &id, &classes, &rect),
-        Shape::Diamond => write_diamond(out, &id, &classes, &rect),
-        Shape::Ellipse => write_ellipse(out, &id, &classes, &rect),
-        Shape::Note => write_note(out, &id, &classes, &rect),
-    }
-    if node.rows.is_empty() {
+    write_shape(out, &id, &classes, node.shape, &rect);
+    if node.rows.is_empty() || node.shape == Shape::Circle {
         write_node_text(out, node, placed);
     } else {
         write_node_table(out, node, placed);
+    }
+}
+
+/// Draws the glyph of one shape inside its rectangle.
+///
+/// The box of a node and the box of an event are the same drawing — a
+/// rectangle the reader fills with a name — so the dispatch lives here once and
+/// both go through it (S12).
+fn write_shape(out: &mut String, id: &str, classes: &str, shape: Shape, rect: &gx_core::Rect) {
+    match shape {
+        Shape::Box => write_rect(out, id, classes, rect, None),
+        Shape::Rounded => write_rect(out, id, classes, rect, Some(TOKENS.corner_radius)),
+        Shape::Cylinder => write_cylinder(out, id, classes, rect),
+        Shape::Diamond => write_diamond(out, id, classes, rect),
+        Shape::Ellipse => write_ellipse(out, id, classes, rect),
+        Shape::Note => write_note(out, id, classes, rect),
+        Shape::Circle => write_circle(out, id, classes, &geometry::glyph_rect(shape, rect)),
+        Shape::Dot => write_dot(out, id, classes, &geometry::glyph_rect(shape, rect)),
+        Shape::RingDot => write_ring_dot(out, id, classes, &geometry::glyph_rect(shape, rect)),
     }
 }
 
@@ -502,19 +596,19 @@ fn write_crow_foot(
 /// rows are its columns).
 fn write_node_table(out: &mut String, node: &IrNode, placed: &NodeBox) {
     let rect = node_rect(placed);
-    let table = Table::of(&rect);
+    // The badge column exists only when some row has a key to put in it (S13).
+    let keys = node.rows.iter().any(|row| Table::badge(row.key).is_some());
+    let table = Table::of(&rect, keys);
 
     // The header: the label, centered, in the first line of the box.
     let mut label_classes = String::from("node-text text");
     push_emphasis(&mut label_classes, node.emphasis, true);
-    out.push_str(&format!(
-        "<text class=\"{label_classes}\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\" font-weight=\"{}\">{}</text>\n",
-        fmt_num(rect.center().x),
-        fmt_num(table.header_y),
-        fmt_num(TOKENS.text_size),
-        TOKENS.semibold_weight,
-        escape_text(&node.label),
-    ));
+    write_lines(
+        out,
+        &label_classes,
+        &[node.label.as_str()],
+        TextAt::header(rect.center().x, table.header_y),
+    );
 
     // The rule that separates the header from the rows.
     out.push_str(&format!(
@@ -529,13 +623,31 @@ fn write_node_table(out: &mut String, node: &IrNode, placed: &NodeBox) {
     // One line per row: the key role on the left, the name, the note right.
     for (index, row) in node.rows.iter().enumerate() {
         let y = table.row_y(index);
-        out.push_str(&format!(
-            "<text class=\"row-badge text\" x=\"{}\" y=\"{}\" font-size=\"{}\" dominant-baseline=\"central\">{}</text>\n",
-            fmt_num(table.badge_x),
-            fmt_num(y),
-            fmt_num(TOKENS.text_size * 0.85),
-            escape_text(Table::badge(row.key)),
-        ));
+        // The compartment rule (S7): a row that divides draws the line its
+        // compartment starts with — the attributes from the methods of a
+        // class. The header rule above is drawn on its own.
+        if row.divider {
+            let divider_y = table.rule_y + table.line * index as f64;
+            out.push_str(&format!(
+                "<line class=\"node-stroke\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke-width=\"{}\"/>\n",
+                fmt_num(rect.x),
+                fmt_num(divider_y),
+                fmt_num(rect.max_x()),
+                fmt_num(divider_y),
+                fmt_num(TOKENS.border_width),
+            ));
+        }
+        // A row without a key draws no badge: no empty element is written, and
+        // a table without keys has no column to write it in (S13).
+        if let (Some(badge), Some(badge_x)) = (Table::badge(row.key), table.badge_x) {
+            out.push_str(&format!(
+                "<text class=\"row-badge text\" x=\"{}\" y=\"{}\" font-size=\"{}\" dominant-baseline=\"central\">{}</text>\n",
+                fmt_num(badge_x),
+                fmt_num(y),
+                fmt_num(TOKENS.text_size * 0.85),
+                escape_text(badge),
+            ));
+        }
         out.push_str(&format!(
             "<text class=\"{}\" x=\"{}\" y=\"{}\" font-size=\"{}\" dominant-baseline=\"central\">{}</text>\n",
             geometry::row_name_classes(row),
@@ -642,6 +754,46 @@ fn write_ellipse(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect
     ));
 }
 
+/// Draws the circle dot: one `<circle>` in the glyph rect
+/// (`f19-formas.md`, S8).
+fn write_circle(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
+    out.push_str(&format!(
+        "<circle id=\"{id}\" class=\"{classes}\" cx=\"{}\" cy=\"{}\" r=\"{}\"/>\n",
+        fmt_num(rect.center().x),
+        fmt_num(rect.center().y),
+        fmt_num(rect.w / 2.0),
+    ));
+}
+
+/// The filled dot: the UML glyph of a state machine's `initial`
+/// (`f22-dibujo.md`, S3). The fill comes from the class, not from here: the
+/// element is the same circle the commit draws, painted solid by CSS.
+fn write_dot(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
+    out.push_str(&format!(
+        "<circle id=\"{id}\" class=\"{classes}\" cx=\"{}\" cy=\"{}\" r=\"{}\"/>\n",
+        fmt_num(rect.center().x),
+        fmt_num(rect.center().y),
+        fmt_num(rect.w / 2.0),
+    ));
+}
+
+/// The dot inside a ring: the UML glyph of a state machine's `final`
+/// (`f22-dibujo.md`, S3). The outer ring keeps the node classes (unfilled,
+/// stroked) and the inner dot carries its own class — its radius is half the
+/// outer one, frozen here and in the painter twin.
+fn write_ring_dot(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
+    let cx = fmt_num(rect.center().x);
+    let cy = fmt_num(rect.center().y);
+    let r = fmt_num(rect.w / 2.0);
+    let core_r = fmt_num(rect.w / 4.0);
+    out.push_str(&format!(
+        "<circle id=\"{id}\" class=\"{classes}\" cx=\"{cx}\" cy=\"{cy}\" r=\"{r}\"/>\n"
+    ));
+    out.push_str(&format!(
+        "<circle class=\"ring-dot-core\" cx=\"{cx}\" cy=\"{cy}\" r=\"{core_r}\"/>\n"
+    ));
+}
+
 fn write_note(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
     let fold = TOKENS.corner_radius.min(rect.w / 4.0).min(rect.h / 4.0);
     let left = fmt_num(rect.x);
@@ -661,39 +813,137 @@ fn write_note(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
 fn write_node_text(out: &mut String, node: &IrNode, placed: &NodeBox) {
     let mut classes = String::from("node-text text");
     push_emphasis(&mut classes, node.emphasis, true);
-    write_centered_text(out, &classes, &node.label, placed);
+    let lines = label_lines(&node.label);
+    // The stereotype sits above the label at 0.85× (`f22-dibujo.md`, S4), in
+    // UML guillemets; the label block centers on what is left of the box. The
+    // line height is the one `measure_node` reserved (engine.rs, S4).
+    let stereotype_line = if node.stereotype.is_some() {
+        TOKENS.text_size * 0.85 * TOKENS.line_height
+    } else {
+        0.0
+    };
+    if let Some(word) = &node.stereotype {
+        let rect = node_rect(placed);
+        let baseline = rect.y + TOKENS.node_padding + stereotype_line / 2.0;
+        let mut st_classes = String::from("node-stereotype text");
+        push_emphasis(&mut st_classes, node.emphasis, true);
+        out.push_str(&format!(
+            "<text class=\"{st_classes}\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\">«{}»</text>\n",
+            fmt_num(rect.center().x),
+            fmt_num(baseline),
+            fmt_num(TOKENS.text_size * 0.85),
+            escape_text(word),
+        ));
+    }
+    match geometry::label_placement(node.shape, &node_rect(placed)) {
+        geometry::LabelPlacement::Inside => write_lines(
+            out,
+            &classes,
+            &lines,
+            TextAt::centered(placed.center.x, placed.center.y + stereotype_line / 2.0),
+        ),
+        geometry::LabelPlacement::Beside { at } => {
+            write_lines(out, &classes, &lines, TextAt::beside(at));
+        }
+    }
 }
 
-/// Draws a label centered on its box, one `<text>` per line.
+/// Where a block of text sits before it is spelled as SVG (S12).
 ///
-/// A node and a timeline event are the same thing for the reader —a box with
-/// its name— so they share this writer instead of drifting apart.
-fn write_centered_text(out: &mut String, classes: &str, label: &str, placed: &NodeBox) {
-    let lines = label_lines(label);
+/// The three writers this replaced differed only in these four numbers: the
+/// column of the lines, the center of the block, which way the lines grow from
+/// that column and, for the header of a table, a weight other than the regular
+/// one.
+#[derive(Clone, Copy)]
+struct TextAt {
+    x: f64,
+    center_y: f64,
+    anchor: Anchor,
+    weight: Option<u16>,
+}
+
+impl TextAt {
+    /// Centered on a box: the label of a node, of an event, of a table.
+    fn centered(x: f64, center_y: f64) -> Self {
+        Self {
+            x,
+            center_y,
+            anchor: Anchor::Middle,
+            weight: None,
+        }
+    }
+
+    /// Starting at a point: the label beside a dot (`f19-formas.md`, S8).
+    fn beside(at: gx_core::Point) -> Self {
+        Self {
+            x: at.x,
+            center_y: at.y,
+            anchor: Anchor::Start,
+            weight: None,
+        }
+    }
+
+    /// The header of a table: centered and semibold (PRD §6.1).
+    fn header(x: f64, center_y: f64) -> Self {
+        Self {
+            weight: Some(TOKENS.semibold_weight),
+            ..Self::centered(x, center_y)
+        }
+    }
+}
+
+/// Which way the lines of a text grow from its column.
+#[derive(Clone, Copy)]
+enum Anchor {
+    Start,
+    Middle,
+}
+
+impl Anchor {
+    fn name(self) -> &'static str {
+        match self {
+            Anchor::Start => "start",
+            Anchor::Middle => "middle",
+        }
+    }
+}
+
+/// Draws one text of the drawing: one `<text>` when it is a single line and one
+/// `<tspan>` per line when it is more (PRD §8.5, S4).
+///
+/// A centered label, a label beside a dot and the header of a table are the
+/// same thing for the reader — text the box holds — so they are written here
+/// once instead of drifting apart (S12).
+fn write_lines(out: &mut String, classes: &str, lines: &[&str], at: TextAt) {
     if lines.is_empty() {
         return;
     }
     let size = fmt_num(TOKENS.text_size);
-    let center_x = fmt_num(placed.center.x);
+    let x = fmt_num(at.x);
+    let anchor = at.anchor.name();
+    let weight = match at.weight {
+        Some(weight) => format!(" font-weight=\"{weight}\""),
+        None => String::new(),
+    };
 
     if lines.len() == 1 {
         out.push_str(&format!(
-            "<text class=\"{classes}\" x=\"{center_x}\" y=\"{}\" font-size=\"{size}\" text-anchor=\"middle\" dominant-baseline=\"central\">{}</text>\n",
-            fmt_num(placed.center.y),
+            "<text class=\"{classes}\" x=\"{x}\" y=\"{}\" font-size=\"{size}\" text-anchor=\"{anchor}\" dominant-baseline=\"central\"{weight}>{}</text>\n",
+            fmt_num(at.center_y),
             escape_text(lines[0]),
         ));
         return;
     }
 
     out.push_str(&format!(
-        "<text class=\"{classes}\" font-size=\"{size}\" text-anchor=\"middle\" dominant-baseline=\"central\">\n"
+        "<text class=\"{classes}\" font-size=\"{size}\" text-anchor=\"{anchor}\" dominant-baseline=\"central\"{weight}>\n"
     ));
     for (line, baseline) in lines
         .iter()
-        .zip(centered_baselines(placed.center.y, lines.len()))
+        .zip(centered_baselines(at.center_y, lines.len()))
     {
         out.push_str(&format!(
-            "<tspan x=\"{center_x}\" y=\"{}\">{}</tspan>\n",
+            "<tspan x=\"{x}\" y=\"{}\">{}</tspan>\n",
             fmt_num(baseline),
             escape_text(line)
         ));
@@ -701,48 +951,30 @@ fn write_centered_text(out: &mut String, classes: &str, label: &str, placed: &No
     out.push_str("</text>\n");
 }
 
-/// Draws one group of a graph: its container and its name, top left.
-fn write_group_box(out: &mut String, group: &LayoutGroup) {
-    let id = escape_text(&cluster_id(&group.id));
-    write_rect(
-        out,
-        &id,
-        "group-box",
-        &group.bbox,
-        Some(TOKENS.corner_radius),
-    );
-
-    let Some(label) = band_label(group) else {
-        return;
-    };
-    out.push_str(&format!(
-        "<text class=\"group-label text\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"start\" dominant-baseline=\"central\">{}</text>\n",
-        fmt_num(group.bbox.x + TOKENS.node_padding * (1.0 + group.depth as f64)),
-        fmt_num(group.bbox.y + TOKENS.text_size),
-        fmt_num(TOKENS.text_size),
-        escape_text(label),
-    ));
-}
-
-/// Draws one lane of a timeline: its band and its name in the left gutter.
+/// Draws one band of a drawing: a container of a graph or a lane of a timeline.
 ///
-/// The band is what tells the reader which row an event belongs to; the name
-/// sits in the gutter the layout reserved for it, so it never rides on top of
-/// the first event of the row.
-fn write_lane_band(out: &mut String, group: &LayoutGroup) {
-    let id = escape_text(&lane_id(&group.id));
-    write_rect(out, &id, "lane-band", &group.bbox, None);
+/// Both are a box behind elements plus a name in a corner. They differ in three
+/// things — the classes, the corner radius and the point the name sits at — and
+/// those three are all this writer needs, so the two hand-written copies became
+/// one (S12).
+fn write_band(out: &mut String, kind: BandKind, group: &LayoutGroup) {
+    let (id, classes, radius, label_classes) = match kind {
+        BandKind::Cluster => (
+            cluster_id(&group.id),
+            "group-box",
+            Some(TOKENS.corner_radius),
+            "group-label text",
+        ),
+        BandKind::Lane => (lane_id(&group.id), "lane-band", None, "lane-label text"),
+    };
+    let id = escape_text(&id);
+    write_rect(out, &id, classes, &group.bbox, radius);
 
     let Some(label) = band_label(group) else {
         return;
     };
-    out.push_str(&format!(
-        "<text class=\"lane-label text\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"start\" dominant-baseline=\"central\">{}</text>\n",
-        fmt_num(group.bbox.x + TOKENS.node_padding),
-        fmt_num(group.bbox.y + group.bbox.h / 2.0),
-        fmt_num(TOKENS.text_size),
-        escape_text(label),
-    ));
+    let at = geometry::band_label_at(group, kind);
+    write_lines(out, label_classes, &[label], TextAt::beside(at));
 }
 
 /// Draws one event of a timeline: a box with its label, inside its lane.
@@ -754,12 +986,16 @@ fn write_lane_band(out: &mut String, group: &LayoutGroup) {
 fn write_event(out: &mut String, event: &IrEvent, placed: &NodeBox) {
     let rect = node_rect(placed);
     let id = escape_text(&node_id(&event.id));
-    write_rect(
+    // An event is the shape its role gives it (`f22-dibujo.md`, S6): the
+    // default is the rounded box of always, and a `milestone` draws its
+    // diamond. The glyph dispatch is the same one every shape goes through
+    // (S12).
+    write_shape(
         out,
         &id,
-        "node-fill node-stroke shape-rounded",
+        &format!("node-fill node-stroke shape-{}", event.shape.as_str()),
+        event.shape,
         &rect,
-        Some(TOKENS.corner_radius),
     );
     if let Some(bar) = geometry::event_bar(&rect, event.span) {
         out.push_str(&format!(
@@ -770,7 +1006,12 @@ fn write_event(out: &mut String, event: &IrEvent, placed: &NodeBox) {
             fmt_num(bar.h),
         ));
     }
-    write_centered_text(out, "node-text text", &event.label, placed);
+    write_lines(
+        out,
+        "node-text text",
+        &label_lines(&event.label),
+        TextAt::centered(placed.center.x, placed.center.y),
+    );
 }
 
 #[cfg(test)]

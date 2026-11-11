@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="-12.00 -12.00 705.93 387.50" width="705.93" height="387.50">
+<style>
+.bg{fill:rgba(27, 27, 27, 1.00)}
+.node-fill{fill:rgba(42, 42, 48, 1.00)}
+.node-stroke{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.node-text{fill:rgba(233, 233, 236, 1.00)}
+.edge-stroke{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.edge-text{fill:rgba(185, 185, 194, 1.00)}
+.accent{fill:rgba(110, 168, 254, 1.00);stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight{stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight-text{fill:rgba(110, 168, 254, 1.00)}
+.emphasis-muted{opacity:0.55}
+.group-box{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.12;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:8.00 5.00}
+.group-label{fill:rgba(185, 185, 194, 1.00)}
+.lane-band{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.35;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.lane-label{fill:rgba(185, 185, 194, 1.00)}
+.lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
+.activation{fill:rgba(42, 42, 48, 1.00);stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.stroke-dashed{stroke-dasharray:6.00 4.00}
+.text{font-family:Inter, sans-serif}
+.cardinality{fill:none;stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00}
+.arrow-normal{fill:rgba(138, 138, 150, 1.00)}
+.arrow-highlight{fill:rgba(110, 168, 254, 1.00)}
+.arrow-muted{fill:rgba(138, 138, 150, 1.00);opacity:0.55}
+.row-badge{fill:rgba(185, 185, 194, 1.00)}
+.row-note{fill:rgba(185, 185, 194, 1.00)}
+.row-key{font-weight:600}
+.row-nullable{opacity:0.75}
+.shape-dot{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.shape-ring_dot{fill:none}
+.ring-dot-core{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.node-stereotype{fill:rgba(185, 185, 194, 1.00)}
+.axis-line{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.axis-value{fill:rgba(185, 185, 194, 1.00)}
+</style>
+<defs>
+</defs>
+<g class="layer-lanes">
+<rect id="lane-pre" class="lane-band" x="0.00" y="0.00" width="681.93" height="220.00"/>
+<text class="lane-label text" x="12.00" y="110.00" font-size="14.00" text-anchor="start" dominant-baseline="central">Preparación</text>
+<rect id="lane-ship" class="lane-band" x="0.00" y="220.00" width="681.93" height="110.00"/>
+<text class="lane-label text" x="12.00" y="275.00" font-size="14.00" text-anchor="start" dominant-baseline="central">Entrega</text>
+</g>
+<g class="layer-axis">
+<line class="axis-line" x1="225.00" y1="346.00" x2="622.93" y2="346.00"/>
+<text class="axis-value text" x="225.00" y="352.00" font-size="11.90" text-anchor="middle" dominant-baseline="hanging">0</text>
+<text class="axis-value text" x="440.93" y="352.00" font-size="11.90" text-anchor="middle" dominant-baseline="hanging">1</text>
+<text class="axis-value text" x="622.93" y="352.00" font-size="11.90" text-anchor="middle" dominant-baseline="hanging">3</text>
+</g>
+<g class="layer-edges">
+</g>
+<g class="layer-nodes">
+<polygon id="g-event-0" class="node-fill node-stroke shape-diamond" points="241.97,85.25 333.93,110.00 241.97,134.75 150.00,110.00"/>
+<text class="node-text text" x="241.97" y="110.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">código congelado</text>
+<rect id="g-event-1" class="node-fill node-stroke shape-rounded" x="365.93" y="85.25" width="118.00" height="49.50" rx="6.00" ry="6.00"/>
+<rect class="accent" x="366.93" y="128.75" width="116.00" height="5.00"/>
+<text class="node-text text" x="424.93" y="110.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">beta</text>
+<rect id="g-event-2" class="node-fill node-stroke shape-rounded" x="365.93" y="140.25" width="268.00" height="49.50" rx="6.00" ry="6.00"/>
+<rect class="accent" x="366.93" y="183.75" width="266.00" height="5.00"/>
+<text class="node-text text" x="499.93" y="165.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">correcciones</text>
+<polygon id="g-event-3" class="node-fill node-stroke shape-diamond" points="606.93,250.25 665.93,275.00 606.93,299.75 547.93,275.00"/>
+<text class="node-text text" x="606.93" y="275.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">v1.0</text>
+</g>
+</svg>

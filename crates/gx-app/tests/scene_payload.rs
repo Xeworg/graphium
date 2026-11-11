@@ -112,7 +112,15 @@ fn the_scene_mirrors_the_drawing_of_a_graph() {
         .as_ref()
         .expect("the paint path builds a scene");
 
-    assert_eq!(scene.canvas, outcome.bbox, "the canvas is the layout bbox");
+    // The canvas is the layout bbox with the air of the frame (`f21-roto.md`,
+    // S3): padded by 12 plan units on every side, so strokes and edge labels
+    // are never cut by the viewBox.
+    let bbox = outcome.bbox;
+    assert_eq!(
+        scene.canvas,
+        gx_core::Rect::new(bbox.x - 12.0, bbox.y - 12.0, bbox.w + 24.0, bbox.h + 24.0),
+        "the canvas is the padded layout bbox"
+    );
     assert_eq!(scene.nodes.len(), outcome.metrics.nodes);
     assert_eq!(scene.edges.len(), outcome.metrics.edges);
 

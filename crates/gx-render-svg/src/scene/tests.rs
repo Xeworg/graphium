@@ -5,7 +5,8 @@ use std::collections::BTreeSet;
 use gx_core::ir::Span;
 use gx_core::{
     Direction, Emphasis, Ir, IrEdge, IrEvent, IrGraph, IrLane, IrNode, IrRow, IrTimeline,
-    LayoutGraph, LayoutGroup, LayoutHint, Palette, Point, Rect, Shape, Size, Style, TOKENS,
+    LayoutEdge, LayoutGraph, LayoutGroup, LayoutHint, Palette, Point, Rect, Shape, Size, Style,
+    TOKENS,
 };
 
 use super::{scene as build_scene, scene_tokens, Drawing};
@@ -215,7 +216,7 @@ fn the_scene_carries_the_canvas_and_the_direction() {
 
     let scene = build_scene(&ir, &layout, &palette());
 
-    assert_eq!(scene.canvas, Rect::new(0.0, 0.0, 260.0, 170.0));
+    assert_eq!(scene.canvas, Rect::new(-12.0, -12.0, 284.0, 194.0));
     assert_eq!(scene.direction, Some(Direction::TB));
     assert_eq!(scene.layout_hint, Some(LayoutHint::Layered));
 }
@@ -255,11 +256,13 @@ fn the_scene_carries_the_containers_of_a_graph() {
     assert!(scene.events.is_empty(), "a graph has no events");
 }
 
-/// S3, S4: a timeline has no direction and no edges; its lanes are the bands,
-/// its events carry the box the lanes engine measured and the span of a bar.
+/// S3, S4: a timeline has no direction; without a declared dependency it has
+/// no edges either. Its lanes are the bands, its events carry the box the
+/// lanes engine measured and the span of a bar.
 #[test]
 fn the_scene_carries_the_lanes_and_events_of_a_timeline() {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: vec![
             IrLane {
                 id: "a".to_string(),
@@ -272,14 +275,17 @@ fn the_scene_carries_the_lanes_and_events_of_a_timeline() {
         ],
         events: vec![
             IrEvent {
+                shape: Shape::Rounded,
                 id: "one".to_string(),
                 lane: "a".to_string(),
                 label: "arranca".to_string(),
                 order: 0,
                 span: None,
+                depends_on: Vec::new(),
                 kind_data: Default::default(),
             },
             IrEvent {
+                shape: Shape::Rounded,
                 id: "two".to_string(),
                 lane: "b".to_string(),
                 label: "barra\nde dos".to_string(),
@@ -288,6 +294,7 @@ fn the_scene_carries_the_lanes_and_events_of_a_timeline() {
                     start: 2.0,
                     end: 4.0,
                 }),
+                depends_on: Vec::new(),
                 kind_data: Default::default(),
             },
         ],
@@ -301,6 +308,7 @@ fn the_scene_carries_the_lanes_and_events_of_a_timeline() {
         Rect::new(0.0, 0.0, 400.0, 160.0),
     );
     let layout = LayoutGraph {
+        activations: Vec::new(),
         groups: vec![
             LayoutGroup {
                 id: "a".to_string(),
@@ -367,20 +375,24 @@ fn the_scene_carries_the_lanes_and_events_of_a_timeline() {
 #[test]
 fn a_spanned_event_carries_the_numbers_of_its_bar() {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: vec![IrLane {
             id: "q1".to_string(),
             label: Some("Q1".to_string()),
         }],
         events: vec![
             IrEvent {
+                shape: Shape::Rounded,
                 id: "point".to_string(),
                 lane: "q1".to_string(),
                 label: "punto".to_string(),
                 order: 0,
                 span: None,
+                depends_on: Vec::new(),
                 kind_data: Default::default(),
             },
             IrEvent {
+                shape: Shape::Rounded,
                 id: "bar".to_string(),
                 lane: "q1".to_string(),
                 label: "dura".to_string(),
@@ -389,6 +401,7 @@ fn a_spanned_event_carries_the_numbers_of_its_bar() {
                     start: 1.0,
                     end: 4.0,
                 }),
+                depends_on: Vec::new(),
                 kind_data: Default::default(),
             },
         ],
@@ -448,6 +461,7 @@ fn the_scene_never_carries_a_path() {
                 note: Some("uuid".to_string()),
                 key: gx_core::RowKey::Pk,
                 nullable: false,
+                divider: false,
             },
             IrRow::new("email"),
         ];
@@ -532,7 +546,7 @@ fn the_drawing_plan_knows_which_layers_exist() {
     assert!(!drawing.draws_lifelines());
     assert_eq!(drawing.nodes.len(), 3);
     assert_eq!(drawing.edges.len(), 2);
-    assert_eq!(drawing.canvas, Rect::new(0.0, 0.0, 260.0, 170.0));
+    assert_eq!(drawing.canvas, Rect::new(-12.0, -12.0, 284.0, 194.0));
 
     let mut lanes_ir = Ir::Graph(IrGraph {
         direction: Direction::LR,
@@ -559,4 +573,188 @@ fn the_drawing_plan_knows_which_layers_exist() {
         drawing.draws_lifelines(),
         "a lanes graph draws a lifeline under every actor"
     );
+}
+
+/// S7 (`f18-gantt.md`): a task that declares `depends_on` draws one dependency
+/// arrow, from the dependency's event box to the waiting task's box, with the
+/// frozen elbow of `dependency_route`.
+#[test]
+fn a_declared_dependency_draws_one_arrow_from_the_dependency_to_the_task() {
+    let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
+        lanes: vec![
+            IrLane {
+                id: "a".to_string(),
+                label: Some("Diseño".to_string()),
+            },
+            IrLane {
+                id: "b".to_string(),
+                label: Some("Obra".to_string()),
+            },
+        ],
+        events: vec![
+            IrEvent {
+                shape: Shape::Rounded,
+                id: "one".to_string(),
+                lane: "a".to_string(),
+                label: "planos".to_string(),
+                order: 0,
+                span: Some(Span {
+                    start: 0.0,
+                    end: 3.0,
+                }),
+                depends_on: Vec::new(),
+                kind_data: Default::default(),
+            },
+            IrEvent {
+                shape: Shape::Rounded,
+                id: "two".to_string(),
+                lane: "b".to_string(),
+                label: "demolición".to_string(),
+                order: 5,
+                span: Some(Span {
+                    start: 5.0,
+                    end: 9.0,
+                }),
+                depends_on: vec!["one".to_string()],
+                kind_data: Default::default(),
+            },
+        ],
+    });
+    let layout = fixture::layout(
+        &[
+            ("one", Point::new(80.0, 40.0), Size::new(120.0, 40.0)),
+            ("two", Point::new(320.0, 120.0), Size::new(160.0, 40.0)),
+        ],
+        Vec::new(),
+        Rect::new(0.0, 0.0, 480.0, 160.0),
+    );
+
+    let scene = build_scene(&ir, &layout, &palette());
+
+    assert_eq!(scene.edges.len(), 1, "one arrow per declared dependency");
+    let edge = &scene.edges[0];
+    assert_eq!(edge.id, "m-one-two");
+    assert_eq!(edge.from, "one");
+    assert_eq!(edge.to, "two");
+    assert!(edge.arrow, "the dependency points at the task that waits");
+    assert_eq!(edge.label, None);
+    // The elbow is frozen: out of the right edge of `one` — the box spans
+    // 20..140 — across the mid gap (190), down into `two`'s lane, into its
+    // left edge — the box spans 240..400.
+    assert_eq!(edge.points.len(), 4);
+    assert_eq!(edge.points[0], Point::new(140.0, 40.0));
+    assert_eq!(edge.points[1], Point::new(190.0, 40.0));
+    assert_eq!(edge.points[2], Point::new(190.0, 120.0));
+    assert_eq!(edge.points[3], Point::new(240.0, 120.0));
+
+    // The same document always yields the same arrow (S7, determinism).
+    let again = build_scene(&ir, &layout, &palette());
+    assert_eq!(scene.edges, again.edges);
+}
+
+/// S8 (`f22-dibujo.md`): a connector of a swimlane reaches the scene as a
+/// plain arrow with the route the layout computed, in connection order — and
+/// a connection with an end the layout never placed draws nothing, without
+/// unpairing the routes of the connections that follow it.
+#[test]
+fn a_connector_of_a_timeline_reaches_the_scene_as_a_plain_arrow() {
+    use gx_core::{connector_route, IrConnection, NodeBox};
+
+    let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
+        lanes: vec![IrLane {
+            id: "a".to_string(),
+            label: Some("Soporte".to_string()),
+        }],
+        events: vec![
+            IrEvent {
+                shape: Shape::Rounded,
+                id: "one".to_string(),
+                lane: "a".to_string(),
+                label: "abre".to_string(),
+                order: 0,
+                span: None,
+                depends_on: Vec::new(),
+                kind_data: Default::default(),
+            },
+            IrEvent {
+                shape: Shape::Rounded,
+                id: "two".to_string(),
+                lane: "a".to_string(),
+                label: "escala".to_string(),
+                order: 1,
+                span: None,
+                depends_on: Vec::new(),
+                kind_data: Default::default(),
+            },
+        ],
+    });
+    let mut with_connection = ir.clone();
+    if let Ir::Timeline(timeline) = &mut with_connection {
+        timeline.connections = vec![
+            IrConnection {
+                from: "one".to_string(),
+                to: "two".to_string(),
+            },
+            // An end the layout never placed: it draws nothing, and the
+            // routes of the connections after it stay paired.
+            IrConnection {
+                from: "one".to_string(),
+                to: "fantasma".to_string(),
+            },
+            IrConnection {
+                from: "two".to_string(),
+                to: "one".to_string(),
+            },
+        ];
+    }
+    let mut layout = fixture::layout(
+        &[
+            ("one", Point::new(80.0, 40.0), Size::new(120.0, 40.0)),
+            ("two", Point::new(320.0, 40.0), Size::new(120.0, 40.0)),
+        ],
+        Vec::new(),
+        Rect::new(0.0, 0.0, 480.0, 160.0),
+    );
+    // The routes are the lanes engine's: the scene reads them from the
+    // layout, never routes on its own. Same filter as the engine — a route
+    // per placed connection, in connection order.
+    let box_of = |center: Point, size: Size| NodeBox { center, size };
+    layout.edges = vec![
+        LayoutEdge {
+            from: "one".to_string(),
+            to: "two".to_string(),
+            points: connector_route(
+                &box_of(Point::new(80.0, 40.0), Size::new(120.0, 40.0)),
+                &box_of(Point::new(320.0, 40.0), Size::new(120.0, 40.0)),
+            ),
+            label_at: None,
+        },
+        LayoutEdge {
+            from: "two".to_string(),
+            to: "one".to_string(),
+            points: connector_route(
+                &box_of(Point::new(320.0, 40.0), Size::new(120.0, 40.0)),
+                &box_of(Point::new(80.0, 40.0), Size::new(120.0, 40.0)),
+            ),
+            label_at: None,
+        },
+    ];
+
+    let scene = build_scene(&with_connection, &layout, &palette());
+
+    assert_eq!(scene.edges.len(), 2, "one arrow per placed connection");
+    let forward = &scene.edges[0];
+    assert_eq!(forward.id, "m-one-two");
+    assert!(forward.arrow, "a connector is an arrow");
+    assert_eq!(forward.points.len(), 2, "same row: a straight line");
+    let backward = &scene.edges[1];
+    assert_eq!(
+        backward.id, "m-two-one",
+        "the opposite pair is not parallel: its own id"
+    );
+    // Without connections the scene carries no edge at all.
+    let plain = build_scene(&ir, &layout, &palette());
+    assert!(plain.edges.is_empty(), "no connectors, no arrows");
 }

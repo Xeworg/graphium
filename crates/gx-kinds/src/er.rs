@@ -6,10 +6,8 @@
 //! the diagram answers the question a schema diagram exists for.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{
-    Cardinality, Direction, Ir, IrEdge, IrGraph, IrNode, IrRow, LayoutHint, RowKey, Shape,
-};
-use gx_core::kind::{DiagramKind, KindLimits};
+use gx_core::ir::{Cardinality, Direction, Ir, IrEdge, IrNode, IrRow, LayoutHint, RowKey, Shape};
+use gx_core::kind::{DiagramKind, KindLimits, KindWarning};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -78,7 +76,8 @@ pub struct ErRelation {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ErInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `er`.
     pub kind: String,
@@ -114,39 +113,16 @@ fn key_of(column: &ErColumn) -> RowKey {
 
 impl DiagramKind for ErKind {
     const KIND: &'static str = "er";
+    const PHASE: &'static str = "F1";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = ErInput;
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
-        let mut errors = Vec::new();
-
-        if input.kind != Self::KIND {
-            errors.push(ValidationError::new(
-                "kind",
-                ErrorCode::InvalidValue,
-                format!("`kind` debe ser `{}`, no `{}`", Self::KIND, input.kind),
-                Some("usá get_diagram_schema para ver los kinds disponibles".to_string()),
-            ));
-        }
-        if input.version != SUPPORTED_VERSION {
-            errors.push(ValidationError::new(
-                "version",
-                ErrorCode::UnsupportedVersion,
-                format!(
-                    "versión de contrato no soportada: {} (soportada: {SUPPORTED_VERSION})",
-                    input.version
-                ),
-                Some("actualizá el documento a la versión 1 del contrato".to_string()),
-            ));
-        }
+        let mut errors =
+            crate::flow::validate_header(Self::KIND, &input.kind, SUPPORTED_VERSION, input.version);
 
         // Names of the tables, in order, for the references and uniqueness.
         let mut tables: Vec<&str> = Vec::new();
@@ -156,7 +132,7 @@ impl DiagramKind for ErKind {
                     format!("tables[{index}].name"),
                     ErrorCode::InvalidValue,
                     "el nombre de la tabla no puede estar vacío",
-                    None,
+                    Some("escribí el nombre de la tabla, por ejemplo `pedidos`".to_string()),
                 ));
             }
             if tables.contains(&table.name.as_str()) {
@@ -171,6 +147,14 @@ impl DiagramKind for ErKind {
 
             let mut columns: Vec<&str> = Vec::new();
             for (column_index, column) in table.columns.iter().enumerate() {
+                if column.name.is_empty() {
+                    errors.push(ValidationError::new(
+                        format!("tables[{index}].columns[{column_index}].name"),
+                        ErrorCode::InvalidValue,
+                        "el nombre de la columna no puede estar vacío",
+                        Some("poné el nombre que la fila muestra, por ejemplo `total`".to_string()),
+                    ));
+                }
                 if columns.contains(&column.name.as_str()) {
                     errors.push(ValidationError::new(
                         format!("tables[{index}].columns[{column_index}].name"),
@@ -277,21 +261,11 @@ impl DiagramKind for ErKind {
             .tables
             .iter()
             .map(|table| {
-                let width = table
-                    .columns
-                    .iter()
-                    .map(|column| column.name.len() + column.r#type.as_deref().unwrap_or("").len())
-                    .max()
-                    .unwrap_or(0)
-                    .max(table.name.len());
                 let mut node = IrNode::new(
                     table.name.clone(),
                     table.label.clone().unwrap_or_else(|| table.name.clone()),
                 );
                 node.shape = Shape::Box;
-                // The width is a hint for the measurer: the real size comes
-                // from `TextMetrics`, which measures the rows too.
-                let _ = width;
                 for column in &table.columns {
                     let mut row = IrRow::new(&column.name);
                     row.key = key_of(column);
@@ -346,17 +320,110 @@ impl DiagramKind for ErKind {
             })
             .collect();
 
-        Ir::Graph(IrGraph {
-            direction: input.direction.unwrap_or(Direction::LR),
-            layout_hint: Self::LAYOUT_HINT,
+        Ir::Graph(crate::flow::ir_graph(
+            // El contrato de `er` defaultea LR: el esquema se lee de izquierda
+            // a derecha. `ir_graph` defaultea TB (el default de la familia
+            // graph), así que el kind fija el suyo acá.
+            Some(input.direction.unwrap_or(Direction::LR)),
+            Self::LAYOUT_HINT,
             nodes,
             edges,
-            groups: Vec::new(),
-        })
+            Vec::new(),
+        ))
+    }
+
+    /// El aviso agregado de las tablas sin clave primaria (`f25-arreglos.md`,
+    /// S2): la tabla se dibuja igual —una tabla sin PK es legal en una base
+    /// real— y el aviso dice qué no puede anclar. Un solo aviso para todas
+    /// las tablas, con los nombres en el orden del documento.
+    fn warnings(&self, input: &Self::Input) -> Vec<KindWarning> {
+        /// Cuántos nombres entran en el aviso antes de contar el resto.
+        const NAMES_SHOWN: usize = 5;
+
+        // Una tabla tiene clave cuando alguna columna lo es: `pk`, o la
+        // mitad `pk` de una `pk_fk`. `key_of` ya normaliza el texto de
+        // `key`, así que se reusa en vez de re-parsearlo.
+        let keyless: Vec<&str> = input
+            .tables
+            .iter()
+            .filter(|table| {
+                !table
+                    .columns
+                    .iter()
+                    .any(|column| matches!(key_of(column), RowKey::Pk | RowKey::PkFk))
+            })
+            .map(|table| table.name.as_str())
+            .collect();
+        if keyless.is_empty() {
+            return Vec::new();
+        }
+
+        let listed = keyless
+            .iter()
+            .take(NAMES_SHOWN)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let rest = keyless.len().saturating_sub(NAMES_SHOWN);
+        let listed = if rest > 0 {
+            format!("{listed}, y {rest} más")
+        } else {
+            listed
+        };
+        let (noun, verb) = if keyless.len() == 1 {
+            ("tabla", "puede")
+        } else {
+            ("tablas", "pueden")
+        };
+
+        vec![KindWarning {
+            code: "tables_without_key",
+            message: format!(
+                "{} {noun} sin clave primaria ({listed}): no {verb} ser el origen de una relación —el origen debe ser una columna `pk`— y el puente de SQL omite las claves foráneas que apuntan a una columna que no es primaria",
+                keyless.len()
+            ),
+        }]
     }
 
     fn schema() -> schemars::Schema {
         schemars::schema_for!(ErInput)
+    }
+
+    fn shapes() -> Vec<Shape> {
+        vec![Shape::Box]
+    }
+
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "Cada tabla tiene un `name` único dentro del diagrama.".to_string(),
+            "Cada relación referencia tablas y columnas declaradas.".to_string(),
+            // La regla del aviso (`f25-arreglos.md`, S2): el agente tiene que
+            // leer en el schema que una tabla sin clave se dibuja igual y que
+            // lo que pierde es el anclaje, no el dibujo.
+            "Una tabla sin columna con `key: \"pk\"` se dibuja igual y la respuesta lo avisa con `tables_without_key`: esa tabla no puede ser el origen de una relación y el puente de SQL omite las claves foráneas que le apuntan.".to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "er",
+            "title": "Schema — posts",
+            "tables": [
+                { "name": "users", "columns": [ { "name": "id", "type": "uuid", "key": "pk" } ] },
+                { "name": "posts", "columns": [
+                    { "name": "id", "type": "uuid", "key": "pk" },
+                    { "name": "user_id", "type": "uuid", "key": "fk" }
+                ] }
+            ],
+            "relations": [
+                {
+                    "from": { "table": "users", "column": "id" },
+                    "to": { "table": "posts", "column": "user_id" },
+                    "cardinality": "1:N"
+                }
+            ]
+        })
     }
 }
 
@@ -535,6 +602,73 @@ mod tests {
         assert!(errors[0].hint.clone().unwrap().contains("1:N"));
     }
 
+    /// `f25-arreglos.md` S2: una tabla sin columna `pk` es legal y se dibuja
+    /// igual; el documento lo dice en **un solo** aviso agregado. Con `pk` en
+    /// todas las tablas no hay aviso, y varias tablas sin clave siguen siendo
+    /// un aviso (los nombres, en el orden del documento).
+    #[test]
+    fn a_schema_without_primary_keys_reports_one_aggregated_warning() {
+        let keyless = serde_json::json!({
+            "version": 1, "kind": "er",
+            "tables": [
+                { "name": "audit_log", "columns": [ { "name": "at", "type": "timestamptz" } ] },
+                { "name": "joins", "columns": [
+                    { "name": "left_id", "type": "uuid", "key": "fk" },
+                    { "name": "right_id", "type": "uuid", "key": "fk" }
+                ] }
+            ]
+        });
+        let input: ErInput = serde_json::from_value(keyless).expect("valid");
+
+        let warnings = ErKind.warnings(&input);
+
+        assert_eq!(warnings.len(), 1, "un aviso agregado: {warnings:?}");
+        assert_eq!(warnings[0].code, "tables_without_key");
+        let message = &warnings[0].message;
+        assert!(
+            message.contains("2 tablas sin clave primaria (audit_log, joins)"),
+            "{message}"
+        );
+        assert!(message.contains("columna `pk`"), "{message}");
+        assert!(message.contains("puente de SQL"), "{message}");
+
+        // Con `pk` en todas las tablas no hay nada que avisar.
+        let keyed: ErInput = serde_json::from_str(EXAMPLE).expect("valid");
+        assert!(ErKind.warnings(&keyed).is_empty());
+
+        // Una tabla cuyo único rol es `pk_fk` **tiene** clave: es la mitad
+        // `pk` de una compuesta, y el validador la acepta como origen de una
+        // relación (`key_of` la resuelve a `PkFk`).
+        let composite: ErInput = serde_json::from_value(serde_json::json!({
+            "version": 1, "kind": "er",
+            "tables": [ { "name": "enrollments", "columns": [
+                { "name": "student_id", "key": "pk_fk" },
+                { "name": "course_id", "key": "pk_fk" }
+            ] } ]
+        }))
+        .expect("valid");
+        assert!(ErKind.warnings(&composite).is_empty());
+
+        // Muchas tablas sin clave: un aviso, los primeros cinco nombres y el
+        // resto contado.
+        let names = ["t1", "t2", "t3", "t4", "t5", "t6", "t7"];
+        let tables: Vec<serde_json::Value> = names
+            .iter()
+            .map(|name| serde_json::json!({ "name": name }))
+            .collect();
+        let many: ErInput = serde_json::from_value(serde_json::json!({
+            "version": 1, "kind": "er", "tables": tables
+        }))
+        .expect("valid");
+        let warnings = ErKind.warnings(&many);
+        assert_eq!(warnings.len(), 1, "uno solo: {warnings:?}");
+        let message = &warnings[0].message;
+        assert!(
+            message.contains("7 tablas sin clave primaria (t1, t2, t3, t4, t5, y 2 más)"),
+            "{message}"
+        );
+    }
+
     #[test]
     fn a_relation_must_point_to_a_foreign_key() {
         let document = EXAMPLE.replace(
@@ -544,5 +678,28 @@ mod tests {
         let input: ErInput = serde_json::from_str(&document).expect("valid");
         let errors = ErKind.validate(&input).expect_err("must fail");
         assert_eq!(errors[0].code, gx_core::error::ErrorCode::InvalidValue);
+    }
+}
+
+#[cfg(test)]
+mod direction_tests {
+    use super::ErKind;
+    use gx_core::ir::{Direction, Ir};
+    use gx_core::kind::DiagramKind;
+
+    /// El default de `er` es LR (el esquema se lee de izquierda a derecha),
+    /// aunque `flow::ir_graph` defaultee TB: el kind fija el suyo.
+    #[test]
+    fn a_schema_without_direction_maps_to_lr() {
+        let parsed: super::ErInput = serde_json::from_str(
+            r#"{ "version": 1, "kind": "er",
+                 "tables": [ { "name": "posts" } ] }"#,
+        )
+        .expect("the document parses");
+
+        let Ir::Graph(graph) = ErKind.to_ir(&parsed) else {
+            panic!("un diagrama de `er` es un grafo");
+        };
+        assert_eq!(graph.direction, Direction::LR);
     }
 }

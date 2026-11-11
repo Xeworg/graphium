@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="-12.00 -12.00 171.90 204.50" width="171.90" height="204.50">
+<style>
+.bg{fill:rgba(27, 27, 27, 1.00)}
+.node-fill{fill:rgba(42, 42, 48, 1.00)}
+.node-stroke{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.node-text{fill:rgba(233, 233, 236, 1.00)}
+.edge-stroke{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.edge-text{fill:rgba(185, 185, 194, 1.00)}
+.accent{fill:rgba(110, 168, 254, 1.00);stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight{stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight-text{fill:rgba(110, 168, 254, 1.00)}
+.emphasis-muted{opacity:0.55}
+.group-box{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.12;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:8.00 5.00}
+.group-label{fill:rgba(185, 185, 194, 1.00)}
+.lane-band{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.35;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.lane-label{fill:rgba(185, 185, 194, 1.00)}
+.lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
+.activation{fill:rgba(42, 42, 48, 1.00);stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.stroke-dashed{stroke-dasharray:6.00 4.00}
+.text{font-family:Inter, sans-serif}
+.cardinality{fill:none;stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00}
+.arrow-normal{fill:rgba(138, 138, 150, 1.00)}
+.arrow-highlight{fill:rgba(110, 168, 254, 1.00)}
+.arrow-muted{fill:rgba(138, 138, 150, 1.00);opacity:0.55}
+.row-badge{fill:rgba(185, 185, 194, 1.00)}
+.row-note{fill:rgba(185, 185, 194, 1.00)}
+.row-key{font-weight:600}
+.row-nullable{opacity:0.75}
+.shape-dot{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.shape-ring_dot{fill:none}
+.ring-dot-core{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.node-stereotype{fill:rgba(185, 185, 194, 1.00)}
+.axis-line{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.axis-value{fill:rgba(185, 185, 194, 1.00)}
+</style>
+<defs>
+<marker id="arrow-normal" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
+<path class="arrow-normal" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00 Z"/>
+</marker>
+</defs>
+<g class="layer-groups">
+</g>
+<g class="layer-edges">
+<polyline id="m-idea-margen" class="edge-stroke" points="73.95,41.50 73.95,90.25 73.95,139.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="102.47" y="90.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">anota</text>
+</g>
+<g class="layer-nodes">
+<rect id="g-idea" class="node-fill node-stroke shape-rounded" x="37.78" y="0.00" width="72.34" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="73.95" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">La idea</text>
+<path id="g-margen" class="node-fill node-stroke shape-note" d="M 0.00 139.00 L 141.90 139.00 L 147.90 145.00 L 147.90 180.50 L 0.00 180.50 Z"/>
+<path class="node-stroke shape-note" fill="none" d="M 141.90 139.00 L 141.90 145.00 L 147.90 145.00"/>
+<text class="node-text text" x="73.95" y="159.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">el margen la anota</text>
+</g>
+</svg>

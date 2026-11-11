@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="0.00 0.00 399.22 244.50" width="399.22" height="244.50">
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="-12.00 -12.00 423.22 268.50" width="423.22" height="268.50">
 <style>
 .bg{fill:rgba(27, 27, 27, 1.00)}
 .node-fill{fill:rgba(42, 42, 48, 1.00)}
@@ -15,12 +15,23 @@
 .lane-band{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.35;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
 .lane-label{fill:rgba(185, 185, 194, 1.00)}
 .lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
+.activation{fill:rgba(42, 42, 48, 1.00);stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
 .stroke-dashed{stroke-dasharray:6.00 4.00}
 .text{font-family:Inter, sans-serif}
 .cardinality{fill:none;stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00}
 .arrow-normal{fill:rgba(138, 138, 150, 1.00)}
 .arrow-highlight{fill:rgba(110, 168, 254, 1.00)}
 .arrow-muted{fill:rgba(138, 138, 150, 1.00);opacity:0.55}
+.row-badge{fill:rgba(185, 185, 194, 1.00)}
+.row-note{fill:rgba(185, 185, 194, 1.00)}
+.row-key{font-weight:600}
+.row-nullable{opacity:0.75}
+.shape-dot{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.shape-ring_dot{fill:none}
+.ring-dot-core{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.node-stereotype{fill:rgba(185, 185, 194, 1.00)}
+.axis-line{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.axis-value{fill:rgba(185, 185, 194, 1.00)}
 </style>
 <defs>
 </defs>

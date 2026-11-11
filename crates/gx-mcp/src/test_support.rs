@@ -71,6 +71,8 @@ impl LayoutEngine for StubLayout {
             })
             .collect();
         LayoutGraph {
+            activations: Vec::new(),
+            axis: None,
             nodes,
             edges,
             groups: Vec::new(),
@@ -189,7 +191,9 @@ impl SvgRenderer for StubRenderer {
                             style: node.style,
                             center: placed.center,
                             size: placed.size,
+                            label_at: None,
                             rows: node.rows.clone(),
+                            stereotype: node.stereotype.clone(),
                             meta: node.meta.clone(),
                         })
                     })
@@ -247,6 +251,11 @@ impl SvgRenderer for StubRenderer {
                 depth: group.depth,
                 members: group.members.clone(),
                 gutter: group.gutter,
+                kind: if timeline.is_some() {
+                    gx_core::BandKind::Lane
+                } else {
+                    gx_core::BandKind::Cluster
+                },
             })
             .collect();
 
@@ -263,6 +272,7 @@ impl SvgRenderer for StubRenderer {
                             lane: event.lane.clone(),
                             label: event.label.clone(),
                             order: event.order,
+                            shape: event.shape,
                             span: event.span,
                             center: placed.center,
                             size: placed.size,
@@ -287,6 +297,8 @@ impl SvgRenderer for StubRenderer {
             .unwrap_or_default();
 
         Some(Scene {
+            axis: None,
+            activations: Vec::new(),
             canvas: layout.bbox,
             tokens: scene_tokens(),
             direction: graph.map(|graph| graph.direction),
@@ -320,6 +332,8 @@ fn scene_tokens() -> SceneTokens {
         lifeline_dash: [4.0, 4.0],
         dash_pattern: [6.0, 4.0],
         group_dash: [8.0, 5.0],
+        circle_diameter: 24.0,
+        activation_width: 10.0,
     }
 }
 

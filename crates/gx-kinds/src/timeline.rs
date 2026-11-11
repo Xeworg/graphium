@@ -7,13 +7,14 @@
 //! de un plan— y son opcionales: una cronología de una sola línea no necesita
 //! declarar ninguno y el documento no repite el carril en cada evento.
 
+use crate::flow::shape_of;
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Ir, IrEvent, IrLane, IrTimeline, LayoutHint, Span};
-use gx_core::kind::{DiagramKind, KindLimits};
+use gx_core::ir::{Ir, IrEvent, IrLane, IrTimeline, LayoutHint, Shape, Span};
+use gx_core::kind::{DiagramKind, KindLimits, Role};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::lanes::{duplicate_event, event_id, unknown_lane, validate_lanes, Lane, SeenIds};
+use crate::lanes::{duplicate_event, event_id, validate_lanes, Lane, SeenIds};
 
 /// Contract version supported by this build (PRD §10.1).
 pub const SUPPORTED_VERSION: u32 = 1;
@@ -21,6 +22,11 @@ pub const SUPPORTED_VERSION: u32 = 1;
 /// El carril que se usa cuando el documento no declara ninguno: una cronología
 /// de una sola línea.
 pub const SINGLE_LANE: &str = "cronologia";
+
+/// Los roles que un evento puede declarar (`f22-dibujo.md`, S6). Un evento sin
+/// rol es un evento: su caja redondeada de siempre. El `milestone` es el punto
+/// del tiempo que se lee distinto: su rombo lo dice sin leer el texto.
+pub const ROLES: [Role; 1] = [Role::new("milestone", Shape::Diamond)];
 
 /// One event of the chronology.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -41,6 +47,11 @@ pub struct TimelineEvent {
     /// point. Draws the event as a bar from `order` to `end`.
     #[serde(default)]
     pub end: Option<i64>,
+    /// Role of the event: it decides the shape (`f22-dibujo.md`, S6). The
+    /// kind lists the roles it admits; the default event declares none and
+    /// draws as its rounded box.
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 impl TimelineEvent {
@@ -54,7 +65,8 @@ impl TimelineEvent {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TimelineInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `timeline`.
     pub kind: String,
@@ -74,14 +86,10 @@ pub struct TimelineKind;
 
 impl DiagramKind for TimelineKind {
     const KIND: &'static str = "timeline";
+    const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 200,
-        max_edges: 0,
-        max_density: 0.0,
-        max_lanes: 40,
-        max_events: 200,
-    };
+    const LIMITS: KindLimits = KindLimits::TIMELINE;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = TimelineInput;
 
@@ -90,28 +98,8 @@ impl DiagramKind for TimelineKind {
     }
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
-        let mut errors = Vec::new();
-
-        if input.kind != Self::KIND {
-            errors.push(ValidationError::new(
-                "kind",
-                ErrorCode::InvalidValue,
-                format!("`kind` debe ser `{}`, no `{}`", Self::KIND, input.kind),
-                Some("usá get_diagram_schema para ver los kinds disponibles".to_string()),
-            ));
-        }
-
-        if input.version != SUPPORTED_VERSION {
-            errors.push(ValidationError::new(
-                "version",
-                ErrorCode::InvalidValue,
-                format!(
-                    "versión de contrato no soportada: {} (soportada: {SUPPORTED_VERSION})",
-                    input.version
-                ),
-                Some("actualizá el documento a la versión 1 del contrato".to_string()),
-            ));
-        }
+        let mut errors =
+            crate::flow::validate_header(Self::KIND, &input.kind, SUPPORTED_VERSION, input.version);
 
         errors.extend(validate_lanes(&input.lanes, "lanes"));
 
@@ -124,7 +112,7 @@ impl DiagramKind for TimelineKind {
             ));
         }
 
-        let lanes_declared = !input.lanes.is_empty();
+        let _lanes_declared = !input.lanes.is_empty();
         let mut ids = SeenIds::new();
         for (index, event) in input.events.iter().enumerate() {
             if event.label.trim().is_empty() {
@@ -136,35 +124,39 @@ impl DiagramKind for TimelineKind {
                 ));
             }
 
-            // El carril: obligatorio cuando hay carriles, y siempre uno que el
-            // documento haya declarado. Sin carriles, el evento declara uno que
-            // no existe y el error enseña a crearlo.
-            match (&event.lane, lanes_declared) {
-                (Some(lane), _) if !input.lanes.iter().any(|known| &known.id == lane) => {
-                    errors.push(unknown_lane(
-                        &format!("events[{index}].lane"),
-                        lane,
-                        &input.lanes,
-                    ));
-                }
-                (None, true) => errors.push(ValidationError::new(
-                    format!("events[{index}].lane"),
-                    ErrorCode::MissingField,
-                    "el evento no dice en qué carril va",
-                    Some(format!(
-                        "usá uno de los carriles declarados: {}",
-                        input
-                            .lanes
-                            .iter()
-                            .map(|lane| lane.id.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )),
-                )),
-                _ => {}
-            }
+            errors.extend(crate::lanes::validate_row_lane(
+                &format!("events[{index}].lane"),
+                "evento",
+                &event.lane,
+                &input.lanes,
+            ));
 
             let column = event.column(index);
+            if let Some(role) = &event.role {
+                if !ROLES.iter().any(|known| known.name == role) {
+                    let known = ROLES
+                        .iter()
+                        .map(|known| format!("`{}`", known.name))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    errors.push(ValidationError::new(
+                        format!("events[{index}].role"),
+                        ErrorCode::InvalidValue,
+                        format!("el rol `{role}` no es un rol de un evento"),
+                        Some(format!("los roles que un evento puede llevar son: {known}")),
+                    ));
+                }
+            }
+            // Un hito es un punto (`f22-dibujo.md`, S6): un hito con tramo es
+            // dos cosas a la vez, y el documento que lo escribe se confundió.
+            if event.role.as_deref() == Some("milestone") && event.end.is_some() {
+                errors.push(ValidationError::new(
+                    format!("events[{index}].end"),
+                    ErrorCode::InvalidValue,
+                    "un `milestone` es un punto del tiempo: no puede llevar `end`",
+                    Some("quitá el `end`, o quitá el `role` si el evento es un tramo".to_string()),
+                ));
+            }
             if let Some(end) = event.end {
                 if end <= column {
                     errors.push(ValidationError::new(
@@ -208,6 +200,10 @@ impl DiagramKind for TimelineKind {
             .map(|(index, event)| {
                 let column = event.column(index);
                 IrEvent {
+                    // El rol decide la forma (`f22-dibujo.md`, S6): un evento
+                    // sin rol es la caja redondeada de siempre; un `milestone`
+                    // dibuja su rombo.
+                    shape: shape_of(&ROLES, event.role.as_deref().unwrap_or("")),
                     id: event_id(&event.id, "event-", index),
                     lane: match &event.lane {
                         Some(lane) => lane.clone(),
@@ -221,12 +217,43 @@ impl DiagramKind for TimelineKind {
                         start: column as f64,
                         end: end as f64,
                     }),
+                    depends_on: Vec::new(),
                     kind_data: Default::default(),
                 }
             })
             .collect();
 
-        Ir::Timeline(IrTimeline { lanes, events })
+        Ir::Timeline(IrTimeline {
+            lanes,
+            events,
+            connections: Vec::new(),
+        })
+    }
+
+    /// La línea de tiempo enseña su orden, sus carriles y sus tramos, que es lo
+    /// que el schema no puede decir.
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "Cada `id` de carril es único, y `order` decide la columna: el array de eventos puede venir desordenado."
+                .to_string(),
+            "Si el documento declara `lanes`, cada evento dice su `lane` y referencia uno declarado."
+                .to_string(),
+            "Un evento con `end` es un tramo y `end` tiene que ser posterior a `order`."
+                .to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "timeline",
+            "title": "Roadmap",
+            "lanes": [ { "id": "q1", "label": "Q1" } ],
+            "events": [
+                { "label": "v1.0", "lane": "q1", "role": "milestone" },
+                { "label": "v1.1", "lane": "q1" }
+            ]
+        })
     }
 }
 
@@ -237,14 +264,11 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::{TimelineInput, TimelineKind};
+    use super::TimelineKind;
+    use crate::test_support::input;
     use gx_core::error::ErrorCode;
     use gx_core::ir::Ir;
     use gx_core::kind::DiagramKind;
-
-    fn input(json: &str) -> TimelineInput {
-        serde_json::from_str(json).expect("the document parses")
-    }
 
     const ROADMAP: &str = r#"{
       "version": 1, "kind": "timeline", "title": "Roadmap",
@@ -280,6 +304,71 @@ mod tests {
         assert_eq!(span.start, 1.0);
         assert_eq!(span.end, 2.0);
         assert!(timeline.events[0].span.is_none());
+    }
+
+    /// S6 (`f22-dibujo.md`): el evento que declara el rol `milestone` se
+    /// traduce con su rombo, y el que no declara rol queda como siempre.
+    #[test]
+    fn a_milestone_draws_its_diamond() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "timeline",
+              "lanes": [ { "id": "q1", "label": "Q1" } ],
+              "events": [
+                { "label": "v1.0", "lane": "q1", "order": 0, "role": "milestone" },
+                { "label": "spike", "lane": "q1", "order": 1 }
+              ] }"#,
+        );
+        TimelineKind
+            .validate(&parsed)
+            .expect("la timeline es válida");
+
+        let Ir::Timeline(timeline) = TimelineKind.to_ir(&parsed) else {
+            panic!("una timeline va a la IR de timeline");
+        };
+
+        use gx_core::ir::Shape;
+        assert_eq!(timeline.events[0].shape, Shape::Diamond);
+        assert_eq!(timeline.events[1].shape, Shape::Rounded);
+    }
+
+    /// S6: un hito es un punto del tiempo — un `milestone` con `end` es dos
+    /// cosas a la vez y el kind lo rechaza.
+    #[test]
+    fn a_milestone_with_an_end_is_rejected() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "timeline",
+              "lanes": [ { "id": "q1", "label": "Q1" } ],
+              "events": [
+                { "label": "v1.0", "lane": "q1", "order": 0, "role": "milestone", "end": 2 }
+              ] }"#,
+        );
+
+        let errors = TimelineKind.validate(&parsed).expect_err("rechazado");
+        assert!(errors.iter().any(|error| error.path == "events[0].end"));
+    }
+
+    /// S6: un rol que el kind no conoce se rechaza con la lista completa —
+    /// la misma disciplina que los roles de los nodos.
+    #[test]
+    fn an_unknown_event_role_is_rejected_with_the_list() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "timeline",
+              "lanes": [ { "id": "q1", "label": "Q1" } ],
+              "events": [
+                { "label": "v1.0", "lane": "q1", "order": 0, "role": "crown" }
+              ] }"#,
+        );
+
+        let errors = TimelineKind.validate(&parsed).expect_err("rechazado");
+        let role_error = errors
+            .iter()
+            .find(|error| error.path == "events[0].role")
+            .expect("el error del rol");
+        let hint = role_error.hint.as_deref().expect("el error lleva su hint");
+        assert!(
+            hint.contains("milestone"),
+            "el hint nombra los roles conocidos"
+        );
     }
 
     /// S1: sin carriles declarados, el documento no repite el carril en cada

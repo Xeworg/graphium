@@ -596,6 +596,25 @@ document.
       spanned event of the timeline fixture and none for the point, plus the
       S8 equivalence on `timeline-roadmap`, whose regenerated golden carries
       the two bars of the roadmap.
+- [x] C47 An activation of a sequence (`Message.activation`) is a thin
+      rectangle on the `to` actor's lifeline while the actor holds the
+      control: the layout computes it (from the activating row to the
+      actor's next outgoing message, bars of one actor merged), the scene
+      carries `x`/`y1`/`y2` with the width in the tokens
+      (`activation_width`), and both painters spell the same rect inside
+      `layer-lifelines`, under the arrows. — **T4 ✓** `parity: activation`:
+      two `rect.activation` at 235/100/10×60 (x centers on the lifeline with
+      the tokens' width) inside the lifelines layer, plus the new
+      `sequence-activation` golden whose two bars have different spans, and
+      the S8 equivalence on it (21 documents).
+- [x] C48 The members of a class (`ClassNode.attributes` / `.methods`) are
+      the rows the table machinery already draws, and the compartment rule
+      (`IrRow.divider`) is the line above the first method — the header rule
+      is the first compartment's on its own, so methods without attributes
+      divide nothing. — **T5 ✓** `parity: divider`: two `line.node-stroke`
+      inside the node, the second exactly one line below the first (the top
+      edge of the dividing row), plus the `class-shop` golden with member
+      compartments on `Order` and `Payable`, and the S8 equivalence on it.
 
 ## 9. What the tasks delivered
 

@@ -6,7 +6,7 @@
 //! added.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Emphasis, Ir, IrEdge, IrGraph, IrNode, LayoutHint, Shape, Style};
+use gx_core::ir::{Direction, Emphasis, Ir, IrEdge, IrNode, LayoutHint, Shape, Style};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -56,7 +56,8 @@ pub struct GraphEdge {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GraphInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `graph`.
     pub kind: String,
@@ -81,40 +82,16 @@ pub struct GraphKind;
 
 impl DiagramKind for GraphKind {
     const KIND: &'static str = "graph";
+    const PHASE: &'static str = "F1";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
-    const LIMITS: KindLimits = KindLimits {
-        max_nodes: 300,
-        max_edges: 600,
-        max_density: 3.0,
-        max_lanes: 0,
-        max_events: 0,
-    };
+    const LIMITS: KindLimits = KindLimits::GRAPH;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = GraphInput;
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
-        let mut errors = Vec::new();
-
-        if input.kind != Self::KIND {
-            errors.push(ValidationError::new(
-                "kind",
-                ErrorCode::InvalidValue,
-                format!("`kind` debe ser `{}`, no `{}`", Self::KIND, input.kind),
-                Some("usá get_diagram_schema para ver los kinds disponibles".to_string()),
-            ));
-        }
-
-        if input.version != SUPPORTED_VERSION {
-            errors.push(ValidationError::new(
-                "version",
-                ErrorCode::InvalidValue,
-                format!(
-                    "versión de contrato no soportada: {} (soportada: {SUPPORTED_VERSION})",
-                    input.version
-                ),
-                Some("actualizá el documento a la versión 1 del contrato".to_string()),
-            ));
-        }
+        let mut errors =
+            crate::flow::validate_header(Self::KIND, &input.kind, SUPPORTED_VERSION, input.version);
 
         let mut seen: Vec<&str> = Vec::new();
         for (index, node) in input.nodes.iter().enumerate() {
@@ -123,7 +100,7 @@ impl DiagramKind for GraphKind {
                     format!("nodes[{index}].id"),
                     ErrorCode::InvalidValue,
                     "el id del nodo no puede estar vacío",
-                    None,
+                    Some("escribí un id único, por ejemplo `pedido`".to_string()),
                 ));
             }
             if seen.contains(&node.id.as_str()) {
@@ -207,17 +184,47 @@ impl DiagramKind for GraphKind {
             })
             .collect();
 
-        Ir::Graph(IrGraph {
-            direction: input.direction.unwrap_or(Direction::TB),
-            layout_hint: Self::LAYOUT_HINT,
+        Ir::Graph(crate::flow::ir_graph(
+            input.direction,
+            Self::LAYOUT_HINT,
             nodes,
             edges,
-            groups: to_ir_groups(&input.groups),
-        })
+            to_ir_groups(&input.groups),
+        ))
     }
 
     fn schema() -> schemars::Schema {
         schemars::schema_for!(GraphInput)
+    }
+
+    fn shapes() -> Vec<Shape> {
+        Shape::ALL.to_vec()
+    }
+
+    fn rules(&self) -> Vec<String> {
+        vec![
+            "Cada nodo tiene un `id` único dentro del diagrama.".to_string(),
+            "Cada arista referencia nodos declarados en `nodes` con `from` y `to`.".to_string(),
+        ]
+    }
+
+    fn min_example() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "kind": "graph",
+            "title": "parse_config() — flujo",
+            "direction": "TB",
+            "nodes": [
+                { "id": "read", "label": "read file" },
+                { "id": "ok", "label": "Config" }
+            ],
+            "edges": [
+                { "from": "read", "to": "ok", "label": "utf-8" }
+            ],
+            "groups": [
+                { "id": "io", "label": "I/O", "members": ["read"] }
+            ]
+        })
     }
 }
 
@@ -229,6 +236,7 @@ pub fn register() {
 #[cfg(test)]
 mod tests {
     use super::{GraphInput, GraphKind};
+    use crate::test_support::{an_unknown_group_member_is_rejected, groups_reach_the_ir};
     use gx_core::error::ErrorCode;
     use gx_core::ir::Ir;
     use gx_core::kind::DiagramKind;
@@ -297,45 +305,22 @@ mod tests {
     /// Un grupo dentro de otro tambien pasa por el kind `graph` (RF15).
     #[test]
     fn nested_groups_reach_the_ir() {
-        let document = serde_json::json!({
-            "version": 1,
-            "kind": "graph",
-            "nodes": [ { "id": "read" } ],
-            "groups": [
-                { "id": "io", "label": "I/O", "members": ["disk"] },
-                { "id": "disk", "members": ["read"] }
-            ]
-        });
-        let input: GraphInput = serde_json::from_value(document).expect("parsea");
-        GraphKind.validate(&input).expect("anida");
-
-        let ir = GraphKind.to_ir(&input);
-        let graph = ir.graph().expect("graph ir");
-        assert_eq!(graph.groups.len(), 2);
-        assert_eq!(graph.groups[0].members, vec!["disk"]);
-        assert_eq!(graph.groups[1].members, vec!["read"]);
+        groups_reach_the_ir::<GraphKind>(
+            r#"{ "version": 1, "kind": "graph",
+                 "nodes": [ { "id": "read" } ],
+                 "groups": [
+                   { "id": "io", "label": "I/O", "members": ["disk"] },
+                   { "id": "disk", "members": ["read"] } ] }"#,
+        );
     }
 
     /// Un miembro que no existe se reporta y el documento no pasa.
     #[test]
     fn a_group_member_that_does_not_exist_is_rejected() {
-        let document = serde_json::json!({
-            "version": 1,
-            "kind": "graph",
-            "nodes": [ { "id": "read" } ],
-            "groups": [ { "id": "io", "members": ["fantasma"] } ]
-        });
-        let input: GraphInput = serde_json::from_value(document).expect("parsea");
-
-        let errors = GraphKind
-            .validate(&input)
-            .expect_err("el miembro no existe");
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.code == ErrorCode::UnknownRef
-                    && error.path == "groups[0].members[0]"),
-            "{errors:?}"
+        an_unknown_group_member_is_rejected::<GraphKind>(
+            r#"{ "version": 1, "kind": "graph",
+                 "nodes": [ { "id": "read" } ],
+                 "groups": [ { "id": "io", "members": ["fantasma"] } ] }"#,
         );
     }
 
