@@ -233,3 +233,23 @@ ola first).
   (four route tests, three contract tests, the scene pairing test),
   parity 73/73, equivalence 21/21. No new parity case: there is no new
   payload field to pin — equivalence on the golden is the twin's witness.
+
+- L11 (2026-11-10, design + execution, T7): the label fits the drawn shape,
+  and both fixes are measurement fixes — the painters already center the
+  text on the rect, so the box is what had to give. (a) Diamond: it
+  inscribes the rect, so at the label's extreme rows its usable width is
+  `w * (1 - label_h / h)`; the measured width is the one that makes the
+  widest line fit there (`w = label_w * h / (h - label_h)`), replacing the
+  padded rect of always for `Diamond` — in `measure_node` for the flowchart
+  decisions and in `LanesEngine::event_size` for the milestone events, whose
+  own column widens with the box (S5's widening covers it). (b) Cylinder:
+  the box grows one rim at each end (`height += 2 * corner_radius`), so the
+  label never rides on the rim bulge; the drawn rim caps at a quarter of the
+  box, a cap this height always clears. No painter change, no payload
+  change: both sides size from the same measured box. Evidence: visual reads
+  of the regenerated goldens — `timeline-milestone` («código congelado» and
+  «v1.0» fit their diamonds), `flowchart-approval` (the decision's label
+  fits the slanted edges: the L3a finding, closed), `dataflow-etl` and
+  `shape-gallery` (cylinders with clear air under the rim); gates fmt/clippy
+  0, 847 tests (two `measure_node` tests — its first — and the milestone
+  route test), parity 73/73, equivalence 21/21.

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="-12.00 -12.00 719.86 350.00" width="719.86" height="350.00">
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="-12.00 -12.00 719.86 362.00" width="719.86" height="362.00">
 <style>
 .bg{fill:rgba(27, 27, 27, 1.00)}
 .node-fill{fill:rgba(42, 42, 48, 1.00)}
@@ -41,27 +41,27 @@
 <g class="layer-groups">
 </g>
 <g class="layer-edges">
-<polyline id="m-caja-rombo" class="edge-stroke" points="122.71,41.50 122.71,90.25 122.71,139.00" marker-end="url(#arrow-normal)"/>
-<text class="edge-text text" x="155.13" y="90.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">decide</text>
-<polyline id="m-rombo-punto" class="edge-stroke" points="122.71,180.50 122.71,229.25 122.71,278.00" marker-end="url(#arrow-normal)"/>
-<text class="edge-text text" x="157.15" y="229.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">commit</text>
+<polyline id="m-caja-rombo" class="edge-stroke" points="122.71,47.50 122.71,102.25 122.71,151.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="155.13" y="102.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">decide</text>
+<polyline id="m-rombo-punto" class="edge-stroke" points="122.71,192.50 122.71,241.25 122.71,290.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="157.15" y="241.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">commit</text>
 </g>
 <g class="layer-nodes">
-<rect id="g-caja" class="node-fill node-stroke shape-box" x="95.68" y="0.00" width="54.06" height="41.50"/>
-<text class="node-text text" x="122.71" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Caja</text>
-<path id="g-cilindro" class="node-fill node-stroke shape-cylinder" d="M 378.76 6.00 C 378.76 -2.00 455.14 -2.00 455.14 6.00 L 455.14 35.50 C 455.14 43.50 378.76 43.50 378.76 35.50 Z"/>
+<rect id="g-caja" class="node-fill node-stroke shape-box" x="95.68" y="6.00" width="54.06" height="41.50"/>
+<text class="node-text text" x="122.71" y="26.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Caja</text>
+<path id="g-cilindro" class="node-fill node-stroke shape-cylinder" d="M 378.76 6.00 C 378.76 -2.00 455.14 -2.00 455.14 6.00 L 455.14 47.50 C 455.14 55.50 378.76 55.50 378.76 47.50 Z"/>
 <path class="node-stroke shape-cylinder" fill="none" d="M 378.76 6.00 C 378.76 14.00 455.14 14.00 455.14 6.00"/>
-<text class="node-text text" x="416.95" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Cilindro</text>
-<ellipse id="g-elipse" class="node-fill node-stroke shape-ellipse" cx="547.40" cy="20.75" rx="32.25" ry="20.75"/>
-<text class="node-text text" x="547.40" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Elipse</text>
-<path id="g-nota" class="node-fill node-stroke shape-note" d="M 639.65 0.00 L 689.86 0.00 L 695.86 6.00 L 695.86 41.50 L 639.65 41.50 Z"/>
-<path class="node-stroke shape-note" fill="none" d="M 689.86 0.00 L 689.86 6.00 L 695.86 6.00"/>
-<text class="node-text text" x="667.76" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Nota</text>
-<circle id="g-punto" class="node-fill node-stroke shape-circle" cx="24.00" cy="302.00" r="12.00"/>
-<text class="node-text text" x="42.00" y="302.00" font-size="14.00" text-anchor="start" dominant-baseline="central">el punto, su etiqueta al lado</text>
-<rect id="g-redondeada" class="node-fill node-stroke shape-rounded" x="209.73" y="0.00" width="109.03" height="41.50" rx="6.00" ry="6.00"/>
-<text class="node-text text" x="264.25" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Redondeada</text>
-<polygon id="g-rombo" class="node-fill node-stroke shape-diamond" points="122.71,139.00 158.38,159.75 122.71,180.50 87.03,159.75"/>
-<text class="node-text text" x="122.71" y="159.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Rombo</text>
+<text class="node-text text" x="416.95" y="26.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Cilindro</text>
+<ellipse id="g-elipse" class="node-fill node-stroke shape-ellipse" cx="547.40" cy="26.75" rx="32.25" ry="20.75"/>
+<text class="node-text text" x="547.40" y="26.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Elipse</text>
+<path id="g-nota" class="node-fill node-stroke shape-note" d="M 639.65 6.00 L 689.86 6.00 L 695.86 12.00 L 695.86 47.50 L 639.65 47.50 Z"/>
+<path class="node-stroke shape-note" fill="none" d="M 689.86 6.00 L 689.86 12.00 L 695.86 12.00"/>
+<text class="node-text text" x="667.76" y="26.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Nota</text>
+<circle id="g-punto" class="node-fill node-stroke shape-circle" cx="24.00" cy="314.00" r="12.00"/>
+<text class="node-text text" x="42.00" y="314.00" font-size="14.00" text-anchor="start" dominant-baseline="central">el punto, su etiqueta al lado</text>
+<rect id="g-redondeada" class="node-fill node-stroke shape-rounded" x="209.73" y="6.00" width="109.03" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="264.25" y="26.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Redondeada</text>
+<polygon id="g-rombo" class="node-fill node-stroke shape-diamond" points="122.71,151.00 175.64,171.75 122.71,192.50 69.77,171.75"/>
+<text class="node-text text" x="122.71" y="171.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Rombo</text>
 </g>
 </svg>

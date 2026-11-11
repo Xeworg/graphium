@@ -695,3 +695,24 @@ mod connectors {
         );
     }
 }
+
+// S9 (`f22-dibujo.md`): the label fits the drawn shape — a milestone's
+// diamond is measured against the usable width at the label's extreme rows,
+// so its own column widens until the label fits the slanted edges.
+#[test]
+fn a_milestones_diamond_is_wide_enough_for_its_label() {
+    let mut milestone = event("corte", "hits", "código congelado", 0);
+    milestone.shape = gx_core::ir::Shape::Diamond;
+    let timeline = timeline(vec![lane("hits", "Hits")], vec![milestone]);
+    let layout = engine().layout_timeline(&timeline, &LayoutOpts::default());
+
+    let box_ = &layout.nodes["corte"];
+    let line = 14.0 * 1.25; // TOKENS at the fixed measurer of the engine
+    let usable = box_.size.w * (1.0 - line / box_.size.h);
+    let label_w = "código congelado".chars().count() as f64 * 14.0 * 0.5;
+    assert!(
+        usable >= label_w - 1e-6,
+        "la etiqueta cabe en el rombo: usable {usable} ≥ texto {label_w} (caja {:?})",
+        box_.size
+    );
+}

@@ -1109,7 +1109,10 @@ impl LanesEngine {
     }
 
     /// The size of the box of an event: its label plus padding, and the width
-    /// of the span it covers when it has one.
+    /// of the span it covers when it has one. A diamond event (a milestone,
+    /// `f22-dibujo.md`, S6) is measured against the diamond's usable width at
+    /// the label's extreme rows (S9): the width grows until the label fits
+    /// the slanted edges, and its own column widens with it (S5).
     fn event_size(&self, event: &IrEvent, step: f64, padding: f64) -> Size {
         let label = self
             .metrics
@@ -1120,8 +1123,15 @@ impl LanesEngine {
             Some(span) if span.end > span.start => (span.end - span.start).max(1.0),
             _ => 1.0,
         };
-        let width = (label.w + 2.0 * padding).max(columns * step - 2.0 * padding);
-        Size::new(width, label.h + 2.0 * padding)
+        let height = label.h + 2.0 * padding;
+        let mut width = (label.w + 2.0 * padding).max(columns * step - 2.0 * padding);
+        if event.shape == gx_core::ir::Shape::Diamond {
+            let body = height - label.h;
+            if body > 0.0 {
+                width = width.max(label.w * height / body);
+            }
+        }
+        Size::new(width, height)
     }
 
     /// The row of a lane, or the last one for an event without a lane.

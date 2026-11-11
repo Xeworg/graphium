@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="-12.00 -12.00 672.90 387.50" width="672.90" height="387.50">
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="-12.00 -12.00 705.93 387.50" width="705.93" height="387.50">
 <style>
 .bg{fill:rgba(27, 27, 27, 1.00)}
 .node-fill{fill:rgba(42, 42, 48, 1.00)}
@@ -36,29 +36,29 @@
 <defs>
 </defs>
 <g class="layer-lanes">
-<rect id="lane-pre" class="lane-band" x="0.00" y="0.00" width="648.90" height="220.00"/>
+<rect id="lane-pre" class="lane-band" x="0.00" y="0.00" width="681.93" height="220.00"/>
 <text class="lane-label text" x="12.00" y="110.00" font-size="14.00" text-anchor="start" dominant-baseline="central">Preparación</text>
-<rect id="lane-ship" class="lane-band" x="0.00" y="220.00" width="648.90" height="110.00"/>
+<rect id="lane-ship" class="lane-band" x="0.00" y="220.00" width="681.93" height="110.00"/>
 <text class="lane-label text" x="12.00" y="275.00" font-size="14.00" text-anchor="start" dominant-baseline="central">Entrega</text>
 </g>
 <g class="layer-axis">
-<line class="axis-line" x1="225.00" y1="346.00" x2="589.90" y2="346.00"/>
+<line class="axis-line" x1="225.00" y1="346.00" x2="622.93" y2="346.00"/>
 <text class="axis-value text" x="225.00" y="352.00" font-size="11.90" text-anchor="middle" dominant-baseline="hanging">0</text>
-<text class="axis-value text" x="407.90" y="352.00" font-size="11.90" text-anchor="middle" dominant-baseline="hanging">1</text>
-<text class="axis-value text" x="589.90" y="352.00" font-size="11.90" text-anchor="middle" dominant-baseline="hanging">3</text>
+<text class="axis-value text" x="440.93" y="352.00" font-size="11.90" text-anchor="middle" dominant-baseline="hanging">1</text>
+<text class="axis-value text" x="622.93" y="352.00" font-size="11.90" text-anchor="middle" dominant-baseline="hanging">3</text>
 </g>
 <g class="layer-edges">
 </g>
 <g class="layer-nodes">
-<polygon id="g-event-0" class="node-fill node-stroke shape-diamond" points="225.45,85.25 300.90,110.00 225.45,134.75 150.00,110.00"/>
-<text class="node-text text" x="225.45" y="110.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">código congelado</text>
-<rect id="g-event-1" class="node-fill node-stroke shape-rounded" x="332.90" y="85.25" width="118.00" height="49.50" rx="6.00" ry="6.00"/>
-<rect class="accent" x="333.90" y="128.75" width="116.00" height="5.00"/>
-<text class="node-text text" x="391.90" y="110.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">beta</text>
-<rect id="g-event-2" class="node-fill node-stroke shape-rounded" x="332.90" y="140.25" width="268.00" height="49.50" rx="6.00" ry="6.00"/>
-<rect class="accent" x="333.90" y="183.75" width="266.00" height="5.00"/>
-<text class="node-text text" x="466.90" y="165.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">correcciones</text>
-<polygon id="g-event-3" class="node-fill node-stroke shape-diamond" points="573.90,250.25 632.90,275.00 573.90,299.75 514.90,275.00"/>
-<text class="node-text text" x="573.90" y="275.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">v1.0</text>
+<polygon id="g-event-0" class="node-fill node-stroke shape-diamond" points="241.97,85.25 333.93,110.00 241.97,134.75 150.00,110.00"/>
+<text class="node-text text" x="241.97" y="110.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">código congelado</text>
+<rect id="g-event-1" class="node-fill node-stroke shape-rounded" x="365.93" y="85.25" width="118.00" height="49.50" rx="6.00" ry="6.00"/>
+<rect class="accent" x="366.93" y="128.75" width="116.00" height="5.00"/>
+<text class="node-text text" x="424.93" y="110.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">beta</text>
+<rect id="g-event-2" class="node-fill node-stroke shape-rounded" x="365.93" y="140.25" width="268.00" height="49.50" rx="6.00" ry="6.00"/>
+<rect class="accent" x="366.93" y="183.75" width="266.00" height="5.00"/>
+<text class="node-text text" x="499.93" y="165.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">correcciones</text>
+<polygon id="g-event-3" class="node-fill node-stroke shape-diamond" points="606.93,250.25 665.93,275.00 606.93,299.75 547.93,275.00"/>
+<text class="node-text text" x="606.93" y="275.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">v1.0</text>
 </g>
 </svg>
