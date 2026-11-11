@@ -106,6 +106,18 @@ impl Role {
     }
 }
 
+/// A non-fatal note about a document that is still valid (`f25-arreglos.md`,
+/// S2): the kind says what the document cannot anchor, never that it refuses
+/// to draw it. It travels in the answer's `warnings[]` with the shape the
+/// size warnings already use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KindWarning {
+    /// The stable code the agent branches on, e.g. `tables_without_key`.
+    pub code: &'static str,
+    /// The note, in the words the agent reads.
+    pub message: String,
+}
+
 /// A diagram kind: its JSON contract, its semantic rules and its translation
 /// to the IR.
 pub trait DiagramKind: Send + Sync + Default {
@@ -130,6 +142,13 @@ pub trait DiagramKind: Send + Sync + Default {
 
     /// Translation to the IR.
     fn to_ir(&self, input: &Self::Input) -> Ir;
+
+    /// The non-fatal notes a valid document earns (`f25-arreglos.md`, S2):
+    /// empty when the kind has none. A note never rejects the document and
+    /// never changes the drawing; it only says what the drawing cannot do.
+    fn warnings(&self, _input: &Self::Input) -> Vec<KindWarning> {
+        Vec::new()
+    }
 
     /// The JSON schema of the kind.
     fn schema() -> schemars::Schema;
@@ -204,6 +223,13 @@ pub trait KindHandler: Send + Sync {
     /// These are the rules JSON Schema cannot express (PRD §11.1, regla de
     /// oro): unknown references, duplicated ids and the limits of size.
     fn check(&self, document: &Value) -> Vec<ValidationError>;
+
+    /// The non-fatal notes of a document (`f25-arreglos.md`, S2): empty when
+    /// it earns none.
+    ///
+    /// A document the kind cannot parse earns none: the error path already
+    /// named the problem, and a note on top of an error is noise.
+    fn warnings(&self, document: &Value) -> Vec<KindWarning>;
 
     /// Validates and translates a document into the IR.
     fn process_json(&self, document: &Value) -> Result<Ir, Vec<ValidationError>>;
@@ -297,6 +323,15 @@ impl<K: DiagramKind> KindHandler for KindAdapter<K> {
             return Err(errors);
         }
         Ok(self.kind.to_ir(&input))
+    }
+
+    fn warnings(&self, document: &Value) -> Vec<KindWarning> {
+        match parse_input::<K>(document) {
+            Ok(input) => self.kind.warnings(&input),
+            // The malformed document was already reported as an error by
+            // `validate_json`/`check`: there is no note to add.
+            Err(_) => Vec::new(),
+        }
     }
 }
 

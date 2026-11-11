@@ -133,11 +133,22 @@ pub fn validate_diagram(document: &str) -> ValidateResponse {
         return ValidateResponse {
             ok: true,
             errors: Vec::new(),
-            warnings: Some(size_warnings(
-                count(&parsed, "nodes"),
-                count(&parsed, "edges"),
-                kind.limits(),
-            )),
+            warnings: Some({
+                let mut warnings = size_warnings(
+                    count(&parsed, "nodes"),
+                    count(&parsed, "edges"),
+                    kind.limits(),
+                );
+                // El kind dice qué no puede anclar el documento
+                // (`f25-arreglos.md`, S2): el dry run da el mismo aviso que
+                // el render, en las mismas palabras (PRD §7 RF20).
+                warnings.extend(
+                    kind.warnings(&parsed)
+                        .into_iter()
+                        .map(|warning| Warning::new(warning.code, warning.message)),
+                );
+                warnings
+            }),
             projected_svg_bytes: Some(projected_svg_bytes(kind.limits(), &parsed)),
             errors_truncated: false,
             supported_versions: supported_versions(),
@@ -1439,6 +1450,50 @@ mod tests {
         assert_eq!(target["nodes"], serde_json::json!([9]));
         assert!(target.get("title").is_none(), "null borra la clave");
         assert_eq!(target["extra"], true);
+    }
+
+    /// `f25-arreglos.md` S2: la puerta seca da el mismo aviso que el render
+    /// (PRD §7 RF20). Una tabla sin clave se valida igual, con **un**
+    /// `tables_without_key`; un esquema con claves no lo recibe.
+    #[test]
+    fn the_dry_run_reports_the_tables_without_a_primary_key() {
+        let keyless = r#"{
+          "version": 1, "kind": "er",
+          "tables": [
+            { "name": "audit_log", "columns": [ { "name": "at", "type": "timestamptz" } ] }
+          ]
+        }"#;
+        let response = validate_diagram(keyless);
+        assert!(
+            response.ok,
+            "el aviso no rechaza el documento: {response:?}"
+        );
+        let warnings = response.warnings.expect("el dry run informa avisos");
+        let keyless_warnings: Vec<_> = warnings
+            .iter()
+            .filter(|warning| warning.code == "tables_without_key")
+            .collect();
+        assert_eq!(keyless_warnings.len(), 1, "un solo aviso: {warnings:?}");
+        assert!(
+            keyless_warnings[0].message.contains("audit_log"),
+            "el aviso nombra la tabla: {warnings:?}"
+        );
+
+        let keyed = r#"{
+          "version": 1, "kind": "er",
+          "tables": [
+            { "name": "users", "columns": [ { "name": "id", "type": "uuid", "key": "pk" } ] }
+          ]
+        }"#;
+        let response = validate_diagram(keyed);
+        assert!(response.ok, "{response:?}");
+        let warnings = response.warnings.expect("el dry run informa avisos");
+        assert!(
+            warnings
+                .iter()
+                .all(|warning| warning.code != "tables_without_key"),
+            "un esquema con claves no lleva el aviso: {warnings:?}"
+        );
     }
 
     #[test]
