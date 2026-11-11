@@ -201,7 +201,7 @@ impl DiagramKind for SequenceKind {
                 { "id": "api", "label": "API" }
             ],
             "messages": [
-                { "from": "cliente", "to": "api", "label": "POST /orders" },
+                { "from": "cliente", "to": "api", "label": "POST /orders", "activation": true },
                 { "from": "api", "to": "cliente", "label": "201", "reply": true }
             ]
         })

@@ -201,249 +201,27 @@ declared and `state` is `active|in_grace`. The same `session` object travels wit
 /// The relay and the stdio server both read this table, so a tool exists once
 /// with one description.
 pub fn description(name: &str) -> &'static str {
+    // One text per tool (`f23-contrato.md`, S4): the constants of `lib.rs` are
+    // the ones the tool declarations register, so this table points at them
+    // instead of copying them — a copy is what let the two drift apart.
     match name {
-        "register_session" => REGISTER_SESSION_DESCRIPTION,
-        "render_diagram" => {
-            "\
-Draw a diagram and place it on the plan. Send the whole document as a JSON \
-object in `diagram`, not as a string. The kind is required; `get_diagram_schema` \
-gives its contract and `validate_diagram` checks a document without opening \
-anything, so call it first when the document is long or the last render failed. \
-`ok: true` returns `diagram_id`, `rendered_kind`, `metrics { nodes, edges, \
-layout_ms, render_ms, svg_bytes }` and `rendered`, which tells whether the window \
-confirmed the paint; when `rendered` is false, `reason` says why. `ok: false` \
-means nothing was placed and `errors[]` carries `{ path, code, message, hint? }`. \
-For a diagram of hundreds of nodes, `opts.extract: { around, depth }` (default \
-`depth: 1`, at most 300 nodes) draws only the neighbourhood of that node and the \
-response carries `extracted_from` (`\"<diagram_id>@<depth>\"`); the document \
-itself is unchanged. `opts.layout_timeout_ms` (default 2000, ceiling 10000) is \
-the deadline of the layout: missing it answers `ok: false`, code \
-`layout_timeout`, with `metrics.elapsed_ms` and nothing on the plan. \
-`opts.focus` puts the camera on a node and its neighbourhood. `opts.replace_id` \
-replaces the document of the named diagram instead of creating another one: an \
-unknown id answers `unknown_diagram` and creates nothing. `opts.interactive` \
-arrives in F3."
-        }
-        "list_diagram_versions" => {
-            "\
-List the source-document versions of one diagram (RF14): every render that \
-creates a diagram and every update or `opts.replace_id` adds one, capped at 20 \
-with the oldest discarded. Read-only: a version is never restored through a \
-tool — take its document with `get_diagram_version` and render it again. \
-Answers `ok: true` with `current_version` and `versions[]`; an unknown or \
-foreign `diagram_id` answers `unknown_diagram` or `not_owner`."
-        }
-        "get_diagram_version" => {
-            "\
-Get the exact source document of one version of a diagram (RF14): pass the \
-`version` from `list_diagram_versions` and the tool answers the document that \
-produced that paint. Read-only; feed the document back to `render_diagram` (or \
-use `opts.replace_id`) to restore it on the plan. An unknown version answers \
-`invalid_value` on path `version`; an unknown or foreign `diagram_id` answers \
-`unknown_diagram` or `not_owner`."
-        }
-        "validate_diagram" => {
-            "\
-Check a diagram document WITHOUT opening anything: the same validation the \
-render runs, no layout, no window. Use it before `render_diagram` when the \
-document is long or the last render failed, and fix the `path` that `errors[]` \
-names. `ok: true` also returns `projected_svg_bytes`, so you know the size before \
-drawing. `errors_truncated` is true when there were more errors than the cap of \
-20."
-        }
-        "get_diagram_schema" => {
-            "\
-The contract of a diagram kind. Without `kind` it returns the index of the \
-available kinds with their phase, engine, limits and a minimal example, and \
-never their schemas. With `kind` it returns that kind's JSON Schema, its cross \
-rules (the ones the schema cannot express: references, uniqueness), its valid \
-shapes, its limits and an example. Read it before writing a document: unknown \
-fields are rejected."
-        }
-        "list_diagrams" => {
-            "\
-The diagrams of this session that are on the plan: id, title, kind, revision and \
-when they were updated. Call it after a compaction or when an id was lost, before \
-assuming which diagram to update or export. The answer also carries `session`, the \
-name the human sees for you. It never renders anything."
-        }
-        "get_diagram" => {
-            "\
-The source document of a diagram with its current revision. Use it to read before \
-an `update_diagram` (send that revision back) or to recover a document after a \
-compaction. It never renders anything."
-        }
-        "update_diagram" => {
-            "\
-Change an existing diagram instead of creating another one. `patch` is an RFC 7386 \
-merge patch: objects merge key by key, arrays are replaced whole, `null` removes a \
-key. The merge is transactional: the result is validated with the same pipeline as \
-the render and only then replaces the document, so a bad patch leaves the diagram \
-untouched and returns `applied: false` with the errors. Send the `revision` you \
-read, so a stale write is rejected with `stale_revision`. The `kind` cannot change."
-        }
-        "export_diagram" => {
-            "\
-Take the diagram out of the window, as text or as a file. With `format: \"svg\"` \
-and `opts.inline: true` the SVG comes back in `content` and nothing is written: \
-that is the path for pasting it in a README or a message. With `opts.path` the \
-file lands inside the exports root (`~/.graphium/exports/` unless configured): \
-relative, no `..`, no symlinks — an absolute path or an escape answers \
-`export_path_outside_root` and writes nothing. `svg` and `png` both accept \
-`path`; `png` REQUIRES it, because it is bytes. An existing file is replaced \
-only with `opts.overwrite: true`; without it the answer is `export_exists` and \
-the old bytes stay. `diagram_id` is optional: without it the tool exports the \
-only open diagram of the session and answers `ambiguous_diagram` when there are \
-several. `opts.scale` (default 1.0, ceiling 3.0) and `opts.max_px` (default \
-16 Mpx, ceiling 64 Mpx) govern the PNG; inline SVG is capped at 1 MB. Exporting \
-never changes the plan."
-        }
-        "code_search" => {
-            "\
-Search the book of this project: the symbols the indexer extracted, without \
-reading the files. It answers the places of ONE symbol with `file`, `line`, \
-`kind`, `name`, `qname`, `content_hash` and `indexed_at`, plus the `book_key` \
-of the book that answered. `query` is split into words and every word has to \
-match (`render config` finds a symbol whose name carries both); CamelCase and \
-snake_case are both indexed. When the query fits more than one declaration \
-the answer is `ok: false` with code `ambiguous_symbol` and `candidates[]` \
-(`name`, `kind`, `qname`, `file`, `line`, `occurrences`): send the words of \
-one candidate's qname to narrow it, never guess. The book is on by default: \
-`book_disabled` only answers when the owner opted out with \
-`GRAPHIUM_BOOK=off`, a book that cannot be opened answers `book_unavailable`, \
-and `progress.state == \"indexing\"` means the first pass is still running. \
-Read-only: it never touches the plan."
-        }
-        "code_structure" => {
-            "Read the structure of one chapter of the book, and it answers the outline by \
-default: only the declarations whose parent is `NULL`, ordered by span, each \
-with `name`, `kind`, `qname`, `line`, `column`, `end_line`, `end_column` and \
-`parent` (the qname of the declaration that contains it). The answer carries \
-`count` (the full rows plus the pointer tail), `total` (every declaration of \
-the chapter, filter included) and, when children were hidden, \
-`collapsed: {hidden_symbols, declarations_with_children, next}`, where `next` \
-is the copy-pasteable call that reads them. To read a slice of the tree, send \
-`after_line` (start strictly after that line) and `limit` (1..=200): they are \
-a range over the same span-ordered list, never a mode, so the whole tree is a \
-sequence of monotone pages. `kinds` filters the rows by declaration kind and \
-never changes `total`. Send exactly one selector: `file` (a path relative to \
-the project root, with `/`) or `symbol` (a name, as `code_search` takes it). A \
-symbol that fits more than one declaration answers `ok: false` with \
-`ambiguous_symbol` and `candidates[]`; an unknown path answers `invalid_value` \
-at `path: \"file\"` with a hint, never an empty tree that reads as «no \
-declarations». A cut answers `truncated: {reason, shown, total, next}` with \
-reason `collapsed` (the outline hid children) or `nodes` (the limit cut the \
-range). The answer carries the `content_hash` and `indexed_at` of the chapter, \
-the `book_key` of the book and `progress.state` (`indexing` means the first \
-pass is running). It is bounded in characters too (`chars`, `max_chars`): past \
-the envelope the full rows stop and the tail arrives as one-line `pointers` \
-(`{name, line, kind}`), the `after_line` cursor still reads what was left, and \
-the cut says reason `budget` with the exact wider call in `next`. The book is on \
-by default: `book_disabled` only answers when \
-the owner opted out with `GRAPHIUM_BOOK=off`, and a book that cannot be opened \
-answers `book_unavailable`. Read-only: it never touches the plan."
-        }
-        "code_impact" => {
-            "Walk the connections of one symbol, or of one whole chapter, in the book: who \
-points at it, what it reaches, or both. The seed is exactly one of `symbol` (a \
-name, as `code_search` takes it) or `file` (a path relative to the project \
-root, with `/`): a file seed is the connections view — the file as a node — \
-where every declaration of the chapter starts the walk and the answer adds \
-`file` and a `files` grouping of the connected files (`imports_out`, \
-`referenced_by_in`, `symbols`). `direction` is `in` for a symbol (the default: \
-what a change would affect), `out` (what the symbol calls, imports or uses) or \
-`both` (the default of a file seed); `edges` narrows which kinds the walk \
-follows (`calls`, `imports`, `inherits`, `uses`). The edges are syntactic, not \
-typed — a call by name, an import by its bound segment, an `impl Trait for \
-Type`, a type reference — so a common name may be a false positive, and \
-`unresolved` counts the targets the book could not pin to one declaration \
-(resolution is by name, only while the name has at most five definers). The \
-walk has three guards and the answer states them: `depth` is clamped to 3 \
-hops, a cycle is answered once per symbol and never followed twice, and the \
-answer is bounded by `budget` nodes (600 by default, 2000 at most, with the \
-edges at twice the nodes). A cut answers `truncated: {reason, shown, total, \
-next}`: `nodes` or `edges` when the budget bit (then `next` is the same call \
-with twice the budget), `budget` when the character envelope of the answer \
-(`chars`, `max_chars` — the ladder of the book by indexed files, overridable \
-up to 1.5 times) stopped the full rows and the rest arrived as one-line \
-`pointers` (then `next` is the wider call, or a narrower walk at the \
-ceiling), `depth` when the request asked for more hops than 3 \
-and the walk still had somewhere to go (`next` is `null`: the cap is the \
-answer). Nodes carry `file`, `line` and the hop they were reached at; the seed \
-travels with `content_hash`, `indexed_at` and the `book_key` of the book. An \
-ambiguous name answers `ok: false` with `ambiguous_symbol` and `candidates[]`; \
-the book is on by default, so `book_disabled` only comes from an explicit \
-`GRAPHIUM_BOOK=off`. Read-only: it never touches the plan."
-        }
-        "code_diagram" => {
-            "Build the diagram of one symbol's neighbourhood from the book, without \
-reading any file: the answer is a complete `graph` document (`version: 1`, \
-`kind: \"graph\"`, one node per symbol labelled with its `qname`, one edge per \
-connection labelled with its kind) in `diagram`. Send it to `render_diagram` \
-as it is, or to `validate_diagram` first: it respects the contract of the kind \
-(300 nodes, 600 edges, density 3), so it needs no repair. When the neighbourhood \
-spans more than one file the document groups its nodes by file — one flat group \
-per file — and the seed node travels `emphasis: \"highlight\"`, so the reader sees \
-which symbol the question was about. The walk is \
-`code_impact` with `direction: both` and `depth` clamped to 3 hops; `edges` \
-narrows which kinds it follows. `truncated` is `{reason, shown, total, next}` \
-and tells the two cuts apart: `density` means the document was trimmed to \
-render (the walk itself was complete) and `nodes`/`edges` mean the walk was cut \
-first, because `budget` keeps the 300/600 ceilings of the kind; `budget` means \
-the character envelope of the answer (`chars`, `max_chars`, L7 — the ladder of \
-the book by indexed files, overridable up to 1.5 times) trimmed the document \
-after those ceilings, and the document still renders because an edge never \
-points at a node it dropped; in all cases \
-`next` is the `code_impact` call that answers the same question with the query \
-budget of the connections view, or the same `code_diagram` with a bigger \
-`max_chars` when the envelope can still grow. `unresolved` is the walk's honest \
-count of the names it could not pin down — the same field `code_impact` \
-reports. The connections are syntactic, not typed: the \
-picture is the book's reading of the code. The start symbol travels with \
-`content_hash`, `indexed_at` and the `book_key` of the book; an ambiguous name \
-answers `ok: false` with `ambiguous_symbol` and `candidates[]`, and the book is \
-on by default (`book_disabled` only with an explicit `GRAPHIUM_BOOK=off`). It \
-never renders and never touches the plan."
-        }
-        "clear_canvas" => {
-            "\
-Remove diagrams from the plan. Without `scope` it clears only the diagrams of this \
-session; with `scope: \"plano\"` it clears the whole plan, including the ones of \
-other sessions. It does not close the window and does not stop the MCP session."
-        }
-        "code_er" => {
-            "Build the `er` document of one `.sql` file of the project — or of the whole \
-project with `scope: \"project\"` — its tables as \
-compartments with their columns and the keys between them — without reading the \
-file yourself: the answer carries the document in `diagram` (`version: 1`, \
-`kind: \"er\"`), ready to send to `validate_diagram` and then `render_diagram` as \
-it is, the same contract `code_diagram` keeps. `path` is the file relative to \
-the project root with `/` separators, the way the book stores it \
-(`db/schema.sql`); absolute paths, `..` and a leading `./` are refused the same \
-way, with `ok: false`, code `invalid_value` at `path`, because the guard reads \
-path components before anything is opened. The source is read live, \
-so the document is the file as it is now, not the indexed snapshot. A file that \
-produces no document — another language, a DDL with no column list, or a build \
-without the SQL grammar — answers `ok: false` with the three causes named. \
-`scope` chooses the breadth, never the contract: `\"file\"` (the default) draws \
-only the file `path` names; `\"project\"` parses every `.sql` chapter the book \
-knows live from disk, merges them in the book's chapter order — a table name \
-declared twice is drawn once, a foreign key that points at a table in another \
-file anchors — and answers one document, with `files` reporting how many \
-chapters were parsed and a chapter that no longer reads skipped. `path` stays \
-required under both scopes: it names the file of the answer, and under \
-`\"project\"` its tables take part in the merge like any other chapter's. \
-Beside `diagram` the answer reports `tables`, `relations` and `chars` (the byte \
-length of the document), so its size is read without counting the JSON. The \
-ceilings of the `er` kind apply at the render — a schema bigger than the kind \
-accepts is refused there with `too_large` — and a document already over them \
-warns first, with `er_over_kind` in `warnings[]`: `ok` stays `true`, the \
-document travels whole, and splitting the schema file is the way to render it. \
-The book is on by default \
-(`book_disabled` only with an explicit `GRAPHIUM_BOOK=off`). It never renders \
-and never touches the plan."
-        }
-        _ => "A Graphium tool.",
+        "render_diagram" => crate::RENDER_DIAGRAM_DESCRIPTION,
+        "export_diagram" => crate::EXPORT_DIAGRAM_DESCRIPTION,
+        "validate_diagram" => crate::VALIDATE_DIAGRAM_DESCRIPTION,
+        "get_diagram_schema" => crate::GET_DIAGRAM_SCHEMA_DESCRIPTION,
+        "list_diagrams" => crate::LIST_DIAGRAMS_DESCRIPTION,
+        "get_diagram" => crate::GET_DIAGRAM_DESCRIPTION,
+        "list_diagram_versions" => crate::LIST_DIAGRAM_VERSIONS_DESCRIPTION,
+        "get_diagram_version" => crate::GET_DIAGRAM_VERSION_DESCRIPTION,
+        "clear_canvas" => crate::CLEAR_CANVAS_DESCRIPTION,
+        "update_diagram" => crate::UPDATE_DIAGRAM_DESCRIPTION,
+        "register_session" => crate::REGISTER_SESSION_DESCRIPTION,
+        "code_search" => crate::CODE_SEARCH_DESCRIPTION,
+        "code_structure" => crate::CODE_STRUCTURE_DESCRIPTION,
+        "code_impact" => crate::CODE_IMPACT_DESCRIPTION,
+        "code_diagram" => crate::CODE_DIAGRAM_DESCRIPTION,
+        "code_er" => crate::CODE_ER_DESCRIPTION,
+        _ => "",
     }
 }
 

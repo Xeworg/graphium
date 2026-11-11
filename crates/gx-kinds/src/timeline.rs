@@ -249,7 +249,7 @@ impl DiagramKind for TimelineKind {
             "title": "Roadmap",
             "lanes": [ { "id": "q1", "label": "Q1" } ],
             "events": [
-                { "label": "v1.0", "lane": "q1" },
+                { "label": "v1.0", "lane": "q1", "role": "milestone" },
                 { "label": "v1.1", "lane": "q1" }
             ]
         })

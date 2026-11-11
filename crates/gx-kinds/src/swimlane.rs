@@ -226,7 +226,7 @@ impl DiagramKind for SwimlaneKind {
             "title": "soporte",
             "lanes": [ { "id": "cliente" }, { "id": "soporte" } ],
             "steps": [
-                { "label": "reclama", "lane": "cliente" },
+                { "label": "reclama", "lane": "cliente", "connects": ["step-1"] },
                 { "label": "responde", "lane": "soporte" }
             ]
         })

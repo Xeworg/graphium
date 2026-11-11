@@ -114,3 +114,18 @@ work (Ctrl+C source copy, clear-canvas banner, onboarding — §19 rows 1, 4, 6)
   nested `messages[0].label`, empty-id hint). Test-authoring trap: `graph.nodes`
   carries `serde(default)`, so a document without it is legal — the missing-field
   case needed `version`, which is structurally required.
+
+- L6 (2026-11-10, execution, T3): the teaching surface now shows what exists.
+  (a) The four `min_example`s gained their f22 field (`activation`,
+  `attributes`/`methods`, `connects`, `role: milestone`). (b) The sixteen tool
+  descriptions were duplicated verbatim in `lib.rs` (the constants the tool
+  declarations register) and `harness.rs` — the harness table now delegates to
+  the constants, so one text per tool exists. (c) The render text dropped the
+  lie «Every node needs a unique `id`» — the lanes kinds derive it — and now
+  names the derivation (`step-0`, `event-0`, `task-0`) plus the `\n` line-break
+  convention. (d) The generic rules of every kind carry the `\n` convention
+  too. Surprise: the audit's claim that `sequence`/`tree`/`mindmap` publish no
+  `rules()` was stale — the role rule already gives them three lines; the
+  three-line floor test passes without touching them. Gates: fmt/clippy 0, 856
+  tests (three new: examples mention the opt-in fields, every kind teaches ≥3
+  rules, the `\n` convention is in the rules).

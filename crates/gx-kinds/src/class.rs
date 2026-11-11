@@ -429,7 +429,7 @@ impl DiagramKind for ClassKind {
             "title": "pedidos",
             "nodes": [
                 { "id": "Base", "label": "Base", "role": "abstract" },
-                { "id": "Order", "label": "Order" },
+                { "id": "Order", "label": "Order", "attributes": ["id: uuid"], "methods": ["cobrar()"] },
                 { "id": "Payable", "label": "Payable", "role": "interface" }
             ],
             "edges": [

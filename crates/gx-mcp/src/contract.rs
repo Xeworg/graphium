@@ -469,6 +469,10 @@ fn rules_of(kind: &str) -> Vec<String> {
     let mut rules = vec![
         "`version` debe ser 1 (soportadas: 1).".to_string(),
         "Los campos desconocidos se rechazan con `unknown_field`.".to_string(),
+        // The line-break convention (`f23-contrato.md`, S4), the one thing no
+        // schema could say: the drawing never wraps on its own.
+        "Una etiqueta larga se corta con `\\n`: el dibujo no envuelve solo y la caja crece hasta la línea más ancha."
+            .to_string(),
     ];
     rules.extend(role_rule(handler.roles(), handler.default_role()));
     rules.extend(handler.rules());
@@ -2141,5 +2145,69 @@ mod error_paths {
                 .unwrap_or_else(|| panic!("{kind}: el id vacío dice qué escribir"));
             assert!(!hint.is_empty(), "{kind}: {hint}");
         }
+    }
+}
+
+#[cfg(test)]
+mod teaching_truth {
+    use super::get_diagram_schema;
+
+    // T3 (`f23-contrato.md`, S4): the example of a kind shows its opt-in
+    // fields — what f22 added is not a secret an agent has to read the whole
+    // `$defs` to discover.
+    #[test]
+    fn the_examples_show_the_fields_the_kinds_added() {
+        /// Whether a key appears anywhere in the example.
+        fn mentions(value: &serde_json::Value, key: &str) -> bool {
+            match value {
+                serde_json::Value::Object(map) => {
+                    map.contains_key(key) || map.values().any(|child| mentions(child, key))
+                }
+                serde_json::Value::Array(items) => items.iter().any(|item| mentions(item, key)),
+                _ => false,
+            }
+        }
+
+        for (kind, what) in [
+            ("sequence", "activation"),
+            ("class", "attributes"),
+            ("class", "methods"),
+            ("swimlane", "connects"),
+            ("timeline", "role"),
+        ] {
+            let response = get_diagram_schema(Some(kind));
+            let example = &response.examples.expect("el ejemplo del kind")[0];
+            assert!(
+                mentions(example, what),
+                "{kind}: el ejemplo no muestra `{what}`: {example}"
+            );
+        }
+    }
+
+    // T3: every kind teaches its own rules — `sequence`, `tree` and `mindmap`
+    // answered only the two generic lines.
+    #[test]
+    fn every_kind_publishes_its_own_rules() {
+        let mut thin = Vec::new();
+        for kind in gx_core::kind::kind_names() {
+            let response = get_diagram_schema(Some(kind));
+            let rules = response.rules.unwrap_or_default();
+            if rules.len() < 3 {
+                thin.push((kind, rules.len()));
+            }
+        }
+        assert!(thin.is_empty(), "kinds sin reglas propias: {thin:?}");
+    }
+
+    // T3: the line-break convention is written where the writer reads it —
+    // the generic rules of every kind.
+    #[test]
+    fn the_generic_rules_say_how_a_label_breaks() {
+        let response = get_diagram_schema(Some("graph"));
+        let rules = response.rules.expect("las reglas del kind");
+        assert!(
+            rules.iter().any(|rule| rule.contains("\\n")),
+            "las reglas dicen cómo se corta una etiqueta: {rules:?}"
+        );
     }
 }
