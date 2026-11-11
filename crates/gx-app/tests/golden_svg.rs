@@ -32,7 +32,7 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 23] = [
+const CASES: [(&str, &str); 24] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
@@ -52,6 +52,7 @@ const CASES: [(&str, &str); 23] = [
     ("class-shop", CLASS_SHOP),
     ("component-api", COMPONENT_API),
     ("component-nested", COMPONENT_NESTED),
+    ("component-relations", COMPONENT_RELATIONS),
     ("c4-context", C4_CONTEXT),
     ("gantt-plan", GANTT_PLAN),
     ("graph-note", GRAPH_NOTE),
@@ -408,6 +409,44 @@ const COMPONENT_NESTED: &str = r#"{
     { "from": "web", "to": "api", "label": "HTTPS" },
     { "from": "api", "to": "db", "label": "SQL" },
     { "from": "api", "to": "pagos", "label": "cobro" }
+  ]
+}"#;
+
+/// S4 de `f29-componente.md`: el dibujo que hace visible el corte —las seis
+/// figuras nuevas y las nueve relaciones tipadas— sin mover ninguno de los
+/// dibujos que ya existían. Cada rol nuevo escribe su nombre arriba, en el
+/// hueco del estereotipo, y cada relación pinta la notación de su fila: la
+/// flecha sólida de la acción dirigida, la línea sólida del contacto simétrico,
+/// la flecha punteada de la dependencia y la flecha abierta de la observación.
+/// Ninguna relación es muda: el documento no escribe etiqueta, así que la
+/// palabra sale de la tabla.
+const COMPONENT_RELATIONS: &str = r#"{
+  "version": 1,
+  "kind": "component",
+  "title": "Pedidos — relaciones",
+  "nodes": [
+    { "id": "portal", "label": "Portal", "role": "application" },
+    { "id": "web", "label": "Web", "role": "application" },
+    { "id": "api", "label": "API", "role": "service" },
+    { "id": "cola", "label": "Cola", "role": "broker" },
+    { "id": "db", "label": "Pedidos", "role": "storage" },
+    { "id": "cache", "label": "caché", "role": "infrastructure" },
+    { "id": "host", "label": "Kubernetes", "role": "runtime" }
+  ],
+  "groups": [
+    { "id": "plataforma", "label": "Plataforma",
+      "members": ["api", "cola", "db", "cache", "host"] }
+  ],
+  "edges": [
+    { "from": "portal", "to": "web", "kind": "connects_to" },
+    { "from": "web", "to": "api", "kind": "calls" },
+    { "from": "web", "to": "cache", "kind": "uses" },
+    { "from": "api", "to": "db", "kind": "writes" },
+    { "from": "api", "to": "cache", "kind": "reads" },
+    { "from": "api", "to": "cola", "kind": "publishes" },
+    { "from": "web", "to": "cola", "kind": "subscribes" },
+    { "from": "cache", "to": "db", "kind": "depends_on" },
+    { "from": "host", "to": "cola", "kind": "hosts" }
   ]
 }"#;
 
