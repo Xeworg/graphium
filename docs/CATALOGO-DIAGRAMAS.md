@@ -78,17 +78,17 @@ y el trabajo que falta. `—` en "kind" significa que no hay kind que la cubra.
 | 5 | State Transition Diagram | `state` | capacidad | estado compuesto, entry/exit/do, choice/history, evento[guarda]/acción |
 | 6 | Component Diagram | `component` | capacidad | puertos, lollipop/socket, ensamblaje vs delegación, «subsystem» en la caja del límite |
 | 7 | Deployment Diagram | — | kind nuevo | nodos/dispositivos, entornos de ejecución y artefactos; pide caja 3D e icono de documento (forma nueva) y vocabulario de grupo |
-| 8 | ERD | `er` (+ `code_er`) | capacidad | entidad débil (forma nueva), relación con atributos/roles, clave compuesta, participación total/parcial |
+| 8 | ERD | `er` (+ `code_er`) | capacidad | entidad débil (forma nueva), relación con atributos/roles, clave compuesta; la participación total/parcial ya se declara por extremo (`from_min`/`to_min`, corte `f27-etapa1`) y el `N:M` que el contrato anunciaba ya se dibuja |
 | 9 | Relational Schema | `er` (+ `code_er`) | capacidad | UNIQUE, CHECK, DEFAULT, acciones referenciales, índices, PK/FK compuestas |
 | 10 | Document Database Diagram | — | kind nuevo | anidamiento de documentos dentro de una colección; `IrNode` tiene filas, no hijos |
 | 11 | Normalization Diagram | capacidad de `er` | capacidad | dependencia funcional como arista de conjunto a conjunto; el cálculo de la forma normal no es un kind |
 | 12 | System Component Map | `component` / `c4` | capacidad | tipos de componente y tipos de relación semánticos del §5 de la referencia; hoy las aristas solo llevan texto |
-| 13 | Hierarchical Diagram | `tree` / `mindmap` | capacidad | metadatos por nodo (canal sin usar), niveles como dato; las agrupaciones no: el motor de árbol no dibuja clusters |
+| 13 | Hierarchical Diagram | `tree` / `mindmap` | capacidad | metadatos y niveles ya son datos en `tree` (corte `f27-etapa1`); las agrupaciones no: el motor de árbol no dibuja clusters y `mindmap` no tiene el canal |
 | 14 | Timeline Diagram | `timeline` | casi hecho | dependencias entre eventos (el eje, los intervalos y el hito ya existen) |
 | 15 | Flowchart | `flowchart` | capacidad | paralogramo de entrada/salida (hoy `data` es una caja lisa, glifo equivocado), conectores y el resto de los símbolos ISO: la factura de formas más grande del catálogo |
-| 16 | Data Flow Diagram | `dataflow` | capacidad | número de proceso y niveles; el nombre del dato en el flujo y las dos reglas de flujo ilegal ya existen |
+| 16 | Data Flow Diagram | `dataflow` | capacidad | banda de Gane-Sarson y segundo glifo de almacén; el número de proceso y el nivel ya son campos (`number`, `level`, del contexto 0 al 6, corte `f27-etapa1`), y el nombre del dato en el flujo y las dos reglas de flujo ilegal ya existen |
 | 17 | Workflow Diagram | `swimlane` | capacidad | rol de decisión, condición en `connects`, dueño por carril, entradas y resultados |
-| 18 | Functional Decomposition | `tree` | capacidad | nivel e identificador como dato: el mismo canal `meta` que falta en la fila 13 (nunca IDEF0) |
+| 18 | Functional Decomposition | `tree` | capacidad | nivel, identificador y `meta` ya son datos (corte `f27-etapa1`, el mismo canal de la fila 13); quedan las bandas de nivel del motor (nunca IDEF0) |
 | 19 | Nassi-Shneiderman | — | kind nuevo + motor | bloques anidados sin aristas: el único de los 21 que pide motor nuevo |
 | 20 | Project Schedule | `gantt` | capacidad | progreso, hito de duración cero con glifo, tipos de dependencia FS/SS/FF/SF, guardia de ciclos |
 | 21 | PERT | — | kind nuevo (barato) | estimación de tres puntos, ES/EF/LS/LF, holgura y camino crítico: layered lo hospeda, no pide forma ni motor |
@@ -399,11 +399,13 @@ cuervo, que debe más a los diagramas de Bachman—, y ninguna conformidad es
 posible donde no hay norma.
 
 **Hoy:** `ErColumn{name,type,key,nullable,note}` (`crates/gx-kinds/src/er.rs:20`),
-`ErTable`, `ErRelation{from,to,cardinality}` **columna a columna** (`:61`);
+`ErTable`, `ErRelation{from,to,cardinality,from_min,to_min}` **columna a columna** (`:61`);
 `key_of` produce `Pk`/`Fk`/`PkFk` (`:104`) y la validación cubre referencias,
 unicidad y que el origen sea PK y el destino FK (`:113`). La IR dibuja cajas con
 filas que llevan tipo y nota, arista sin flecha, anclada a la fila
-(`:259`), y la cardinalidad sale de `1:N` más la nulabilidad del destino. El
+(`:259`), y la cardinalidad sale de la forma corta (`1:N` por defecto) más la
+nulabilidad del destino, salvo que `from_min`/`to_min` digan otra cosa para un
+extremo (corte `f27-etapa1`). El
 puente SQL (`crates/gx-index/src/lang/er_bridge.rs:110`) arma el documento
 desde el DDL real, exige **exactamente una** columna PK para anclar
 (`:216`) y salta FK compuestas o contra una no-PK (`:63`).
@@ -417,9 +419,15 @@ ser un nodo.
 doble borde.
 - `[CONTRACT]`+`[DRAW]` clave parcial: no hay subrayado punteado (la fila sabe
 decir `row-key` y nada más).
-- `[SEMANTICS]` participación total/parcial más allá del booleano `nullable`: el
-mínimo solo puede ser 0 o 1 y solo se declara en el extremo destino
-(`crates/gx-core/src/ir.rs:300`).
+- `[SEMANTICS]` participación total/parcial — **hecho en `f27-etapa1`**: cada
+relación declara `from_min` y `to_min` con el vocabulario cerrado
+`required`/`optional`, resuelto en un solo lugar (`cardinality_of`,
+`crates/gx-kinds/src/er.rs`), y un valor escrito gana sobre la derivación. El
+mínimo del origen, que la derivación fijaba en `required`, por fin se puede
+expresar. El mismo corte reparó el defecto que la fila dejó a la vista:
+`N:M` estaba en `Cardinality::SHORT_FORMS` y su lado derecho (`M`) no se
+parseaba en `parse_side` (`crates/gx-core/src/ir.rs`), así que el ejemplo del
+propio hint se rechazaba a sí mismo.
 - `[CONTRACT]`+`[LAYOUT]` clave compuesta como unidad y FK compuesta: el ancla de
 fila es **un solo** `u32` por extremo (`ir.rs:227`).
 - `[CONTRACT]` nombres de rol e identificadora vs no identificadora.
@@ -587,21 +595,27 @@ abstracciones jerárquicas. **Marca:** notación propia; comparación segura con
 la composición/Grouping de ArchiMate, nunca «un diagrama ArchiMate».
 
 **Hoy:** el documento de `tree` anida (`crates/gx-kinds/src/tree.rs:27`), la
-profundidad tiene tope (`:101`) y se calcula en `walk` (`:59`) y después **se
-tira** (`:167`); el `note` se funde con la etiqueta como segunda línea (`:173`)
-y nunca llega como dato. Ni `TreeInput` (`:40`) ni `MindmapInput`
-(`crates/gx-kinds/src/mindmap.rs:38`) aceptan `groups` ni `meta`; `mindmap` solo
-lleva `emphasis` (`:29`). Los grafos sí anidan con `groups`, pero `IrGroup` es
-solo id/etiqueta/miembros (`crates/gx-core/src/ir.rs:343`). Y el motor de árbol
-**no dibuja clusters**: `TreeEngine` devuelve `groups: Vec::new()`
+profundidad tiene tope (`:101`) y se calcula en `walk` (`:59`) —desde
+`f27-etapa1` ya no se tira: viaja como `level`—; el `note` se funde con la
+etiqueta como segunda línea (`:173`) y nunca llega como dato. `tree` acepta
+`meta` por nodo y `numbering` desde `f27-etapa1`; ni `TreeInput` (`:40`) ni
+`MindmapInput` (`crates/gx-kinds/src/mindmap.rs:38`) aceptan `groups`, y
+`mindmap` solo lleva `emphasis` (`:29`). Los grafos sí anidan con `groups`, pero
+`IrGroup` es solo id/etiqueta/miembros (`crates/gx-core/src/ir.rs:343`). Y el
+motor de árbol **no dibuja clusters**: `TreeEngine` devuelve
+`groups: Vec::new()`
 (`crates/gx-layout/src/lib.rs:1088`), mientras layered calcula cajas anidadas
 (`:393`).
 
 **Falta:**
 
-- `[CONTRACT]` `meta` por nodo: el canal existe y hoy nadie lo usa
-  (`IrNode.meta`, `ir.rs:181`, llega intacto a la escena, `scene.rs:251`).
-- `[CONTRACT]` niveles como dato: `tree` ya los calcula y los descarta.
+- `[CONTRACT]` `meta` por nodo — **hecho en `f27-etapa1`**: `TreeNode.meta` es
+  un mapa de escalares que viaja intacto a `IrNode.meta`
+  (`crates/gx-kinds/src/tree.rs`), el canal de `ir.rs:181` que llega a la escena
+  en `scene.rs:251`.
+- `[CONTRACT]` niveles como dato — **hecho en `f27-etapa1`**: la profundidad
+  que `walk` calculaba se escribe como `level` en `IrNode.meta`, junto al
+  `number` que sale de la posición entre hermanos.
 - `[SEMANTICS]` `tree`/`mindmap` rechazan `groups`, así que una agrupación
   independiente del parentesco no se puede expresar.
 - `[LAYOUT]` bandas de nivel y clusters en el motor de árbol —o mover la
@@ -668,15 +682,15 @@ Los cinco diagramas describen un procedimiento: pasos, decisiones, responsables 
 
 **Fuente:** DFD de Yourdon/DeMarco y Gane-Sarson. No hay texto oficial gratuito de ninguna de las dos escuelas: la descripción se apoya en la literatura de notación, no en un documento citable. Cuatro clases de elemento: proceso, almacén, entidad externa y flujo etiquetado. Convenciones: numeración de procesos (P1, P2...), descomposición por niveles (contexto o nivel 0, después 1, 2...) y, en Gane-Sarson, glifos propios de proceso (caja redondeada con banda de número) y almacén (rectángulo abierto).
 
-**Hoy:** tres roles (`crates/gx-kinds/src/dataflow.rs:30`): `process` en caja redondeada, `store` en cilindro y `external` en caja. Los flujos llevan el nombre del dato en la etiqueta (`dataflow.rs:53`) y las dos reglas de flujo ilegal existen (`dataflow.rs:8-12`): un depósito no alimenta a otro y una entidad externa no alimenta a otra. Los `groups` anidados permiten cajas visuales dentro del dibujo.
+**Hoy:** tres roles (`crates/gx-kinds/src/dataflow.rs:30`): `process` en caja redondeada, `store` en cilindro y `external` en caja. Los flujos llevan el nombre del dato en la etiqueta (`dataflow.rs:53`) y las dos reglas de flujo ilegal existen (`dataflow.rs:8-12`): un depósito no alimenta a otro y una entidad externa no alimenta a otra. Los `groups` anidados permiten cajas visuales dentro del dibujo. Desde `f27-etapa1` el documento declara su `level` y cada proceso su `number`.
 
 **Falta:**
 
-- `[CONTRACT]` número de proceso (P1, P2): `FlowNode` no tiene campo de número (`crates/gx-kinds/src/flow.rs:22-36`); hoy va escrito a mano en la etiqueta y ninguna regla lo revisa.
-- `[CONTRACT]` nivel: `DataflowInput` no tiene campo (`dataflow.rs:39-59`), así que contexto, nivel 0 y nivel 1 son documentos sin relación declarada; `groups` es una caja visual dentro de un dibujo, no una jerarquía entre dibujos (`crates/gx-core/src/ir.rs:343-347`).
+- `[CONTRACT]` número de proceso (P1, P2) — **hecho en `f27-etapa1`**: `DataflowNode.number` (`crates/gx-kinds/src/dataflow.rs`), `P` y dígitos, único en el diagrama (`duplicate_id`) y dibujado como prefijo de la etiqueta (`P1 · nombre`). Vive en el nodo del `dataflow` y no en `FlowNode`: una caja de flowchart no tiene número.
+- `[CONTRACT]` nivel — **hecho en `f27-etapa1`**: `DataflowInput.level` de 0 a 6, con el contexto en 0, y cada nivel sigue siendo un documento aparte; `groups` sigue siendo una caja visual dentro de un dibujo, no una jerarquía entre dibujos (`crates/gx-core/src/ir.rs:343-347`).
+- `[SEMANTICS]` numeración única y niveles coherentes — **hecho en `f27-etapa1`**: el número se valida por formato y por unicidad, y el nivel 0 rechaza procesos numerados, porque el diagrama de contexto no tiene proceso que numerar.
 - `[SHAPE]` variante de almacén de Gane-Sarson (rectángulo abierto): `store` fija cilindro y no hay segundo glifo (`dataflow.rs:30-34`); el renderer tiene una sola rama de cilindro (`renderer.rs:489`).
-- `[DRAW]` banda del número de Gane-Sarson: la caja redondeada es lisa y el número solo puede ir en la etiqueta (`renderer.rs:488`).
-- `[SEMANTICS]` numeración única y niveles coherentes: sin número no hay nada que validar; la regla llega con el campo.
+- `[DRAW]` banda del número de Gane-Sarson: la caja redondeada es lisa y el número va en la etiqueta (`renderer.rs:488`). La banda es la otra mitad del glifo de Gane-Sarson que falta, y pide una variante de forma en los dos emisores.
 
 **Costo:** el más chico de la sección: dos campos, una variante de dibujo y dos reglas. Motor y layout no cambian; cada nivel es un documento aparte.
 
@@ -700,13 +714,13 @@ Los cinco diagramas describen un procedimiento: pasos, decisiones, responsables 
 
 **Fuente:** notación propia de Graphium, nunca IDEF0. IDEF0 (FIPS 183) es público y la distancia hay que decirla: el diagrama no tiene entradas, controles, salidas ni mecanismos, los cuatro lados de una caja IDEF0. Tampoco hay norma llamada "functional decomposition": la fuente es la práctica de descomponer una función en subfunciones y dibujarlas como jerarquía.
 
-**Hoy:** `tree` anida (`crates/gx-kinds/src/tree.rs:27-35`), el documento es `root {name, note, children}` (`tree.rs:40-51`) y el tope de profundidad es 12 (`tree.rs:22`, aplicado en `:101`). La traducción deriva los ids de la ruta y funde `note` con el nombre en una segunda línea (`tree.rs:172-176`).
+**Hoy:** `tree` anida (`crates/gx-kinds/src/tree.rs:27-35`), el documento es `root {name, note, children}` más `meta` por nodo y `numbering` en el documento (`tree.rs:40-51`, corte `f27-etapa1`) y el tope de profundidad es 12 (`tree.rs:22`, aplicado en `:101`). La traducción deriva los ids de la ruta, escribe la profundidad y el número como datos y funde `note` con el nombre en una segunda línea (`tree.rs:172-176`).
 
 **Falta:**
 
-- `[CONTRACT]` nivel como dato: `walk` calcula la profundidad y `to_ir` la descarta (`tree.rs:172`); el dibujo no numera ni agrupa por nivel.
-- `[CONTRACT]` identificador por nodo (1, 1.1, 1.1.2): `TreeNode` no tiene campo (`tree.rs:27-35`); la ruta es el id interno, no un número.
-- `[CONTRACT]` `meta` por nodo: el canal existe (`ir.rs:181`) y nadie lo llena (`ir.rs:202` lo crea vacío); `TreeInput` no tiene campo que lo reciba (`tree.rs:40-51`). Es el canal que también falta en la fila 13.
+- `[CONTRACT]` nivel como dato — **hecho en `f27-etapa1`**: `walk` calcula la profundidad y `to_ir` la escribe como `level` en `IrNode.meta`; el dibujo todavía no agrupa por nivel, y eso es el motor, no el contrato.
+- `[CONTRACT]` identificador por nodo (1, 1.1, 1.1.2) — **hecho en `f27-etapa1`**: el número se deriva de la posición entre hermanos, va a `IrNode.meta.number` y, con `numbering: true`, precede la primera línea de la etiqueta (`1.1 · nombre`); sin el campo, las etiquetas son las de siempre.
+- `[CONTRACT]` `meta` por nodo — **hecho en `f27-etapa1`**: `meta` recibe un mapa de escalares, y las claves derivadas (`level`, `number`) se rechazan al escribirlas (`invalid_value`), porque no hay precedencia entre el valor derivado y el escrito. Es el canal que también paga la fila 13.
 - `[SEMANTICS]` la distancia con IDEF0 es solo de documento: ninguna regla impide escribir entradas, controles y mecanismos en etiquetas, y el contrato no los declara fuera de alcance.
 - `[LAYOUT]` bandas de nivel: el motor de árbol devuelve `groups: Vec::new()` (`crates/gx-layout/src/lib.rs:1088`) y no numera niveles.
 
@@ -868,10 +882,22 @@ extremo (`marker-end`/`marker-start`, el de origen espejado, las reglas CSS solo
 de las familias que el documento usa). `class` estrena la notación que nombraba
 desde siempre: rombo lleno en `composition` y la fila nueva `aggregation` con
 rombo hueco. `er` dejó de apagar la flecha a mano. Único golden que se movió:
-`class-shop`. **Falta de la etapa 0:** el estereotipo dibujado en las cajas de
-`flow` (vocabulario de nodo, no la ranura de arista) y el tipo compartido
-`EdgeKind` para el vocabulario de relación tipada, que entra con las nueve
-relaciones de `component` en la etapa 1.
+`class-shop`.
+
+**Hecho en `f27-etapa1` (2026-11-11):** el resto de la etapa 0. El estereotipo
+llegó a las cajas de `flow`: `FlowNode.stereotype` es un campo del documento —1
+a 32 caracteres, dibujado entre «» sobre el nombre— y lo heredan los kinds que
+dibujan una caja de flujo (`flowchart`, `state`, `component` y `dataflow`),
+mientras `class` sigue derivándolo del rol y no lo lee del documento. El tipo
+compartido `EdgeKind` dejó de ser privado de `class`: vive en `gx-core` con su
+tabla y su resolución única (`EdgeKind::find`), y cada kind publica la suya por
+`edge_kinds()` —en el trait y en la superficie object-safe—, que es la puerta
+por la que `component` va a enseñar sus nueve relaciones. El tipo compartido no
+cambió un solo documento, y el estereotipo es un campo opcional que ningún
+documento fijado escribe: los goldens de `f26` siguen byte a byte.
+**Falta de la etapa 0:** el campo `kind` en la arista —el vocabulario de
+relación tipada escrito en el documento—, que entra con las nueve relaciones de
+`component` en la etapa 1; la etapa 0 dejó la mesa puesta, no el campo.
 
 ### Etapa 1 — capacidades sobre kinds existentes (cierra diez filas sin gastar techo)
 

@@ -557,9 +557,18 @@ Común a todos los `kind`: `kind` (obligatorio) y `version` (opcional; ausente v
 
 - **Reglas de integridad del `er`.** Todo `relations[].from.table` y `relations[].to.table` debe existir en `tables[]` (`unknown_ref`, con did-you-mean de tabla) y toda `relations[].column` debe existir en esa tabla. Una tabla **sin** columna con `key: "pk"` **no es un error**: se dibuja igual, sin badge de clave, y la respuesta trae un único aviso agregado `code: "tables_without_key"` que nombra esas tablas y dice qué cuesta la ausencia (esa tabla no puede ser el origen de una relación —el origen debe ser una `pk`— y el puente de SQL omite las claves foráneas que apuntan a una columna que no es primaria). La razón: una tabla sin clave primaria es legal en una base real (tablas de unión, logs, tablas que el parser no supo leer), así que rechazar el dibujo sería hostil; el dibujo se hace y declara qué no puede anclar.
 
+- **Mínimo de cada extremo (`f27-etapa1`).** `relations[].from_min` y `relations[].to_min` aceptan `required` u `optional` (`invalid_enum` con el vocabulario en el `hint`). Si el documento no los escribe, el origen es `required` y el destino copia el `nullable` de su columna; un valor escrito **gana** sobre esa derivación. La relación se resuelve en un solo lugar (`cardinality_of`, `crates/gx-kinds/src/er.rs`), así que no hay dos verdades.
+
 (Schemas de `sequence`/`class`/`state`/`component`: mismo patrón, se congelan al iniciar F2.)
 
-**Validación semántica (todas con `path` + `code`):** refs existentes (`unknown_ref`), ids únicos (`duplicate_id`), `cardinality ∈ {1:1, 1:N, N:M}` (`invalid_enum`), límites de tamaño (RF20, `too_large`).
+**Campos que `f27-etapa1` sumó a kinds que este capítulo todavía no detalla** —todos opcionales y aditivos: un documento que no los escribe se dibuja byte a byte como antes y `version` sigue en `1`—:
+
+- **`stereotype?` en un nodo de flujo:** de 1 a 32 caracteres, dibujado entre «» sobre el nombre. Llega a las cajas de los kinds que usan el nodo de flujo (`flowchart`, `state`, `component` y `dataflow`); `class` no lo lee del documento, sigue derivándolo de su rol (`abstract`, `interface`).
+- **`number?` en un nodo de `dataflow`:** `P` y dígitos (`P1`, `P2`), único en el documento (`duplicate_id`) y dibujado como prefijo de la etiqueta (`P1 · nombre`).
+- **`level?` en `dataflow`:** de 0 a 6, con el diagrama de contexto en 0. Llega a todos los nodos del dibujo como `meta.level`, porque un nivel es del documento y no tiene nodo propio. El nivel 0 no numera procesos (`invalid_value`).
+- **`meta?`, `numbering?`, `level` y `number` en `tree`:** `meta` —en cualquier nodo— es un mapa de escalares (texto, número, booleano o nulo; una estructura se rechaza) que viaja intacto a `IrNode.meta`. `level` (profundidad desde 0) y `number` (`1`, `1.1`, `1.1.2`) son **derivados** de la ruta: escribirlos en `meta` es `invalid_value`, no una precedencia. `numbering: true` antepone el número a la primera línea de la etiqueta; ausente o `false`, el dibujo es el de siempre.
+
+**Validación semántica (todas con `path` + `code`):** refs existentes (`unknown_ref`), ids únicos (`duplicate_id`), `cardinality` en una de las formas cortas que el contrato anuncia —`1:1`, `1:N`, `N:1`, `N:M`— (`invalid_enum`; desde `f27-etapa1` las cuatro parsean y se dibujan: `N:M` estaba anunciada y su lado derecho no se aceptaba), límites de tamaño (RF20, `too_large`).
 
 ### 10.1 Campos comunes y evolución del contrato
 

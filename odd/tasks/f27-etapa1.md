@@ -120,24 +120,27 @@ T1 `gx-core/src/kind.rs`: the `EdgeKind` row type lifted out of `class`
 and `KindHandler::edge_kinds()`, and `class` migrated onto it. Test first: RED on
 the table being reachable through the object-safe handler and on the rule line
 still being derived from it. Goldens byte-identical is the refactor's proof.
-inline. commit: `refactor(core): the relation vocabulary is shared, not class's own`.
+inline. commit: `refactor(core): the relation vocabulary is shared, not class's own` →
+`458ddac`.
 T2 `gx-kinds/flow.rs`: `FlowNode.stereotype`, its validation and its trip to
 `IrNode.stereotype`; `class` stops being the only kind that can write one. Test
 first: RED on the length rule and on the round trip. inline.
-commit: `feat(kinds): a flow box can carry the stereotype it draws`.
+commit: `feat(kinds): a flow box can carry the stereotype it draws` → `28c4536`.
 T3 `gx-kinds/dataflow.rs`: `DataflowNode.number` and `DataflowInput.level` with
 their two rules, the label prefix, and the `dataflow-levels` scene + golden. Test
 first: RED on duplicate numbers, on the format and on the level coherence (D5).
-inline. commit: `feat(dataflow): a process carries its number and the diagram its level`.
+inline. commit: `feat(dataflow): a process carries its number and the diagram its level`
+→ `c750486`, scene and golden in `3ae73a6`.
 T4 `gx-kinds/er.rs`: `from_min`/`to_min` on a relation, the precedence rule and
 the derived default. Test first: RED on `from_min: "optional"` reaching the
 source end and on the explicit value beating `nullable`. inline.
-commit: `feat(er): the minimum of each end is declared, not implied`.
+commit: `feat(er): the minimum of each end is declared, not implied` → `4213bd6`.
 T5 `gx-kinds/tree.rs`: `TreeNode.meta`, the derived `level`/`number`,
 `numbering`, S8's rejection, and the `tree-numbered` scene + golden. Test first:
 RED on the reserved-key rejection, on the derived numbers and on the byte
 identity with `numbering` absent. inline.
-commit: `feat(tree): levels, numbers and metadata reach the drawing`.
+commit: `feat(tree): levels, numbers and metadata reach the drawing` → `e3f9306`,
+scene and golden in `3ae73a6`.
 T6 gates and docs: `cargo test --workspace`, fmt, clippy, the two harnesses
 (parity, equivalence), `docs/PRD.md` §6/§10, `docs/CATALOGO-DIAGRAMAS.md` (§3
 rows, §5 the closed gaps, §6 Etapa 0 done and Etapa 1 progress) and
@@ -151,3 +154,24 @@ L2 (owner, verbatim): "Sí: FF main, converger staging, borrar la rama" — the
 closing hygiene of f26 executed before this cut: `main` at b6bf154, `staging`
 converged at 74d46d2 and pushed.
 L3 (owner selected): "Plataforma y lo barato (recomendado)".
+L4 (evidence, the cut's commits). `458ddac` T1, `28c4536` T2, `c750486` T3,
+`4213bd6` T4, `e3f9306` T5 and `3ae73a6` for the two drawing witnesses. Every
+commit was green on its own: `cargo test -p gx-core -p gx-kinds`, the per-kind
+suites and `cargo test -p gx-app --test golden_svg` (four cases, including the
+byte budget and the determinism pass).
+L5 (plan change, slice boundary). The two new scenes landed in **one** commit
+instead of one per task: both edit the fixed-size `CASES` table of
+`crates/gx-app/tests/golden_svg.rs`, and splitting them would leave a state
+where the array length and the entries disagree. T3 and T5 therefore each hold
+their code and tests, and `3ae73a6` holds the wiring plus the four fixture files.
+L6 (defect the cut uncovered, fixed inside T4). `Cardinality::SHORT_FORMS`
+advertised `N:M` while `parse_side` (`crates/gx-core/src/ir.rs`) only accepted
+`1` and `N`, so the example the `er` hint lists was the example its own
+validator rejected. `M` now joins the many side, pinned from both ends:
+`ir::tests::every_advertised_short_form_parses` and
+`er::tests::the_many_to_many_short_form_reaches_the_drawing`.
+L7 (evidence, scene budget). `tree` now writes the derived `level` and `number`
+into `IrNode.meta` for every node, so `crates/gx-app/tests/golden-scenes/tree-src.json`
+moves additively while `tree-src.svg` stays byte-identical. S7's promise is about
+the drawings, and it holds; the scene fixture is the freshness gate of the
+equivalence probe, not a drawing.
