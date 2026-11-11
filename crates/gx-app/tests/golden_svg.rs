@@ -32,12 +32,13 @@ const BYTES_PER_NODE: usize = 900;
 const BYTES_PER_EDGE: usize = 350;
 
 /// The drawings that are pinned, by file name.
-const CASES: [(&str, &str); 21] = [
+const CASES: [(&str, &str); 23] = [
     ("graph-minimal", MINIMAL),
     ("graph-left-to-right", LEFT_TO_RIGHT),
     ("graph-labeled", LABELED),
     ("er-posts", ER_POSTS),
     ("tree-src", TREE_SRC),
+    ("tree-numbered", TREE_NUMBERED),
     ("mindmap-feature", MINDMAP),
     ("sequence-order", SEQUENCE),
     ("sequence-activation", SEQUENCE_ACTIVATION),
@@ -47,6 +48,7 @@ const CASES: [(&str, &str); 21] = [
     ("flowchart-approval", FLOWCHART_APPROVAL),
     ("state-order", STATE_ORDER),
     ("dataflow-etl", DATAFLOW_ETL),
+    ("dataflow-levels", DATAFLOW_LEVELS),
     ("class-shop", CLASS_SHOP),
     ("component-api", COMPONENT_API),
     ("component-nested", COMPONENT_NESTED),
@@ -138,6 +140,20 @@ const TREE_SRC: &str = r#"{
       { "name": "render.rs", "note": "312 líneas" },
       { "name": "layout.rs" }
     ] }
+  ] }
+}"#;
+
+const TREE_NUMBERED: &str = r#"{
+  "version": 1,
+  "kind": "tree",
+  "title": "graphium",
+  "numbering": true,
+  "root": { "name": "graphium", "meta": { "owner": "core" }, "children": [
+    { "name": "crates", "children": [
+      { "name": "gx-core", "note": "IR y motor" },
+      { "name": "gx-kinds", "meta": { "kinds": 16 } }
+    ] },
+    { "name": "docs", "children": [ { "name": "PRD.md" } ] }
   ] }
 }"#;
 
@@ -297,6 +313,36 @@ const DATAFLOW_ETL: &str = r#"{
     { "from": "crudo", "to": "limpieza", "label": "pedidos crudos" },
     { "from": "limpieza", "to": "curado", "label": "pedidos curados" },
     { "from": "curado", "to": "bi", "label": "pedidos curados" }
+  ]
+}"#;
+
+/// S7 de `f27-etapa1.md`: un DFD de nivel 2, el documento que escribe los dos
+/// campos nuevos —el número de Gane-Sarson de cada proceso (D4) y el nivel
+/// declarado (D5)—. Se dibuja como el `dataflow-etl` de arriba más dos cosas
+/// que solo existen aquí: la etiqueta de cada proceso empieza por su número
+/// (`P1 · valida el pedido`) y el nivel viaja en el canal `meta` de cada nodo.
+/// Dos externos, dos procesos numerados y dos depósitos: el nivel 2 descompone
+/// un proceso del nivel 1, así que numera.
+const DATAFLOW_LEVELS: &str = r#"{
+  "version": 1,
+  "kind": "dataflow",
+  "title": "Cobro — nivel 2",
+  "level": 2,
+  "nodes": [
+    { "id": "cliente", "label": "Cliente", "role": "external" },
+    { "id": "valida", "label": "valida el pedido", "role": "process", "number": "P1" },
+    { "id": "pedidos", "label": "pedidos", "role": "store" },
+    { "id": "cobra", "label": "cobra el total", "role": "process", "number": "P2" },
+    { "id": "pagos", "label": "pagos", "role": "store" },
+    { "id": "pasarela", "label": "pasarela", "role": "external" }
+  ],
+  "edges": [
+    { "from": "cliente", "to": "valida", "label": "pedido" },
+    { "from": "valida", "to": "pedidos", "label": "pedido válido" },
+    { "from": "pedidos", "to": "cobra", "label": "total" },
+    { "from": "cobra", "to": "pasarela", "label": "cargo" },
+    { "from": "pasarela", "to": "cobra", "label": "aprobación" },
+    { "from": "cobra", "to": "pagos", "label": "pago" }
   ]
 }"#;
 

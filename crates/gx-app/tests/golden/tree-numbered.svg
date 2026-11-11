@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="-12.00 -12.00 457.39 286.00" width="457.39" height="286.00">
+<style>
+.bg{fill:rgba(27, 27, 27, 1.00)}
+.node-fill{fill:rgba(42, 42, 48, 1.00)}
+.node-stroke{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.node-text{fill:rgba(233, 233, 236, 1.00)}
+.edge-stroke{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.edge-text{fill:rgba(185, 185, 194, 1.00)}
+.accent{fill:rgba(110, 168, 254, 1.00);stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight{stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight-text{fill:rgba(110, 168, 254, 1.00)}
+.emphasis-muted{opacity:0.55}
+.group-box{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.12;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:8.00 5.00}
+.group-label{fill:rgba(185, 185, 194, 1.00)}
+.lane-band{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.35;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.lane-label{fill:rgba(185, 185, 194, 1.00)}
+.lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
+.activation{fill:rgba(42, 42, 48, 1.00);stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.stroke-dashed{stroke-dasharray:6.00 4.00}
+.text{font-family:Inter, sans-serif}
+.cardinality{fill:none;stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00}
+.arrow-normal{fill:rgba(138, 138, 150, 1.00)}
+.arrow-highlight{fill:rgba(110, 168, 254, 1.00)}
+.arrow-muted{fill:rgba(138, 138, 150, 1.00);opacity:0.55}
+.row-badge{fill:rgba(185, 185, 194, 1.00)}
+.row-note{fill:rgba(185, 185, 194, 1.00)}
+.row-key{font-weight:600}
+.row-nullable{opacity:0.75}
+.shape-dot{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.shape-ring_dot{fill:none}
+.ring-dot-core{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.node-stereotype{fill:rgba(185, 185, 194, 1.00)}
+.axis-line{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.axis-value{fill:rgba(185, 185, 194, 1.00)}
+</style>
+<defs>
+</defs>
+<g class="layer-groups">
+</g>
+<g class="layer-edges">
+<polyline id="m-graphium-graphium/crates" class="edge-stroke" points="216.69,41.50 138.08,101.50"/>
+<polyline id="m-graphium-graphium/docs" class="edge-stroke" points="216.69,41.50 374.77,101.50"/>
+<polyline id="m-graphium/crates-graphium/crates/gx-core" class="edge-stroke" points="138.08,143.00 56.42,203.00"/>
+<polyline id="m-graphium/crates-graphium/crates/gx-kinds" class="edge-stroke" points="138.08,143.00 214.50,203.00"/>
+<polyline id="m-graphium/docs-graphium/docs/PRD.md" class="edge-stroke" points="374.77,143.00 374.77,203.00"/>
+</g>
+<g class="layer-nodes">
+<rect id="g-graphium" class="node-fill node-stroke shape-rounded" x="163.79" y="0.00" width="105.81" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="216.69" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">1 · graphium</text>
+<rect id="g-graphium/crates" class="node-fill node-stroke shape-rounded" x="91.59" y="101.50" width="92.97" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="138.08" y="122.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">1.1 · crates</text>
+<rect id="g-graphium/crates/gx-core" class="node-fill node-stroke shape-rounded" x="0.00" y="203.00" width="112.85" height="59.00" rx="6.00" ry="6.00"/>
+<text class="node-text text" font-size="14.00" text-anchor="middle" dominant-baseline="central">
+<tspan x="56.42" y="223.75">1.1.1 · gx-core</tspan>
+<tspan x="56.42" y="241.25">IR y motor</tspan>
+</text>
+<rect id="g-graphium/crates/gx-kinds" class="node-fill node-stroke shape-rounded" x="152.85" y="203.00" width="123.31" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="214.50" y="223.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">1.1.2 · gx-kinds</text>
+<rect id="g-graphium/docs" class="node-fill node-stroke shape-rounded" x="330.91" y="101.50" width="87.73" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="374.77" y="122.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">1.2 · docs</text>
+<rect id="g-graphium/docs/PRD.md" class="node-fill node-stroke shape-rounded" x="316.16" y="203.00" width="117.23" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="374.77" y="223.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">1.2.1 · PRD.md</text>
+</g>
+</svg>

@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="-12.00 -12.00 306.66 645.50" width="306.66" height="645.50">
+<style>
+.bg{fill:rgba(27, 27, 27, 1.00)}
+.node-fill{fill:rgba(42, 42, 48, 1.00)}
+.node-stroke{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.node-text{fill:rgba(233, 233, 236, 1.00)}
+.edge-stroke{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.edge-text{fill:rgba(185, 185, 194, 1.00)}
+.accent{fill:rgba(110, 168, 254, 1.00);stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight{stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight-text{fill:rgba(110, 168, 254, 1.00)}
+.emphasis-muted{opacity:0.55}
+.group-box{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.12;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:8.00 5.00}
+.group-label{fill:rgba(185, 185, 194, 1.00)}
+.lane-band{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.35;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.lane-label{fill:rgba(185, 185, 194, 1.00)}
+.lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
+.activation{fill:rgba(42, 42, 48, 1.00);stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.stroke-dashed{stroke-dasharray:6.00 4.00}
+.text{font-family:Inter, sans-serif}
+.cardinality{fill:none;stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00}
+.arrow-normal{fill:rgba(138, 138, 150, 1.00)}
+.arrow-highlight{fill:rgba(110, 168, 254, 1.00)}
+.arrow-muted{fill:rgba(138, 138, 150, 1.00);opacity:0.55}
+.row-badge{fill:rgba(185, 185, 194, 1.00)}
+.row-note{fill:rgba(185, 185, 194, 1.00)}
+.row-key{font-weight:600}
+.row-nullable{opacity:0.75}
+.shape-dot{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.shape-ring_dot{fill:none}
+.ring-dot-core{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.node-stereotype{fill:rgba(185, 185, 194, 1.00)}
+.axis-line{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.axis-value{fill:rgba(185, 185, 194, 1.00)}
+</style>
+<defs>
+<marker id="arrow-normal" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
+<path class="arrow-normal" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00 Z"/>
+</marker>
+</defs>
+<g class="layer-groups">
+</g>
+<g class="layer-edges">
+<polyline id="m-cliente-valida" class="edge-stroke" points="131.66,41.50 131.66,90.25 131.66,139.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="164.49" y="90.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">pedido</text>
+<polyline id="m-cobra-pagos" class="edge-stroke" points="102.18,470.50 32.94,519.25 32.94,568.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="59.72" y="519.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">pago</text>
+<polyline id="m-cobra-pasarela" class="edge-stroke" points="162.85,470.50 236.15,519.25 198.26,574.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="265.16" y="519.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">cargo</text>
+<polyline id="m-pasarela-cobra" class="edge-stroke" points="169.54,574.00 131.66,519.25 131.66,470.50" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="178.90" y="519.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">aprobación</text>
+<polyline id="m-pedidos-cobra" class="edge-stroke" points="131.66,331.50 131.66,380.25 131.66,429.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="156.03" y="380.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">total</text>
+<polyline id="m-valida-pedidos" class="edge-stroke" points="131.66,180.50 131.66,229.25 131.66,278.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="186.16" y="229.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">pedido válido</text>
+</g>
+<g class="layer-nodes">
+<rect id="g-cliente" class="node-fill node-stroke shape-box" x="95.87" y="0.00" width="71.57" height="41.50"/>
+<text class="node-text text" x="131.66" y="20.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">Cliente</text>
+<rect id="g-cobra" class="node-fill node-stroke shape-rounded" x="61.06" y="429.00" width="141.20" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="131.66" y="449.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">P2 · cobra el total</text>
+<path id="g-pagos" class="node-fill node-stroke shape-cylinder" d="M 0.00 574.00 C 0.00 566.00 65.88 566.00 65.88 574.00 L 65.88 615.50 C 65.88 623.50 0.00 623.50 0.00 615.50 Z"/>
+<path class="node-stroke shape-cylinder" fill="none" d="M 0.00 574.00 C 0.00 582.00 65.88 582.00 65.88 574.00"/>
+<text class="node-text text" x="32.94" y="594.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">pagos</text>
+<rect id="g-pasarela" class="node-fill node-stroke shape-box" x="142.97" y="574.00" width="81.87" height="41.50"/>
+<text class="node-text text" x="183.90" y="594.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">pasarela</text>
+<path id="g-pedidos" class="node-fill node-stroke shape-cylinder" d="M 92.47 284.00 C 92.47 276.00 170.84 276.00 170.84 284.00 L 170.84 325.50 C 170.84 333.50 92.47 333.50 92.47 325.50 Z"/>
+<path class="node-stroke shape-cylinder" fill="none" d="M 92.47 284.00 C 92.47 292.00 170.84 292.00 170.84 284.00"/>
+<text class="node-text text" x="131.66" y="304.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">pedidos</text>
+<rect id="g-valida" class="node-fill node-stroke shape-rounded" x="53.46" y="139.00" width="156.38" height="41.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="131.66" y="159.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">P1 · valida el pedido</text>
+</g>
+</svg>
