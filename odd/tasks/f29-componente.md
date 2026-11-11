@@ -20,9 +20,10 @@ S3 (catalogue row 12 cost, verbatim): "barato para roles + estereotipo (dibujo y
 contrato derivados); medio … cambia el documento (niveles)".
 
 S4 (the promise this cut must keep, from `f26-adornos.md`): every existing golden
-stays byte-identical, because a document that writes no `kind` is today's
-document. One declared exception is allowed and must be named here before the gate
-runs: the `component-api` scene gains typed relations, so its drawing changes.
+stays byte-identical, including `component-api`, because a document that writes no
+`kind` is today's document. The new drawing gets its own witness,
+`component-relations`: typed edges and the six new roles, so nothing that exists
+today has to move for this cut to be visible.
 
 S5 (one resolution point, from `f27-etapa1.md` D2): an edge that writes a `kind`
 resolves its adornments, style and implied label from the kind's table and from
@@ -47,17 +48,25 @@ resolution path and the compiler names every call site that must pass one. A kin
 without a vocabulary passes `&[]`, and S6 turns that empty table into the
 rejection of any `kind`.
 
-D3 (the nine relations of `component`). `uses`, `provides`, `consumes`,
-`depends_on`, `implements`, `extends`, `aggregates`, `composes`, `deploys` — each
-row with its style, its `head`/`tail` glyph from the closed vocabulary of
-`f26-adornos.md`, and the word it implies when the document writes no label. The
-table is the contract: the rule line derives from it (the f26 S8 discipline), so a
-relation cannot be painted with a glyph the contract does not mention.
+D3 (the nine relations, named by the catalogue and not by me). Row 12 lists them
+verbatim: `uses`, `calls`, `reads`, `writes`, `publishes`, `subscribes`,
+`depends_on`, `hosts`, `connects_to`. **Every row names its line**: the document
+may override the label, but no relation is silent, because four of them share a
+glyph family and the word is what removes the ambiguity. The notation follows one
+rule — a solid arrow is a directed action (`calls`, `writes`, `publishes`,
+`hosts`), a solid line with no adornment is a symmetric touch (`uses`,
+`connects_to`), a dashed arrow is a dependency (`depends_on`) and a dashed open
+arrow is an observation (`reads`, `subscribes`). The table is the contract and the
+rule line derives from it (the f26 S8 discipline), so a relation can never be
+painted with a glyph the contract does not mention.
 
-D4 (six roles). `container`, `component`, `database`, `external` stay, and
-`subsystem` and `actor` join them, each with the shape the catalogue's row 12 asks
-for and the stereotype the role means (S2). The stereotype rides the node field
-`f27-etapa1` added, so the drawing already exists.
+D4 (the six roles, also named by the catalogue). Row 12 names them verbatim:
+`application`, `service`, `infrastructure`, `broker`, `storage`, `runtime`, on top
+of the four that exist. The catalogue also settles the drawing: "no hace falta
+forma nueva: un broker se lee por su palabra, no por un glifo" — so the six keep
+the shared rounded box and write their own name in the stereotype slot
+`f27-etapa1` opened, and the four existing roles keep their shapes and stay
+silent, which is why no existing golden moves.
 
 D5 (the boundary label is not invented). Level bands and the level vocabulary stay
 out: the row closes with roles, relations and stereotype, and the catalogue records
