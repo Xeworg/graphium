@@ -5,7 +5,8 @@ use std::collections::BTreeSet;
 use gx_core::ir::Span;
 use gx_core::{
     Direction, Emphasis, Ir, IrEdge, IrEvent, IrGraph, IrLane, IrNode, IrRow, IrTimeline,
-    LayoutGraph, LayoutGroup, LayoutHint, Palette, Point, Rect, Shape, Size, Style, TOKENS,
+    LayoutEdge, LayoutGraph, LayoutGroup, LayoutHint, Palette, Point, Rect, Shape, Size, Style,
+    TOKENS,
 };
 
 use super::{scene as build_scene, scene_tokens, Drawing};
@@ -261,6 +262,7 @@ fn the_scene_carries_the_containers_of_a_graph() {
 #[test]
 fn the_scene_carries_the_lanes_and_events_of_a_timeline() {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: vec![
             IrLane {
                 id: "a".to_string(),
@@ -373,6 +375,7 @@ fn the_scene_carries_the_lanes_and_events_of_a_timeline() {
 #[test]
 fn a_spanned_event_carries_the_numbers_of_its_bar() {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: vec![IrLane {
             id: "q1".to_string(),
             label: Some("Q1".to_string()),
@@ -578,6 +581,7 @@ fn the_drawing_plan_knows_which_layers_exist() {
 #[test]
 fn a_declared_dependency_draws_one_arrow_from_the_dependency_to_the_task() {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: vec![
             IrLane {
                 id: "a".to_string(),
@@ -647,4 +651,110 @@ fn a_declared_dependency_draws_one_arrow_from_the_dependency_to_the_task() {
     // The same document always yields the same arrow (S7, determinism).
     let again = build_scene(&ir, &layout, &palette());
     assert_eq!(scene.edges, again.edges);
+}
+
+/// S8 (`f22-dibujo.md`): a connector of a swimlane reaches the scene as a
+/// plain arrow with the route the layout computed, in connection order — and
+/// a connection with an end the layout never placed draws nothing, without
+/// unpairing the routes of the connections that follow it.
+#[test]
+fn a_connector_of_a_timeline_reaches_the_scene_as_a_plain_arrow() {
+    use gx_core::{connector_route, IrConnection, NodeBox};
+
+    let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
+        lanes: vec![IrLane {
+            id: "a".to_string(),
+            label: Some("Soporte".to_string()),
+        }],
+        events: vec![
+            IrEvent {
+                shape: Shape::Rounded,
+                id: "one".to_string(),
+                lane: "a".to_string(),
+                label: "abre".to_string(),
+                order: 0,
+                span: None,
+                depends_on: Vec::new(),
+                kind_data: Default::default(),
+            },
+            IrEvent {
+                shape: Shape::Rounded,
+                id: "two".to_string(),
+                lane: "a".to_string(),
+                label: "escala".to_string(),
+                order: 1,
+                span: None,
+                depends_on: Vec::new(),
+                kind_data: Default::default(),
+            },
+        ],
+    });
+    let mut with_connection = ir.clone();
+    if let Ir::Timeline(timeline) = &mut with_connection {
+        timeline.connections = vec![
+            IrConnection {
+                from: "one".to_string(),
+                to: "two".to_string(),
+            },
+            // An end the layout never placed: it draws nothing, and the
+            // routes of the connections after it stay paired.
+            IrConnection {
+                from: "one".to_string(),
+                to: "fantasma".to_string(),
+            },
+            IrConnection {
+                from: "two".to_string(),
+                to: "one".to_string(),
+            },
+        ];
+    }
+    let mut layout = fixture::layout(
+        &[
+            ("one", Point::new(80.0, 40.0), Size::new(120.0, 40.0)),
+            ("two", Point::new(320.0, 40.0), Size::new(120.0, 40.0)),
+        ],
+        Vec::new(),
+        Rect::new(0.0, 0.0, 480.0, 160.0),
+    );
+    // The routes are the lanes engine's: the scene reads them from the
+    // layout, never routes on its own. Same filter as the engine — a route
+    // per placed connection, in connection order.
+    let box_of = |center: Point, size: Size| NodeBox { center, size };
+    layout.edges = vec![
+        LayoutEdge {
+            from: "one".to_string(),
+            to: "two".to_string(),
+            points: connector_route(
+                &box_of(Point::new(80.0, 40.0), Size::new(120.0, 40.0)),
+                &box_of(Point::new(320.0, 40.0), Size::new(120.0, 40.0)),
+            ),
+            label_at: None,
+        },
+        LayoutEdge {
+            from: "two".to_string(),
+            to: "one".to_string(),
+            points: connector_route(
+                &box_of(Point::new(320.0, 40.0), Size::new(120.0, 40.0)),
+                &box_of(Point::new(80.0, 40.0), Size::new(120.0, 40.0)),
+            ),
+            label_at: None,
+        },
+    ];
+
+    let scene = build_scene(&with_connection, &layout, &palette());
+
+    assert_eq!(scene.edges.len(), 2, "one arrow per placed connection");
+    let forward = &scene.edges[0];
+    assert_eq!(forward.id, "m-one-two");
+    assert!(forward.arrow, "a connector is an arrow");
+    assert_eq!(forward.points.len(), 2, "same row: a straight line");
+    let backward = &scene.edges[1];
+    assert_eq!(
+        backward.id, "m-two-one",
+        "the opposite pair is not parallel: its own id"
+    );
+    // Without connections the scene carries no edge at all.
+    let plain = build_scene(&ir, &layout, &palette());
+    assert!(plain.edges.is_empty(), "no connectors, no arrows");
 }

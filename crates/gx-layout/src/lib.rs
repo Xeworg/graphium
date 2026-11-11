@@ -15,8 +15,8 @@ use dagre::{layout, EdgeLabel, LayoutOptions, NodeLabel, RankDir, Ranker};
 use gx_core::geom::{Point, Rect, Size};
 use gx_core::ir::{Direction, IrEvent, IrGraph, IrGroup, IrLane, IrTimeline};
 use gx_core::layout::{
-    LayoutActivation, LayoutAxis, LayoutEdge, LayoutEngine, LayoutGraph, LayoutGroup, LayoutOpts,
-    NodeBox,
+    connector_route, LayoutActivation, LayoutAxis, LayoutEdge, LayoutEngine, LayoutGraph,
+    LayoutGroup, LayoutOpts, NodeBox,
 };
 use gx_core::text::{TextMetrics, TextStyle};
 use gx_core::tokens::TOKENS;
@@ -1454,10 +1454,29 @@ impl LayoutEngine for LanesEngine {
         };
         let bbox = Rect::new(0.0, 0.0, width, top + axis_band);
 
+        // The connectors (S8): the lanes engine routes them — one orthogonal
+        // route per connection whose both ends are placed. The layout is the
+        // authority, as everywhere else: a connection with an end it did not
+        // place draws nothing.
+        let edges: Vec<LayoutEdge> = timeline
+            .connections
+            .iter()
+            .filter_map(|connection| {
+                let from = nodes.get(&connection.from)?;
+                let to = nodes.get(&connection.to)?;
+                Some(LayoutEdge {
+                    from: connection.from.clone(),
+                    to: connection.to.clone(),
+                    points: connector_route(from, to),
+                    label_at: None,
+                })
+            })
+            .collect();
+
         LayoutGraph {
             activations: Vec::new(),
             nodes,
-            edges: Vec::new(),
+            edges,
             groups,
             axis,
             bbox,
@@ -1604,6 +1623,7 @@ mod tests {
     #[test]
     fn a_lane_travels_with_its_events_and_its_gutter() {
         let timeline = IrTimeline {
+            connections: Vec::new(),
             lanes: vec![
                 IrLane {
                     id: "now".to_string(),

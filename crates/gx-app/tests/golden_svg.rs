@@ -232,10 +232,10 @@ const SWIMLANE_SOPORTE: &str = r#"{
     { "id": "logistica", "label": "Logística" }
   ],
   "steps": [
-    { "label": "reclama el pedido", "lane": "cliente" },
-    { "label": "abre el ticket", "lane": "soporte" },
-    { "label": "consulta el envío", "lane": "logistica" },
-    { "label": "responde", "lane": "soporte" }
+    { "id": "reclama", "label": "reclama el pedido", "lane": "cliente", "connects": ["ticket"] },
+    { "id": "ticket", "label": "abre el ticket", "lane": "soporte", "connects": ["consulta"] },
+    { "id": "consulta", "label": "consulta el envío", "lane": "logistica", "connects": ["responde"] },
+    { "id": "responde", "label": "responde", "lane": "soporte", "connects": ["reclama"] }
   ]
 }"#;
 

@@ -535,6 +535,7 @@ fn only_the_rows_with_a_key_draw_a_badge() {
 #[test]
 fn an_event_is_drawn_as_the_same_rounded_box_as_a_node() {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: vec![gx_core::IrLane {
             id: "q1".to_string(),
             label: Some("Q1".to_string()),
@@ -598,6 +599,7 @@ fn the_root_uses_plan_units_and_the_document_has_no_trailing_whitespace() {
 #[test]
 fn a_timeline_ir_still_renders_a_valid_canvas() {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: Vec::new(),
         events: Vec::new(),
     });
@@ -785,6 +787,7 @@ fn nested_groups_draw_the_outer_box_first_and_indent_the_inner_name() {
 #[test]
 fn a_timeline_draws_each_lane_as_a_band_with_its_name() {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: vec![
             gx_core::IrLane {
                 id: "q1".to_string(),
@@ -854,6 +857,7 @@ fn a_timeline_draws_each_lane_as_a_band_with_its_name() {
 #[test]
 fn the_timeline_is_written_in_id_order_with_the_bands_underneath() {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: vec![
             gx_core::IrLane {
                 id: "b".to_string(),
@@ -939,6 +943,7 @@ fn spanned(id: &str, lane: &str, label: &str, start: f64, end: f64) -> gx_core::
 /// documento con el que se prueban las dos emisoras de la barra.
 fn bar_timeline() -> (Ir, LayoutGraph) {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: vec![gx_core::IrLane {
             id: "q1".to_string(),
             label: Some("Q1".to_string()),

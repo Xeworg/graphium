@@ -221,7 +221,11 @@ impl DiagramKind for TimelineKind {
             })
             .collect();
 
-        Ir::Timeline(IrTimeline { lanes, events })
+        Ir::Timeline(IrTimeline {
+            lanes,
+            events,
+            connections: Vec::new(),
+        })
     }
 
     /// La línea de tiempo enseña su orden, sus carriles y sus tramos, que es lo

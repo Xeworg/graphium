@@ -210,3 +210,26 @@ ola first).
   (C48), equivalence 21/21. Test-authoring lesson (twice in one task): the
   second node of a renderer test must match the layout's ids — a node the
   layout does not name draws nothing, silently.
+
+- L10 (2026-11-10, design + execution, T6): the connectors ride the timeline
+  and the lanes engine routes them. (a) Contract: `Step.connects: Vec<String>`
+  (opt-in) — the targets may be declared ids or resolved defaults (`step-N`),
+  and the hint of an unknown target names the resolved ids; a step does not
+  connect to itself. (b) IR: `IrTimeline.connections: Vec<IrConnection { from,
+  to }>` (serde default, skip empty — additive; the gantt arrows stay the
+  events' `depends_on`). (c) The lanes engine routes (`connector_route` in
+  gx-core): forward flows leave the source's right edge and enter the
+  target's left edge with one bend between the boxes; backward flows mirror
+  it so the line never crosses a box; same column goes straight through the
+  vertical; same row is a straight line. A connection with an end the layout
+  did not place draws nothing — the layout is the authority. (d) The
+  renderer combines: timeline edges = dependency arrows (gantt) + connector
+  routes read from `layout.edges` with the same placement filter, so the
+  pairing stays one to one. No payload change: connectors are scene edges —
+  the twin draws them with the edge machinery it already has. (e) Evidence:
+  the `swimlane-soporte` golden gained the four connectors of the process
+  (forward, cross-lane, upward, and the backward loop to the customer —
+  visually reviewed, nothing crosses a box), gates fmt/clippy 0, 845 tests
+  (four route tests, three contract tests, the scene pairing test),
+  parity 73/73, equivalence 21/21. No new parity case: there is no new
+  payload field to pin — equivalence on the golden is the twin's witness.

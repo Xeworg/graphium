@@ -104,6 +104,30 @@ fn timeline_dependency_edges(
     edges
 }
 
+/// The connector arrows of a swimlane (`f22-dibujo.md`, S8): one edge per
+/// connection whose both ends the layout placed, in connection order — the
+/// same filter the layout applies, so the routes pair one to one. The arrow
+/// is a plain one: a connector says nothing but "this flows to that".
+fn connector_edges(timeline: &IrTimeline, layout: &LayoutGraph) -> Vec<(IrEdge, LayoutEdge)> {
+    let mut routes = layout.edges.iter();
+    timeline
+        .connections
+        .iter()
+        .filter(|connection| {
+            layout.nodes.contains_key(&connection.from) && layout.nodes.contains_key(&connection.to)
+        })
+        .map(|connection| {
+            let route = routes
+                .next()
+                .expect("the layout routed every placed connection");
+            (
+                IrEdge::new(connection.from.clone(), connection.to.clone()),
+                route.clone(),
+            )
+        })
+        .collect()
+}
+
 impl<'a> Drawing<'a> {
     /// Reads the plan of a render.
     pub(crate) fn of(ir: &'a Ir, layout: &'a LayoutGraph) -> Self {
@@ -128,10 +152,16 @@ impl<'a> Drawing<'a> {
                 .into_iter()
                 .map(|(edge, route)| (edge.clone(), route.clone()))
                 .collect(),
-            // A timeline draws only the arrows its tasks declare: one
-            // dependency arrow per `depends_on` entry (`f18-gantt.md`,
-            // S7), tasks in id order, dependencies in declared order.
-            None => timeline_dependency_edges(timeline.expect("graph or timeline"), layout),
+            // A timeline draws the arrows its tasks declare: one dependency
+            // arrow per `depends_on` entry (`f18-gantt.md`, S7), tasks in id
+            // order, dependencies in declared order — plus the connectors of
+            // a swimlane (S8), whose routes the layout computed.
+            None => {
+                let timeline = timeline.expect("graph or timeline");
+                let mut edges = timeline_dependency_edges(timeline, layout);
+                edges.extend(connector_edges(timeline, layout));
+                edges
+            }
         };
         // The label points the canvas has to contain (`f21-roto.md`, S3):
         // every routed edge that carries a label, at the point the layout

@@ -73,6 +73,65 @@ pub struct LayoutAxis {
     pub ticks: Vec<(f64, i64)>,
 }
 
+/// The orthogonal route of a connector between two placed nodes
+/// (`f22-dibujo.md`, S8): a forward flow leaves the source's right edge and
+/// enters the target's left edge with one bend in the middle; a backward
+/// flow mirrors it, so the line never crosses a box; a connector in the same
+/// column goes straight through the vertical.
+pub fn connector_route(from: &NodeBox, to: &NodeBox) -> Vec<Point> {
+    let source = Rect::new(
+        from.center.x - from.size.w / 2.0,
+        from.center.y - from.size.h / 2.0,
+        from.size.w,
+        from.size.h,
+    );
+    let target = Rect::new(
+        to.center.x - to.size.w / 2.0,
+        to.center.y - to.size.h / 2.0,
+        to.size.w,
+        to.size.h,
+    );
+    let dx = to.center.x - from.center.x;
+    if dx.abs() < 0.01 {
+        // Same column: the vertical carries the flow, top to bottom.
+        let (exit, entry) = if to.center.y >= from.center.y {
+            (
+                Point::new(from.center.x, source.max_y()),
+                Point::new(to.center.x, target.min_y()),
+            )
+        } else {
+            (
+                Point::new(from.center.x, source.min_y()),
+                Point::new(to.center.x, target.max_y()),
+            )
+        };
+        return vec![exit, entry];
+    }
+    let (exit, entry, mid_x) = if dx > 0.0 {
+        (
+            Point::new(source.max_x(), source.center().y),
+            Point::new(target.min_x(), target.center().y),
+            (source.max_x() + target.min_x()) / 2.0,
+        )
+    } else {
+        (
+            Point::new(source.min_x(), source.center().y),
+            Point::new(target.max_x(), target.center().y),
+            (source.min_x() + target.max_x()) / 2.0,
+        )
+    };
+    if (exit.y - entry.y).abs() < 0.01 {
+        // Same row: a straight line needs no bend.
+        return vec![exit, entry];
+    }
+    vec![
+        exit,
+        Point::new(mid_x, exit.y),
+        Point::new(mid_x, entry.y),
+        entry,
+    ]
+}
+
 /// An activation bar of a sequence (`f22-dibujo.md`, S5): the thin rectangle
 /// over an actor's lifeline while the actor holds the control. The layout
 /// computes it and the painters spell it; an empty [`LayoutGraph

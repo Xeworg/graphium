@@ -53,7 +53,11 @@ fn event(id: &str, lane: &str, label: &str, order: i64) -> IrEvent {
 }
 
 fn timeline(lanes: Vec<IrLane>, events: Vec<IrEvent>) -> IrTimeline {
-    IrTimeline { lanes, events }
+    IrTimeline {
+        lanes,
+        events,
+        connections: Vec::new(),
+    }
 }
 
 #[test]
@@ -279,6 +283,7 @@ fn sequence_graph() -> gx_core::ir::IrGraph {
 fn overlapping_tasks_of_one_lane_pack_into_sub_rows() {
     let engine = LanesEngine::new(std::sync::Arc::new(FakeMetrics));
     let timeline = IrTimeline {
+        connections: Vec::new(),
         lanes: vec![IrLane {
             id: "diseno".to_string(),
             label: Some("Diseño".to_string()),
@@ -332,6 +337,7 @@ fn overlapping_tasks_of_one_lane_pack_into_sub_rows() {
 fn sequential_steps_keep_air_between_boxes() {
     let engine = LanesEngine::new(std::sync::Arc::new(FakeMetrics));
     let timeline = IrTimeline {
+        connections: Vec::new(),
         lanes: vec![IrLane {
             id: "cliente".to_string(),
             label: Some("Cliente".to_string()),
@@ -560,6 +566,132 @@ mod activation {
             layout.activations.is_empty(),
             "nadie pidió control: {:?}",
             layout.activations
+        );
+    }
+}
+
+// S8 (`f22-dibujo.md`): the connectors of a swimlane — the lanes engine
+// routes the arrows between steps, across lanes. Forward flows exit the
+// source's right edge and enter the target's left edge with one bend in the
+// middle; backward flows mirror it so the line never crosses a box; a
+// connector in the same column goes straight down.
+mod connectors {
+    use super::*;
+    use gx_core::ir::IrConnection;
+
+    fn connected(from: &str, to: &str) -> IrTimeline {
+        let mut timeline = timeline(
+            vec![lane("soporte", "Soporte"), lane("negocio", "Negocio")],
+            vec![
+                event("a", "soporte", "abre", 0),
+                event("b", "negocio", "escala", 1),
+            ],
+        );
+        timeline.connections = vec![IrConnection {
+            from: from.to_string(),
+            to: to.to_string(),
+        }];
+        timeline
+    }
+
+    #[test]
+    fn a_connector_routes_forward_across_lanes() {
+        let layout = engine().layout_timeline(&connected("a", "b"), &LayoutOpts::default());
+
+        assert_eq!(layout.edges.len(), 1, "una conexión, una ruta");
+        let route = &layout.edges[0];
+        assert_eq!(route.from, "a");
+        assert_eq!(route.to, "b");
+        let a = &layout.nodes["a"];
+        let b = &layout.nodes["b"];
+        // The arrow leaves the source's right edge and lands on the target's
+        // left edge, with the bend between the two boxes.
+        assert!(
+            (route.points[0].x - (a.center.x + a.size.w / 2.0)).abs() < 1e-6,
+            "sale del borde derecho: {:?} vs {}",
+            route.points[0],
+            a.center.x + a.size.w / 2.0
+        );
+        assert!((route.points[0].y - a.center.y).abs() < 1e-6);
+        assert!(
+            (route.points.last().unwrap().x - b.center.x + b.size.w / 2.0).abs() < 1e-6
+                || (route.points.last().unwrap().x - (b.center.x - b.size.w / 2.0)).abs() < 1e-6,
+            "llega a un borde del destino"
+        );
+        // Four points: exit, the bend down, the entry.
+        assert_eq!(route.points.len(), 4, "un solo quiebre: {:?}", route.points);
+        assert!(
+            route.points[1].x > a.center.x + a.size.w / 2.0
+                && route.points[1].x < b.center.x - b.size.w / 2.0,
+            "el quiebre vive entre las cajas: {:?}",
+            route.points[1]
+        );
+    }
+
+    #[test]
+    fn a_connector_routes_backwards_without_crossing_a_box() {
+        // `b` sits to the right of `a` in column order; a connector that goes
+        // back leaves the source's LEFT edge and enters the target's right.
+        let mut timeline = connected("a", "b");
+        timeline.events[0].order = 1;
+        timeline.events[1].order = 0;
+        let layout = engine().layout_timeline(&timeline, &LayoutOpts::default());
+
+        let route = &layout.edges[0];
+        let a = &layout.nodes["a"];
+        let b = &layout.nodes["b"];
+        assert!(
+            (route.points[0].x - (a.center.x - a.size.w / 2.0)).abs() < 1e-6,
+            "sale del borde izquierdo: {:?}",
+            route.points[0]
+        );
+        assert!(
+            (route.points.last().unwrap().x - (b.center.x + b.size.w / 2.0)).abs() < 1e-6,
+            "entra por el borde derecho: {:?}",
+            route.points.last().unwrap()
+        );
+        // The bend lives between the two boxes, never over one.
+        assert!(
+            route.points[1].x < a.center.x - a.size.w / 2.0
+                && route.points[1].x > b.center.x + b.size.w / 2.0,
+            "el quiebre vive entre las cajas: {:?}",
+            route.points[1]
+        );
+    }
+
+    #[test]
+    fn a_connector_in_the_same_column_goes_straight_down() {
+        let mut timeline = connected("a", "b");
+        timeline.events[1].order = 0;
+        let layout = engine().layout_timeline(&timeline, &LayoutOpts::default());
+
+        let route = &layout.edges[0];
+        let a = &layout.nodes["a"];
+        let b = &layout.nodes["b"];
+        assert_eq!(route.points.len(), 2, "vertical: {:?}", route.points);
+        assert!((route.points[0].x - a.center.x).abs() < 1e-6);
+        assert!(
+            (route.points[0].y - (a.center.y + a.size.h / 2.0)).abs() < 1e-6,
+            "sale del borde inferior: {:?}",
+            route.points[0]
+        );
+        assert!(
+            (route.points[1].y - (b.center.y - b.size.h / 2.0)).abs() < 1e-6,
+            "entra por el borde superior: {:?}",
+            route.points[1]
+        );
+    }
+
+    #[test]
+    fn a_connector_with_an_unplaced_end_draws_nothing() {
+        let mut timeline = connected("a", "fantasma");
+        timeline.connections[0].to = "fantasma".to_string();
+        let layout = engine().layout_timeline(&timeline, &LayoutOpts::default());
+
+        assert!(
+            layout.edges.is_empty(),
+            "el layout es la autoridad: {:?}",
+            layout.edges
         );
     }
 }

@@ -236,7 +236,11 @@ impl DiagramKind for GanttKind {
             })
             .collect();
 
-        Ir::Timeline(IrTimeline { lanes, events })
+        Ir::Timeline(IrTimeline {
+            lanes,
+            events,
+            connections: Vec::new(),
+        })
     }
 
     /// Los tramos, los carriles opcionales y las dependencias: lo que un plan

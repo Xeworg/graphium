@@ -34,6 +34,9 @@
 .axis-value{fill:rgba(185, 185, 194, 1.00)}
 </style>
 <defs>
+<marker id="arrow-normal" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
+<path class="arrow-normal" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00 Z"/>
+</marker>
 </defs>
 <g class="layer-lanes">
 <rect id="lane-cliente" class="lane-band" x="0.00" y="0.00" width="830.00" height="110.00"/>
@@ -51,15 +54,19 @@
 <text class="axis-value text" x="771.00" y="352.00" font-size="11.90" text-anchor="middle" dominant-baseline="hanging">3</text>
 </g>
 <g class="layer-edges">
+<polyline id="m-reclama-ticket" class="edge-stroke" points="299.67,55.00 315.83,55.00 315.83,165.00 332.00,165.00" marker-end="url(#arrow-normal)"/>
+<polyline id="m-ticket-consulta" class="edge-stroke" points="450.00,165.00 482.00,165.00 482.00,275.00 514.00,275.00" marker-end="url(#arrow-normal)"/>
+<polyline id="m-consulta-responde" class="edge-stroke" points="657.75,275.00 676.87,275.00 676.87,165.00 696.00,165.00" marker-end="url(#arrow-normal)"/>
+<polyline id="m-responde-reclama" class="edge-stroke" points="696.00,165.00 497.83,165.00 497.83,55.00 299.67,55.00" marker-end="url(#arrow-normal)"/>
 </g>
 <g class="layer-nodes">
-<rect id="g-step-0" class="node-fill node-stroke shape-rounded" x="150.00" y="30.25" width="149.67" height="49.50" rx="6.00" ry="6.00"/>
-<text class="node-text text" x="224.83" y="55.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">reclama el pedido</text>
-<rect id="g-step-1" class="node-fill node-stroke shape-rounded" x="332.00" y="140.25" width="118.00" height="49.50" rx="6.00" ry="6.00"/>
-<text class="node-text text" x="391.00" y="165.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">abre el ticket</text>
-<rect id="g-step-2" class="node-fill node-stroke shape-rounded" x="514.00" y="250.25" width="143.75" height="49.50" rx="6.00" ry="6.00"/>
+<rect id="g-consulta" class="node-fill node-stroke shape-rounded" x="514.00" y="250.25" width="143.75" height="49.50" rx="6.00" ry="6.00"/>
 <text class="node-text text" x="585.87" y="275.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">consulta el envío</text>
-<rect id="g-step-3" class="node-fill node-stroke shape-rounded" x="696.00" y="140.25" width="118.00" height="49.50" rx="6.00" ry="6.00"/>
+<rect id="g-reclama" class="node-fill node-stroke shape-rounded" x="150.00" y="30.25" width="149.67" height="49.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="224.83" y="55.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">reclama el pedido</text>
+<rect id="g-responde" class="node-fill node-stroke shape-rounded" x="696.00" y="140.25" width="118.00" height="49.50" rx="6.00" ry="6.00"/>
 <text class="node-text text" x="755.00" y="165.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">responde</text>
+<rect id="g-ticket" class="node-fill node-stroke shape-rounded" x="332.00" y="140.25" width="118.00" height="49.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="391.00" y="165.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">abre el ticket</text>
 </g>
 </svg>

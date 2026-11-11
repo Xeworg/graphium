@@ -399,6 +399,22 @@ pub struct IrEvent {
 pub struct IrTimeline {
     pub lanes: Vec<IrLane>,
     pub events: Vec<IrEvent>,
+    /// The connectors of a swimlane (`f22-dibujo.md`, S8): the arrows between
+    /// steps, across lanes, with the ids resolved. Empty for every other
+    /// timeline kind — the gantt arrows are the `depends_on` of the events.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connections: Vec<IrConnection>,
+}
+
+/// A connector between two steps of a swimlane (`f22-dibujo.md`, S8): the
+/// arrow the lanes engine routes from the step that flows to the one that
+/// follows it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IrConnection {
+    /// Id of the step the arrow leaves from.
+    pub from: String,
+    /// Id of the step the arrow arrives at.
+    pub to: String,
 }
 
 /// The shape an event draws when its kind has no role for it: the rounded
@@ -642,6 +658,7 @@ mod tests {
         let timeline = Ir::Timeline(IrTimeline {
             lanes: Vec::new(),
             events: Vec::new(),
+            connections: Vec::new(),
         });
         let timeline_error = timeline
             .extracted("a", 1)

@@ -47,7 +47,112 @@
     "accent": "var(--accent)"
   },
   "nodes": [],
-  "edges": [],
+  "edges": [
+    {
+      "id": "m-reclama-ticket",
+      "from": "reclama",
+      "to": "ticket",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 299.6669921875,
+          "y": 55.0
+        },
+        {
+          "x": 315.83349609375,
+          "y": 55.0
+        },
+        {
+          "x": 315.83349609375,
+          "y": 165.0
+        },
+        {
+          "x": 332.0,
+          "y": 165.0
+        }
+      ]
+    },
+    {
+      "id": "m-ticket-consulta",
+      "from": "ticket",
+      "to": "consulta",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 450.0,
+          "y": 165.0
+        },
+        {
+          "x": 482.0,
+          "y": 165.0
+        },
+        {
+          "x": 482.0,
+          "y": 275.0
+        },
+        {
+          "x": 514.0,
+          "y": 275.0
+        }
+      ]
+    },
+    {
+      "id": "m-consulta-responde",
+      "from": "consulta",
+      "to": "responde",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 657.7470703125,
+          "y": 275.0
+        },
+        {
+          "x": 676.87353515625,
+          "y": 275.0
+        },
+        {
+          "x": 676.87353515625,
+          "y": 165.0
+        },
+        {
+          "x": 696.0,
+          "y": 165.0
+        }
+      ]
+    },
+    {
+      "id": "m-responde-reclama",
+      "from": "responde",
+      "to": "reclama",
+      "emphasis": "normal",
+      "style": "solid",
+      "arrow": true,
+      "points": [
+        {
+          "x": 696.0,
+          "y": 165.0
+        },
+        {
+          "x": 497.83349609375,
+          "y": 165.0
+        },
+        {
+          "x": 497.83349609375,
+          "y": 55.0
+        },
+        {
+          "x": 299.6669921875,
+          "y": 55.0
+        }
+      ]
+    }
+  ],
   "bands": [
     {
       "id": "lane-cliente",
@@ -60,7 +165,7 @@
       },
       "depth": 0,
       "members": [
-        "step-0"
+        "reclama"
       ],
       "gutter": 150.0,
       "kind": "lane"
@@ -76,7 +181,7 @@
       },
       "depth": 0,
       "members": [
-        "step-2"
+        "consulta"
       ],
       "gutter": 150.0,
       "kind": "lane"
@@ -92,8 +197,8 @@
       },
       "depth": 0,
       "members": [
-        "step-1",
-        "step-3"
+        "ticket",
+        "responde"
       ],
       "gutter": 150.0,
       "kind": "lane"
@@ -101,37 +206,7 @@
   ],
   "events": [
     {
-      "id": "g-step-0",
-      "lane": "cliente",
-      "label": "reclama el pedido",
-      "order": 0,
-      "shape": "rounded",
-      "center": {
-        "x": 224.83349609375,
-        "y": 55.0
-      },
-      "size": {
-        "w": 149.6669921875,
-        "h": 49.5
-      }
-    },
-    {
-      "id": "g-step-1",
-      "lane": "soporte",
-      "label": "abre el ticket",
-      "order": 1,
-      "shape": "rounded",
-      "center": {
-        "x": 391.0,
-        "y": 165.0
-      },
-      "size": {
-        "w": 118.0,
-        "h": 49.5
-      }
-    },
-    {
-      "id": "g-step-2",
+      "id": "g-consulta",
       "lane": "logistica",
       "label": "consulta el envío",
       "order": 2,
@@ -146,13 +221,43 @@
       }
     },
     {
-      "id": "g-step-3",
+      "id": "g-reclama",
+      "lane": "cliente",
+      "label": "reclama el pedido",
+      "order": 0,
+      "shape": "rounded",
+      "center": {
+        "x": 224.83349609375,
+        "y": 55.0
+      },
+      "size": {
+        "w": 149.6669921875,
+        "h": 49.5
+      }
+    },
+    {
+      "id": "g-responde",
       "lane": "soporte",
       "label": "responde",
       "order": 3,
       "shape": "rounded",
       "center": {
         "x": 755.0,
+        "y": 165.0
+      },
+      "size": {
+        "w": 118.0,
+        "h": 49.5
+      }
+    },
+    {
+      "id": "g-ticket",
+      "lane": "soporte",
+      "label": "abre el ticket",
+      "order": 1,
+      "shape": "rounded",
+      "center": {
+        "x": 391.0,
         "y": 165.0
       },
       "size": {
