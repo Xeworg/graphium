@@ -859,6 +859,20 @@ flow. No cierra ninguna fila por sí sola: desbloquea la etapa 1. Es el trabajo
 más caro de la ruta en proporción a su tamaño, y el único que toca los dos
 emisores (Rust y el gemelo JS) con goldens nuevos.
 
+**Hecho en `f26-adornos` (2026-11-11):** la mitad de aristas. `IrEdge` dejó
+`arrow: bool` por `head`/`tail` opcionales con un vocabulario cerrado
+(`arrow`, `open_arrow`, `hollow_triangle`, `diamond`, `hollow_diamond`), una sola
+resolución (`IrEdge::head_end`/`tail_end`) en la que una `cardinality` se queda
+con los dos extremos, y los dos pintores escriben cualquier glifo en cualquier
+extremo (`marker-end`/`marker-start`, el de origen espejado, las reglas CSS solo
+de las familias que el documento usa). `class` estrena la notación que nombraba
+desde siempre: rombo lleno en `composition` y la fila nueva `aggregation` con
+rombo hueco. `er` dejó de apagar la flecha a mano. Único golden que se movió:
+`class-shop`. **Falta de la etapa 0:** el estereotipo dibujado en las cajas de
+`flow` (vocabulario de nodo, no la ranura de arista) y el tipo compartido
+`EdgeKind` para el vocabulario de relación tipada, que entra con las nueve
+relaciones de `component` en la etapa 1.
+
 ### Etapa 1 — capacidades sobre kinds existentes (cierra diez filas sin gastar techo)
 
 | Fila | Kind | Trabajo |

@@ -131,3 +131,37 @@ Gates: `cargo test -p gx-kinds` 116 + 11 + 12 passed, 0 failed;
 `cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets`
 0 warnings, 0 errors. Nothing under `gx-render-svg` or the frontend needed to
 change: both painters already drew every glyph of S5.
+
+L6 (2026-11-11, close, T5): the cut is complete. **Slices and their boundaries**
+— the harness measured the branch by authored lines since `origin/main`, so the
+boundary is recorded here: `2e08314` is the platform slice and it is **one**
+commit because the compiler forces it (the IR field, the painter, the kinds and
+the payload are one atomic change; there is no compiling state in between), and
+it carries the 19 regenerated scene payloads beside the sources. `01d2747` is
+the painter twin (frontend only). `1d927d9` is the class notation and its single
+golden. This entry closes with the documents. A review slice of the whole
+feature is the three commits in that order; the platform one is the only one
+over the ~400-line guideline, by construction and not by accumulation.
+
+**What the cut leaves in the platform.** `IrEdge` has `head`/`tail`
+(`Option<Adornment>`, five glyphs) and one resolution point, `head_end`/
+`tail_end`, where a `cardinality` takes both ends. The emitter writes
+`marker-end` and `marker-start`, the source-end glyph mirrored with `refX` on the
+near side, ids `<glyph>-<emphasis>[-start]` with the plain arrow keeping
+`arrow-<emphasis>`, `<defs>` holding only the referenced markers and the style
+block holding only the rule of each family the document uses. The twin mirrors
+all of it from the payload names, never from a path. `class` derives its rule
+line from its relation table (S8) and draws diamonds; `er` states the crow's
+foot instead of cancelling an arrow.
+
+**Gates at close.** `cargo fmt --all -- --check` clean; `cargo clippy
+--workspace --all-targets` 0 warnings and 0 errors; `cargo test --workspace`
+**42 suites, 866 passed, 0 failed** (861 before the cut: six new tests — three on
+the resolution, one on the hollow family glyphs, two on the class table — plus
+the tests the cut rewrote); `node tools/equivalence.mjs` **21/21 golden
+documents**, including `class-shop`, which now carries the diamond on both
+sides of the gate. Every golden SVG stayed byte-identical except the declared
+`class-shop`.
+
+**Delivery.** Branch `feature/f26-adornos` on `main` @ 790634a. Push, PR and
+merge stay the owner's decisions.
