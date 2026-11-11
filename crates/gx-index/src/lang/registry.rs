@@ -1321,9 +1321,13 @@ const DART_BUILTINS: &[&str] = &[
 /// name lives in the innermost of them while the span the book needs is the
 /// outermost, so the declarations of a file and of a type are hooks
 /// (`dart::declaration`): a member is a `fn` at the root of the file and a
-/// `method` inside a type. A `typedef` and a top-level variable name themselves
-/// in a list or with no field (two hooks more). Every relation kind of the
-/// schema exists in Dart, and `with` is `inherits` (see `dart.rs`).
+/// `method` inside a type. The class is a hook too (`dart::class_declaration`):
+/// the mixin application class `class C = Base with M;` is a
+/// `class_declaration` with **no `name` field**, so a table that read the name
+/// of a class would silently drop it and never reach the child that holds it
+/// (S5-c). A `typedef` and a top-level variable name themselves in a list or
+/// with no field (two hooks more). Every relation kind of the schema exists in
+/// Dart, and `with` is `inherits` (see `dart.rs`).
 #[cfg(feature = "lang-dart")]
 pub const DART: Grammar = Grammar {
     lang: dart::LANGUAGE,
@@ -1340,7 +1344,6 @@ pub const DART: Grammar = Grammar {
             "member_declaration",
         ],
         containers: &[
-            container("class_declaration", "class"),
             container("mixin_declaration", "trait"),
             container("enum_declaration", "type"),
             container("extension_declaration", "type"),
@@ -1348,6 +1351,11 @@ pub const DART: Grammar = Grammar {
         ],
         leaves: &[],
         hooks: &[
+            // A class names itself in the `name` field, and the mixin
+            // application class (`class C = Base with M;`) names itself one
+            // level down, in the `mixin_application_class` the grammar wraps
+            // (dart::class_declaration, S5-c).
+            ("class_declaration", dart::class_declaration),
             // A method, an abstract method and a constructor are one hook: the
             // name is in the signature and the span is the declaration
             // (dart::declaration).

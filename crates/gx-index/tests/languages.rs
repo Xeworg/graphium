@@ -682,6 +682,85 @@ fn go_relations_are_the_four_kinds_and_never_prose() {
     assert_no_prose_edges(&parsed);
 }
 
+/// S5(b): the two-file Go package of the f10 record — `internal/store` and the
+/// `cmd` that imports it. The import names the package the book indexes, so the
+/// chapter that is imported has to declare it: `store` is the name the source
+/// imports, not the path it spells.
+#[cfg(feature = "lang-go")]
+const GO_PACKAGE_STORE: &str = r#"
+package store
+
+type DiagramStore struct {
+	Path string
+}
+
+func OpenStore(path string) *DiagramStore {
+	return &DiagramStore{Path: path}
+}
+
+func (s *DiagramStore) Load(input string) int {
+	return len(input)
+}
+"#;
+
+/// S5(b): the caller of that package: `store.OpenStore()` and `s.Load("y")`,
+/// and the type of the package it names in the type of a variable.
+#[cfg(feature = "lang-go")]
+const GO_PACKAGE_MAIN: &str = r#"
+package main
+
+import (
+	"fmt"
+
+	"example.com/app/internal/store"
+)
+
+var defaultStore *store.DiagramStore
+
+func main() {
+	s := store.OpenStore("x")
+	fmt.Println(s.Load("y"))
+}
+"#;
+
+/// S5(b)/D5: the rate is the measurement that justifies this cut. The f10
+/// record measured the two-file package at **5/6 = 83,3 %**: the qualified call
+/// and the method of the receiver already resolved by name, and the one edge
+/// left was `imports store`, because a chapter only declared its module anchor
+/// when one of its own file-scope relations needed it. A package is what an
+/// `import` names, so the chapter declares it and the same tree measures
+/// **6/6 = 100,0 %**.
+#[cfg(feature = "lang-go")]
+#[test]
+fn a_go_import_of_a_package_the_book_indexes_resolves_to_that_package() {
+    let scratch = Scratch::new("go-package-import");
+    scratch.write("internal/store/store.go", GO_PACKAGE_STORE);
+    scratch.write("cmd/main.go", GO_PACKAGE_MAIN);
+    let book = Arc::new(scratch.open());
+    scratch.indexer(&book).run_full().expect("the index");
+
+    let report = book.resolution().expect("the honesty report");
+    let go = report
+        .iter()
+        .find(|row| row.lang == "go")
+        .unwrap_or_else(|| panic!("the report has no `go` row: {report:?}"))
+        .clone();
+    println!(
+        "S5(b) go package import: {}/{} = {:.1} % ({:?})",
+        go.resolved,
+        go.edges,
+        go.percent(),
+        go
+    );
+
+    // The six relations of the tree: the import, the call and the method of
+    // the caller, the two types the store chapter spells and the method of the
+    // receiver. Five resolved was the measurement of f10; the sixth is the
+    // import of a package the book holds.
+    assert_eq!((go.resolved, go.edges), (6, 6), "{go:?}");
+    assert_eq!(go.percent(), 100.0, "{go:?}");
+}
+
 // ---------------------------------------------------------------------------
 // Java
 // ---------------------------------------------------------------------------
@@ -2982,6 +3061,75 @@ fn dart_relations_are_syntactic_and_never_prose() {
     assert_edge(&parsed, "calls", "Renderer");
     assert_edge(&parsed, "uses", "DiagramStore");
     assert_edge(&parsed, "uses", "Renderer");
+}
+
+/// S5(c): `class DiagramStore = Base with Loggable;` — the form the grammar
+/// names `mixin_application_class`, the mixin application **class** the book's
+/// note deferred for rarity — is a declaration like every other one: the name
+/// the document gives it, the kind the source spells and the span of the
+/// declaration, with the `with` clause read as the embedding it is.
+///
+/// The literal `mixin C = Base with M;` spelling is not Dart syntax: the
+/// grammar recovers it as a `top_level_variable_declaration` (a `const` named
+/// `C` of a type spelled `mixin`), which is what the note of this chapter was
+/// pointing at. The node the book has to read is the one the grammar defines.
+#[cfg(feature = "lang-dart")]
+const DART_MIXIN_APPLICATION: &str = r#"
+class Base {
+  int load(String input) => 0;
+}
+
+mixin Loggable {
+  void log(String message) {}
+}
+
+class DiagramStore = Base with Loggable;
+"#;
+
+/// S5(c)/D5: the mixin application is a declaration of the book. It was the one
+/// Dart form the chapter did not read: the grammar gives the node no `name`
+/// field (`class_declaration` wraps a `mixin_application_class` that holds the
+/// identifier), so the walk found no name and the declaration — with the
+/// `inherits Loggable` of its `with` clause — was lost.
+#[cfg(feature = "lang-dart")]
+#[test]
+fn a_dart_mixin_application_is_a_declaration() {
+    let parsed =
+        parse("lib/store.dart", DART_MIXIN_APPLICATION.as_bytes(), 0).expect("the grammar");
+    assert_eq!(parsed.lang, "dart");
+
+    assert_symbols(
+        &parsed,
+        &[("class", "DiagramStore", "lib.store.DiagramStore")],
+    );
+    // The mixin it applies is the relation of the declaration, not of the
+    // chapter: the embedding hangs from `DiagramStore`.
+    assert_edge_owned(&parsed, "inherits", "Loggable", "lib.store.DiagramStore");
+
+    // One declaration of the name the document spells, and not the `const` a
+    // top-level variable would be (a field is never a declaration).
+    let declared: Vec<&str> = parsed
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.qname == "lib.store.DiagramStore")
+        .map(|symbol| symbol.kind)
+        .collect();
+    assert_eq!(declared, ["class"], "{:?}", rows(&parsed));
+
+    // The book of the same file: the declaration is measured like every other
+    // relation of the language, and this is the number the cut moves (D5).
+    let row = measured_rate(
+        "dart-mixin-application",
+        "lib/store.dart",
+        DART_MIXIN_APPLICATION,
+        "dart",
+    );
+    println!(
+        "S5(c) dart mixin application: {}/{} = {:.1} % ({row:?})",
+        row.resolved,
+        row.edges,
+        row.percent()
+    );
 }
 
 /// S5(a): the Dart chapter of the runtime rule — `print` is `dart:core`'s,

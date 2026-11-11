@@ -19,6 +19,16 @@
 //! the `static` kind of the vocabulary, the one it has for storage that is not
 //! a constant.
 //!
+//! **The package is a declaration (S5-b).** In Go the package is what an
+//! `import` of the directory binds, so the chapter declares it: one `module`
+//! symbol named `store` in `internal/store/store.go`, qualified by the module
+//! path (`internal.store`). Without it an `import` of a package the book itself
+//! indexes has no target — the edge is read and lost — and with it the two-file
+//! package of the f10 record measures 6/6 = 100,0 % of its relations instead of
+//! 5/6 = 83,3 %. The declaration is the shape [`crate::relations::attach`]
+//! appends for file-scope relations, and the anchor it feeds is the same one:
+//! the chapter declares its package once, never twice.
+//!
 //! What is Go's alone is here; the entry of the language is
 //! [`crate::lang::registry::GO`] and the pipeline is [`crate::lang::engine`]
 //! (S3, T2). Go is the language whose scope is not a tree of containers — a
@@ -26,7 +36,7 @@
 //! them in — so its walk is its own and the second pass over the receivers
 //! stays imperative.
 
-use crate::lang::emit::{dotted_directories, emit, text};
+use crate::lang::emit::{anchor_symbol, dotted_directories, emit, text};
 use crate::lang::model::ParsedSymbol;
 use crate::relations::{RawEdge, CALLS, IMPORTS, INHERITS, USES};
 
@@ -40,6 +50,11 @@ pub fn language(_path: &str) -> tree_sitter::Language {
 
 /// Walks the package scope of one Go file, and re-parents its methods once the
 /// whole file is read (T2: the second pass of the receivers stays imperative).
+///
+/// The package the file declares is a declaration of the chapter (S5-b): in Go
+/// the package is the name an `import` of the directory binds, so the chapter
+/// that is imported has to declare it, or every `import` of a package the book
+/// itself indexes is an edge with no target.
 pub(crate) fn walk(
     root: &tree_sitter::Node,
     prefix: &str,
@@ -48,12 +63,51 @@ pub(crate) fn walk(
 ) {
     let methods = scope(root, prefix, source, out);
     attach_receivers(out, &methods);
+    declare_package(root, prefix, source, out);
 }
 
 /// The module path of a Go file: the package path, which in Go is the
 /// directory.
 pub fn module_path(relative: &str) -> String {
     dotted_directories(relative)
+}
+
+/// Declares the package of the chapter: `package store` is one `module` symbol
+/// named `store` and qualified by the module path (`internal.store`), the one
+/// shape [`crate::relations::attach`] appends for the file-scope relations of a
+/// chapter — so a chapter that already declares its module keeps one anchor and
+/// not two.
+///
+/// It is declared **always** and not only when a relation of the chapter needs
+/// it: the `import` that needs it lives in another file, and the chapter cannot
+/// know whether the book holds one. The span is empty, so it can never win an
+/// ownership question against a declaration of the file.
+fn declare_package(
+    root: &tree_sitter::Node,
+    prefix: &str,
+    source: &[u8],
+    out: &mut Vec<ParsedSymbol>,
+) {
+    let Some(name) = package_name(root, source) else {
+        return;
+    };
+    let module = prefix.strip_suffix('.').unwrap_or(prefix);
+    out.push(anchor_symbol(module, &name));
+}
+
+/// The package a Go file declares: the `package_identifier` of its package
+/// clause. A file with no recoverable clause (a half-saved one) declares no
+/// package the book could name.
+fn package_name(root: &tree_sitter::Node, source: &[u8]) -> Option<String> {
+    let mut cursor = root.walk();
+    let clause = root
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "package_clause")?;
+    let mut inner = clause.walk();
+    let identifier = clause
+        .named_children(&mut inner)
+        .find(|child| child.kind() == "package_identifier")?;
+    text(&identifier, source)
 }
 
 /// Walks the package scope of a file and returns the methods with the receiver
@@ -307,6 +361,46 @@ mod tests {
         assert_eq!(module_path("internal/store/store.go"), "internal.store");
         assert_eq!(module_path("cmd/graphium/main.go"), "cmd.graphium");
         assert_eq!(module_path("main.go"), "");
+    }
+
+    /// S5(b): the chapter declares the package it is, with the name the source
+    /// spells and the module path of the directory, and with no span — the
+    /// anchor can own no relation of the file.
+    #[test]
+    fn a_go_chapter_declares_its_package() {
+        let source = "package store\n\nfunc OpenStore() int { return 1 }\n";
+        let parsed = GO
+            .parse("internal/store/store.go", source.as_bytes(), 0)
+            .expect("parses");
+        let package = parsed
+            .symbols
+            .iter()
+            .find(|symbol| symbol.kind == "module")
+            .expect("the package is declared");
+        assert_eq!(package.name, "store");
+        assert_eq!(package.qname, "internal.store");
+        assert_eq!(
+            package.start_byte, package.end_byte,
+            "an anchor owns nothing"
+        );
+    }
+
+    /// A file with no recoverable package clause declares no package: the
+    /// grammar is error tolerant, not inventive.
+    #[test]
+    fn a_go_file_with_no_package_clause_declares_no_package() {
+        let parsed = GO
+            .parse(
+                "internal/store/broken.go",
+                b"func One() int { return 1 }\n",
+                0,
+            )
+            .expect("parses");
+        assert!(
+            !parsed.symbols.iter().any(|symbol| symbol.kind == "module"),
+            "{:?}",
+            parsed.symbols
+        );
     }
 
     /// Tree-sitter is error tolerant: a half-saved file still yields the
