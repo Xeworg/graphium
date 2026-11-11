@@ -126,6 +126,19 @@ T5 measure and document (D7): re-measure the release binary, update `docs/PRD.md
 `docs/CATALOGO-DIAGRAMAS.md` or a new `docs/LENGUAJES.md`, and run the full gate
 set. inline. commit: `docs(odd): f28 records the coverage the book can defend`.
 
+T6 the teaching layer (owner's direction after L5): the server must teach an agent
+**when** to reach for a tool, not only what the tool does. Study the text the
+server puts in front of an agent — `harness.rs` `INSTRUCTIONS` and every tool
+description, with their sizes — and rewrite it as triggers in the agent's own
+working words ("before you grep for the callers of a name", "before you change a
+signature", "when a file you expected is missing from the index", "when a name
+answers as ambiguous"), keeping the API explanation subordinate to the trigger.
+Budgets: the whole teaching text must not grow beyond what it costs today, and
+every tool must be reachable from INSTRUCTIONS alone for an agent that reads it
+once at session start. No tool changes behaviour in this task. worker C, after
+T1 and T3 (same files). commit: `docs(harness): the server teaches when to look,
+not only what it answers`.
+
 ## Log
 
 L1 (owner, verbatim): the request of S1.
@@ -155,3 +168,7 @@ indexed, so the field the census is supposed to publish is already published as 
 lie, not merely absent. T1 owns the fix (a non-zero pinned count, and the wiring
 audited) because the census cannot be honest on top of a counter that reads zero.
 
+L5 (owner, verbatim): "no hay problema en que no sean utiles aun la extension debe
+ser estudiada para ensenarle al agente cuando y como usarlas". The bar moves from
+"the tools are useful" to "the tools are findable at the moment they are useful":
+the teaching text is the deliverable, and T6 is where it lands.
