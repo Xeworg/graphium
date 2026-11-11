@@ -165,3 +165,21 @@ sides of the gate. Every golden SVG stayed byte-identical except the declared
 
 **Delivery.** Branch `feature/f26-adornos` on `main` @ 790634a. Push, PR and
 merge stay the owner's decisions.
+
+L7 (2026-11-11, close, T5): a hole in the evidence was found while reading the
+cut back, and closed. **No document reaches the source end yet** — `class` paints
+the target, `er` paints the crow's foot — so `marker-start`, the mirrored path
+and `refX` on the near side travelled with no assertion on top of them, and the
+hollow family only had the composition golden (filled). One test in the
+reference emitter now pins all of it
+(`every_glyph_of_the_vocabulary_reaches_the_drawing`): a filled diamond at the
+target (id, `refX`, the four vertices, the fill rule), an open arrow at the
+source (the `-start` id, `refX="0.00"`, the two-stroke path and the stroke rule),
+and a hollow diamond at the target with its stroke rule. It was observed RED
+first (the accent colour of the rule was guessed wrong) and GREEN after.
+
+**Known and stated gap.** The twin's `marker-start` path is written to the same
+contract and covered by the equivalence gate **the moment a kind uses it**; today
+no document does, so the gate cannot see it. The first kind that puts a glyph on
+a source end — `component`'s navigability, or a gantt dependency — pays for it
+with its golden. Nothing else in the twin is unexercised: 21/21 documents agree.
