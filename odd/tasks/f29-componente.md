@@ -99,3 +99,16 @@ the platform before the catalogue; the platform piece Etapa 0 left undone is the
 `kind` field, and `component` is the consumer it was deferred to. Rows with a
 correctness defect — `swimlane` drawing two outputs of one decision as a sequence —
 are the next cut, not this one, because they need a pass in the lane engine.
+L3 (evidence and slice boundary). T1 and T2 landed in one commit, `dbfab3c`, not
+two: the shared `to_graph`/`validate_flow` signature changes and `component` is a
+call site, so separating them leaves either a commit that does not compile or one
+that ships a field no kind can use. T3 is `bae5fd5` (the `component-relations`
+scene, and every existing golden byte-identical, `component-api` included). The
+same clippy rule the repo already honours forced the table into a
+`FlowVocabulary` value instead of a seventh argument, with no `#[allow]`. T4
+(docs) is still open. Verified in the worktree: `cargo test --workspace` green,
+clippy clean, `cargo test -p gx-app --test golden_svg` four cases green. A fresh
+worktree has no `crates/gx-app/frontend/dist`, so `tauri::generate_context!`
+panics until the Vite bundle exists; the bundle of the same clone stands in
+(f29 touches no frontend source).
+
