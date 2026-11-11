@@ -14,7 +14,7 @@
 
 use gx_core::error::{ErrorCode, ValidationError};
 use gx_core::ir::{Adornment, Direction, Emphasis, Ir, IrEdge, IrRow, LayoutHint, Shape, Style};
-use gx_core::kind::{DiagramKind, KindLimits, Role};
+use gx_core::kind::{DiagramKind, EdgeKind, KindLimits, Role};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -35,81 +35,6 @@ pub const ROLES: [Role; 4] = [
     Role::new("enum", Shape::Box),
 ];
 
-/// Una relación admitida: cómo se dibuja la línea, si es *un* (is-a) y qué
-/// palabra la nombra cuando el documento no escribe etiqueta.
-///
-/// Los dos adornos son la notación de la relación (`f26-adornos.md`, S2): la
-/// tabla decide qué pares puede expresar este kind y el documento sólo escribe
-/// el nombre de la relación.
-#[derive(Debug, Clone, Copy)]
-pub struct Relation {
-    /// The name the document writes, e.g. `extends`.
-    pub name: &'static str,
-    /// Line style of the relation.
-    pub style: Style,
-    /// The glyph at the target end, when the relation gives it one.
-    pub head: Option<Adornment>,
-    /// The glyph at the source end, when the relation gives it one.
-    pub tail: Option<Adornment>,
-    /// Whether the relation is an "is a": those are the ones that cannot form
-    /// a cycle.
-    pub is_a: bool,
-    /// The word the line shows when the document gives no label. `None` is for
-    /// the relation that needs none: a plain arrow says what it says.
-    pub label: Option<&'static str>,
-}
-
-impl Relation {
-    const fn new(
-        name: &'static str,
-        style: Style,
-        head: Option<Adornment>,
-        is_a: bool,
-        label: Option<&'static str>,
-    ) -> Self {
-        Self {
-            name,
-            style,
-            head,
-            tail: None,
-            is_a,
-            label,
-        }
-    }
-
-    /// The word the contract uses for the style of the line.
-    const fn style_word(&self) -> &'static str {
-        match self.style {
-            Style::Solid => "sólida",
-            Style::Dashed => "punteada",
-        }
-    }
-
-    /// The word the contract uses for the glyph at the target end, when the
-    /// relation gives it one.
-    const fn head_word(&self) -> Option<&'static str> {
-        Self::adornment_word(self.head)
-    }
-
-    /// The word the contract uses for the glyph at the source end.
-    const fn tail_word(&self) -> Option<&'static str> {
-        Self::adornment_word(self.tail)
-    }
-
-    /// The word of a glyph of the closed vocabulary (S5): the one name the
-    /// table and the rule line share.
-    const fn adornment_word(adornment: Option<Adornment>) -> Option<&'static str> {
-        match adornment {
-            Some(Adornment::Arrow) => Some("flecha"),
-            Some(Adornment::OpenArrow) => Some("flecha abierta"),
-            Some(Adornment::HollowTriangle) => Some("triángulo hueco"),
-            Some(Adornment::Diamond) => Some("diamante relleno"),
-            Some(Adornment::HollowDiamond) => Some("diamante hueco"),
-            None => None,
-        }
-    }
-}
-
 /// Las relaciones de un diagrama de clases.
 ///
 /// El rombo de la fila es la notación del todo y la parte (`f26-adornos.md`,
@@ -118,24 +43,24 @@ impl Relation {
 /// cuál. `extends` e `implements` conservan la flecha de siempre: el triángulo
 /// hueco está en el vocabulario, pero cambiarlos es una decisión con su propio
 /// golden.
-pub const RELATIONS: [Relation; 6] = [
+pub const RELATIONS: [EdgeKind; 6] = [
     // La relación que no dice nada más que "estos dos se conocen": es el
     // default, porque una línea sin palabras no puede afirmar una herencia.
-    Relation::new(
+    EdgeKind::new(
         "association",
         Style::Solid,
         Some(Adornment::Arrow),
         false,
         None,
     ),
-    Relation::new(
+    EdgeKind::new(
         "extends",
         Style::Solid,
         Some(Adornment::Arrow),
         true,
         Some("extends"),
     ),
-    Relation::new(
+    EdgeKind::new(
         "implements",
         Style::Dashed,
         Some(Adornment::Arrow),
@@ -144,7 +69,7 @@ pub const RELATIONS: [Relation; 6] = [
     ),
     // La composición es la posesión: el rombo relleno va en el extremo de la
     // clase que es dueña de la otra.
-    Relation::new(
+    EdgeKind::new(
         "composition",
         Style::Solid,
         Some(Adornment::Diamond),
@@ -152,14 +77,14 @@ pub const RELATIONS: [Relation; 6] = [
         Some("composition"),
     ),
     // La agregación es la composición que no posee: mismo rombo, hueco.
-    Relation::new(
+    EdgeKind::new(
         "aggregation",
         Style::Solid,
         Some(Adornment::HollowDiamond),
         false,
         Some("aggregation"),
     ),
-    Relation::new(
+    EdgeKind::new(
         "dependency",
         Style::Dashed,
         Some(Adornment::Arrow),
@@ -315,7 +240,7 @@ impl ClassKind {
             let relation = Self::relation_of(edge);
             let is_a = RELATIONS
                 .iter()
-                .any(|known| known.name == relation && known.is_a);
+                .any(|known| known.name == relation && known.specialization);
             if !is_a {
                 continue;
             }
@@ -386,6 +311,13 @@ impl DiagramKind for ClassKind {
 
     fn default_role() -> Option<&'static str> {
         Some(DEFAULT_ROLE)
+    }
+
+    /// La tabla de relaciones del kind, publicada por la superficie compartida
+    /// (`f27-etapa1.md`, T1): el contrato y los kinds que adopten el
+    /// vocabulario leen acá, no en un módulo privado.
+    fn edge_kinds() -> &'static [EdgeKind] {
+        &RELATIONS
     }
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
@@ -944,5 +876,37 @@ mod tests {
         )
         .expect_err("deny_unknown_fields sigue guardando el contrato");
         assert!(error.to_string().contains("atributos"));
+    }
+
+    /// `f27-etapa1.md`, T1: el vocabulario de relación se publica por la
+    /// superficie object-safe del kind, que es la que el contrato y un kind
+    /// nuevo (`component`) leen. La tabla deja de ser un asunto privado de
+    /// `class`.
+    #[test]
+    fn the_relation_vocabulary_is_published_by_the_handler() {
+        use gx_core::kind::{KindAdapter, KindHandler};
+
+        let handler = KindAdapter::new(ClassKind);
+        let names: Vec<&str> = handler
+            .edge_kinds()
+            .iter()
+            .map(|edge_kind| edge_kind.name)
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "association",
+                "extends",
+                "implements",
+                "composition",
+                "aggregation",
+                "dependency"
+            ]
+        );
+
+        // Un kind sin vocabulario de relación no inventa uno: la superficie
+        // existe para todos y la tabla vacía es la respuesta honesta.
+        let plain = KindAdapter::new(crate::tree::TreeKind);
+        assert!(plain.edge_kinds().is_empty());
     }
 }
