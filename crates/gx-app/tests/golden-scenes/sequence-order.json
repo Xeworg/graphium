@@ -101,7 +101,10 @@
       "label": "reintento",
       "emphasis": "normal",
       "style": "dashed",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 205.0,
@@ -132,7 +135,10 @@
       "label": "201",
       "emphasis": "normal",
       "style": "dashed",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 205.0,
@@ -155,7 +161,10 @@
       "label": "INSERT",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 205.0,
@@ -178,7 +187,10 @@
       "label": "POST /orders",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 45.0,
@@ -201,7 +213,10 @@
       "label": "ok",
       "emphasis": "normal",
       "style": "dashed",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 365.0,

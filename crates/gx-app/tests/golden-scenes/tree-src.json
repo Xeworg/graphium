@@ -145,7 +145,6 @@
       "to": "src/lib",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": false,
       "points": [
         {
           "x": 225.8720703125,
@@ -163,7 +162,6 @@
       "to": "src/main.rs",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": false,
       "points": [
         {
           "x": 225.8720703125,
@@ -181,7 +179,6 @@
       "to": "src/lib/layout.rs",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": false,
       "points": [
         {
           "x": 288.7978515625,
@@ -199,7 +196,6 @@
       "to": "src/lib/mod.rs",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": false,
       "points": [
         {
           "x": 288.7978515625,
@@ -217,7 +213,6 @@
       "to": "src/lib/render.rs",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": false,
       "points": [
         {
           "x": 288.7978515625,

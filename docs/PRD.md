@@ -337,13 +337,14 @@ pub trait DiagramKind: Send + Sync {
 enum Ir { Graph(IrGraph), Timeline(IrTimeline) }
 struct IrGraph  { direction: Direction, layout_hint: LayoutHint, nodes: Vec<IrNode>, edges: Vec<IrEdge>, groups: Vec<IrGroup> }
 struct IrNode   { id, label, shape, emphasis, style, meta, size: Size }   // size lo calcula gx-render-svg
-struct IrEdge   { from, to, label, emphasis, style, arrow }
+struct IrEdge   { from, to, label, emphasis, style, head: Option<Adornment>, tail: Option<Adornment>, cardinality: Option<Cardinality>, kind_data }
 struct IrTimeline { lanes: Vec<IrLane>, events: Vec<IrEvent> }
 enum LayoutHint { Layered, Tree, Sankey, Git }   // lanes => IrTimeline
 struct IrEvent  { id, lane, label, order, span: Option<Span>, kind_data: BTreeMap<&'static str, IrValue> }
 ```
 
 - `get_diagram_schema` se autogenera con `schemars` desde `Self::Input` (con `deny_unknown_fields`): lo que la IA lee y lo que validamos son la misma definición.
+- **Los adornos de una arista son dos y opcionales** (f26): `head` para el extremo de destino y `tail` para el de origen, cada uno un `Adornment` de un vocabulario cerrado (`arrow`, `open_arrow`, `hollow_triangle`, `diamond`, `hollow_diamond`). Un extremo se toma de la IR y el otro también: el documento **no** escribe glifos, escribe el nombre de la relación y el kind decide el par. La única resolución vive en `IrEdge::head_end`/`tail_end`: una relación con `cardinality` entrega **los dos** extremos a la pata de cuervo y su arista no lleva marcador, porque las dos notaciones caerían en la misma punta. El vocabulario de un documento es el que el kind usa, no el cerrado entero: `class` dibuja hoy flecha, rombo lleno (composición) y rombo hueco (agregación); `open_arrow` y `hollow_triangle` existen en la plataforma y no tienen todavía un kind que los pida.
 - `gx-layout` no conoce kinds; `gx-kinds` no conoce layout.
 - **La IR no crece por kind:** 14 kinds comparten `IrGraph` (con `layout_hint`), 5 usan `IrTimeline`, y los 2 especializados (`sankey`, `gitgraph`) son un `layout_hint` más. Ampliar el catálogo no agranda la superficie del motor.
 
@@ -398,7 +399,7 @@ Esto cierra R6: la métrica Rust es la misma que declara el SVG porque hay **una
 
 - **Un único formateador** `fmt_num(f64) -> String` (2 decimales, half-even, sin `-0`) usado en **todo** atributo numérico.
 - Los ids del SVG se derivan del id de la IR (`g-<id>`, `m-<from>-<to>`), **nunca** de contadores.
-- `<defs>` y los markers se emiten en **orden de id**; sin espacios finales, sin declaración XML, atributos en orden fijo.
+- `<defs>` y los markers se emiten en **orden de id**; sin espacios finales, sin declaración XML, atributos en orden fijo. Solo viajan los markers que el documento **referencia** (f26): un glifo del vocabulario de arista suma su `<marker>` y su regla CSS únicamente cuando una arista lo usa, y el id es `<glifo>-<énfasis>`, con el sufijo `-start` para el extremo de origen, cuyo trazo es el espejo del de destino.
 - **Fuera del pipeline determinista** (nunca comparados por hash): cámara (pan/zoom), grilla y sus colores, panel lateral, banner de error, geometría de ventana, `--dump-last` y **PNG** (depende de la versión de `resvg`).
 - O8 se verifica en **Linux x86_64** hasta que existan builds de macOS/Windows.
 

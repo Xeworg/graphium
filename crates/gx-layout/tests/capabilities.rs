@@ -463,7 +463,7 @@ fn a_relation_that_skips_a_table_goes_around_it() {
         let mut edge = IrEdge::new(from, to);
         edge.from_row = Some(0);
         edge.to_row = Some(to_row);
-        edge.arrow = false;
+        edge.head = None;
         edge
     }
 
@@ -584,7 +584,7 @@ fn a_relation_between_side_by_side_tables_is_orthogonal() {
     let mut edge = IrEdge::new("users", "posts");
     edge.from_row = Some(0);
     edge.to_row = Some(1);
-    edge.arrow = false;
+    edge.head = None;
 
     let graph = IrGraph {
         direction: Direction::LR,
@@ -631,7 +631,7 @@ fn a_relation_between_rows_at_the_same_height_is_one_segment() {
     let mut edge = IrEdge::new("users", "posts");
     edge.from_row = Some(0);
     edge.to_row = Some(0);
-    edge.arrow = false;
+    edge.head = None;
 
     let graph = IrGraph {
         direction: Direction::LR,

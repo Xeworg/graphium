@@ -28,7 +28,7 @@
 //! resizes anything (PRD §8.4.1); [`InterMetrics`](crate::InterMetrics) is kept
 //! only so the wiring layer can build the layout engine from the same instance.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use gx_core::scene::BandKind;
@@ -38,11 +38,14 @@ use gx_core::{
     SvgRenderer as SvgRendererContract, TextMetrics, TOKENS,
 };
 
+use gx_core::{Adornment, Emphasis};
+
 use crate::escape::escape_text;
 use crate::geometry::{
     self, band_label, centered_baselines, cluster_id, crow_foot_mark, edge_id, label_lines,
-    lane_id, marker_id, node_id, node_rect, points_text, push_emphasis, shape_class, CrowFoot,
-    Table, ACTIVATION_WIDTH, ARROW_LENGTH, DASH_PATTERN, GROUP_DASH, LIFELINE_DASH, MUTED_OPACITY,
+    lane_id, marker_class, marker_id, marker_is_hollow, marker_path, marker_ref_x, node_id,
+    node_rect, points_text, push_emphasis, shape_class, CrowFoot, Table, ACTIVATION_WIDTH,
+    ARROW_LENGTH, DASH_PATTERN, GROUP_DASH, LIFELINE_DASH, MUTED_OPACITY,
 };
 use crate::scene::Drawing;
 
@@ -96,7 +99,11 @@ impl SvgRenderer {
             fmt_num(canvas.w),
             fmt_num(canvas.h),
         ));
-        write_style(&mut out, palette);
+        // Los marcadores que el documento referencia, calculados una sola vez:
+        // `<defs>` los escribe y el bloque de estilos emite la regla de cada
+        // familia que aparece (S5).
+        let markers = markers_of(&drawing.edges);
+        write_style(&mut out, palette, &markers);
 
         // The background goes right after the style block: under every layer,
         // so nothing it covers is lost.
@@ -110,7 +117,7 @@ impl SvgRenderer {
             ));
         }
 
-        write_defs(&mut out, &drawing.edges);
+        write_defs(&mut out, &markers);
 
         // Los contenedores de un grafo van primero: son el fondo sobre el que
         // se leen las cajas. Sin ellos un diagrama de componentes es una nube
@@ -237,7 +244,58 @@ impl SvgRendererContract for SvgRenderer {
     }
 }
 
-fn write_style(out: &mut String, palette: &Palette) {
+/// One marker of `<defs>`: the glyph, the class that paints it and the end of
+/// the line it belongs to (`f26-adornos.md`, S2/S6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MarkerSpec {
+    /// The id the `<polyline>` references: the sort key, so `<defs>` goes in
+    /// id order and never in insertion order (PRD §8.5.1).
+    id: String,
+    /// Which glyph.
+    adornment: Adornment,
+    /// The emphasis the glyph is painted with.
+    emphasis: Emphasis,
+    /// Whether the glyph sits on the source end, which mirrors it.
+    at_start: bool,
+}
+
+impl PartialOrd for MarkerSpec {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for MarkerSpec {
+    /// Id order, and only id order: `<defs>` sorts by the string the document
+    /// references, exactly as it did before the vocabulary grew (PRD §8.5.1).
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
+/// The markers a document references, sorted by id and never by insertion
+/// order (PRD §8.5.1). A relation with a cardinality references none: its ends
+/// are the crow's foot, drawn as geometry by the edge (S4).
+fn markers_of(routed: &[(IrEdge, LayoutEdge)]) -> BTreeSet<MarkerSpec> {
+    let mut used = BTreeSet::new();
+    for (edge, _) in routed {
+        let ends = [(edge.head_end(), false), (edge.tail_end(), true)];
+        for (end, at_start) in ends {
+            let Some(gx_core::EndAdornment::Marker { adornment }) = end else {
+                continue;
+            };
+            used.insert(MarkerSpec {
+                id: marker_id(adornment, edge.emphasis, at_start),
+                adornment,
+                emphasis: edge.emphasis,
+                at_start,
+            });
+        }
+    }
+    used
+}
+
+fn write_style(out: &mut String, palette: &Palette, markers: &BTreeSet<MarkerSpec>) {
     let border = fmt_num(TOKENS.border_width);
     let rules: [(&str, String); 32] = [
         (".bg", format!("fill:{}", palette.bg.css())),
@@ -380,6 +438,23 @@ fn write_style(out: &mut String, palette: &Palette) {
         ),
         (".axis-value", format!("fill:{}", palette.edge_text.css())),
     ];
+
+    // Los glifos que este documento SÍ usa (`f26-adornos.md`, S5): la flecha de
+    // siempre conserva sus tres reglas arriba, donde estaban, y cada familia
+    // nueva emite la suya sólo cuando una arista la referencia. Así ningún
+    // golden anterior se mueve y el export no carga CSS muerto.
+    let mut families: BTreeMap<String, (bool, Emphasis)> = BTreeMap::new();
+    for marker in markers {
+        // The plain arrow keeps its three rules above, where they have always
+        // been, so a drawing that only arrows does not change one byte.
+        if marker.adornment == Adornment::Arrow {
+            continue;
+        }
+        families.insert(
+            marker_class(marker.adornment, marker.emphasis),
+            (marker_is_hollow(marker.adornment), marker.emphasis),
+        );
+    }
     out.push_str("<style>\n");
     for (selector, body) in rules {
         out.push_str(selector);
@@ -387,32 +462,48 @@ fn write_style(out: &mut String, palette: &Palette) {
         out.push_str(&body);
         out.push_str("}\n");
     }
+    for (class, (hollow, emphasis)) in families {
+        let colour = match emphasis {
+            Emphasis::Normal => palette.edge_stroke.css(),
+            Emphasis::Highlight => palette.accent.css(),
+            Emphasis::Muted => palette.edge_stroke.css(),
+        };
+        let opacity = match emphasis {
+            Emphasis::Muted => format!(";opacity:{}", fmt_num(MUTED_OPACITY)),
+            _ => String::new(),
+        };
+        let body = if hollow {
+            format!("fill:none;stroke:{colour};stroke-width:{border}{opacity}")
+        } else {
+            format!("fill:{colour}{opacity}")
+        };
+        out.push_str(&format!(".{class}{{{body}}}\n"));
+    }
     out.push_str("</style>\n");
 }
 
-fn write_defs(out: &mut String, routed: &[(IrEdge, LayoutEdge)]) {
-    // Only the markers the document references, sorted by id and never by
-    // insertion order (PRD §8.5.1).
-    let mut used: BTreeSet<&'static str> = BTreeSet::new();
-    for (edge, _) in routed {
-        if edge.arrow {
-            used.insert(marker_id(edge.emphasis));
-        }
-    }
+fn write_defs(out: &mut String, markers: &BTreeSet<MarkerSpec>) {
+    // El documento siempre lleva `<defs>`, aunque esté vacío: es lo que el
+    // export escribe desde el primer día y ningún golden tiene por qué moverse
+    // por este corte (`f26-adornos.md`, S3).
     out.push_str("<defs>\n");
-    for id in used {
-        write_marker(out, id);
+    for marker in markers {
+        write_marker(out, marker);
     }
     out.push_str("</defs>\n");
 }
 
-fn write_marker(out: &mut String, id: &str) {
+fn write_marker(out: &mut String, marker: &MarkerSpec) {
+    let id = &marker.id;
     let zero = fmt_num(0.0);
     let length = fmt_num(ARROW_LENGTH);
     let half = fmt_num(ARROW_LENGTH / 2.0);
+    let ref_x = fmt_num(marker_ref_x(marker.at_start));
+    let class = marker_class(marker.adornment, marker.emphasis);
+    let path = marker_path(marker.adornment, marker.at_start);
     out.push_str(&format!(
-        "<marker id=\"{id}\" viewBox=\"{zero} {zero} {length} {length}\" refX=\"{length}\" refY=\"{half}\" markerWidth=\"{length}\" markerHeight=\"{length}\" markerUnits=\"userSpaceOnUse\" orient=\"auto\">\n\
-         <path class=\"{id}\" d=\"M {zero} {zero} L {length} {half} L {zero} {length} Z\"/>\n\
+        "<marker id=\"{id}\" viewBox=\"{zero} {zero} {length} {length}\" refX=\"{ref_x}\" refY=\"{half}\" markerWidth=\"{length}\" markerHeight=\"{length}\" markerUnits=\"userSpaceOnUse\" orient=\"auto\">\n\
+         <path class=\"{class}\" d=\"{path}\"/>\n\
          </marker>\n"
     ));
 }
@@ -429,14 +520,26 @@ fn write_edge(out: &mut String, edge: &IrEdge, route: &LayoutEdge) {
     }
     push_emphasis(&mut classes, edge.emphasis, false);
 
-    let marker = if edge.arrow {
-        format!(" marker-end=\"url(#{})\"", marker_id(edge.emphasis))
-    } else {
-        String::new()
+    // Un solo adorno por extremo (`f26-adornos.md`, S2): el que resuelve
+    // `IrEdge`, que ya le dio el extremo a la pata de cuervo cuando la relación
+    // tiene cardinalidad (S4).
+    let head = match edge.head_end() {
+        Some(gx_core::EndAdornment::Marker { adornment }) => format!(
+            " marker-end=\"url(#{})\"",
+            marker_id(adornment, edge.emphasis, false)
+        ),
+        _ => String::new(),
+    };
+    let tail = match edge.tail_end() {
+        Some(gx_core::EndAdornment::Marker { adornment }) => format!(
+            " marker-start=\"url(#{})\"",
+            marker_id(adornment, edge.emphasis, true)
+        ),
+        _ => String::new(),
     };
     let id = escape_text(&edge_id(&edge.from, &edge.to));
     out.push_str(&format!(
-        "<polyline id=\"{id}\" class=\"{classes}\" points=\"{}\"{marker}/>\n",
+        "<polyline id=\"{id}\" class=\"{classes}\" points=\"{}\"{head}{tail}/>\n",
         points.join(" ")
     ));
 

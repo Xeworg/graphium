@@ -64,17 +64,14 @@
       <marker
         id={marker.id}
         viewBox="0 0 {marker.length} {marker.length}"
-        refX={marker.length}
+        refX={marker.refX}
         refY={marker.half}
         markerWidth={marker.length}
         markerHeight={marker.length}
         markerUnits="userSpaceOnUse"
         orient="auto"
       >
-        <path
-          class={marker.id}
-          d="M 0 0 L {marker.length} {marker.half} L 0 {marker.length} Z"
-        />
+        <path class={marker.classes} d={marker.path} />
       </marker>
     {/each}
   </defs>

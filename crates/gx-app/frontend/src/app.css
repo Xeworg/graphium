@@ -293,6 +293,47 @@
   opacity: 0.55;
 }
 
+/* Los glifos del vocabulario de aristas (`f26-adornos.md`, S5), el gemelo de
+ * las reglas que el export escribe cuando una arista los referencia. Un glifo
+ * hueco se dibuja con trazo y sin relleno; el rombo lleno, como la flecha. */
+.graphium .diamond-normal {
+  fill: var(--edge-stroke);
+}
+
+.graphium .diamond-highlight {
+  fill: var(--accent);
+}
+
+.graphium .diamond-muted {
+  fill: var(--edge-stroke);
+  opacity: 0.55;
+}
+
+.graphium .hollow-triangle-normal,
+.graphium .hollow-diamond-normal,
+.graphium .open-arrow-normal {
+  fill: none;
+  stroke: var(--edge-stroke);
+  stroke-width: 1;
+}
+
+.graphium .hollow-triangle-highlight,
+.graphium .hollow-diamond-highlight,
+.graphium .open-arrow-highlight {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+
+.graphium .hollow-triangle-muted,
+.graphium .hollow-diamond-muted,
+.graphium .open-arrow-muted {
+  fill: none;
+  stroke: var(--edge-stroke);
+  stroke-width: 1;
+  opacity: 0.55;
+}
+
 /* The tokens of the diagram, applied over the classes of the SVG.
  * These rules win over the inline <style> of the SVG (and they are the
  * only ones that apply in the app, where the CSP forbids inline styles). */

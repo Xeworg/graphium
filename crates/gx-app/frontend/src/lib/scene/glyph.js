@@ -183,30 +183,110 @@ export function rowNameClasses(row) {
   return classes.join(" ");
 }
 
-/** The marker of an emphasis: the arrowheads of `<defs>` (S5). */
-export function markerId(emphasis) {
+// --- the adornments of an edge (f26-adornos.md, S2/S5/S6) -------------------
+
+/** The glyphs of the vocabulary, spelled as the IR serialises them. */
+export const ADORNMENTS = [
+  "arrow",
+  "open_arrow",
+  "hollow_triangle",
+  "diamond",
+  "hollow_diamond",
+];
+
+/** The word each glyph takes in the id and the class of its marker (`marker_id`). */
+const GLYPH = {
+  arrow: "arrow",
+  open_arrow: "open-arrow",
+  hollow_triangle: "hollow-triangle",
+  diamond: "diamond",
+  hollow_diamond: "hollow-diamond",
+};
+
+/** The emphasis of a marker, as its id spells it. */
+function stressOf(emphasis) {
   switch (emphasis) {
     case "highlight":
-      return "arrow-highlight";
+      return "highlight";
     case "muted":
-      return "arrow-muted";
+      return "muted";
     default:
-      return "arrow-normal";
+      return "normal";
   }
 }
 
 /**
+ * The id of a marker: the glyph, its emphasis and the end of the line, exactly
+ * what `geometry::marker_id` spells in Rust. The plain arrow at the target end
+ * keeps the id it always had (`arrow-<emphasis>`).
+ */
+export function markerId(adornment, emphasis, atStart = false) {
+  const id = `${GLYPH[adornment] ?? GLYPH.arrow}-${stressOf(emphasis)}`;
+  return atStart ? `${id}-start` : id;
+}
+
+/** The class the glyph is painted with: the family and the emphasis, never the end. */
+export function markerClass(adornment, emphasis) {
+  return `${GLYPH[adornment] ?? GLYPH.arrow}-${stressOf(emphasis)}`;
+}
+
+/** Whether the glyph is drawn with a stroke and no fill (`marker_is_hollow`). */
+export function markerIsHollow(adornment) {
+  return (
+    adornment === "open_arrow" ||
+    adornment === "hollow_triangle" ||
+    adornment === "hollow_diamond"
+  );
+}
+
+/**
+ * The path of a glyph in its marker box (`geometry::marker_path`): the tip sits
+ * on the anchor, which is the far side at the target end and the near side at
+ * the source one, so the second is the mirror of the first.
+ */
+export function markerPath(adornment, atStart, length) {
+  const zero = num(0);
+  const size = num(length);
+  const half = num(length / 2);
+  const [back, tip] = atStart ? [size, zero] : [zero, size];
+  switch (adornment) {
+    case "open_arrow":
+      return `M ${back} ${zero} L ${tip} ${half} L ${back} ${size}`;
+    case "diamond":
+    case "hollow_diamond":
+      return `M ${back} ${half} L ${half} ${zero} L ${tip} ${half} L ${half} ${size} Z`;
+    default:
+      return `M ${back} ${zero} L ${tip} ${half} L ${back} ${size} Z`;
+  }
+}
+
+/** The x of the anchor inside the box of a marker (`marker_ref_x`). */
+export function markerRefX(atStart, length) {
+  return atStart ? num(0) : num(length);
+}
+
+/**
  * The markers the scene needs, sorted by id, like the `BTreeSet` of the
- * emitter: only the ones an edge references, never the whole family.
+ * emitter: only the ones an edge references, never the whole family. A
+ * relation with a cardinality references none — its ends are the crow's foot.
  */
 export function arrowMarkers(scene) {
-  const used = new Set();
+  const used = new Map();
   for (const edge of scene.edges) {
-    if (edge.arrow) {
-      used.add(markerId(edge.emphasis));
+    for (const [end, atStart] of [
+      [edge.head, false],
+      [edge.tail, true],
+    ]) {
+      if (end === null || end === undefined || end.kind !== "marker") {
+        continue;
+      }
+      const id = markerId(end.adornment, edge.emphasis, atStart);
+      used.set(id, { id, adornment: end.adornment, emphasis: edge.emphasis, atStart });
     }
   }
-  return Array.from(used).sort();
+  return Array.from(used.values()).sort((left, right) =>
+    left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+  );
 }
 
 // --- the table of a node with rows (PRD §6.1) -------------------------------
@@ -425,19 +505,35 @@ export function crowFootPath(mark, at) {
   return [leg(at), ...mark.toes.map(leg)].join(" ");
 }
 
-/** The arrows of the two ends of a relation, or nothing when it has none. */
+/**
+ * The crow's feet of a relation, or nothing when it has none: the ends are read
+ * from the payload, which already resolved who owns the tip (`f26-adornos.md`,
+ * S2/S4). The target end comes first, the order the emitter writes.
+ */
 export function cardinalityMarks(edge) {
-  if (edge.cardinality === null || edge.points.length < 2) {
+  if (edge.points.length < 2) {
     return [];
   }
   const first = edge.points[0];
   const last = edge.points[edge.points.length - 1];
-  const endDirection = directionAt(edge.points, true);
-  const startDirection = directionAt(edge.points, false);
-  return [
-    { at: last, direction: endDirection, bound: edge.cardinality.to_min, max: edge.cardinality.to_max },
-    { at: first, direction: startDirection, bound: edge.cardinality.from_min, max: edge.cardinality.from_max },
-  ];
+  const marks = [];
+  if (edge.head?.kind === "crow_foot") {
+    marks.push({
+      at: last,
+      direction: directionAt(edge.points, true),
+      bound: edge.head.min,
+      max: edge.head.max,
+    });
+  }
+  if (edge.tail?.kind === "crow_foot") {
+    marks.push({
+      at: first,
+      direction: directionAt(edge.points, false),
+      bound: edge.tail.min,
+      max: edge.tail.max,
+    });
+  }
+  return marks;
 }
 
 // --- the lifeline of an actor (PRD §6, S5) ---------------------------------
@@ -653,10 +749,17 @@ export function nodePaint(node, tokens) {
 
 /** The paint of an edge: the route, its marker, its crow's feet and its label. */
 export function edgePaint(edge, tokens) {
+  // The crow's foot of the relation, when one of its ends is that notation.
+  const crowFoot =
+    edge.head?.kind === "crow_foot"
+      ? edge.head
+      : edge.tail?.kind === "crow_foot"
+        ? edge.tail
+        : null;
   const classes =
-    edge.cardinality === null || edge.points.length < 2
+    crowFoot === null || edge.points.length < 2
       ? "cardinality"
-      : edge.cardinality.to_min === "optional"
+      : crowFoot.min === "optional"
         ? "cardinality cardinality-optional"
         : "cardinality";
   return {
@@ -666,7 +769,14 @@ export function edgePaint(edge, tokens) {
     // names them (`m-<from>-<to>` is built from the very same ids).
     name: `${edge.from} → ${edge.to}`,
     points: pointsText(edge.points),
-    marker: edge.arrow ? `url(#${markerId(edge.emphasis)})` : null,
+    marker:
+      edge.head?.kind === "marker"
+        ? `url(#${markerId(edge.head.adornment, edge.emphasis, false)})`
+        : null,
+    markerStart:
+      edge.tail?.kind === "marker"
+        ? `url(#${markerId(edge.tail.adornment, edge.emphasis, true)})`
+        : null,
     feet: cardinalityMarks(edge).map((mark) => {
       const foot = crowFootMark(
         mark.at,
@@ -792,8 +902,11 @@ export function eventPaint(event, tokens) {
  */
 export function diagramPaint(scene) {
   const tokens = scene.tokens;
-  const markers = arrowMarkers(scene).map((id) => ({
-    id,
+  const markers = arrowMarkers(scene).map((marker) => ({
+    id: marker.id,
+    classes: markerClass(marker.adornment, marker.emphasis),
+    path: markerPath(marker.adornment, marker.atStart, tokens.arrow_length),
+    refX: markerRefX(marker.atStart, tokens.arrow_length),
     length: num(tokens.arrow_length),
     half: num(tokens.arrow_length / 2),
   }));

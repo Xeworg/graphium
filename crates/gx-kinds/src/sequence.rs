@@ -5,7 +5,7 @@
 //! necesita numerar nada y el layout no tiene que adivinar.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Ir, IrEdge, IrNode, LayoutHint};
+use gx_core::ir::{Adornment, Direction, Ir, IrEdge, IrNode, LayoutHint};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -171,7 +171,7 @@ impl DiagramKind for SequenceKind {
             .map(|message| {
                 let mut edge = IrEdge::new(message.from.clone(), message.to.clone());
                 edge.label = Some(message.label.clone());
-                edge.arrow = true;
+                edge.head = Some(Adornment::Arrow);
                 if message.reply {
                     edge.style = gx_core::ir::Style::Dashed;
                 }

@@ -6,7 +6,7 @@
 //! added.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Emphasis, Ir, IrEdge, IrNode, LayoutHint, Shape, Style};
+use gx_core::ir::{Adornment, Direction, Emphasis, Ir, IrEdge, IrNode, LayoutHint, Shape, Style};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -178,7 +178,7 @@ impl DiagramKind for GraphKind {
                     ir_edge.style = style;
                 }
                 if let Some(arrow) = edge.arrow {
-                    ir_edge.arrow = arrow;
+                    ir_edge.head = arrow.then_some(Adornment::Arrow);
                 }
                 ir_edge
             })

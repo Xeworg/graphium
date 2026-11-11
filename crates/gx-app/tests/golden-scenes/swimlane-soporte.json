@@ -54,7 +54,10 @@
       "to": "ticket",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 299.6669921875,
@@ -80,7 +83,10 @@
       "to": "consulta",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 450.0,
@@ -106,7 +112,10 @@
       "to": "responde",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 657.7470703125,
@@ -132,7 +141,10 @@
       "to": "reclama",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 696.0,

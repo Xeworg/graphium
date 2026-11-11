@@ -28,7 +28,9 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 use crate::geom::{Point, Rect, Size};
-use crate::ir::{Cardinality, Direction, Emphasis, IrRow, IrValue, LayoutHint, Shape, Span, Style};
+use crate::ir::{
+    Direction, Emphasis, EndAdornment, IrRow, IrValue, LayoutHint, Shape, Span, Style,
+};
 use crate::render::Theme;
 
 /// The whole drawing, as data (`f11-elementos.md`, S3).
@@ -250,18 +252,21 @@ pub struct SceneEdge {
     pub label: Option<String>,
     pub emphasis: Emphasis,
     pub style: Style,
-    /// Whether the target end carries a marker: `arrow-<emphasis>`.
-    pub arrow: bool,
+    /// What the target end draws (`f26-adornos.md`, S2): a marker of the
+    /// vocabulary, the crow's foot of the relation, or nothing. The glyph
+    /// travels as a **name** and the painter builds its path from the frozen
+    /// tokens, like the crow's foot and the diamond of a node (S5).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<EndAdornment>,
+    /// What the source end draws, resolved the same way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tail: Option<EndAdornment>,
     /// Row of the source node the edge leaves from, when it anchors to one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from_row: Option<u32>,
     /// Row of the target node the edge arrives at, when it anchors to one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to_row: Option<u32>,
-    /// The crow's foot of the relation, when the kind has one: the painter
-    /// draws it from [`SceneTokens::crow_foot`] (S5).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cardinality: Option<Cardinality>,
     /// The route, in plan units.
     pub points: Vec<Point>,
     /// Where the label sits, when it has one.

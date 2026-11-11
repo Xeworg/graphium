@@ -191,7 +191,7 @@ impl DiagramKind for TreeKind {
         for (path, parent) in &parent_of {
             if let Some(parent) = parent {
                 let mut edge = IrEdge::new(parent.clone(), path.clone());
-                edge.arrow = false;
+                edge.head = None;
                 edges.push(edge);
             }
         }
@@ -271,7 +271,7 @@ mod tests {
             .edges
             .iter()
             .any(|edge| edge.from == "src/lib" && edge.to == "src/lib/render.rs"));
-        assert!(graph.edges.iter().all(|edge| !edge.arrow));
+        assert!(graph.edges.iter().all(|edge| edge.head.is_none()));
     }
 
     #[test]

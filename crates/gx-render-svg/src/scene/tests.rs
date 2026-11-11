@@ -4,9 +4,9 @@ use std::collections::BTreeSet;
 
 use gx_core::ir::Span;
 use gx_core::{
-    Direction, Emphasis, Ir, IrEdge, IrEvent, IrGraph, IrLane, IrNode, IrRow, IrTimeline,
-    LayoutEdge, LayoutGraph, LayoutGroup, LayoutHint, Palette, Point, Rect, Shape, Size, Style,
-    TOKENS,
+    Adornment, Direction, Emphasis, EndAdornment, Ir, IrEdge, IrEvent, IrGraph, IrLane, IrNode,
+    IrRow, IrTimeline, LayoutEdge, LayoutGraph, LayoutGroup, LayoutHint, Palette, Point, Rect,
+    Shape, Size, Style, TOKENS,
 };
 
 use super::{scene as build_scene, scene_tokens, Drawing};
@@ -101,8 +101,14 @@ fn the_scene_mirrors_the_routed_edges() {
         ]
     );
     assert_eq!(ok.label_at, Some(Point::new(90.0, 85.0)));
-    assert!(ok.arrow, "a plain edge carries a marker");
-    assert_eq!(ok.cardinality, None, "a plain edge has no crow's foot");
+    assert_eq!(
+        ok.head,
+        Some(EndAdornment::Marker {
+            adornment: Adornment::Arrow
+        }),
+        "a plain edge carries a marker"
+    );
+    assert_eq!(ok.tail, None, "and nothing at the other end");
     assert_eq!(ok.from_row, None);
     assert_eq!(ok.to_row, None);
 
@@ -479,10 +485,29 @@ fn the_scene_never_carries_a_path() {
 
     assert!(!json.contains('<'), "no markup in the payload: {json}");
     assert!(!json.contains("\"d\":"), "no path data in the payload");
-    assert!(!json.contains("marker"), "no marker of the exporter");
     assert!(
-        json.contains("\"cardinality\""),
-        "the relation travels as data: {json}"
+        !json.contains("url(#"),
+        "no reference to a marker of the exporter: {json}"
+    );
+    // The end of a relation travels as data too (`f26-adornos.md`, S2): the
+    // glyph is a name and the crow's foot a pair of bounds, never a shape. And
+    // the crow's foot owns both ends, so no marker rides on top of it (S4).
+    let payload: serde_json::Value = serde_json::from_str(&json).expect("the payload is JSON");
+    let relation = payload["edges"]
+        .as_array()
+        .expect("the payload carries edges")
+        .iter()
+        .find(|edge| edge["id"] == "m-read-ok")
+        .expect("the relation is in the payload");
+    assert_eq!(relation["head"]["kind"], "crow_foot", "{json}");
+    assert_eq!(relation["head"]["min"], "optional", "{json}");
+    assert_eq!(relation["head"]["max"], "many", "{json}");
+    assert_eq!(relation["tail"]["kind"], "crow_foot", "{json}");
+    assert_eq!(relation["tail"]["min"], "required", "{json}");
+    assert_eq!(relation["tail"]["max"], "one", "{json}");
+    assert!(
+        relation["head"].get("adornment").is_none(),
+        "no glyph on the end the crow's foot owns: {json}"
     );
     assert!(
         json.contains("\"rows\""),
@@ -637,7 +662,13 @@ fn a_declared_dependency_draws_one_arrow_from_the_dependency_to_the_task() {
     assert_eq!(edge.id, "m-one-two");
     assert_eq!(edge.from, "one");
     assert_eq!(edge.to, "two");
-    assert!(edge.arrow, "the dependency points at the task that waits");
+    assert_eq!(
+        edge.head,
+        Some(EndAdornment::Marker {
+            adornment: Adornment::Arrow
+        }),
+        "the dependency points at the task that waits"
+    );
     assert_eq!(edge.label, None);
     // The elbow is frozen: out of the right edge of `one` — the box spans
     // 20..140 — across the mid gap (190), down into `two`'s lane, into its
@@ -747,7 +778,13 @@ fn a_connector_of_a_timeline_reaches_the_scene_as_a_plain_arrow() {
     assert_eq!(scene.edges.len(), 2, "one arrow per placed connection");
     let forward = &scene.edges[0];
     assert_eq!(forward.id, "m-one-two");
-    assert!(forward.arrow, "a connector is an arrow");
+    assert_eq!(
+        forward.head,
+        Some(EndAdornment::Marker {
+            adornment: Adornment::Arrow
+        }),
+        "a connector is an arrow"
+    );
     assert_eq!(forward.points.len(), 2, "same row: a straight line");
     let backward = &scene.edges[1];
     assert_eq!(

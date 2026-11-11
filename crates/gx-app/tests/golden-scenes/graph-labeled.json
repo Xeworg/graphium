@@ -101,7 +101,10 @@
       "label": "no",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 88.94303795245054,
@@ -128,7 +131,10 @@
       "label": "sí",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 130.12727454754946,

@@ -145,7 +145,10 @@
       "to": "fin",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 78.8076171875,
@@ -167,7 +170,10 @@
       "to": "monto",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 179.31640625,
@@ -189,7 +195,10 @@
       "to": "fin",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 279.8251953125,
@@ -212,7 +221,10 @@
       "label": "no",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 179.31640625,
@@ -239,7 +251,10 @@
       "label": "sí",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 179.31640625,
@@ -265,7 +280,10 @@
       "to": "limite",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 179.31640625,
