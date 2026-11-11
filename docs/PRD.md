@@ -114,6 +114,8 @@ Priorizados por frecuencia de uso real en desarrollo de software. Cada kind decl
 
 **Fases:** F1 = 2 kinds (`graph`, `er`) · F2 = 10 kinds · F3 = 12 kinds. Ampliar el catálogo después **no mueve fases ya cerradas**: un kind nuevo entra en la fase que esté abierta, sin tocar las anteriores.
 
+**Estado medido (2026-11-11):** el binario registra **14** de los kinds de esta tabla —`graph`, `er`, `flowchart`, `sequence`, `class`, `state`, `component`, `dataflow`, `tree`, `mindmap`, `timeline`, `swimlane`, `c4`, `gantt` (`crates/gx-kinds/src/lib.rs::register_all`)—; los once restantes siguen sin construir. El catálogo adaptado del documento de referencia del dueño, con el faltante de cada diagrama contra su fuente oficial y la ruta que los cierra, vive en **`docs/CATALOGO-DIAGRAMAS.md`**.
+
 ### 6.1 Con cuáles iniciamos
 
 El MVP arranca con **dos kinds de los 24 del catálogo**, no con veinticuatro:
