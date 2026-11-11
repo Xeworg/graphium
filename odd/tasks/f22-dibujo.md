@@ -79,6 +79,9 @@ ola first).
   contract + renderer compartments.
 - T6 (S8): swimlane connectors — gx-kinds swimlane contract + gx-layout
   routing + renderer.
+- T6b (S10): the flowchart stubs — a diamond's branches leave the vertex the
+  flow direction names (bottom for `TB`) and arrive at the opposite one, so
+  no diagonal stub hangs off a slanted edge.
 - T7 (S9): diamond/cylinder label geometry — geometry.rs + renderer.
 - T8: orchestrator — gates, goldens regen + hand review, commits, close.
 
@@ -253,3 +256,27 @@ ola first).
   `shape-gallery` (cylinders with clear air under the rim); gates fmt/clippy
   0, 847 tests (two `measure_node` tests — its first — and the milestone
   route test), parity 73/73, equivalence 21/21.
+
+- L12 (2026-11-10, orchestrator, task gap found at T8): the eight items
+  include the flowchart stubs, but the Tasks section only recovered the
+  finding (T0) and closed its label half (T7). The routing half — branch
+  edges anchoring at the diamond's side vertices (L3b) — had no task, so it
+  reopens as T6b before the close: the anchor moves to the vertex the flow
+  direction names, which is the convention L3 recorded.
+
+- L13 (2026-11-10, execution, T6b + close): the flowchart stubs closed the
+  set. `anchor_diamond_edges` runs once per layered layout, after the
+  normalization: a branch edge of a diamond re-anchors at the vertex the
+  flow direction names (bottom for `TB`, right for `LR`, mirrored for
+  `BT`/`RL`) and an arriving edge at the opposite vertex; a box keeps its
+  border anchoring. The fix is in the layout, so both painters inherit it —
+  no payload or painter change. Evidence: the `flowchart-approval` golden
+  (two-line diff) re-reviewed — both branches leave the bottom vertex, the
+  incoming edge lands on the top one. Final gates of the feature:
+  fmt/clippy 0, 848 tests, parity 73/73, equivalence 21/21.
+
+f22-dibujo is COMPLETE: T0-T8 all delivered (T0 recovery, T1 glyphs and
+stereotypes, T2 time axis, T3 milestone, T4 activations, T5 members, T6
+connectors, T6b diamond anchors, T7 label geometry, T8 close). Branch
+`feature/f22-dibujo` on top of staging `4ac2730`; push, PR and the merge to
+staging remain the owner's decisions.

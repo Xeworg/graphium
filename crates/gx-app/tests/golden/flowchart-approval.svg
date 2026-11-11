@@ -44,9 +44,9 @@
 <polyline id="m-auto-fin" class="edge-stroke" points="78.81,423.50 78.81,463.50 158.44,511.63" marker-end="url(#arrow-normal)"/>
 <polyline id="m-inicio-monto" class="edge-stroke" points="179.32,41.50 179.32,81.50 179.32,121.50" marker-end="url(#arrow-normal)"/>
 <polyline id="m-jefe-fin" class="edge-stroke" points="279.83,423.50 279.83,463.50 200.19,511.63" marker-end="url(#arrow-normal)"/>
-<polyline id="m-limite-auto" class="edge-stroke" points="149.31,284.50 78.81,333.25 78.81,382.00" marker-end="url(#arrow-normal)"/>
+<polyline id="m-limite-auto" class="edge-stroke" points="179.32,284.50 78.81,333.25 78.81,382.00" marker-end="url(#arrow-normal)"/>
 <text class="edge-text text" x="97.14" y="333.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">no</text>
-<polyline id="m-limite-jefe" class="edge-stroke" points="209.32,284.50 279.83,333.25 279.83,382.00" marker-end="url(#arrow-normal)"/>
+<polyline id="m-limite-jefe" class="edge-stroke" points="179.32,284.50 279.83,333.25 279.83,382.00" marker-end="url(#arrow-normal)"/>
 <text class="edge-text text" x="295.22" y="333.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">sí</text>
 <polyline id="m-monto-limite" class="edge-stroke" points="179.32,163.00 179.32,203.00 179.32,243.00" marker-end="url(#arrow-normal)"/>
 </g>

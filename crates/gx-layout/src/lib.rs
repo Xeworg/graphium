@@ -85,6 +85,58 @@ struct Pass {
     cluster_boxes: BTreeMap<String, Rect>,
 }
 
+/// The flowchart stubs (T6b, `f22-dibujo.md` S10/L3b): a branch edge of a
+/// diamond anchors at the vertex the flow direction names — the bottom one
+/// for `TB` — and an edge that arrives anchors at the opposite vertex. No
+/// diagonal stub hangs off a slanted edge; a box keeps its border anchoring.
+fn anchor_diamond_edges(
+    graph: &IrGraph,
+    nodes: &BTreeMap<String, NodeBox>,
+    edges: &mut [LayoutEdge],
+) {
+    let shape_of = |id: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.id == id)
+            .map(|node| node.shape)
+    };
+    let vertex = |placed: &NodeBox, out: bool| {
+        let half_w = placed.size.w / 2.0;
+        let half_h = placed.size.h / 2.0;
+        match (graph.direction, out) {
+            (Direction::TB, true) | (Direction::BT, false) => {
+                Point::new(placed.center.x, placed.center.y + half_h)
+            }
+            (Direction::TB, false) | (Direction::BT, true) => {
+                Point::new(placed.center.x, placed.center.y - half_h)
+            }
+            (Direction::LR, true) | (Direction::RL, false) => {
+                Point::new(placed.center.x + half_w, placed.center.y)
+            }
+            (Direction::LR, false) | (Direction::RL, true) => {
+                Point::new(placed.center.x - half_w, placed.center.y)
+            }
+        }
+    };
+    for edge in edges {
+        if edge.points.is_empty() {
+            continue;
+        }
+        if shape_of(&edge.from) == Some(gx_core::ir::Shape::Diamond) {
+            if let Some(placed) = nodes.get(&edge.from) {
+                edge.points[0] = vertex(placed, true);
+            }
+        }
+        if shape_of(&edge.to) == Some(gx_core::ir::Shape::Diamond) {
+            if let Some(placed) = nodes.get(&edge.to) {
+                let last = edge.points.len() - 1;
+                edge.points[last] = vertex(placed, false);
+            }
+        }
+    }
+}
+
 impl LayoutEngine for DagreEngine {
     fn layout(&self, graph: &IrGraph, opts: &LayoutOpts) -> LayoutGraph {
         let mut pass = self.run(graph, opts, true);
@@ -124,6 +176,7 @@ impl LayoutEngine for DagreEngine {
         }
 
         let bbox = drawing_bbox(&pass.nodes, &pass.edges, &groups);
+        anchor_diamond_edges(graph, &pass.nodes, &mut pass.edges);
         LayoutGraph {
             activations: Vec::new(),
             nodes: pass.nodes,
