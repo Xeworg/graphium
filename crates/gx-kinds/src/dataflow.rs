@@ -12,7 +12,7 @@
 //! sus propios insumos).
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Ir, LayoutHint, Shape};
+use gx_core::ir::{Direction, Emphasis, Ir, IrValue, LayoutHint, Shape, Style};
 use gx_core::kind::{DiagramKind, KindLimits, Role};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -25,6 +25,13 @@ pub const SUPPORTED_VERSION: u32 = 1;
 
 /// El rol de un nodo que no declara ninguno: un proceso.
 pub const DEFAULT_ROLE: &str = "process";
+
+/// El nivel más profundo que un DFD declara: del contexto (0) al 6
+/// (`f27-etapa1.md`, D5).
+pub const MAX_LEVEL: u32 = 6;
+
+/// El prefijo del número de proceso: `P` y dígitos (`f27-etapa1.md`, S4).
+pub const NUMBER_PREFIX: char = 'P';
 
 /// Los roles de un dataflow y su forma.
 pub const ROLES: [Role; 3] = [
@@ -48,8 +55,13 @@ pub struct DataflowInput {
     /// Direction of the layout.
     #[serde(default)]
     pub direction: Option<Direction>,
+    /// The level of the decomposition (`f27-etapa1.md`, S4): the context
+    /// diagram is `0`, and each level below it is one drawing of its own.
+    /// Absent means the document does not claim a level.
+    #[serde(default)]
+    pub level: Option<u32>,
     /// The processes, the stores and the external entities.
-    pub nodes: Vec<FlowNode>,
+    pub nodes: Vec<DataflowNode>,
     /// The flows, with the data they carry on the label.
     #[serde(default)]
     pub edges: Vec<FlowEdge>,
@@ -62,9 +74,55 @@ pub struct DataflowInput {
 #[derive(Debug, Default)]
 pub struct DataflowKind;
 
+/// A node of a dataflow: the flow fields plus the process number of a DFD
+/// (`f27-etapa1.md`, S4).
+///
+/// The number lives here and not in the shared `FlowNode` because it is a DFD
+/// fact: a flowchart box has no number, and a field every other kind silently
+/// ignores is a field that lies about the contract. This is the same shape
+/// `class` took for its members (`ClassNode::flow`).
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DataflowNode {
+    /// Unique identifier inside the diagram.
+    pub id: String,
+    /// Text of the node. Defaults to the id.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Role of the node: `process`, `store` or `external`.
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub emphasis: Option<Emphasis>,
+    #[serde(default)]
+    pub style: Option<Style>,
+    #[serde(default)]
+    pub stereotype: Option<String>,
+    /// El número de proceso de Gane-Sarson: `P1`, `P2`… Único en el diagrama y
+    /// dibujado como prefijo de la etiqueta, que es donde hoy puede ir (la
+    /// banda de la caja es un cambio de renderer, declarado fuera de este
+    /// corte).
+    #[serde(default)]
+    pub number: Option<String>,
+}
+
+impl DataflowNode {
+    /// The flow node the shared machinery reads.
+    fn flow(&self) -> FlowNode {
+        FlowNode {
+            id: self.id.clone(),
+            label: self.label.clone(),
+            role: self.role.clone(),
+            emphasis: self.emphasis,
+            style: self.style,
+            stereotype: self.stereotype.clone(),
+        }
+    }
+}
+
 impl DataflowKind {
     /// The role of a node, or the default one.
-    fn role_of(node: &FlowNode) -> &str {
+    fn role_of(node: &DataflowNode) -> &str {
         node.role.as_deref().unwrap_or(DEFAULT_ROLE)
     }
 
@@ -115,6 +173,82 @@ impl DataflowKind {
 
         errors
     }
+
+    /// El número de un proceso, cuando lo declara y no está en blanco.
+    fn number_of(node: &DataflowNode) -> Option<&str> {
+        node.number
+            .as_deref()
+            .map(str::trim)
+            .filter(|number| !number.is_empty())
+    }
+
+    /// Las dos reglas que llegan con los campos (`f27-etapa1.md`, S4): el
+    /// número es `P` y dígitos, único en el diagrama, y el nivel del documento
+    /// es coherente con la numeración.
+    fn check_numbers(input: &DataflowInput) -> Vec<ValidationError> {
+        let mut errors = Vec::new();
+
+        if let Some(level) = input.level {
+            if level > MAX_LEVEL {
+                errors.push(ValidationError::new(
+                    "level",
+                    ErrorCode::InvalidValue,
+                    format!("nivel de DFD fuera de rango: {level} (del contexto 0 al {MAX_LEVEL})"),
+                    Some(
+                        "cada nivel es un documento aparte que descompone un proceso del anterior"
+                            .to_string(),
+                    ),
+                ));
+            }
+        }
+
+        let mut seen: Vec<&str> = Vec::new();
+        let mut numbered = false;
+        for (index, node) in input.nodes.iter().enumerate() {
+            let Some(number) = Self::number_of(node) else {
+                continue;
+            };
+            numbered = true;
+            let digits = number.strip_prefix(NUMBER_PREFIX);
+            let well_formed = digits.is_some_and(|digits| {
+                !digits.is_empty() && digits.chars().all(|character| character.is_ascii_digit())
+            });
+            if !well_formed {
+                errors.push(ValidationError::new(
+                    format!("nodes[{index}].number"),
+                    ErrorCode::InvalidValue,
+                    format!("número de proceso inválido: `{number}`"),
+                    Some(format!(
+                        "el número de Gane-Sarson es `{NUMBER_PREFIX}` y dígitos, por ejemplo `{NUMBER_PREFIX}1`"
+                    )),
+                ));
+                continue;
+            }
+            if seen.contains(&number) {
+                errors.push(ValidationError::new(
+                    format!("nodes[{index}].number"),
+                    ErrorCode::DuplicateId,
+                    format!("número de proceso repetido: `{number}`"),
+                    Some("cada proceso se numera una vez: el DFD se lee por el número".to_string()),
+                ));
+                continue;
+            }
+            seen.push(number);
+        }
+
+        // El contexto es el sistema con sus entidades externas: no hay proceso
+        // que numerar, y un `P1` ahí promete un nivel 0 que no existe.
+        if input.level == Some(0) && numbered {
+            errors.push(ValidationError::new(
+                "level",
+                ErrorCode::InvalidValue,
+                "el diagrama de contexto (nivel 0) no numera procesos".to_string(),
+                Some("quitá `level: 0` o quitá los números: el nivel 0 es el sistema con sus entidades externas".to_string()),
+            ));
+        }
+
+        errors
+    }
 }
 
 impl DiagramKind for DataflowKind {
@@ -144,9 +278,10 @@ impl DiagramKind for DataflowKind {
 
     fn validate(&self, input: &Self::Input) -> Result<(), Vec<ValidationError>> {
         let mut errors = validate_header(Self::KIND, &input.kind, SUPPORTED_VERSION, input.version);
+        let flow_nodes: Vec<FlowNode> = input.nodes.iter().map(DataflowNode::flow).collect();
         errors.extend(validate_flow(
             Self::KIND,
-            &input.nodes,
+            &flow_nodes,
             &input.edges,
             &ROLES,
             DEFAULT_ROLE,
@@ -155,6 +290,7 @@ impl DiagramKind for DataflowKind {
         errors.extend(validate_groups(&node_ids, &input.groups));
 
         errors.extend(Self::check_flows(input));
+        errors.extend(Self::check_numbers(input));
 
         if errors.is_empty() {
             Ok(())
@@ -164,8 +300,9 @@ impl DiagramKind for DataflowKind {
     }
 
     fn to_ir(&self, input: &Self::Input) -> Ir {
-        let graph = to_graph(
-            &input.nodes,
+        let flow_nodes: Vec<FlowNode> = input.nodes.iter().map(DataflowNode::flow).collect();
+        let mut graph = to_graph(
+            &flow_nodes,
             &input.edges,
             &ROLES,
             DEFAULT_ROLE,
@@ -173,6 +310,19 @@ impl DiagramKind for DataflowKind {
             Self::LAYOUT_HINT,
             to_ir_groups(&input.groups),
         );
+        for (node, input_node) in graph.nodes.iter_mut().zip(&input.nodes) {
+            // El número va delante del nombre: el DFD se lee por el número, y
+            // la etiqueta es lo único que hoy lleva texto libre sobre la caja.
+            if let Some(number) = Self::number_of(input_node) {
+                node.label = format!("{number} · {}", node.label);
+            }
+            // El nivel no tiene nodo propio: va en el canal `meta`, que viaja
+            // intacto a la escena (`f27-etapa1.md`, D5).
+            if let Some(level) = input.level {
+                node.meta
+                    .insert("level".to_string(), IrValue::Int(i64::from(level)));
+            }
+        }
         Ir::Graph(graph)
     }
 
@@ -183,6 +333,11 @@ impl DiagramKind for DataflowKind {
             "Un flujo no puede ir de un depósito a otro ni de una entidad externa a otra: en el medio va un proceso."
                 .to_string(),
             "La etiqueta del flujo es el dato que viaja.".to_string(),
+            "Un proceso puede llevar su número de Gane-Sarson (`number: \"P1\"`), único en el diagrama: se dibuja como prefijo de la etiqueta."
+                .to_string(),
+            format!(
+                "El nivel (`level`) va del contexto, que es 0, al {MAX_LEVEL}: el diagrama de contexto no numera procesos y cada nivel es un documento aparte."
+            ),
         ]
     }
 
@@ -389,5 +544,117 @@ mod tests {
 
         assert_eq!(errors[0].code, ErrorCode::MissingField);
         assert_eq!(errors[0].path, "nodes");
+    }
+
+    /// S4 de `f27-etapa1.md`: el número de proceso de Gane-Sarson se declara y
+    /// llega al dibujo como prefijo de la etiqueta, que es el único lugar donde
+    /// hoy puede ir (la banda de la caja es un cambio de renderer que este
+    /// corte no compra).
+    #[test]
+    fn a_process_carries_its_number_into_the_label() {
+        let document: crate::dataflow::DataflowInput = input(
+            r#"{ "version": 1, "kind": "dataflow",
+                 "nodes": [ { "id": "ingesta", "label": "ingesta",
+                              "role": "process", "number": "P1" } ],
+                 "edges": [] }"#,
+        );
+
+        DataflowKind
+            .validate(&document)
+            .expect("P1 es un número legal");
+        let Ir::Graph(graph) = DataflowKind.to_ir(&document) else {
+            panic!("un dataflow es un grafo")
+        };
+        assert_eq!(graph.nodes[0].label, "P1 · ingesta");
+    }
+
+    /// La numeración es única: dos procesos llamados P1 son dos procesos con el
+    /// mismo nombre, y el DFD los lee por el número.
+    #[test]
+    fn a_duplicated_process_number_is_reported() {
+        let document: crate::dataflow::DataflowInput = input(
+            r#"{ "version": 1, "kind": "dataflow",
+                 "nodes": [ { "id": "a", "role": "process", "number": "P1" },
+                            { "id": "b", "role": "process", "number": "P1" } ],
+                 "edges": [] }"#,
+        );
+
+        let errors = DataflowKind
+            .validate(&document)
+            .expect_err("P1 no puede ser dos procesos");
+        assert_eq!(errors[0].path, "nodes[1].number");
+        assert_eq!(errors[0].code, ErrorCode::DuplicateId);
+    }
+
+    /// El formato: `P` y dígitos. Nada de `1`, `p1` ni `P1a`.
+    #[test]
+    fn a_number_that_is_not_p_and_digits_is_reported() {
+        for bad in ["1", "p1", "P1a", "P"] {
+            let document: crate::dataflow::DataflowInput = input(&format!(
+                r#"{{ "version": 1, "kind": "dataflow",
+                      "nodes": [ {{ "id": "a", "number": "{bad}" }} ],
+                      "edges": [] }}"#
+            ));
+
+            let errors = DataflowKind
+                .validate(&document)
+                .expect_err("el número de proceso es P y dígitos");
+            assert_eq!(errors[0].path, "nodes[0].number", "para `{bad}`");
+            assert_eq!(errors[0].code, ErrorCode::InvalidValue);
+        }
+    }
+
+    /// El nivel es del documento y llega a cada nodo por el canal `meta`, que
+    /// ya viaja intacto a la escena.
+    #[test]
+    fn the_level_reaches_the_nodes_as_metadata() {
+        let document: crate::dataflow::DataflowInput = input(
+            r#"{ "version": 1, "kind": "dataflow", "level": 2,
+                 "nodes": [ { "id": "a", "role": "process", "number": "P1" } ],
+                 "edges": [] }"#,
+        );
+
+        DataflowKind.validate(&document).expect("nivel 2 es legal");
+        let Ir::Graph(graph) = DataflowKind.to_ir(&document) else {
+            panic!("un dataflow es un grafo")
+        };
+        assert_eq!(
+            graph.nodes[0].meta.get("level"),
+            Some(&gx_core::ir::IrValue::Int(2))
+        );
+    }
+
+    /// El nivel también tiene techo: más allá del 6 un DFD deja de ser legible
+    /// y el documento no está diciendo un nivel, está inventando uno.
+    #[test]
+    fn a_level_beyond_the_ceiling_is_reported() {
+        let document: crate::dataflow::DataflowInput = input(
+            r#"{ "version": 1, "kind": "dataflow", "level": 7,
+                 "nodes": [ { "id": "a", "role": "process" } ],
+                 "edges": [] }"#,
+        );
+
+        let errors = DataflowKind
+            .validate(&document)
+            .expect_err("el nivel va del 0 al 6");
+        assert_eq!(errors[0].path, "level");
+        assert_eq!(errors[0].code, ErrorCode::InvalidValue);
+    }
+
+    /// El diagrama de contexto no numera procesos: en el nivel 0 no hay
+    /// procesos que numerar, solo el sistema y sus entidades externas.
+    #[test]
+    fn the_context_level_has_no_numbered_process() {
+        let document: crate::dataflow::DataflowInput = input(
+            r#"{ "version": 1, "kind": "dataflow", "level": 0,
+                 "nodes": [ { "id": "a", "role": "process", "number": "P1" } ],
+                 "edges": [] }"#,
+        );
+
+        let errors = DataflowKind
+            .validate(&document)
+            .expect_err("el contexto no numera");
+        assert_eq!(errors[0].path, "level");
+        assert_eq!(errors[0].code, ErrorCode::InvalidValue);
     }
 }
