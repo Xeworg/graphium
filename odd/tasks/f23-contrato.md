@@ -143,3 +143,19 @@ work (Ctrl+C source copy, clear-canvas banner, onboarding — §19 rows 1, 4, 6)
   already per node and per edge). One test of T2 moved with the change: the
   missing-required case is now the nested `nodes[0].id`, because `version` is no
   longer owed. Gates: fmt/clippy 0, 858 tests.
+
+- L8 (2026-11-10, close, T5): all five specs delivered and verified. Gates of
+  the feature: `cargo fmt --all -- --check` clean, `clippy --workspace
+  --all-targets` 0, **858 tests 0 failed**, goldens byte-identical
+  (`golden_svg` 4/4, `export_golden` 3/3 — no drawing changed, as expected:
+  the whole cut is contract, not paint), parity **73/73**, equivalence
+  **21/21** against a freshly built Vite bundle in this worktree. The only
+  pins that moved are contract pins, each one reviewed against its rule: the
+  schema `required` list (`version` left it) and the missing-field test of T2
+  (now the nested `nodes[0].id`). Out-of-scope items stayed out: no renames,
+  no `label_max_width`, no window work. Branch `feature/f23-contrato` on top
+  of staging `111c5bb`; push, PR and the merge to staging remain the owner's
+  decisions.
+
+f23-contrato is COMPLETE: T0-T5 (audit evidence, version truth, machine-usable
+error paths, teaching truth, cheap contract decisions, close).
