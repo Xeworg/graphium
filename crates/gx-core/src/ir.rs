@@ -52,13 +52,22 @@ pub enum Shape {
     /// The dot: a frozen-diameter circle whose label sits beside it, not
     /// inside (`f19-formas.md`, S8). The commit of a `gitgraph`.
     Circle,
+    /// The filled dot: the same frozen-diameter envelope as [`Shape::Circle`]
+    /// but drawn solid — the UML glyph of a state machine's `initial`
+    /// (`f22-dibujo.md`, S3).
+    Dot,
+    /// The dot inside a ring: the same frozen-diameter envelope, an unfilled
+    /// outer ring with a solid inner dot — the UML glyph of a state machine's
+    /// `final` (`f22-dibujo.md`, S3). The inner dot's radius is half the
+    /// outer one.
+    RingDot,
 }
 
 impl Shape {
     /// Every shape, in declaration order: the one list of the wire words
     /// (`f19-formas.md`, S3). A new shape enters here and the compiler walks
     /// the rest of the way.
-    pub const ALL: [Shape; 7] = [
+    pub const ALL: [Shape; 9] = [
         Shape::Box,
         Shape::Rounded,
         Shape::Cylinder,
@@ -66,6 +75,8 @@ impl Shape {
         Shape::Ellipse,
         Shape::Note,
         Shape::Circle,
+        Shape::Dot,
+        Shape::RingDot,
     ];
 
     /// The wire word of the shape: the one spelling every painter, the scene
@@ -79,6 +90,8 @@ impl Shape {
             Shape::Ellipse => "ellipse",
             Shape::Note => "note",
             Shape::Circle => "circle",
+            Shape::Dot => "dot",
+            Shape::RingDot => "ring_dot",
         }
     }
 }
@@ -137,6 +150,12 @@ pub struct IrRow {
     pub key: RowKey,
     /// Whether the row admits `NULL` (PRD §6.1, kind `er`).
     pub nullable: bool,
+    /// Whether a compartment rule draws above this row (`f22-dibujo.md`,
+    /// S7): the class kind marks the first method, so the attributes and the
+    /// methods read as the two compartments of UML. The header rule is the
+    /// first compartment's on its own, so a first row never divides.
+    #[serde(default)]
+    pub divider: bool,
 }
 
 impl IrRow {
@@ -146,6 +165,7 @@ impl IrRow {
             note: None,
             key: RowKey::None,
             nullable: false,
+            divider: false,
         }
     }
 }
@@ -161,6 +181,11 @@ pub struct IrNode {
     pub meta: BTreeMap<String, IrValue>,
     /// The detail rows of the node, drawn under its label.
     pub rows: Vec<IrRow>,
+    /// The stereotype word the kind gives the node's role, drawn above its
+    /// label («interface», «abstract») — `f22-dibujo.md`, S4. `None` draws
+    /// nothing: a plain node has no stereotype.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stereotype: Option<String>,
     /// Filled by the engine with the single `TextMetrics` implementation
     /// before the layout runs (PRD §8.4.1).
     pub size: Size,
@@ -176,6 +201,7 @@ impl IrNode {
             style: Style::Solid,
             meta: BTreeMap::new(),
             rows: Vec::new(),
+            stereotype: None,
             size: Size::default(),
         }
     }
@@ -202,6 +228,12 @@ pub struct IrEdge {
     pub to_row: Option<u32>,
     /// Cardinality drawn at the target end, when the kind has one.
     pub cardinality: Option<Cardinality>,
+    /// Kind-specific scalar data, the same channel [`IrNode`] and
+    /// [`IrEvent`] carry: ordered, never rendered directly (PRD §8.3). The
+    /// `sequence` kind marks its activating messages here (`f22-dibujo.md`,
+    /// S5, L7b).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub kind_data: BTreeMap<String, IrValue>,
 }
 
 /// How many rows of each side take part in a relation (PRD §6.1, kind `er`).
@@ -301,6 +333,7 @@ impl IrEdge {
             from_row: None,
             to_row: None,
             cardinality: None,
+            kind_data: BTreeMap::new(),
         }
     }
 }
@@ -344,6 +377,13 @@ pub struct IrEvent {
     pub lane: String,
     pub label: String,
     pub order: i64,
+    /// The shape the event's role gives it (`f22-dibujo.md`, S6): the kinds
+    /// resolve it with their role table (`shape_of`), and a kind without
+    /// roles leaves the default. `Rounded` is the event box of always.
+    #[serde(default = "crate::ir::default_event_shape")]
+    pub shape: Shape,
+    /// The time span of a `gantt` or a `timeline` bar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub span: Option<Span>,
     pub kind_data: BTreeMap<String, IrValue>,
     /// Task ids this event depends on (`gantt`, feature doc `f18-gantt.md`):
@@ -359,6 +399,28 @@ pub struct IrEvent {
 pub struct IrTimeline {
     pub lanes: Vec<IrLane>,
     pub events: Vec<IrEvent>,
+    /// The connectors of a swimlane (`f22-dibujo.md`, S8): the arrows between
+    /// steps, across lanes, with the ids resolved. Empty for every other
+    /// timeline kind — the gantt arrows are the `depends_on` of the events.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connections: Vec<IrConnection>,
+}
+
+/// A connector between two steps of a swimlane (`f22-dibujo.md`, S8): the
+/// arrow the lanes engine routes from the step that flows to the one that
+/// follows it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IrConnection {
+    /// Id of the step the arrow leaves from.
+    pub from: String,
+    /// Id of the step the arrow arrives at.
+    pub to: String,
+}
+
+/// The shape an event draws when its kind has no role for it: the rounded
+/// box of always (`f22-dibujo.md`, S6).
+fn default_event_shape() -> Shape {
+    Shape::Rounded
 }
 
 /// The two IRs of Graphium.
@@ -596,6 +658,7 @@ mod tests {
         let timeline = Ir::Timeline(IrTimeline {
             lanes: Vec::new(),
             events: Vec::new(),
+            connections: Vec::new(),
         });
         let timeline_error = timeline
             .extracted("a", 1)

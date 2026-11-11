@@ -222,6 +222,14 @@
   fill: none;
 }
 
+/* La activación de una secuencia (`f22-dibujo.md`, S5): el rectángulo fino
+ * sobre la línea de vida mientras el actor tiene el control. */
+.graphium .activation {
+  fill: var(--node-fill);
+  stroke: var(--node-stroke);
+  stroke-width: 1px;
+}
+
 /* El contenedor de un grupo (un *boundary* de un diagrama de componentes): el
  * recuadro punteado que dice qué piezas forman el mismo sistema, y su nombre
  * arriba a la izquierda. */
@@ -328,6 +336,41 @@
 
 .graphium .row-nullable {
   opacity: 0.75;
+}
+
+/* The UML role glyphs (`f22-dibujo.md`, S3): the initial state is a solid
+ * dot, the final one a dot inside a ring. These rules go after `.node-fill`
+ * so the glyph wins the fill, and the ring stays hollow. */
+.graphium .shape-dot {
+  fill: var(--node-text);
+  stroke: none;
+}
+
+.graphium .shape-ring_dot {
+  fill: none;
+}
+
+.graphium .ring-dot-core {
+  fill: var(--node-text);
+  stroke: none;
+}
+
+/* The stereotype of a class role (`f22-dibujo.md`, S4): the word the role
+ * names, above the node name at 0.85×. */
+.graphium .node-stereotype {
+  fill: var(--edge-text);
+}
+
+/* The time axis (`f22-dibujo.md`, S2): the line under the lanes and the
+ * value each known column names. */
+.graphium .axis-line {
+  stroke: var(--edge-stroke);
+  stroke-width: 1px;
+  fill: none;
+}
+
+.graphium .axis-value {
+  fill: var(--edge-text);
 }
 
 .graphium .cardinality {

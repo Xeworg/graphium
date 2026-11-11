@@ -473,6 +473,8 @@ fn shape_in_words(shape: gx_core::ir::Shape) -> &'static str {
         gx_core::ir::Shape::Ellipse => "elipse",
         gx_core::ir::Shape::Note => "nota",
         gx_core::ir::Shape::Circle => "círculo",
+        gx_core::ir::Shape::Dot => "punto lleno",
+        gx_core::ir::Shape::RingDot => "punto dentro de un anillo",
     }
 }
 

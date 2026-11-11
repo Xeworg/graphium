@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="-12.00 -12.00 504.00 554.00" width="504.00" height="554.00">
+<style>
+.bg{fill:rgba(27, 27, 27, 1.00)}
+.node-fill{fill:rgba(42, 42, 48, 1.00)}
+.node-stroke{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.node-text{fill:rgba(233, 233, 236, 1.00)}
+.edge-stroke{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.edge-text{fill:rgba(185, 185, 194, 1.00)}
+.accent{fill:rgba(110, 168, 254, 1.00);stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight{stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight-text{fill:rgba(110, 168, 254, 1.00)}
+.emphasis-muted{opacity:0.55}
+.group-box{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.12;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:8.00 5.00}
+.group-label{fill:rgba(185, 185, 194, 1.00)}
+.lane-band{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.35;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.lane-label{fill:rgba(185, 185, 194, 1.00)}
+.lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
+.activation{fill:rgba(42, 42, 48, 1.00);stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.stroke-dashed{stroke-dasharray:6.00 4.00}
+.text{font-family:Inter, sans-serif}
+.cardinality{fill:none;stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00}
+.arrow-normal{fill:rgba(138, 138, 150, 1.00)}
+.arrow-highlight{fill:rgba(110, 168, 254, 1.00)}
+.arrow-muted{fill:rgba(138, 138, 150, 1.00);opacity:0.55}
+.row-badge{fill:rgba(185, 185, 194, 1.00)}
+.row-note{fill:rgba(185, 185, 194, 1.00)}
+.row-key{font-weight:600}
+.row-nullable{opacity:0.75}
+.shape-dot{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.shape-ring_dot{fill:none}
+.ring-dot-core{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.node-stereotype{fill:rgba(185, 185, 194, 1.00)}
+.axis-line{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.axis-value{fill:rgba(185, 185, 194, 1.00)}
+</style>
+<defs>
+<marker id="arrow-normal" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
+<path class="arrow-normal" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00 Z"/>
+</marker>
+</defs>
+<g class="layer-groups">
+</g>
+<g class="layer-lifelines">
+<line class="lifeline" x1="205.00" y1="64.75" x2="205.00" y2="542.00"/>
+<line class="lifeline" x1="45.00" y1="64.75" x2="45.00" y2="542.00"/>
+<line class="lifeline" x1="365.00" y1="64.75" x2="365.00" y2="542.00"/>
+<rect class="activation" x="200.00" y="138.50" width="10.00" height="153.00"/>
+<rect class="activation" x="360.00" y="228.50" width="10.00" height="153.00"/>
+</g>
+<g class="layer-edges">
+<polyline id="m-api-cliente" class="edge-stroke stroke-dashed" points="205.00,440.00 45.00,440.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="125.00" y="422.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">201</text>
+<polyline id="m-api-db" class="edge-stroke" points="205.00,260.00 365.00,260.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="285.00" y="242.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">INSERT</text>
+<polyline id="m-cliente-api" class="edge-stroke" points="45.00,170.00 205.00,170.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="125.00" y="152.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">POST /orders</text>
+<polyline id="m-db-api" class="edge-stroke stroke-dashed" points="365.00,350.00 205.00,350.00" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="285.00" y="332.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">ok</text>
+</g>
+<g class="layer-nodes">
+<rect id="g-api" class="node-fill node-stroke shape-rounded" x="160.00" y="15.25" width="90.00" height="49.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="205.00" y="40.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">API</text>
+<rect id="g-cliente" class="node-fill node-stroke shape-rounded" x="0.00" y="15.25" width="90.00" height="49.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="45.00" y="40.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">Cliente</text>
+<rect id="g-db" class="node-fill node-stroke shape-rounded" x="320.00" y="15.25" width="90.00" height="49.50" rx="6.00" ry="6.00"/>
+<text class="node-text text" x="365.00" y="40.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">Base</text>
+</g>
+</svg>

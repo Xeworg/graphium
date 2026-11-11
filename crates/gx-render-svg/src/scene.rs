@@ -17,14 +17,17 @@
 use std::collections::BTreeMap;
 
 use gx_core::{
-    Ir, IrEdge, IrEvent, IrGraph, IrNode, IrTimeline, LayoutEdge, LayoutGraph, LayoutGroup,
-    NodeBox, Palette, Rect, Scene, SceneBand, SceneEdge, SceneEvent, SceneNode, ScenePalette,
-    SceneTokens, TOKENS,
+    Ir, IrEdge, IrEvent, IrGraph, IrNode, IrTimeline, LayoutAxis, LayoutEdge, LayoutGraph,
+    LayoutGroup, NodeBox, Palette, Rect, Scene, SceneActivation, SceneAxis, SceneBand, SceneEdge,
+    SceneEvent, SceneNode, ScenePalette, SceneTokens, TOKENS,
 };
 
+use gx_core::layout::LayoutActivation;
+
 use crate::geometry::{
-    self, canvas_rect, cluster_id, edge_id, lane_id, node_id, node_rect, ARROW_LENGTH, BADGE_WIDTH,
-    CROW_FOOT, CROW_FOOT_SPREAD, DASH_PATTERN, GROUP_DASH, LIFELINE_DASH, MUTED_OPACITY,
+    self, canvas_rect, cluster_id, edge_id, lane_id, node_id, node_rect, ACTIVATION_WIDTH,
+    ARROW_LENGTH, BADGE_WIDTH, CROW_FOOT, CROW_FOOT_SPREAD, DASH_PATTERN, GROUP_DASH,
+    LIFELINE_DASH, MUTED_OPACITY,
 };
 
 /// The drawing plan both emitters walk (`f11-elementos.md`, T1).
@@ -48,6 +51,11 @@ pub(crate) struct Drawing<'a> {
     pub(crate) clusters: Vec<&'a LayoutGroup>,
     /// The lane bands of a timeline, in id order.
     pub(crate) lanes: Vec<&'a LayoutGroup>,
+    /// The time axis of a timeline (`f22-dibujo.md`, S2).
+    pub(crate) axis: Option<LayoutAxis>,
+    /// The activation bars of a sequence (`f22-dibujo.md`, S5), in the order
+    /// the layout computed them.
+    pub(crate) activations: Vec<LayoutActivation>,
 }
 
 /// The dependency arrows of a timeline (`f18-gantt.md`, S7): one edge per
@@ -96,6 +104,30 @@ fn timeline_dependency_edges(
     edges
 }
 
+/// The connector arrows of a swimlane (`f22-dibujo.md`, S8): one edge per
+/// connection whose both ends the layout placed, in connection order — the
+/// same filter the layout applies, so the routes pair one to one. The arrow
+/// is a plain one: a connector says nothing but "this flows to that".
+fn connector_edges(timeline: &IrTimeline, layout: &LayoutGraph) -> Vec<(IrEdge, LayoutEdge)> {
+    let mut routes = layout.edges.iter();
+    timeline
+        .connections
+        .iter()
+        .filter(|connection| {
+            layout.nodes.contains_key(&connection.from) && layout.nodes.contains_key(&connection.to)
+        })
+        .map(|connection| {
+            let route = routes
+                .next()
+                .expect("the layout routed every placed connection");
+            (
+                IrEdge::new(connection.from.clone(), connection.to.clone()),
+                route.clone(),
+            )
+        })
+        .collect()
+}
+
 impl<'a> Drawing<'a> {
     /// Reads the plan of a render.
     pub(crate) fn of(ir: &'a Ir, layout: &'a LayoutGraph) -> Self {
@@ -120,10 +152,16 @@ impl<'a> Drawing<'a> {
                 .into_iter()
                 .map(|(edge, route)| (edge.clone(), route.clone()))
                 .collect(),
-            // A timeline draws only the arrows its tasks declare: one
-            // dependency arrow per `depends_on` entry (`f18-gantt.md`,
-            // S7), tasks in id order, dependencies in declared order.
-            None => timeline_dependency_edges(timeline.expect("graph or timeline"), layout),
+            // A timeline draws the arrows its tasks declare: one dependency
+            // arrow per `depends_on` entry (`f18-gantt.md`, S7), tasks in id
+            // order, dependencies in declared order — plus the connectors of
+            // a swimlane (S8), whose routes the layout computed.
+            None => {
+                let timeline = timeline.expect("graph or timeline");
+                let mut edges = timeline_dependency_edges(timeline, layout);
+                edges.extend(connector_edges(timeline, layout));
+                edges
+            }
         };
         // The label points the canvas has to contain (`f21-roto.md`, S3):
         // every routed edge that carries a label, at the point the layout
@@ -151,6 +189,8 @@ impl<'a> Drawing<'a> {
                 Some(_) => geometry::ordered_groups(layout),
                 None => Vec::new(),
             },
+            axis: layout.axis.clone(),
+            activations: layout.activations.clone(),
         }
     }
 
@@ -207,6 +247,7 @@ impl<'a> Drawing<'a> {
                             geometry::LabelPlacement::Beside { at } => Some(at),
                         },
                         rows: node.rows.clone(),
+                        stereotype: node.stereotype.clone(),
                         meta: node.meta.clone(),
                     }
                 })
@@ -262,6 +303,7 @@ impl<'a> Drawing<'a> {
                     lane: event.lane.clone(),
                     label: event.label.clone(),
                     order: event.order,
+                    shape: event.shape,
                     span: event.span,
                     center: placed.center,
                     size: placed.size,
@@ -269,6 +311,27 @@ impl<'a> Drawing<'a> {
                     // `event_bar` decides is the one the exported markup draws
                     // (S5, T4/D).
                     bar: geometry::event_bar(&geometry::node_rect(placed), event.span),
+                })
+                .collect(),
+            // The axis travels verbatim (`f22-dibujo.md`, L5): the layout
+            // computed it, the scene carries the numbers, the painter spells
+            // them — no path ships in the payload (S5).
+            axis: self.axis.as_ref().map(|axis| SceneAxis {
+                y: axis.y,
+                x1: axis.x1,
+                x2: axis.x2,
+                ticks: axis.ticks.clone(),
+            }),
+            // The bars travel verbatim (`f22-dibujo.md`, L7): the layout
+            // computed them, the scene carries the numbers, the width is a
+            // token.
+            activations: self
+                .activations
+                .iter()
+                .map(|bar| SceneActivation {
+                    x: bar.x,
+                    y1: bar.y1,
+                    y2: bar.y2,
                 })
                 .collect(),
         }
@@ -321,6 +384,7 @@ pub fn scene_tokens() -> SceneTokens {
         dash_pattern: [DASH_PATTERN.0, DASH_PATTERN.1],
         group_dash: [GROUP_DASH.0, GROUP_DASH.1],
         circle_diameter: TOKENS.circle_diameter,
+        activation_width: ACTIVATION_WIDTH,
     }
 }
 

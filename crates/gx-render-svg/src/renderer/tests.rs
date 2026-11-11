@@ -535,6 +535,7 @@ fn only_the_rows_with_a_key_draw_a_badge() {
 #[test]
 fn an_event_is_drawn_as_the_same_rounded_box_as_a_node() {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: vec![gx_core::IrLane {
             id: "q1".to_string(),
             label: Some("Q1".to_string()),
@@ -542,6 +543,8 @@ fn an_event_is_drawn_as_the_same_rounded_box_as_a_node() {
         events: vec![event("event-0", "q1", "spike")],
     });
     let layout = LayoutGraph {
+        activations: Vec::new(),
+        axis: None,
         nodes: [(
             "event-0".to_string(),
             NodeBox {
@@ -596,6 +599,7 @@ fn the_root_uses_plan_units_and_the_document_has_no_trailing_whitespace() {
 #[test]
 fn a_timeline_ir_still_renders_a_valid_canvas() {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: Vec::new(),
         events: Vec::new(),
     });
@@ -624,6 +628,8 @@ fn a_graph_draws_each_group_as_a_container_with_its_name() {
         }],
     });
     let layout = LayoutGraph {
+        activations: Vec::new(),
+        axis: None,
         nodes: [
             (
                 "api".to_string(),
@@ -717,6 +723,8 @@ fn nested_groups_draw_the_outer_box_first_and_indent_the_inner_name() {
         ],
     });
     let layout = LayoutGraph {
+        activations: Vec::new(),
+        axis: None,
         nodes: [(
             "api".to_string(),
             NodeBox {
@@ -779,6 +787,7 @@ fn nested_groups_draw_the_outer_box_first_and_indent_the_inner_name() {
 #[test]
 fn a_timeline_draws_each_lane_as_a_band_with_its_name() {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: vec![
             gx_core::IrLane {
                 id: "q1".to_string(),
@@ -792,6 +801,8 @@ fn a_timeline_draws_each_lane_as_a_band_with_its_name() {
         events: vec![event("event-0", "q1", "spike")],
     });
     let layout = LayoutGraph {
+        activations: Vec::new(),
+        axis: None,
         nodes: [(
             "event-0".to_string(),
             NodeBox {
@@ -846,6 +857,7 @@ fn a_timeline_draws_each_lane_as_a_band_with_its_name() {
 #[test]
 fn the_timeline_is_written_in_id_order_with_the_bands_underneath() {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: vec![
             gx_core::IrLane {
                 id: "b".to_string(),
@@ -859,6 +871,8 @@ fn the_timeline_is_written_in_id_order_with_the_bands_underneath() {
         events: vec![event("event-1", "b", "uno"), event("event-0", "a", "dos")],
     });
     let layout = LayoutGraph {
+        activations: Vec::new(),
+        axis: None,
         nodes: [
             (
                 "event-1".to_string(),
@@ -905,6 +919,7 @@ fn the_timeline_is_written_in_id_order_with_the_bands_underneath() {
 /// Un evento de un timeline.
 fn event(id: &str, lane: &str, label: &str) -> gx_core::IrEvent {
     gx_core::IrEvent {
+        shape: Shape::Rounded,
         id: id.to_string(),
         lane: lane.to_string(),
         label: label.to_string(),
@@ -928,6 +943,7 @@ fn spanned(id: &str, lane: &str, label: &str, start: f64, end: f64) -> gx_core::
 /// documento con el que se prueban las dos emisoras de la barra.
 fn bar_timeline() -> (Ir, LayoutGraph) {
     let ir = Ir::Timeline(IrTimeline {
+        connections: Vec::new(),
         lanes: vec![gx_core::IrLane {
             id: "q1".to_string(),
             label: Some("Q1".to_string()),
@@ -938,6 +954,8 @@ fn bar_timeline() -> (Ir, LayoutGraph) {
         ],
     });
     let layout = LayoutGraph {
+        activations: Vec::new(),
+        axis: None,
         nodes: [
             (
                 "point".to_string(),
@@ -1080,6 +1098,8 @@ fn the_crow_foot_opens_towards_the_table() {
     });
 
     let layout = LayoutGraph {
+        activations: Vec::new(),
+        axis: None,
         nodes: [
             (
                 "users".to_string(),
@@ -1293,5 +1313,140 @@ fn the_style_block_styles_the_cardinality_marks() {
     assert!(
         render_fixture().contains(".cardinality{fill:none;stroke:"),
         "the export's style block must style the cardinality marks"
+    );
+}
+
+/// S5 (`f22-dibujo.md`): the activation of a sequence is a thin rectangle on
+/// the lifeline of the actor that holds the control — inside the lifelines
+/// layer, after the lines and under the arrows. A sequence without
+/// activations paints none, and a layered graph never does.
+#[test]
+fn an_activation_is_a_rect_on_the_lifeline_of_its_actor() {
+    use gx_core::ir::LayoutHint;
+
+    let mut sequence = crate::test_support::graph(
+        vec![
+            crate::test_support::node("cliente", "Cliente"),
+            crate::test_support::node("api", "API"),
+        ],
+        vec![crate::test_support::labeled_edge(
+            "cliente",
+            "api",
+            "POST /orders",
+        )],
+    );
+    if let gx_core::ir::Ir::Graph(graph) = &mut sequence {
+        graph.layout_hint = LayoutHint::Lanes;
+    }
+    let mut layout = crate::test_support::layout(
+        &[
+            (
+                "cliente",
+                gx_core::geom::Point::new(60.0, 30.0),
+                gx_core::geom::Size::new(90.0, 40.0),
+            ),
+            (
+                "api",
+                gx_core::geom::Point::new(240.0, 30.0),
+                gx_core::geom::Size::new(90.0, 40.0),
+            ),
+        ],
+        vec![crate::test_support::routed(
+            "cliente",
+            "api",
+            &[(60.0, 120.0), (240.0, 120.0)],
+            Some((150.0, 100.0)),
+        )],
+        gx_core::geom::Rect::new(0.0, 0.0, 300.0, 220.0),
+    );
+    layout.activations = vec![gx_core::LayoutActivation {
+        x: 240.0,
+        y1: 80.0,
+        y2: 160.0,
+    }];
+
+    let svg = render(&sequence, &layout, &Palette::plano());
+
+    // The bar sits centered on the actor's lifeline: x is the left edge of
+    // the tokens' width, y is the layout's.
+    assert!(
+        svg.contains("<rect class=\"activation\" x=\"235.00\" y=\"80.00\" width=\"10.00\" height=\"80.00\"/>"),
+        "la barra vive sobre la línea de vida: {svg}"
+    );
+    assert!(
+        svg.contains(".activation{"),
+        "la regla del tema viaja en el SVG"
+    );
+    // The bar belongs to the lifelines layer, before the edges: the arrow
+    // the edge layer paints later rides over it.
+    let lifelines = svg
+        .split("<g class=\"layer-lifelines\">")
+        .nth(1)
+        .and_then(|rest| rest.split("</g>").next())
+        .unwrap_or_default();
+    assert!(
+        lifelines.contains("class=\"activation\""),
+        "la barra es de la capa de líneas de vida: {lifelines}"
+    );
+
+    // Without an activation nothing is painted, and the rule still ships:
+    // the stylesheet is the drawing's, not one element's.
+    layout.activations.clear();
+    let svg = render(&sequence, &layout, &Palette::plano());
+    assert!(
+        !svg.contains("class=\"activation\""),
+        "nadie pidió control: {svg}"
+    );
+    assert!(
+        svg.contains(".activation{"),
+        "la regla del tema viaja igual"
+    );
+}
+
+/// S7 (`f22-dibujo.md`): the compartment rule — a row that divides draws the
+/// line its compartment starts with, full width, on the row's top edge. The
+/// header rule is drawn once either way: a table without dividers has
+/// exactly one rule.
+#[test]
+fn a_divider_row_draws_the_compartment_rule() {
+    let mut node = fixture::shaped("pedido", "Pedido", Shape::Box);
+    let first = IrRow::new("id: uuid");
+    let mut second = IrRow::new("cobrar()");
+    second.divider = true;
+    node.rows = vec![first, second];
+    let ir = fixture::graph(vec![node], Vec::new());
+    let layout = fixture::layout(
+        &[("pedido", Point::new(100.0, 60.0), Size::new(200.0, 110.0))],
+        Vec::new(),
+        Rect::new(0.0, 0.0, 200.0, 120.0),
+    );
+
+    let svg = render(&ir, &layout, &Palette::plano());
+
+    // Two rules: the header's and the compartment's. The compartment rule
+    // sits on the top edge of the dividing row: rule_y + line * 1.
+    let line_h = TOKENS.text_size * TOKENS.line_height;
+    let header_rule_y = 60.0 - 110.0 / 2.0 + TOKENS.node_padding + line_h;
+    let divider_y = header_rule_y + line_h;
+    assert_eq!(
+        svg.matches("<line class=\"node-stroke\"").count(),
+        2,
+        "la regla del encabezado y la del compartimento: {svg}"
+    );
+    assert!(
+        svg.contains(&format!("y1=\"{}\"", fmt_num(divider_y))),
+        "la regla vive en el borde superior de la fila: {svg}"
+    );
+
+    // Without a divider the table keeps its one rule: the existing behavior
+    // of every er table is untouched.
+    let mut node = fixture::shaped("pedido", "Pedido", Shape::Box);
+    node.rows = vec![IrRow::new("person"), IrRow::new("hace el pedido")];
+    let ir = fixture::graph(vec![node], Vec::new());
+    let svg = render(&ir, &layout, &Palette::plano());
+    assert_eq!(
+        svg.matches("<line class=\"node-stroke\"").count(),
+        1,
+        "sin divisores la tabla tiene su única regla: {svg}"
     );
 }

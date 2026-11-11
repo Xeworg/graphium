@@ -3,7 +3,7 @@
     "x": -12.0,
     "y": -12.0,
     "w": 854.0,
-    "h": 244.0
+    "h": 277.5
   },
   "tokens": {
     "text_size": 14.0,
@@ -30,7 +30,8 @@
       8.0,
       5.0
     ],
-    "circle_diameter": 24.0
+    "circle_diameter": 24.0,
+    "activation_width": 10.0
   },
   "direction": null,
   "layout_hint": null,
@@ -89,6 +90,7 @@
       "lane": "q1",
       "label": "spike F0",
       "order": 0,
+      "shape": "rounded",
       "center": {
         "x": 209.0,
         "y": 55.0
@@ -103,6 +105,7 @@
       "lane": "q1",
       "label": "MVP",
       "order": 1,
+      "shape": "rounded",
       "span": {
         "start": 1.0,
         "end": 2.0
@@ -127,6 +130,7 @@
       "lane": "q2",
       "label": "los 10 kinds",
       "order": 2,
+      "shape": "rounded",
       "center": {
         "x": 573.0,
         "y": 165.0
@@ -141,6 +145,7 @@
       "lane": "q2",
       "label": "export",
       "order": 3,
+      "shape": "rounded",
       "span": {
         "start": 3.0,
         "end": 4.0
@@ -160,5 +165,28 @@
         "h": 5.0
       }
     }
-  ]
+  ],
+  "axis": {
+    "y": 236.0,
+    "x1": 225.0,
+    "x2": 771.0,
+    "ticks": [
+      [
+        225.0,
+        0
+      ],
+      [
+        407.0,
+        1
+      ],
+      [
+        589.0,
+        2
+      ],
+      [
+        771.0,
+        3
+      ]
+    ]
+  }
 }

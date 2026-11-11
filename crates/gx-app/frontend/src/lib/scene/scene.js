@@ -35,11 +35,21 @@
 // empty route), so the painter draws exactly the edges the export would.
 
 /** The shapes of `gx-core/src/ir.rs`. */
-const SHAPES = ["box", "rounded", "cylinder", "diamond", "ellipse", "note", "circle"];
+const SHAPES = [
+  "box",
+  "rounded",
+  "cylinder",
+  "diamond",
+  "ellipse",
+  "note",
+  "circle",
+  "dot",
+  "ring_dot",
+];
 
 /** The shape of a node, or the loud end of the run: a shape the painter does
  * not know never paints as a plausible box (`f19-formas.md`, S5). */
-function shapeOf(shape) {
+export function shapeOf(shape) {
   if (!SHAPES.includes(shape)) {
     throw new Error(`the scene names a shape the painter does not know: ${shape}`);
   }
@@ -69,6 +79,7 @@ const NUMBER_TOKENS = [
   "badge_width",
   "muted_opacity",
   "circle_diameter",
+  "activation_width",
 ];
 /** The tokens that are a dash pattern of two numbers. */
 const DASH_TOKENS = ["lifeline_dash", "dash_pattern", "group_dash"];
@@ -170,6 +181,7 @@ function rowsOf(raw) {
       note: isText(row.note) ? row.note : null,
       key: ROW_KEYS.includes(row.key) ? row.key : "none",
       nullable: row.nullable === true,
+      divider: row.divider === true,
     });
   }
   return rows;
@@ -206,6 +218,17 @@ function nodeOf(raw) {
               throw new Error(`the scene names a malformed label_at: ${JSON.stringify(raw.label_at)}`);
             })(),
     rows,
+    // The stereotype word the role names (`f22-dibujo.md`, S4): it travels
+    // verbatim or it does not travel; a wrong one is a loud end, like a
+    // malformed label_at.
+    stereotype:
+      raw.stereotype === undefined || raw.stereotype === null
+        ? null
+        : typeof raw.stereotype === "string" && raw.stereotype !== ""
+          ? raw.stereotype
+          : (() => {
+              throw new Error(`the scene names a malformed stereotype: ${JSON.stringify(raw.stereotype)}`);
+            })(),
     meta: isRecord(raw.meta) ? raw.meta : {},
   };
 }
@@ -355,6 +378,11 @@ function eventOf(raw) {
     lane: raw.lane,
     label: raw.label,
     order: isNumber(raw.order) ? raw.order : 0,
+    // The shape the event's role gives it (`f22-dibujo.md`, S6): the same
+    // validator the nodes go through, and the same fallback? No: the events
+    // never fall back to a plausible box (f19 S5) — a shape the painter does
+    // not know is a loud end.
+    shape: shapeOf(raw.shape ?? "rounded"),
     span: spanOf(raw.span),
     center,
     size: measured,
@@ -422,6 +450,55 @@ export function sceneFromElements(raw) {
     edges,
     bands,
     events,
+    // The time axis of a timeline (`f22-dibujo.md`, S2): the numbers travel
+    // verbatim; a malformed one is a loud end, like a malformed label_at.
+    axis: axisOf(raw.axis),
+    // The activation bars of a sequence (`f22-dibujo.md`, S5): absent on
+    // payloads that carry none, a loud end when one is malformed.
+    activations: activationsOf(raw.activations),
+  };
+}
+
+/** The activation bars of a sequence, or `[]` when there are none. */
+function activationsOf(raw) {
+  if (raw === undefined || raw === null) {
+    return [];
+  }
+  if (!Array.isArray(raw)) {
+    throw new Error(`the scene names malformed activations: ${JSON.stringify(raw)}`);
+  }
+  return raw.map((bar) => {
+    if (!isRecord(bar) || !isNumber(bar.x) || !isNumber(bar.y1) || !isNumber(bar.y2)) {
+      throw new Error(`the scene names a malformed activation: ${JSON.stringify(bar)}`);
+    }
+    return { x: bar.x, y1: bar.y1, y2: bar.y2 };
+  });
+}
+
+/** The axis of a timeline scene, or `null` when there is none. */
+function axisOf(raw) {
+  if (raw === undefined || raw === null) {
+    return null;
+  }
+  if (
+    !isRecord(raw) ||
+    !isNumber(raw.y) ||
+    !isNumber(raw.x1) ||
+    !isNumber(raw.x2) ||
+    !Array.isArray(raw.ticks)
+  ) {
+    throw new Error(`the scene names a malformed axis: ${JSON.stringify(raw)}`);
+  }
+  return {
+    y: raw.y,
+    x1: raw.x1,
+    x2: raw.x2,
+    ticks: raw.ticks.map((tick) => {
+      if (!Array.isArray(tick) || tick.length !== 2 || !isNumber(tick[0]) || !Number.isInteger(tick[1])) {
+        throw new Error(`the scene names a malformed axis tick: ${JSON.stringify(tick)}`);
+      }
+      return [tick[0], tick[1]];
+    }),
   };
 }
 

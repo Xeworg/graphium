@@ -22,6 +22,12 @@ use gx_core::{
 
 /// Length of the arrowhead, in plan units (`markerUnits="userSpaceOnUse"`).
 pub(crate) const ARROW_LENGTH: f64 = 10.0;
+
+/// The width of an activation bar of a sequence (`f22-dibujo.md`, S5): the
+/// thin rectangle over the lifeline. It travels in the tokens
+/// (`SceneTokens.activation_width`) so the painter twin spells the same
+/// number.
+pub(crate) const ACTIVATION_WIDTH: f64 = 10.0;
 /// Opacity of a muted node or edge.
 pub(crate) const MUTED_OPACITY: f64 = 0.55;
 /// Dash pattern of a lifeline, in plan units: shorter than the one of an
@@ -106,7 +112,10 @@ pub(crate) fn dependency_route(from: &Rect, to: &Rect) -> Vec<Point> {
 /// edge, so the arrows that arrive do land on it.
 pub(crate) fn glyph_rect(shape: Shape, rect: &Rect) -> Rect {
     match shape {
-        Shape::Circle => {
+        // The dot family shares the envelope of the circle: frozen diameter,
+        // at the left edge of the box, so the arrows land on it (`f19-formas.md`,
+        // S8; `f22-dibujo.md`, L4).
+        Shape::Circle | Shape::Dot | Shape::RingDot => {
             let d = TOKENS.circle_diameter;
             Rect::new(
                 rect.x + TOKENS.node_padding,
@@ -131,7 +140,7 @@ pub(crate) enum LabelPlacement {
 
 pub(crate) fn label_placement(shape: Shape, rect: &Rect) -> LabelPlacement {
     match shape {
-        Shape::Circle => {
+        Shape::Circle | Shape::Dot | Shape::RingDot => {
             let glyph = glyph_rect(shape, rect);
             LabelPlacement::Beside {
                 at: Point::new(glyph.max_x() + TOKENS.node_padding / 2.0, rect.center().y),

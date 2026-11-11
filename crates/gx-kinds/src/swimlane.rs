@@ -8,7 +8,7 @@
 //! áreas no es un swimlane.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Ir, IrEvent, IrLane, IrTimeline, LayoutHint};
+use gx_core::ir::{Ir, IrConnection, IrEvent, IrLane, IrTimeline, LayoutHint, Shape};
 use gx_core::kind::{DiagramKind, KindLimits};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -32,6 +32,11 @@ pub struct Step {
     /// Column of the step. Defaults to its position in the array.
     #[serde(default)]
     pub order: Option<i64>,
+    /// The steps this one flows to (`f22-dibujo.md`, S8): the ids may be the
+    /// declared ones or the resolved defaults (`step-N`). Opt-in: a step
+    /// without connectors is the step of always.
+    #[serde(default)]
+    pub connects: Vec<String>,
 }
 
 /// The JSON contract of the `swimlane` kind.
@@ -97,6 +102,7 @@ impl DiagramKind for SwimlaneKind {
         }
 
         let mut ids = SeenIds::new();
+        let mut resolved: Vec<String> = Vec::new();
         for (index, step) in input.steps.iter().enumerate() {
             if step.label.trim().is_empty() {
                 errors.push(ValidationError::new(
@@ -117,6 +123,34 @@ impl DiagramKind for SwimlaneKind {
             if ids.insert(&id) {
                 errors.push(duplicate_event(&format!("steps[{index}].id"), &id));
             }
+            resolved.push(id);
+        }
+
+        // The connectors (S8): every target has to name a step of the
+        // process — declared id or resolved default — and no step connects
+        // to itself: a loop of one is not a flow.
+        for (index, step) in input.steps.iter().enumerate() {
+            let id = &resolved[index];
+            for (target_index, target) in step.connects.iter().enumerate() {
+                if !resolved.iter().any(|known| known == target) {
+                    errors.push(ValidationError::new(
+                        format!("steps[{index}].connects[{target_index}]"),
+                        ErrorCode::UnknownRef,
+                        format!("paso desconocido: `{target}`"),
+                        Some(format!(
+                            "conectá a uno de los pasos declarados: {}",
+                            resolved.join(", ")
+                        )),
+                    ));
+                } else if target == id {
+                    errors.push(ValidationError::new(
+                        format!("steps[{index}].connects[{target_index}]"),
+                        ErrorCode::InvalidValue,
+                        "un paso no se conecta a sí mismo",
+                        Some("el paso ya sigue al que le sigue: quitá la autoconexión".to_string()),
+                    ));
+                }
+            }
         }
 
         if errors.is_empty() {
@@ -128,12 +162,19 @@ impl DiagramKind for SwimlaneKind {
 
     fn to_ir(&self, input: &Self::Input) -> Ir {
         let lanes: Vec<IrLane> = input.lanes.iter().map(Lane::to_ir).collect();
+        let resolved: Vec<String> = input
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(index, step)| event_id(&step.id, "step-", index))
+            .collect();
         let events: Vec<IrEvent> = input
             .steps
             .iter()
             .enumerate()
             .map(|(index, step)| IrEvent {
-                id: event_id(&step.id, "step-", index),
+                shape: Shape::Rounded,
+                id: resolved[index].clone(),
                 lane: step.lane.clone(),
                 label: step.label.clone(),
                 order: step.order.unwrap_or(index as i64),
@@ -145,7 +186,26 @@ impl DiagramKind for SwimlaneKind {
             })
             .collect();
 
-        Ir::Timeline(IrTimeline { lanes, events })
+        // The connectors ride the timeline (S8): one per declared target, in
+        // the order of the document, with the ids resolved.
+        let connections: Vec<IrConnection> = input
+            .steps
+            .iter()
+            .enumerate()
+            .flat_map(|(index, step)| {
+                let from = resolved[index].clone();
+                step.connects.iter().map(move |target| IrConnection {
+                    from: from.clone(),
+                    to: target.clone(),
+                })
+            })
+            .collect();
+
+        Ir::Timeline(IrTimeline {
+            lanes,
+            events,
+            connections,
+        })
     }
 
     /// El carril es la fila y el orden de los pasos es el orden del proceso:
@@ -294,5 +354,83 @@ mod tests {
 
         assert_eq!(errors[0].code, ErrorCode::MissingField);
         assert_eq!(errors[0].path, "steps");
+    }
+
+    #[test]
+    fn a_step_connects_to_the_steps_that_follow_it() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "swimlane",
+                 "lanes": [ { "id": "soporte" }, { "id": "negocio" } ],
+                 "steps": [
+                   { "id": "abre", "label": "abre el ticket", "lane": "soporte", "connects": ["step-1"] },
+                   { "label": "escala", "lane": "negocio" },
+                   { "label": "cierra", "lane": "soporte", "connects": ["abre"] }
+                 ] }"#,
+        );
+
+        // S8 (`f22-dibujo.md`): the connectors are opt-in and additive — a
+        // step that declares them validates, and the target may be a declared
+        // id or the resolved default (`step-1`).
+        SwimlaneKind
+            .validate(&parsed)
+            .expect("los conectores son parte del contrato");
+
+        let Ir::Timeline(timeline) = SwimlaneKind.to_ir(&parsed) else {
+            panic!("un swimlane es una timeline");
+        };
+        // The connections travel on the timeline, with the ids resolved.
+        assert_eq!(timeline.connections.len(), 2);
+        assert_eq!(timeline.connections[0].from, "abre");
+        assert_eq!(timeline.connections[0].to, "step-1");
+        assert_eq!(timeline.connections[1].from, "step-2");
+        assert_eq!(timeline.connections[1].to, "abre");
+
+        // The schema publishes the field, so the schema is the contract.
+        let schema = SwimlaneKind::schema().to_value().to_string();
+        assert!(schema.contains("connects"), "el esquema no nombra connects");
+    }
+
+    #[test]
+    fn a_connector_to_an_unknown_step_is_reported() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "swimlane",
+                 "lanes": [ { "id": "soporte" } ],
+                 "steps": [
+                   { "label": "abre", "lane": "soporte", "connects": ["fantasma"] }
+                 ] }"#,
+        );
+
+        let errors = SwimlaneKind
+            .validate(&parsed)
+            .expect_err("el destino del conector no existe");
+
+        assert_eq!(errors[0].code, ErrorCode::UnknownRef);
+        assert_eq!(errors[0].path, "steps[0].connects[0]");
+        let hint = errors[0]
+            .hint
+            .clone()
+            .expect("el error dice a quién se puede conectar");
+        assert!(
+            hint.contains("step-0"),
+            "el hint nombra los ids resueltos: {hint}"
+        );
+    }
+
+    #[test]
+    fn a_step_does_not_connect_to_itself() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "swimlane",
+                 "lanes": [ { "id": "soporte" } ],
+                 "steps": [
+                   { "id": "abre", "label": "abre", "lane": "soporte", "connects": ["abre"] }
+                 ] }"#,
+        );
+
+        let errors = SwimlaneKind
+            .validate(&parsed)
+            .expect_err("un paso no se conecta a sí mismo");
+
+        assert_eq!(errors[0].code, ErrorCode::InvalidValue);
+        assert_eq!(errors[0].path, "steps[0].connects[0]");
     }
 }

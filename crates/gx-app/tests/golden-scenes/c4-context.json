@@ -30,7 +30,8 @@
       8.0,
       5.0
     ],
-    "circle_diameter": 24.0
+    "circle_diameter": 24.0,
+    "activation_width": 10.0
   },
   "direction": "LR",
   "layout_hint": "layered",
@@ -65,13 +66,15 @@
           "text": "person",
           "note": null,
           "key": "none",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         },
         {
           "text": "hace el pedido",
           "note": null,
           "key": "none",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         }
       ]
     },
@@ -94,7 +97,8 @@
           "text": "system",
           "note": "Rust + Svelte",
           "key": "none",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         }
       ]
     },
@@ -117,7 +121,8 @@
           "text": "person",
           "note": null,
           "key": "none",
-          "nullable": false
+          "nullable": false,
+          "divider": false
         }
       ]
     }

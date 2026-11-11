@@ -42,7 +42,7 @@ use crate::escape::escape_text;
 use crate::geometry::{
     self, band_label, centered_baselines, cluster_id, crow_foot_mark, edge_id, label_lines,
     lane_id, marker_id, node_id, node_rect, points_text, push_emphasis, shape_class, CrowFoot,
-    Table, ARROW_LENGTH, DASH_PATTERN, GROUP_DASH, LIFELINE_DASH, MUTED_OPACITY,
+    Table, ACTIVATION_WIDTH, ARROW_LENGTH, DASH_PATTERN, GROUP_DASH, LIFELINE_DASH, MUTED_OPACITY,
 };
 use crate::scene::Drawing;
 
@@ -149,6 +149,42 @@ impl SvgRenderer {
                     fmt_num(geometry::lifeline_end(&canvas)),
                 ));
             }
+            // The activation bars (S5): on the lifeline, after the lines and
+            // under the arrows the edge layer paints later. The x centers the
+            // bar the tokens' width announces; y is the layout's.
+            for bar in &drawing.activations {
+                out.push_str(&format!(
+                    "<rect class=\"activation\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>\n",
+                    fmt_num(bar.x - ACTIVATION_WIDTH / 2.0),
+                    fmt_num(bar.y1),
+                    fmt_num(ACTIVATION_WIDTH),
+                    fmt_num((bar.y2 - bar.y1).max(0.0)),
+                ));
+            }
+            out.push_str("</g>\n");
+        }
+
+        // El eje de tiempo (`f22-dibujo.md`, S2, L5a): debajo de los carriles
+        // y antes de las aristas, para que la línea no pase sobre una caja.
+        // Solo un timeline lo lleva: `None` no dibuja capa.
+        if let Some(axis) = &drawing.axis {
+            out.push_str("<g class=\"layer-axis\">\n");
+            out.push_str(&format!(
+                "<line class=\"axis-line\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"/>\n",
+                fmt_num(axis.x1),
+                fmt_num(axis.y),
+                fmt_num(axis.x2),
+                fmt_num(axis.y),
+            ));
+            for (x, value) in &axis.ticks {
+                out.push_str(&format!(
+                    "<text class=\"axis-value text\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"middle\" dominant-baseline=\"hanging\">{}</text>\n",
+                    fmt_num(*x),
+                    fmt_num(axis.y + TOKENS.node_padding / 2.0),
+                    fmt_num(TOKENS.text_size * 0.85),
+                    value,
+                ));
+            }
             out.push_str("</g>\n");
         }
 
@@ -203,7 +239,7 @@ impl SvgRendererContract for SvgRenderer {
 
 fn write_style(out: &mut String, palette: &Palette) {
     let border = fmt_num(TOKENS.border_width);
-    let rules: [(&str, String); 25] = [
+    let rules: [(&str, String); 32] = [
         (".bg", format!("fill:{}", palette.bg.css())),
         (".node-fill", format!("fill:{}", palette.node_fill.css())),
         (
@@ -270,6 +306,14 @@ fn write_style(out: &mut String, palette: &Palette) {
             ),
         ),
         (
+            ".activation",
+            format!(
+                "fill:{};stroke:{};stroke-width:{border}",
+                palette.node_fill.css(),
+                palette.node_stroke.css(),
+            ),
+        ),
+        (
             ".stroke-dashed",
             format!(
                 "stroke-dasharray:{} {}",
@@ -306,6 +350,35 @@ fn write_style(out: &mut String, palette: &Palette) {
         (".row-note", format!("fill:{}", palette.edge_text.css())),
         (".row-key", String::from("font-weight:600")),
         (".row-nullable", String::from("opacity:0.75")),
+        // The UML role glyphs (`f22-dibujo.md`, S3): the initial state is a
+        // solid dot, the final one a dot inside a ring. The rules go after
+        // `.node-fill` so the glyph wins the fill, and the ring stays hollow.
+        (
+            ".shape-dot",
+            format!("fill:{};stroke:none", palette.node_text.css()),
+        ),
+        (".shape-ring_dot", String::from("fill:none")),
+        (
+            ".ring-dot-core",
+            format!("fill:{};stroke:none", palette.node_text.css()),
+        ),
+        // The stereotype of a class role (`f22-dibujo.md`, S4): the word the
+        // role names, drawn above the node name at 0.85× in the edge text
+        // color, exactly what the window CSS paints.
+        (
+            ".node-stereotype",
+            format!("fill:{}", palette.edge_text.css()),
+        ),
+        // The time axis (`f22-dibujo.md`, S2): the line under the lanes and
+        // the value each known column names.
+        (
+            ".axis-line",
+            format!(
+                "stroke:{};stroke-width:{border};fill:none",
+                palette.edge_stroke.css(),
+            ),
+        ),
+        (".axis-value", format!("fill:{}", palette.edge_text.css())),
     ];
     out.push_str("<style>\n");
     for (selector, body) in rules {
@@ -418,6 +491,8 @@ fn write_shape(out: &mut String, id: &str, classes: &str, shape: Shape, rect: &g
         Shape::Ellipse => write_ellipse(out, id, classes, rect),
         Shape::Note => write_note(out, id, classes, rect),
         Shape::Circle => write_circle(out, id, classes, &geometry::glyph_rect(shape, rect)),
+        Shape::Dot => write_dot(out, id, classes, &geometry::glyph_rect(shape, rect)),
+        Shape::RingDot => write_ring_dot(out, id, classes, &geometry::glyph_rect(shape, rect)),
     }
 }
 
@@ -548,6 +623,20 @@ fn write_node_table(out: &mut String, node: &IrNode, placed: &NodeBox) {
     // One line per row: the key role on the left, the name, the note right.
     for (index, row) in node.rows.iter().enumerate() {
         let y = table.row_y(index);
+        // The compartment rule (S7): a row that divides draws the line its
+        // compartment starts with — the attributes from the methods of a
+        // class. The header rule above is drawn on its own.
+        if row.divider {
+            let divider_y = table.rule_y + table.line * index as f64;
+            out.push_str(&format!(
+                "<line class=\"node-stroke\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke-width=\"{}\"/>\n",
+                fmt_num(rect.x),
+                fmt_num(divider_y),
+                fmt_num(rect.max_x()),
+                fmt_num(divider_y),
+                fmt_num(TOKENS.border_width),
+            ));
+        }
         // A row without a key draws no badge: no empty element is written, and
         // a table without keys has no column to write it in (S13).
         if let (Some(badge), Some(badge_x)) = (Table::badge(row.key), table.badge_x) {
@@ -676,6 +765,35 @@ fn write_circle(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect)
     ));
 }
 
+/// The filled dot: the UML glyph of a state machine's `initial`
+/// (`f22-dibujo.md`, S3). The fill comes from the class, not from here: the
+/// element is the same circle the commit draws, painted solid by CSS.
+fn write_dot(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
+    out.push_str(&format!(
+        "<circle id=\"{id}\" class=\"{classes}\" cx=\"{}\" cy=\"{}\" r=\"{}\"/>\n",
+        fmt_num(rect.center().x),
+        fmt_num(rect.center().y),
+        fmt_num(rect.w / 2.0),
+    ));
+}
+
+/// The dot inside a ring: the UML glyph of a state machine's `final`
+/// (`f22-dibujo.md`, S3). The outer ring keeps the node classes (unfilled,
+/// stroked) and the inner dot carries its own class — its radius is half the
+/// outer one, frozen here and in the painter twin.
+fn write_ring_dot(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
+    let cx = fmt_num(rect.center().x);
+    let cy = fmt_num(rect.center().y);
+    let r = fmt_num(rect.w / 2.0);
+    let core_r = fmt_num(rect.w / 4.0);
+    out.push_str(&format!(
+        "<circle id=\"{id}\" class=\"{classes}\" cx=\"{cx}\" cy=\"{cy}\" r=\"{r}\"/>\n"
+    ));
+    out.push_str(&format!(
+        "<circle class=\"ring-dot-core\" cx=\"{cx}\" cy=\"{cy}\" r=\"{core_r}\"/>\n"
+    ));
+}
+
 fn write_note(out: &mut String, id: &str, classes: &str, rect: &gx_core::Rect) {
     let fold = TOKENS.corner_radius.min(rect.w / 4.0).min(rect.h / 4.0);
     let left = fmt_num(rect.x);
@@ -696,12 +814,33 @@ fn write_node_text(out: &mut String, node: &IrNode, placed: &NodeBox) {
     let mut classes = String::from("node-text text");
     push_emphasis(&mut classes, node.emphasis, true);
     let lines = label_lines(&node.label);
+    // The stereotype sits above the label at 0.85× (`f22-dibujo.md`, S4), in
+    // UML guillemets; the label block centers on what is left of the box. The
+    // line height is the one `measure_node` reserved (engine.rs, S4).
+    let stereotype_line = if node.stereotype.is_some() {
+        TOKENS.text_size * 0.85 * TOKENS.line_height
+    } else {
+        0.0
+    };
+    if let Some(word) = &node.stereotype {
+        let rect = node_rect(placed);
+        let baseline = rect.y + TOKENS.node_padding + stereotype_line / 2.0;
+        let mut st_classes = String::from("node-stereotype text");
+        push_emphasis(&mut st_classes, node.emphasis, true);
+        out.push_str(&format!(
+            "<text class=\"{st_classes}\" x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"middle\" dominant-baseline=\"central\">«{}»</text>\n",
+            fmt_num(rect.center().x),
+            fmt_num(baseline),
+            fmt_num(TOKENS.text_size * 0.85),
+            escape_text(word),
+        ));
+    }
     match geometry::label_placement(node.shape, &node_rect(placed)) {
         geometry::LabelPlacement::Inside => write_lines(
             out,
             &classes,
             &lines,
-            TextAt::centered(placed.center.x, placed.center.y),
+            TextAt::centered(placed.center.x, placed.center.y + stereotype_line / 2.0),
         ),
         geometry::LabelPlacement::Beside { at } => {
             write_lines(out, &classes, &lines, TextAt::beside(at));
@@ -847,13 +986,15 @@ fn write_band(out: &mut String, kind: BandKind, group: &LayoutGroup) {
 fn write_event(out: &mut String, event: &IrEvent, placed: &NodeBox) {
     let rect = node_rect(placed);
     let id = escape_text(&node_id(&event.id));
-    // An event is a rounded box: the glyph a rounded node goes through, so the
-    // two cannot drift apart (S12).
+    // An event is the shape its role gives it (`f22-dibujo.md`, S6): the
+    // default is the rounded box of always, and a `milestone` draws its
+    // diamond. The glyph dispatch is the same one every shape goes through
+    // (S12).
     write_shape(
         out,
         &id,
-        "node-fill node-stroke shape-rounded",
-        Shape::Rounded,
+        &format!("node-fill node-stroke shape-{}", event.shape.as_str()),
+        event.shape,
         &rect,
     );
     if let Some(bar) = geometry::event_bar(&rect, event.span) {

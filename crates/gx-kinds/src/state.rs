@@ -27,9 +27,9 @@ pub const DEFAULT_ROLE: &str = "state";
 
 /// Los roles de una máquina de estados y su forma.
 pub const ROLES: [Role; 3] = [
-    Role::new("initial", Shape::Ellipse),
+    Role::new("initial", Shape::Dot),
     Role::new("state", Shape::Rounded),
-    Role::new("final", Shape::Ellipse),
+    Role::new("final", Shape::RingDot),
 ];
 
 /// The JSON contract of the `state` kind.
@@ -246,9 +246,9 @@ mod tests {
                 .unwrap_or_else(|| panic!("falta `{id}`"))
                 .shape
         };
-        assert_eq!(shape_of("nuevo"), Shape::Ellipse);
+        assert_eq!(shape_of("nuevo"), Shape::Dot);
         assert_eq!(shape_of("pago"), Shape::Rounded);
-        assert_eq!(shape_of("cerrado"), Shape::Ellipse);
+        assert_eq!(shape_of("cerrado"), Shape::RingDot);
 
         let transition = graph
             .edges

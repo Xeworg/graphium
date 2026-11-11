@@ -100,6 +100,37 @@
       {#each paint.lifelines as line, index (index)}
         <line class="lifeline" x1={line.x} y1={line.y1} x2={line.x} y2={line.y2} />
       {/each}
+      {#each paint.activations as bar, index (index)}
+        <!-- The activation of a sequence (`f22-dibujo.md`, S5): the thin
+             rectangle over the lifeline while the actor holds the control. -->
+        <rect class="activation" x={bar.x} y={bar.y} width={bar.w} height={bar.h} />
+      {/each}
+    </g>
+  {/if}
+
+  {#if paint.axis !== null && paint.axis !== undefined}
+    <!-- The time axis under the lanes (`f22-dibujo.md`, S2): the line the
+         layout drew and one value per known column. -->
+    <g class="layer-axis">
+      <line
+        class="axis-line"
+        x1={paint.axis.x1}
+        y1={paint.axis.y}
+        x2={paint.axis.x2}
+        y2={paint.axis.y}
+      />
+      {#each paint.axis.ticks as tick, index (index)}
+        <text
+          class="axis-value text"
+          x={tick.x}
+          y={paint.axis.y + scene.tokens.node_padding / 2}
+          font-size={scene.tokens.text_size * 0.85}
+          text-anchor="middle"
+          dominant-baseline="hanging"
+        >
+          {tick.value}
+        </text>
+      {/each}
     </g>
   {/if}
 

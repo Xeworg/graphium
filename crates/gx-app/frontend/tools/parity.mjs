@@ -146,6 +146,7 @@ function sceneFixture(marker, width = 320, height = 180) {
       badge_width: 26,
       muted_opacity: 0.55,
       circle_diameter: 24,
+      activation_width: 10,
       lifeline_dash: [4, 4],
       dash_pattern: [6, 4],
       group_dash: [8, 5],
@@ -304,6 +305,36 @@ function timelineScene() {
       size: { w: 118, h: 49.5 },
       bar: { x: 301, y: 73.75, w: 116, h: 5 },
     },
+  ];
+  return scene;
+}
+
+/** The scene of a sequence with activations (`f22-dibujo.md`, S5): two
+ * actors with their lifelines, one bar per actor at different spans. */
+function sequenceScene() {
+  const scene = sceneFixture("sequence", 320, 220);
+  scene.layout_hint = "lanes";
+  const actor = (id, label, x) => ({
+    ...scene.nodes[0],
+    id: `g-${id}`,
+    label,
+    center: { x, y: 30 },
+  });
+  scene.nodes = [actor("cliente", "Cliente", 80), actor("api", "API", 240)];
+  scene.activations = [
+    { x: 240, y1: 100, y2: 160 },
+    { x: 80, y1: 120, y2: 140 },
+  ];
+  return scene;
+}
+
+/** The scene of a table node with a compartment rule (`f22-dibujo.md`, S7):
+ * one row of attributes, then the dividing row of the methods. */
+function tableScene() {
+  const scene = sceneFixture("table", 320, 220);
+  scene.nodes[0].rows = [
+    { text: "id: uuid", note: null, key: "none", nullable: false, divider: false },
+    { text: "cobrar()", note: null, key: "none", nullable: false, divider: true },
   ];
   return scene;
 }
@@ -1121,6 +1152,60 @@ const scenarios = [
           __t.expect(point !== null, 'the point in time did not mount');
           __t.expect(point.nextElementSibling === null || point.nextElementSibling.getAttribute('class') !== 'accent', 'a point in time carries a bar');
           return { bars: bars.length, numbers };
+        })()`,
+      },
+      {
+        id: ["C47"],
+        name: "a sequence activation yields a bar on the lifeline with the numbers of the scene",
+        js: `(async () => {
+          __t.rust('graphium://render', ${JSON.stringify({
+            req_id: "r-seq",
+            diagram_id: "d-seq",
+            session_id: "s1",
+            elements: sequenceScene(),
+            placement: { x: 100, y: 100 },
+            camera: { tx: 0, ty: 0, zoom: 1 },
+          })});
+          await __t.wait(220);
+          const object = __t.byId('d-seq');
+          __t.expect(object !== null, 'the sequence did not mount');
+          const content = object.querySelector('.content');
+          const bars = content.querySelectorAll('rect.activation');
+          __t.expect(bars.length === 2, 'bars mounted: ' + bars.length);
+          // The bar centers on the lifeline with the tokens' width: x is the
+          // left edge (240 - 10 / 2), y and height are the layout's.
+          const numbers = ['x', 'y', 'width', 'height'].map((name) => Number(bars[0].getAttribute(name)));
+          __t.expect(numbers.join(',') === '235,100,10,60', 'the bar is not the geometry of the scene: ' + numbers.join(','));
+          const lifelines = content.querySelector('.layer-lifelines');
+          __t.expect(lifelines !== null && lifelines.contains(bars[0]), 'the bar is not in the lifelines layer');
+          return { bars: bars.length, numbers };
+        })()`,
+      },
+      {
+        id: ["C48"],
+        name: "a divider row draws the compartment rule on the row's top edge",
+        js: `(async () => {
+          __t.rust('graphium://render', ${JSON.stringify({
+            req_id: "r-table",
+            diagram_id: "d-table",
+            session_id: "s1",
+            elements: tableScene(),
+            placement: { x: 100, y: 100 },
+            camera: { tx: 0, ty: 0, zoom: 1 },
+          })});
+          await __t.wait(220);
+          const object = __t.byId('d-table');
+          __t.expect(object !== null, 'the table did not mount');
+          const content = object.querySelector('.content');
+          // Two rules inside the node: the header's and the compartment's.
+          const rules = content.querySelectorAll('line.node-stroke');
+          __t.expect(rules.length === 2, 'rules mounted: ' + rules.length);
+          // The divider sits exactly one line below the header rule: the
+          // top edge of the dividing row.
+          const ys = [...rules].map((rule) => Number(rule.getAttribute('y1')));
+          const line = 14 * 1.25;
+          __t.expect(Math.abs(ys[1] - ys[0] - line) < 0.01, 'the rule is not on the top edge: ' + ys.join(','));
+          return { rules: rules.length, ys };
         })()`,
       },
     ],

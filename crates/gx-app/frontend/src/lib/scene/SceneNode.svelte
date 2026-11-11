@@ -91,6 +91,16 @@
     r={paint.circle.r}
     {...hit}
   />
+  {#if paint.ringDotCore !== null}
+    <!-- The inner dot of the final state: same center, half the radius
+         (`f22-dibujo.md`, S3). -->
+    <circle
+      class="ring-dot-core"
+      cx={paint.ringDotCore.cx}
+      cy={paint.ringDotCore.cy}
+      r={paint.ringDotCore.r}
+    />
+  {/if}
 {:else if paint.diamond !== null}
   <polygon id={paint.id} class={shapeClasses} points={paint.diamond} {...hit} />
 {:else if paint.shape === "ellipse"}
@@ -145,6 +155,18 @@
   />
   <!-- One line per row: the key role on the left, the name, the note right. -->
   {#each paint.rows as row, index (index)}
+    {#if row.divider !== null}
+      <!-- The compartment rule (`f22-dibujo.md`, S7): where the row's
+           compartment starts. -->
+      <line
+        class="node-stroke"
+        x1={row.divider.x1}
+        y1={row.divider.y1}
+        x2={row.divider.x2}
+        y2={row.divider.y2}
+        stroke-width={row.divider.width}
+      />
+    {/if}
     {#if row.badge !== null}
       <SceneText paint={row.badge} hot={hot} />
     {/if}
@@ -154,5 +176,9 @@
     {/if}
   {/each}
 {:else if paint.label !== null}
+  {#if paint.stereotype !== null && paint.stereotype !== undefined}
+    <!-- The word the role names, above the node name (`f22-dibujo.md`, S4). -->
+    <SceneText paint={paint.stereotype} hot={hot} />
+  {/if}
   <SceneText paint={paint.label} hot={hot} />
 {/if}

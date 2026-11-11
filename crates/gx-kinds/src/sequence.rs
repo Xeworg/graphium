@@ -37,6 +37,11 @@ pub struct Message {
     /// Whether the arrow is dashed, for a reply that does not start an action.
     #[serde(default)]
     pub reply: bool,
+    /// Whether the receiving actor takes control here (`f22-dibujo.md`, S5):
+    /// opt-in, it draws a thin rectangle over the `to` actor's lifeline while
+    /// the actor holds the control — until its next outgoing message.
+    #[serde(default)]
+    pub activation: bool,
 }
 
 /// The JSON contract of the `sequence` kind.
@@ -168,6 +173,10 @@ impl DiagramKind for SequenceKind {
                 if message.reply {
                     edge.style = gx_core::ir::Style::Dashed;
                 }
+                if message.activation {
+                    edge.kind_data
+                        .insert("activation".to_string(), gx_core::ir::IrValue::Bool(true));
+                }
                 edge
             })
             .collect();
@@ -246,6 +255,46 @@ mod tests {
         // Las respuestas van punteadas.
         assert_eq!(graph.edges[0].style, gx_core::ir::Style::Solid);
         assert_eq!(graph.edges[2].style, gx_core::ir::Style::Dashed);
+    }
+
+    #[test]
+    fn an_activation_travels_on_the_edge_and_the_schema_admits_it() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "sequence",
+                 "participants": [ { "id": "cliente" }, { "id": "api" } ],
+                 "messages": [
+                   { "from": "cliente", "to": "api", "label": "POST /orders", "activation": true },
+                   { "from": "api", "to": "cliente", "label": "201", "reply": true }
+                 ] }"#,
+        );
+
+        // S5 (`f22-dibujo.md`): the field is opt-in and additive — a document
+        // that names it validates, and `deny_unknown_fields` keeps guarding
+        // everything else.
+        SequenceKind
+            .validate(&parsed)
+            .expect("la activación es parte del contrato");
+
+        let Ir::Graph(graph) = SequenceKind.to_ir(&parsed) else {
+            panic!("una secuencia es un grafo");
+        };
+        // The flag rides the edge's kind_data: the scalar channel the IR
+        // reserves for kind-specific data (L7b).
+        assert_eq!(
+            graph.edges[0].kind_data.get("activation"),
+            Some(&gx_core::ir::IrValue::Bool(true)),
+        );
+        assert!(
+            !graph.edges[1].kind_data.contains_key("activation"),
+            "un mensaje sin activación no marca nada"
+        );
+
+        // The schema publishes the field, so the JSON schema is the contract.
+        let schema = SequenceKind::schema().to_value().to_string();
+        assert!(
+            schema.contains("activation"),
+            "el esquema no nombra la activación"
+        );
     }
 
     #[test]

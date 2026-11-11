@@ -54,8 +54,10 @@ pub struct FlowEdge {
     pub arrow: Option<bool>,
 }
 
-/// The shape of a role, or the one of the default role.
-fn shape_of(roles: &[Role], role: &str) -> Shape {
+/// The shape of a role, or the one of the default role. The kinds whose
+/// events carry roles (`timeline`, `f22-dibujo.md` S6) resolve their shape
+/// with this same table, so a role means one shape across the catalog.
+pub fn shape_of(roles: &[Role], role: &str) -> Shape {
     roles
         .iter()
         .find(|candidate| candidate.name == role)
