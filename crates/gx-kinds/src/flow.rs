@@ -183,6 +183,13 @@ pub fn validate_refs(pairs: &[(&str, &str)], nodes: &[FlowNode]) -> Vec<Validati
     errors
 }
 
+/// The version every document means when it does not say one
+/// (`f23-contrato.md`, S5): there is exactly one legal value today, so the
+/// field stopped being boilerplate.
+pub fn default_version() -> u32 {
+    1
+}
+
 /// The `kind` and the `version` checks every kind shares.
 pub fn validate_header(
     kind: &str,

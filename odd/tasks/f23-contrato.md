@@ -129,3 +129,17 @@ work (Ctrl+C source copy, clear-canvas banner, onboarding — §19 rows 1, 4, 6)
   three-line floor test passes without touching them. Gates: fmt/clippy 0, 856
   tests (three new: examples mention the opt-in fields, every kind teaches ≥3
   rules, the `\n` convention is in the rules).
+
+- L7 (2026-11-10, execution, T4): the cheap decisions landed. (a) `version` is
+  optional with the shared `flow::default_version()` (one legal value, so the
+  boilerplate dies); `required` in the schema response shrank to `["kind"]` —
+  the one pin that moved, updated with the reason. (b) `title`, when written, is
+  1–120 visible characters: the rule lives in the adapter (`title_errors` in
+  gx-core), beside `parse_input`, because it is a rule of every kind at once and
+  no kind input repeats it; only an adapter-mediated path (tool, engine) sees
+  it, and that is the contract surface. (c) The PRD stops lying: §10 and §10.1
+  moved `notes[]`, `description` and document-level `emphasis` to the F3+
+  backlog, with the reasons (notes need their rendered reading; emphasis is
+  already per node and per edge). One test of T2 moved with the change: the
+  missing-required case is now the nested `nodes[0].id`, because `version` is no
+  longer owed. Gates: fmt/clippy 0, 858 tests.

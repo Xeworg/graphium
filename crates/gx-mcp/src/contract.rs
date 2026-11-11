@@ -467,7 +467,7 @@ fn rules_of(kind: &str) -> Vec<String> {
     };
 
     let mut rules = vec![
-        "`version` debe ser 1 (soportadas: 1).".to_string(),
+        "`version` es opcional y vale 1 (soportadas: 1); `kind` sí es obligatorio.".to_string(),
         "Los campos desconocidos se rechazan con `unknown_field`.".to_string(),
         // The line-break convention (`f23-contrato.md`, S4), the one thing no
         // schema could say: the drawing never wraps on its own.
@@ -1571,7 +1571,9 @@ mod tests {
         let shapes = response.shapes.unwrap();
         assert!(shapes.contains(&"rounded".to_string()));
         assert!(!shapes.is_empty());
-        assert_eq!(response.required.unwrap(), vec!["version", "kind"]);
+        // `version` stopped being required when it gained its default
+        // (`f23-contrato.md`, S5).
+        assert_eq!(response.required.unwrap(), vec!["kind"]);
     }
 
     /// S11 de `f20-reuso.md`: la línea del vocabulario se deriva de `roles()`
@@ -2097,9 +2099,11 @@ mod error_paths {
         assert_eq!(wrong_type.path, "nodes", "{}", wrong_type.message);
         assert_eq!(wrong_type.code, ErrorCode::InvalidSchema.as_str());
 
-        // `nodes` carries `serde(default)`: the missing field is `version`.
-        let missing = first(r#"{ "kind": "graph", "nodes": [], "edges": [] }"#);
-        assert_eq!(missing.path, "version", "{}", missing.message);
+        // A nested required field: the node owes its `id`.
+        let missing = first(
+            r#"{ "version": 1, "kind": "graph", "nodes": [ { "label": "sin id" } ], "edges": [] }"#,
+        );
+        assert_eq!(missing.path, "nodes[0].id", "{}", missing.message);
         assert_eq!(missing.code, ErrorCode::MissingField.as_str());
         assert!(
             missing.hint.is_some(),
@@ -2209,5 +2213,60 @@ mod teaching_truth {
             rules.iter().any(|rule| rule.contains("\\n")),
             "las reglas dicen cómo se corta una etiqueta: {rules:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod cheap_decisions {
+    use super::validate_diagram;
+    use gx_core::error::ErrorCode;
+
+    // T4 (`f23-contrato.md`, S5): `version` has one legal value, so it stops
+    // being boilerplate — absent means 1.
+    #[test]
+    fn a_document_without_version_is_version_one() {
+        let response = validate_diagram(
+            r#"{ "kind": "graph", "title": "sin versión",
+                 "nodes": [ { "id": "a" }, { "id": "b" } ],
+                 "edges": [ { "from": "a", "to": "b" } ] }"#,
+        );
+        assert!(response.ok, "la versión es opcional: {:?}", response.errors);
+    }
+
+    // T4: `title`, when present, is what the panel shows — 1 to 120 visible
+    // characters, the length the PRD already promised (§10.1).
+    #[test]
+    fn a_title_out_of_range_is_reported() {
+        let long = "x".repeat(121);
+        let response = validate_diagram(&format!(
+            r#"{{ "kind": "graph", "title": "{long}",
+                  "nodes": [ {{ "id": "a" }} ], "edges": [] }}"#
+        ));
+        assert!(!response.ok, "121 caracteres no entran en el panel");
+        assert_eq!(response.errors[0].path, "title");
+        assert_eq!(
+            response.errors[0].code,
+            ErrorCode::InvalidValue.as_str(),
+            "{:?}",
+            response.errors[0]
+        );
+        assert!(response.errors[0].hint.is_some(), "y dice cuánto entra");
+
+        let blank = validate_diagram(
+            r#"{ "kind": "graph", "title": "   ", "nodes": [ { "id": "a" } ], "edges": [] }"#,
+        );
+        assert!(!blank.ok, "un título en blanco no dice nada");
+        assert_eq!(blank.errors[0].path, "title");
+
+        // 120 exactly is inside, and so is no title at all.
+        let limit = "y".repeat(120);
+        let ok = validate_diagram(&format!(
+            r#"{{ "kind": "graph", "title": "{limit}",
+                  "nodes": [ {{ "id": "a" }} ], "edges": [] }}"#
+        ));
+        assert!(ok.ok, "{:?}", ok.errors);
+        let absent =
+            validate_diagram(r#"{ "kind": "graph", "nodes": [ { "id": "a" } ], "edges": [] }"#);
+        assert!(absent.ok, "{:?}", absent.errors);
     }
 }

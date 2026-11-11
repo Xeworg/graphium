@@ -267,7 +267,16 @@ impl<K: DiagramKind> KindHandler for KindAdapter<K> {
 
     fn validate_json(&self, document: &Value) -> Result<(), Vec<ValidationError>> {
         let input = parse_input::<K>(document)?;
-        self.kind.validate(&input)
+        let mut errors = title_errors(document);
+        match self.kind.validate(&input) {
+            Ok(()) => {}
+            Err(more) => errors.extend(more),
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 
     fn check(&self, document: &Value) -> Vec<ValidationError> {
@@ -275,14 +284,67 @@ impl<K: DiagramKind> KindHandler for KindAdapter<K> {
             Ok(input) => input,
             Err(errors) => return errors,
         };
-        self.kind.validate(&input).err().unwrap_or_default()
+        let mut errors = title_errors(document);
+        errors.extend(self.kind.validate(&input).err().unwrap_or_default());
+        errors
     }
 
     fn process_json(&self, document: &Value) -> Result<Ir, Vec<ValidationError>> {
         let input = parse_input::<K>(document)?;
         self.kind.validate(&input)?;
+        let errors = title_errors(document);
+        if !errors.is_empty() {
+            return Err(errors);
+        }
         Ok(self.kind.to_ir(&input))
     }
+}
+
+/// The rule of the document `title` (`f23-contrato.md`, S5): when it is
+/// written, it is what the side panel shows — 1 to 120 visible characters
+/// (PRD §10.1). Absent is fine: the panel falls back to the kind and the id.
+///
+/// It lives here, beside the adapter, because it is a rule of every kind at
+/// once and no kind input needs to repeat it.
+fn title_errors(document: &Value) -> Vec<ValidationError> {
+    /// The longest title the panel holds without cutting it (PRD §10.1).
+    const TITLE_CHARS: usize = 120;
+
+    let Some(title) = document.get("title") else {
+        return Vec::new();
+    };
+    if title.is_null() {
+        return Vec::new();
+    }
+    let Some(title) = title.as_str() else {
+        return vec![ValidationError::new(
+            "title",
+            ErrorCode::InvalidSchema,
+            "`title` tiene que ser un texto",
+            Some("escribí el título del diagrama, por ejemplo `pedido`".to_string()),
+        )];
+    };
+    let visible = title.trim();
+    if visible.is_empty() {
+        return vec![ValidationError::new(
+            "title",
+            ErrorCode::InvalidValue,
+            "el título no puede estar vacío",
+            Some("dejá el campo afuera y el panel usa el kind, o escribí un título".to_string()),
+        )];
+    }
+    let length = visible.chars().count();
+    if length > TITLE_CHARS {
+        return vec![ValidationError::new(
+            "title",
+            ErrorCode::InvalidValue,
+            format!("el título tiene {length} caracteres y entran {TITLE_CHARS}"),
+            Some(format!(
+                "acortalo a {TITLE_CHARS} caracteres o menos: el panel lateral lo muestra entero"
+            )),
+        )];
+    }
+    Vec::new()
 }
 
 /// Parses a document into the typed input of a kind, mapping the failure to
