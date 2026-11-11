@@ -195,6 +195,10 @@
       "label": "total",
       "emphasis": "normal",
       "style": "solid",
+      "head": {
+        "kind": "marker",
+        "adornment": "diamond"
+      },
       "points": [
         {
           "x": 140.10049576375246,

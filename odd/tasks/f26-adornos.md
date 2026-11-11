@@ -96,3 +96,38 @@ asks for, and Etapa 1's `component` rows will bring the shared type when nine
 relations exist to share. The platform work of this cut is the adornment slot in
 the IR plus the marker vocabulary in both painters — which is exactly what
 unblocks Etapa 1.
+
+L5 (2026-11-11, implementation, T4): the `class` table grew its sixth row and
+composition finally draws. `RELATIONS` is now `[Relation; 6]` — `association`
+(sólida, flecha, sin etiqueta, el default), `extends` (sólida, flecha, is-a,
+se nombra), `implements` (punteada, flecha, is-a, se nombra), `composition`
+(sólida, **rombo relleno**, se nombra), `aggregation` (sólida, **rombo hueco**,
+se nombra) and `dependency` (punteada, flecha, se nombra). The two diamond rows
+give up the arrowhead at the target end and keep `tail: None`, because the
+diamond already says which end owns which (S7). `extends` and `implements` keep
+today's `Adornment::Arrow`: swapping them to the hollow triangle is a separate
+decision with its own golden. `ClassEdge.arrow` still overrides the target end
+exactly as before — `Some(true)` is the plain arrow, `Some(false)` is nothing —
+and it wins over the diamond, which is what the new test pins.
+
+S8 stopped being prose: the first rule is derived from the table by
+`ClassKind::relations_rule()`, which asks each row for the word of its style
+(`sólida`/`punteada`) and the word of its glyph (`flecha`, `flecha abierta`,
+`triángulo hueco`, `diamante relleno`, `diamante hueco`), plus whether the row
+names the line and whether it is the default. The line now reads:
+
+`relation` decide la línea: `association` (sólida con flecha, no se nombra, por defecto), `extends` (sólida con flecha, se nombra), `implements` (punteada con flecha, se nombra), `composition` (sólida con diamante relleno, se nombra), `aggregation` (sólida con diamante hueco, se nombra), `dependency` (punteada con flecha, se nombra).
+
+Goldens: only the two declared files moved (S3). `class-shop.svg` gains the
+`.diamond-normal` rule, the `diamond-normal` marker in `<defs>` and
+`marker-end="url(#diamond-normal)"` on `m-Order-Money`; `class-shop.json` gains
+that edge's `head: {kind: marker, adornment: diamond}`. Every other golden — 20
+SVGs and 20 scenes — stayed byte-identical, and `git status --short` after both
+generators listed those two paths and nothing else.
+
+Gates: `cargo test -p gx-kinds` 116 + 11 + 12 passed, 0 failed;
+`cargo test -p gx-app --test golden_svg` 4 passed, 0 failed;
+`cargo test --workspace` 42 suites, 866 passed, 0 failed, 2 ignored;
+`cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets`
+0 warnings, 0 errors. Nothing under `gx-render-svg` or the frontend needed to
+change: both painters already drew every glyph of S5.

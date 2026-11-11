@@ -2,10 +2,11 @@
 //!
 //! Los cuatro roles de nodo se dibujan con las formas que ya existen y la
 //! diferencia está en la **relación**: `extends` e `implements` son relaciones
-//! *es un*, y `composition` y `dependency` no. El estilo de la línea lo dice
-//! —sólida para lo que existe, punteada para lo que depende— y cuando el
-//! documento no escribe etiqueta, la arista se nombra con su relación: sin eso
-//! dos líneas iguales dirían cosas distintas y nadie sabría cuál es cuál.
+//! *es un*, y `composition`, `aggregation` y `dependency` no. El estilo de la
+//! línea lo dice —sólida para lo que existe, punteada para lo que depende—, el
+//! rombo dice qué extremo posee a cuál y, cuando el documento no escribe
+//! etiqueta, la arista se nombra con su relación: sin eso dos líneas iguales
+//! dirían cosas distintas y nadie sabría cuál es cuál.
 //!
 //! La regla propia del kind: **la herencia no puede tener ciclos**. Una clase
 //! que se extiende a sí misma, directa o por un rodeo, no es un diagrama que
@@ -75,10 +76,49 @@ impl Relation {
             label,
         }
     }
+
+    /// The word the contract uses for the style of the line.
+    const fn style_word(&self) -> &'static str {
+        match self.style {
+            Style::Solid => "sólida",
+            Style::Dashed => "punteada",
+        }
+    }
+
+    /// The word the contract uses for the glyph at the target end, when the
+    /// relation gives it one.
+    const fn head_word(&self) -> Option<&'static str> {
+        Self::adornment_word(self.head)
+    }
+
+    /// The word the contract uses for the glyph at the source end.
+    const fn tail_word(&self) -> Option<&'static str> {
+        Self::adornment_word(self.tail)
+    }
+
+    /// The word of a glyph of the closed vocabulary (S5): the one name the
+    /// table and the rule line share.
+    const fn adornment_word(adornment: Option<Adornment>) -> Option<&'static str> {
+        match adornment {
+            Some(Adornment::Arrow) => Some("flecha"),
+            Some(Adornment::OpenArrow) => Some("flecha abierta"),
+            Some(Adornment::HollowTriangle) => Some("triángulo hueco"),
+            Some(Adornment::Diamond) => Some("diamante relleno"),
+            Some(Adornment::HollowDiamond) => Some("diamante hueco"),
+            None => None,
+        }
+    }
 }
 
 /// Las relaciones de un diagrama de clases.
-pub const RELATIONS: [Relation; 5] = [
+///
+/// El rombo de la fila es la notación del todo y la parte (`f26-adornos.md`,
+/// S7): relleno en la composición, hueco en la agregación, y en las dos el
+/// extremo del destino pierde la flecha porque el rombo ya dice cuál posee a
+/// cuál. `extends` e `implements` conservan la flecha de siempre: el triángulo
+/// hueco está en el vocabulario, pero cambiarlos es una decisión con su propio
+/// golden.
+pub const RELATIONS: [Relation; 6] = [
     // La relación que no dice nada más que "estos dos se conocen": es el
     // default, porque una línea sin palabras no puede afirmar una herencia.
     Relation::new(
@@ -102,12 +142,22 @@ pub const RELATIONS: [Relation; 5] = [
         true,
         Some("implements"),
     ),
+    // La composición es la posesión: el rombo relleno va en el extremo de la
+    // clase que es dueña de la otra.
     Relation::new(
         "composition",
         Style::Solid,
-        None,
+        Some(Adornment::Diamond),
         false,
         Some("composition"),
+    ),
+    // La agregación es la composición que no posee: mismo rombo, hueco.
+    Relation::new(
+        "aggregation",
+        Style::Solid,
+        Some(Adornment::HollowDiamond),
+        false,
+        Some("aggregation"),
     ),
     Relation::new(
         "dependency",
@@ -130,7 +180,7 @@ pub struct ClassEdge {
     /// Id of the target node.
     pub to: String,
     /// What the line means: `association`, `extends`, `implements`,
-    /// `composition` or `dependency`. Defaults to `association`.
+    /// `composition`, `aggregation` or `dependency`. Defaults to `association`.
     #[serde(default)]
     pub relation: Option<String>,
     /// Text on the line. When absent, the relation names itself.
@@ -141,7 +191,8 @@ pub struct ClassEdge {
     /// Overrides the style the relation gives the line.
     #[serde(default)]
     pub style: Option<Style>,
-    /// Overrides the arrowhead the relation gives the line.
+    /// Overrides the glyph at the target end: `true` draws the plain arrow and
+    /// `false` draws nothing, whatever the relation declares there.
     #[serde(default)]
     pub arrow: Option<bool>,
 }
@@ -219,6 +270,41 @@ impl ClassKind {
     /// The relation of an edge, or the default one when it declares none.
     fn relation_of(edge: &ClassEdge) -> &str {
         edge.relation.as_deref().unwrap_or(DEFAULT_RELATION)
+    }
+
+    /// The rule that teaches the vocabulary (`f26-adornos.md`, S8): derived
+    /// from [`RELATIONS`], so a relation can never be painted with an adornment
+    /// the contract does not mention.
+    fn relations_rule() -> String {
+        let rows: Vec<String> = RELATIONS
+            .iter()
+            .map(|relation| {
+                let mut words = relation.style_word().to_string();
+                match relation.head_word() {
+                    Some(glyph) => {
+                        words.push_str(" con ");
+                        words.push_str(glyph);
+                    }
+                    None => words.push_str(" sin adorno"),
+                }
+                if let Some(glyph) = relation.tail_word() {
+                    words.push_str(" y ");
+                    words.push_str(glyph);
+                    words.push_str(" en el origen");
+                }
+                // Whether the relation names the line is a fact of the row,
+                // like its style: the table says it, the rule repeats it.
+                words.push_str(match relation.label {
+                    Some(_) => ", se nombra",
+                    None => ", no se nombra",
+                });
+                if relation.name == DEFAULT_RELATION {
+                    words.push_str(", por defecto");
+                }
+                format!("`{}` ({words})", relation.name)
+            })
+            .collect();
+        format!("`relation` decide la línea: {}.", rows.join(", "))
     }
 
     /// The `is a` relations that form a cycle, if any.
@@ -426,7 +512,8 @@ impl DiagramKind for ClassKind {
                     .or_else(|| relation.label.map(str::to_string));
                 ir_edge.style = edge.style.unwrap_or(relation.style);
                 // El documento puede forzar el extremo del destino, que es lo
-                // único que el campo `arrow` de siempre significaba.
+                // único que el campo `arrow` de siempre significaba: gana sobre
+                // el rombo de la composición y sobre la flecha de la herencia.
                 ir_edge.head = match edge.arrow {
                     Some(true) => Some(Adornment::Arrow),
                     Some(false) => None,
@@ -453,8 +540,7 @@ impl DiagramKind for ClassKind {
     /// y la herencia no puede cerrar un ciclo.
     fn rules(&self) -> Vec<String> {
         vec![
-            "`relation` decide la línea: `association` (sólida con flecha, por defecto), `extends` (sólida, se nombra), `implements` (punteada, se nombra), `composition` (sólida sin flecha), `dependency` (punteada)."
-                .to_string(),
+            Self::relations_rule(),
             "La herencia no puede tener ciclos: una clase no es su propio padre.".to_string(),
             "Si la arista no lleva `label`, la línea se nombra con su relación; la asociación no, porque no afirma nada."
                 .to_string(),
@@ -486,7 +572,7 @@ pub fn register() {
 
 #[cfg(test)]
 mod tests {
-    use super::ClassKind;
+    use super::{ClassKind, DEFAULT_RELATION, RELATIONS};
     use crate::test_support::{an_unknown_group_member_is_rejected, groups_reach_the_ir, input};
     use gx_core::error::ErrorCode;
     use gx_core::ir::{Adornment, Ir, Shape, Style};
@@ -528,7 +614,8 @@ mod tests {
         { "from": "Order", "to": "Base", "relation": "extends" },
         { "from": "Refund", "to": "Order", "relation": "extends" },
         { "from": "Order", "to": "Payable", "relation": "implements" },
-        { "from": "Order", "to": "Money", "relation": "composition", "label": "total" }
+        { "from": "Order", "to": "Money", "relation": "composition", "label": "total" },
+        { "from": "Order", "to": "Refund", "relation": "aggregation" }
       ]
     }"#;
 
@@ -545,7 +632,7 @@ mod tests {
 
         assert_eq!(graph.layout_hint, gx_core::ir::LayoutHint::Layered);
         assert_eq!(graph.nodes.len(), 5);
-        assert_eq!(graph.edges.len(), 4);
+        assert_eq!(graph.edges.len(), 5);
         assert_eq!(graph.nodes[0].shape, Shape::Rounded);
 
         let edge = |from: &str, to: &str| {
@@ -563,10 +650,100 @@ mod tests {
         // La implementación es punteada.
         let implements = edge("Order", "Payable");
         assert_eq!(implements.style, Style::Dashed);
-        // La composición no lleva flecha y conserva la etiqueta del documento.
+        // La composición declara su diamante relleno en el extremo del
+        // destino (S7) y conserva la etiqueta del documento: el rombo ya dice
+        // qué extremo posee a cuál, así que la flecha sobra.
         let composition = edge("Order", "Money");
-        assert_eq!(composition.head, None);
+        assert_eq!(composition.style, Style::Solid);
+        assert_eq!(composition.head, Some(Adornment::Diamond));
+        assert_eq!(composition.tail, None);
         assert_eq!(composition.label.as_deref(), Some("total"));
+
+        // La agregación es la relación que la tabla no tenía (S7): sólida, con
+        // el rombo hueco en el destino y nombrada por la tabla, porque el
+        // documento no escribe etiqueta.
+        let aggregation = edge("Order", "Refund");
+        assert_eq!(aggregation.style, Style::Solid);
+        assert_eq!(aggregation.head, Some(Adornment::HollowDiamond));
+        assert_eq!(aggregation.tail, None);
+        assert_eq!(aggregation.label.as_deref(), Some("aggregation"));
+    }
+
+    /// S8: la regla del kind se **deriva** de la tabla de relaciones, así que
+    /// una relación no puede pintarse con un adorno que el contrato no
+    /// menciona. Cada fila nombra su palabra, su estilo y su glifo, y el
+    /// default sigue diciéndose default.
+    #[test]
+    fn the_rule_line_is_derived_from_the_relation_table() {
+        let rules = ClassKind.rules();
+        let line = rules.first().expect("la primera regla es la de la línea");
+
+        for relation in RELATIONS {
+            let name = format!("`{}`", relation.name);
+            assert!(line.contains(&name), "la regla no nombra {name}: {line}");
+            assert!(
+                line.contains(relation.style_word()),
+                "la regla no dice el estilo de `{}`: {line}",
+                relation.name
+            );
+            if let Some(glyph) = relation.head_word() {
+                assert!(
+                    line.contains(glyph),
+                    "la regla no dice el glifo de `{}`: {line}",
+                    relation.name
+                );
+            }
+            if let Some(glyph) = relation.tail_word() {
+                assert!(
+                    line.contains(glyph),
+                    "la regla no dice el glifo del origen de `{}`: {line}",
+                    relation.name
+                );
+            }
+        }
+
+        // El default se sigue nombrando: una línea sin palabras no puede
+        // afirmar una herencia.
+        assert!(
+            line.contains("por defecto"),
+            "la regla no dice el default: {line}"
+        );
+        assert!(
+            line.contains(&format!("`{DEFAULT_RELATION}`")),
+            "la regla no nombra el default: {line}"
+        );
+        assert_eq!(rules.len(), 3, "la regla de las relaciones y dos más");
+    }
+
+    /// El campo `arrow` de siempre sigue siendo el override del extremo del
+    /// destino (T4): `true` vuelve a la flecha simple y `false` no dibuja
+    /// nada, por encima del glifo que la relación declare.
+    #[test]
+    fn the_arrow_field_overrides_the_glyph_of_the_relation() {
+        let parsed = input(
+            r#"{ "version": 1, "kind": "class",
+                 "nodes": [ { "id": "a" }, { "id": "b" }, { "id": "c" } ],
+                 "edges": [
+                   { "from": "a", "to": "b", "relation": "composition", "arrow": true },
+                   { "from": "a", "to": "c", "relation": "composition", "arrow": false } ] }"#,
+        );
+        ClassKind.validate(&parsed).expect("es válido");
+
+        let Ir::Graph(graph) = ClassKind.to_ir(&parsed) else {
+            panic!("un diagrama de clases es un grafo");
+        };
+
+        assert_eq!(
+            graph.edges[0].head,
+            Some(Adornment::Arrow),
+            "`true` es la flecha simple"
+        );
+        assert_eq!(graph.edges[1].head, None, "`false` no dibuja nada");
+        assert_eq!(
+            graph.edges[1].style,
+            Style::Solid,
+            "el estilo de la relación queda"
+        );
     }
 
     /// Un vértice sin `relation` es una asociación: sólida, con flecha y **sin

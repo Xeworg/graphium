@@ -32,10 +32,14 @@
 .node-stereotype{fill:rgba(185, 185, 194, 1.00)}
 .axis-line{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
 .axis-value{fill:rgba(185, 185, 194, 1.00)}
+.diamond-normal{fill:rgba(138, 138, 150, 1.00)}
 </style>
 <defs>
 <marker id="arrow-normal" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
 <path class="arrow-normal" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00 Z"/>
+</marker>
+<marker id="diamond-normal" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
+<path class="diamond-normal" d="M 0.00 5.00 L 5.00 0.00 L 10.00 5.00 L 5.00 10.00 Z"/>
 </marker>
 </defs>
 <g class="layer-groups">
@@ -43,7 +47,7 @@
 <g class="layer-edges">
 <polyline id="m-Order-Base" class="edge-stroke" points="292.34,296.00 397.24,369.75 397.24,458.75" marker-end="url(#arrow-normal)"/>
 <text class="edge-text text" x="433.54" y="369.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">extends</text>
-<polyline id="m-Order-Money" class="edge-stroke" points="140.10,296.00 35.13,369.75 35.13,466.19"/>
+<polyline id="m-Order-Money" class="edge-stroke" points="140.10,296.00 35.13,369.75 35.13,466.19" marker-end="url(#diamond-normal)"/>
 <text class="edge-text text" x="59.50" y="369.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">total</text>
 <polyline id="m-Order-Payable" class="edge-stroke stroke-dashed" points="216.25,296.00 216.25,369.75 216.25,443.50" marker-end="url(#arrow-normal)"/>
 <text class="edge-text text" x="264.40" y="369.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">implements</text>
