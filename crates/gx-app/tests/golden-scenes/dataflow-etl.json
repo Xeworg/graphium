@@ -146,7 +146,10 @@
       "label": "pedidos",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 68.51953125,
@@ -173,7 +176,10 @@
       "label": "pedidos crudos",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 68.51953125,
@@ -200,7 +206,10 @@
       "label": "pedidos curados",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 68.51953125,
@@ -227,7 +236,10 @@
       "label": "pedidos crudos",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 68.51953125,
@@ -254,7 +266,10 @@
       "label": "pedidos curados",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 68.51953125,

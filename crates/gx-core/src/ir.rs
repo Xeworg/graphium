@@ -221,7 +221,13 @@ pub struct IrEdge {
     pub label: Option<String>,
     pub emphasis: Emphasis,
     pub style: Style,
-    pub arrow: bool,
+    /// The adornment of the target end, when the kind gives it one
+    /// (`f26-adornos.md`, S2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<Adornment>,
+    /// The adornment of the source end, when the kind gives it one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail: Option<Adornment>,
     /// Row of the source node the edge leaves from, when it anchors to one.
     pub from_row: Option<u32>,
     /// Row of the target node the edge arrives at, when it anchors to one.
@@ -234,6 +240,49 @@ pub struct IrEdge {
     /// S5, L7b).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub kind_data: BTreeMap<String, IrValue>,
+}
+
+/// The glyph of one end of an edge (`f26-adornos.md`, S5).
+///
+/// The closed vocabulary of this cut is what the catalogue's Etapa 1 asks for
+/// and nothing more: a new glyph is a new shape in **both** painters plus a
+/// golden, so it does not enter for free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Adornment {
+    /// The filled triangle of a plain arrow: the only glyph before this cut.
+    Arrow,
+    /// The open V of a dependency: two strokes, no fill.
+    OpenArrow,
+    /// The hollow triangle of a generalization, kept for the decision that
+    /// swaps `extends` away from the filled arrow.
+    HollowTriangle,
+    /// The filled diamond of a composition.
+    Diamond,
+    /// The hollow diamond of an aggregation.
+    HollowDiamond,
+}
+
+/// What one end of an edge actually draws (`f26-adornos.md`, S2).
+///
+/// Two notational systems meet at the same tip: a marker from [`Adornment`] and
+/// the crow's foot of a [`Cardinality`]. This type is the one place that
+/// resolves the collision, so a painter reads the answer instead of deciding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EndAdornment {
+    /// A marker of the shared vocabulary, from `<defs>`.
+    Marker {
+        /// Which glyph.
+        adornment: Adornment,
+    },
+    /// The crow's foot of a relation: the fork and the circle of its end.
+    CrowFoot {
+        /// Whether zero rows are allowed at this end.
+        min: CardinalityBound,
+        /// Whether many rows are allowed at this end.
+        max: CardinalityMax,
+    },
 }
 
 /// How many rows of each side take part in a relation (PRD §6.1, kind `er`).
@@ -329,11 +378,42 @@ impl IrEdge {
             label: None,
             emphasis: Emphasis::Normal,
             style: Style::Solid,
-            arrow: true,
+            head: Some(Adornment::Arrow),
+            tail: None,
             from_row: None,
             to_row: None,
             cardinality: None,
             kind_data: BTreeMap::new(),
+        }
+    }
+
+    /// What the target end of the edge draws.
+    ///
+    /// A relation with a cardinality gives the end to the crow's foot: the two
+    /// notations would otherwise land on the same tip, which is why `er` used
+    /// to cancel the arrow by hand (`f26-adornos.md`, S4).
+    pub fn head_end(&self) -> Option<EndAdornment> {
+        match self.cardinality {
+            Some(cardinality) => Some(EndAdornment::CrowFoot {
+                min: cardinality.to_min,
+                max: cardinality.to_max,
+            }),
+            None => self
+                .head
+                .map(|adornment| EndAdornment::Marker { adornment }),
+        }
+    }
+
+    /// What the source end of the edge draws, resolved the same way.
+    pub fn tail_end(&self) -> Option<EndAdornment> {
+        match self.cardinality {
+            Some(cardinality) => Some(EndAdornment::CrowFoot {
+                min: cardinality.from_min,
+                max: cardinality.from_max,
+            }),
+            None => self
+                .tail
+                .map(|adornment| EndAdornment::Marker { adornment }),
         }
     }
 }
@@ -577,8 +657,9 @@ pub fn extract_neighbourhood(
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_neighbourhood, Direction, Ir, IrEdge, IrGraph, IrGroup, IrNode, IrTimeline,
-        LayoutHint, MAX_EXTRACT_NODES,
+        extract_neighbourhood, Adornment, Cardinality, CardinalityBound, CardinalityMax, Direction,
+        EndAdornment, Ir, IrEdge, IrGraph, IrGroup, IrNode, IrTimeline, LayoutHint,
+        MAX_EXTRACT_NODES,
     };
     use crate::error::ErrorCode;
 
@@ -754,5 +835,72 @@ mod tests {
             )
         );
         assert_eq!(error.hint.as_deref(), Some("reducí `depth`"));
+    }
+
+    /// `f26-adornos.md`, S5: a new edge keeps the drawing of always — the plain
+    /// arrow at the target end and nothing at the source. This is what lets the
+    /// goldens stay byte-identical across the cut.
+    #[test]
+    fn a_new_edge_carries_the_plain_arrow_at_its_target_end() {
+        let edge = IrEdge::new("a", "b");
+
+        assert_eq!(edge.head, Some(Adornment::Arrow));
+        assert_eq!(edge.tail, None);
+        assert_eq!(
+            edge.head_end(),
+            Some(EndAdornment::Marker {
+                adornment: Adornment::Arrow
+            })
+        );
+        assert_eq!(edge.tail_end(), None);
+    }
+
+    /// `f26-adornos.md`, S4: the crow's foot is the notation of a relation with
+    /// a cardinality, so it owns **both** ends and no marker is drawn on top of
+    /// it — the choice `er` used to make by hand, now the only resolution.
+    #[test]
+    fn a_relation_with_cardinality_gives_both_ends_to_the_crows_foot() {
+        let mut edge = IrEdge::new("a", "b");
+        edge.head = Some(Adornment::Diamond);
+        edge.tail = Some(Adornment::OpenArrow);
+        edge.cardinality = Cardinality::from_short("1:N", true);
+
+        assert_eq!(
+            edge.head_end(),
+            Some(EndAdornment::CrowFoot {
+                min: CardinalityBound::Optional,
+                max: CardinalityMax::Many,
+            })
+        );
+        assert_eq!(
+            edge.tail_end(),
+            Some(EndAdornment::CrowFoot {
+                min: CardinalityBound::Required,
+                max: CardinalityMax::One,
+            })
+        );
+    }
+
+    /// The two ends are independent, which is the whole point of `head`/`tail`:
+    /// a composition says "this diamond is mine" while the other end keeps the
+    /// arrow that shows which way to read the line.
+    #[test]
+    fn the_two_ends_are_independent_adornments() {
+        let mut edge = IrEdge::new("part", "whole");
+        edge.tail = Some(Adornment::OpenArrow);
+        edge.head = Some(Adornment::Diamond);
+
+        assert_eq!(
+            edge.tail_end(),
+            Some(EndAdornment::Marker {
+                adornment: Adornment::OpenArrow
+            })
+        );
+        assert_eq!(
+            edge.head_end(),
+            Some(EndAdornment::Marker {
+                adornment: Adornment::Diamond
+            })
+        );
     }
 }

@@ -27,9 +27,9 @@ pub use export::{
 pub use fmt::fmt_num;
 pub use geom::{Point, Rect, Size};
 pub use ir::{
-    Cardinality, CardinalityBound, CardinalityMax, Direction, Emphasis, Ir, IrConnection, IrEdge,
-    IrEvent, IrGraph, IrGroup, IrLane, IrNode, IrRow, IrTimeline, IrValue, LayoutHint, RowKey,
-    Shape, Style,
+    Adornment, Cardinality, CardinalityBound, CardinalityMax, Direction, Emphasis, EndAdornment,
+    Ir, IrConnection, IrEdge, IrEvent, IrGraph, IrGroup, IrLane, IrNode, IrRow, IrTimeline,
+    IrValue, LayoutHint, RowKey, Shape, Style,
 };
 pub use kind::{for_kind, kind_names, register_kind, DiagramKind, KindHandler, KindLimits};
 pub use layout::{

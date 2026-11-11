@@ -165,7 +165,10 @@
       "label": "extends",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 292.3423693823674,
@@ -192,7 +195,6 @@
       "label": "total",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": false,
       "points": [
         {
           "x": 140.10049576375246,
@@ -219,7 +221,10 @@
       "label": "implements",
       "emphasis": "normal",
       "style": "dashed",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 216.2490234375,
@@ -246,7 +251,10 @@
       "label": "extends",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": true,
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
       "points": [
         {
           "x": 216.2490234375,

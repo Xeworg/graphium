@@ -12,7 +12,7 @@
 //! esté mal dibujado: es un modelo imposible.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Direction, Emphasis, Ir, IrEdge, IrRow, LayoutHint, Shape, Style};
+use gx_core::ir::{Adornment, Direction, Emphasis, Ir, IrEdge, IrRow, LayoutHint, Shape, Style};
 use gx_core::kind::{DiagramKind, KindLimits, Role};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -36,14 +36,20 @@ pub const ROLES: [Role; 4] = [
 
 /// Una relación admitida: cómo se dibuja la línea, si es *un* (is-a) y qué
 /// palabra la nombra cuando el documento no escribe etiqueta.
+///
+/// Los dos adornos son la notación de la relación (`f26-adornos.md`, S2): la
+/// tabla decide qué pares puede expresar este kind y el documento sólo escribe
+/// el nombre de la relación.
 #[derive(Debug, Clone, Copy)]
 pub struct Relation {
     /// The name the document writes, e.g. `extends`.
     pub name: &'static str,
     /// Line style of the relation.
     pub style: Style,
-    /// Whether the line carries an arrowhead.
-    pub arrow: bool,
+    /// The glyph at the target end, when the relation gives it one.
+    pub head: Option<Adornment>,
+    /// The glyph at the source end, when the relation gives it one.
+    pub tail: Option<Adornment>,
     /// Whether the relation is an "is a": those are the ones that cannot form
     /// a cycle.
     pub is_a: bool,
@@ -56,14 +62,15 @@ impl Relation {
     const fn new(
         name: &'static str,
         style: Style,
-        arrow: bool,
+        head: Option<Adornment>,
         is_a: bool,
         label: Option<&'static str>,
     ) -> Self {
         Self {
             name,
             style,
-            arrow,
+            head,
+            tail: None,
             is_a,
             label,
         }
@@ -74,17 +81,41 @@ impl Relation {
 pub const RELATIONS: [Relation; 5] = [
     // La relación que no dice nada más que "estos dos se conocen": es el
     // default, porque una línea sin palabras no puede afirmar una herencia.
-    Relation::new("association", Style::Solid, true, false, None),
-    Relation::new("extends", Style::Solid, true, true, Some("extends")),
-    Relation::new("implements", Style::Dashed, true, true, Some("implements")),
+    Relation::new(
+        "association",
+        Style::Solid,
+        Some(Adornment::Arrow),
+        false,
+        None,
+    ),
+    Relation::new(
+        "extends",
+        Style::Solid,
+        Some(Adornment::Arrow),
+        true,
+        Some("extends"),
+    ),
+    Relation::new(
+        "implements",
+        Style::Dashed,
+        Some(Adornment::Arrow),
+        true,
+        Some("implements"),
+    ),
     Relation::new(
         "composition",
         Style::Solid,
-        false,
+        None,
         false,
         Some("composition"),
     ),
-    Relation::new("dependency", Style::Dashed, true, false, Some("dependency")),
+    Relation::new(
+        "dependency",
+        Style::Dashed,
+        Some(Adornment::Arrow),
+        false,
+        Some("dependency"),
+    ),
 ];
 
 /// The default relation: the one that claims the least.
@@ -394,7 +425,14 @@ impl DiagramKind for ClassKind {
                     .filter(|label| !label.trim().is_empty())
                     .or_else(|| relation.label.map(str::to_string));
                 ir_edge.style = edge.style.unwrap_or(relation.style);
-                ir_edge.arrow = edge.arrow.unwrap_or(relation.arrow);
+                // El documento puede forzar el extremo del destino, que es lo
+                // único que el campo `arrow` de siempre significaba.
+                ir_edge.head = match edge.arrow {
+                    Some(true) => Some(Adornment::Arrow),
+                    Some(false) => None,
+                    None => relation.head,
+                };
+                ir_edge.tail = relation.tail;
                 if let Some(emphasis) = edge.emphasis {
                     ir_edge.emphasis = emphasis;
                 }
@@ -451,7 +489,7 @@ mod tests {
     use super::ClassKind;
     use crate::test_support::{an_unknown_group_member_is_rejected, groups_reach_the_ir, input};
     use gx_core::error::ErrorCode;
-    use gx_core::ir::{Ir, Shape, Style};
+    use gx_core::ir::{Adornment, Ir, Shape, Style};
     use gx_core::kind::DiagramKind;
 
     /// RF15: `groups` existe en `class` y anida: un miembro es un nodo o
@@ -520,14 +558,14 @@ mod tests {
         // La herencia es sólida y con flecha, y se llama `extends`.
         let extends = edge("Order", "Base");
         assert_eq!(extends.style, Style::Solid);
-        assert!(extends.arrow);
+        assert_eq!(extends.head, Some(Adornment::Arrow));
         assert_eq!(extends.label.as_deref(), Some("extends"));
         // La implementación es punteada.
         let implements = edge("Order", "Payable");
         assert_eq!(implements.style, Style::Dashed);
         // La composición no lleva flecha y conserva la etiqueta del documento.
         let composition = edge("Order", "Money");
-        assert!(!composition.arrow);
+        assert_eq!(composition.head, None);
         assert_eq!(composition.label.as_deref(), Some("total"));
     }
 
@@ -548,7 +586,7 @@ mod tests {
 
         let edge = &graph.edges[0];
         assert_eq!(edge.style, Style::Solid);
-        assert!(edge.arrow);
+        assert_eq!(edge.head, Some(Adornment::Arrow));
         assert_eq!(edge.label, None, "la asociación no se nombra");
     }
 

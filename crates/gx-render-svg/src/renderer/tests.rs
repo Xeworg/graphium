@@ -1089,7 +1089,7 @@ fn the_crow_foot_opens_towards_the_table() {
     to.rows = vec![IrRow::new("user_id")];
 
     let mut edge = IrEdge::new("users", "posts");
-    edge.arrow = false;
+    edge.head = None;
     edge.cardinality = Some(Cardinality {
         from_min: CardinalityBound::Required,
         from_max: CardinalityMax::One,
