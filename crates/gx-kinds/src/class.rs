@@ -202,38 +202,10 @@ impl ClassKind {
     }
 
     /// The rule that teaches the vocabulary (`f26-adornos.md`, S8): derived
-    /// from [`RELATIONS`], so a relation can never be painted with an adornment
-    /// the contract does not mention.
+    /// from [`RELATIONS`] by the shared derivation, so a relation can never be
+    /// painted with an adornment the contract does not mention.
     fn relations_rule() -> String {
-        let rows: Vec<String> = RELATIONS
-            .iter()
-            .map(|relation| {
-                let mut words = relation.style_word().to_string();
-                match relation.head_word() {
-                    Some(glyph) => {
-                        words.push_str(" con ");
-                        words.push_str(glyph);
-                    }
-                    None => words.push_str(" sin adorno"),
-                }
-                if let Some(glyph) = relation.tail_word() {
-                    words.push_str(" y ");
-                    words.push_str(glyph);
-                    words.push_str(" en el origen");
-                }
-                // Whether the relation names the line is a fact of the row,
-                // like its style: the table says it, the rule repeats it.
-                words.push_str(match relation.label {
-                    Some(_) => ", se nombra",
-                    None => ", no se nombra",
-                });
-                if relation.name == DEFAULT_RELATION {
-                    words.push_str(", por defecto");
-                }
-                format!("`{}` ({words})", relation.name)
-            })
-            .collect();
-        format!("`relation` decide la línea: {}.", rows.join(", "))
+        crate::flow::relations_rule("relation", &RELATIONS, Some(DEFAULT_RELATION))
     }
 
     /// The `is a` relations that form a cycle, if any.

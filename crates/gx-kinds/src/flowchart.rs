@@ -11,7 +11,7 @@ use gx_core::kind::{DiagramKind, KindLimits, Role};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::flow::{to_graph, validate_flow, validate_header, FlowEdge, FlowNode};
+use crate::flow::{to_graph, validate_flow, validate_header, FlowEdge, FlowNode, FlowVocabulary};
 use crate::groups::{to_ir_groups, validate_groups, Group};
 
 /// Contract version supported by this build (PRD §10.1).
@@ -33,6 +33,15 @@ pub const ROLES: [Role; 6] = [
     Role::new("data", Shape::Box),
     Role::new("note", Shape::Note),
 ];
+
+/// El vocabulario del kind para la maquinaria compartida (`f29-componente.md`,
+/// D2): un diagrama de flujo no declara relaciones, así que su tabla está vacía
+/// y S6 rechaza cualquier `kind` que una arista escriba.
+const VOCABULARY: FlowVocabulary<'static> = FlowVocabulary {
+    roles: &ROLES,
+    default_role: DEFAULT_ROLE,
+    edge_kinds: &[],
+};
 
 /// The JSON contract of the `flowchart` kind.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -94,8 +103,7 @@ impl DiagramKind for FlowchartKind {
             Self::KIND,
             &input.nodes,
             &input.edges,
-            &ROLES,
-            DEFAULT_ROLE,
+            &VOCABULARY,
         ));
 
         // Exactly one way in (`f20-reuso.md`, S8): the rule `state` enforces
@@ -142,8 +150,7 @@ impl DiagramKind for FlowchartKind {
         let graph = to_graph(
             &input.nodes,
             &input.edges,
-            &ROLES,
-            DEFAULT_ROLE,
+            &VOCABULARY,
             input.direction,
             Self::LAYOUT_HINT,
             to_ir_groups(&input.groups),
