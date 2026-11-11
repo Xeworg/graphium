@@ -48,7 +48,8 @@ pub struct Message {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SequenceInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `sequence`.
     pub kind: String,
@@ -71,6 +72,7 @@ impl DiagramKind for SequenceKind {
     const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
     const LIMITS: KindLimits = KindLimits::SEQUENCE;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = SequenceInput;
 
@@ -100,7 +102,7 @@ impl DiagramKind for SequenceKind {
                     format!("participants[{index}].id"),
                     ErrorCode::InvalidValue,
                     "el id del participante no puede estar vacío",
-                    None,
+                    Some("escribí un id único, por ejemplo `cliente`".to_string()),
                 ));
             }
             if seen.contains(&actor.id.as_str()) {
@@ -200,7 +202,7 @@ impl DiagramKind for SequenceKind {
                 { "id": "api", "label": "API" }
             ],
             "messages": [
-                { "from": "cliente", "to": "api", "label": "POST /orders" },
+                { "from": "cliente", "to": "api", "label": "POST /orders", "activation": true },
                 { "from": "api", "to": "cliente", "label": "201", "reply": true }
             ]
         })

@@ -65,7 +65,8 @@ impl TimelineEvent {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TimelineInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `timeline`.
     pub kind: String,
@@ -88,6 +89,7 @@ impl DiagramKind for TimelineKind {
     const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
     const LIMITS: KindLimits = KindLimits::TIMELINE;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = TimelineInput;
 
@@ -248,7 +250,7 @@ impl DiagramKind for TimelineKind {
             "title": "Roadmap",
             "lanes": [ { "id": "q1", "label": "Q1" } ],
             "events": [
-                { "label": "v1.0", "lane": "q1" },
+                { "label": "v1.0", "lane": "q1", "role": "milestone" },
                 { "label": "v1.1", "lane": "q1" }
             ]
         })

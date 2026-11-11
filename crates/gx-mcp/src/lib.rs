@@ -1977,15 +1977,19 @@ pub fn serve_stdio() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Description of the `render_diagram` tool, written for the agent.
-const RENDER_DIAGRAM_DESCRIPTION: &str = "\
+pub(crate) const RENDER_DIAGRAM_DESCRIPTION: &str = "\
 Render a Graphium diagram and place it on the plan. Pass the whole document as \
 a JSON object in `diagram`, not as a string. A `graph` document looks like: \
 { \"version\": 1, \"kind\": \"graph\", \"title\": \"parse_config() — flujo\", \
 \"direction\": \"TB\", \"nodes\": [ { \"id\": \"read\", \"label\": \"read file\" } ], \
 \"edges\": [ { \"from\": \"read\", \"to\": \"ok\", \"label\": \"utf-8\" } ] }. \
 `kind` is required and selects the diagram kind; an unknown kind comes back \
-as `unknown_kind` with the available kinds in `hint`. Every node needs a \
-unique `id`; edges reference node ids with `from` and `to`. \
+as `unknown_kind` with the available kinds in `hint`. Where the schema \
+requires an `id` it has to be unique, and edges reference those ids with `from` \
+and `to`; the lanes kinds (`swimlane`, `timeline`, `gantt`) derive theirs from \
+the position (`step-0`, `event-0`, `task-0`) when the document omits it, which \
+is what a connector or a `depends_on` names. A long label breaks on `\\n` — \
+the drawing never wraps on its own, and the box grows to the widest line. \
 Unknown fields are rejected, so send only documented keys. The response is \
 JSON: { ok, diagram_id, rendered_kind, rendered, metrics, extracted_from, \
 replaced, errors, warnings, session }. `ok: false` means nothing was placed and \
@@ -2008,7 +2012,7 @@ the answer names the diagram in `replaced`; without it the render sums to the \
 plan. `opts.interactive` arrives in F3 and is ignored for now.";
 
 /// Description of the `export_diagram` tool, written for the agent.
-const EXPORT_DIAGRAM_DESCRIPTION: &str = "\
+pub(crate) const EXPORT_DIAGRAM_DESCRIPTION: &str = "\
 Exports a diagram of this session as SVG or PNG. With `format: \"svg\"` and \
 `opts.inline: true` (or no `opts`) the SVG comes back as text in `content`, \
 with zero disk access: paste it in a README or in a message. With `opts.path` \
@@ -2028,7 +2032,7 @@ the diagram), a PNG accepts `opts.scale` (default 1.0, ceiling 3.0) and \
 5 s deadline (`export_timeout`). Exporting never changes the plan.";
 
 /// Description of the `validate_diagram` tool, written for the agent.
-const VALIDATE_DIAGRAM_DESCRIPTION: &str = "\
+pub(crate) const VALIDATE_DIAGRAM_DESCRIPTION: &str = "\
 Check a diagram document WITHOUT opening anything. Use it before \
 `render_diagram` when the document is long or the last render failed: it \
 runs the same validation and returns the same errors, but no window opens \
@@ -2040,7 +2044,7 @@ wrong and `errors[]` carries `{ path, code, message, hint? }` with a stable \
 big the diagram would be.";
 
 /// Description of the `get_diagram_schema` tool, written for the agent.
-const GET_DIAGRAM_SCHEMA_DESCRIPTION: &str = "\
+pub(crate) const GET_DIAGRAM_SCHEMA_DESCRIPTION: &str = "\
 The contract of a diagram kind. Call it without arguments to get the index \
 of the available kinds with their limits and a minimal example, or with \
 `kind` (for example \"graph\") to get its JSON Schema, the cross rules, the \
@@ -2066,21 +2070,21 @@ pub struct GetDiagramSchemaParams {
 }
 
 /// Description of the `list_diagrams` tool, written for the agent.
-const LIST_DIAGRAMS_DESCRIPTION: &str = "\
+pub(crate) const LIST_DIAGRAMS_DESCRIPTION: &str = "\
 The diagrams of this session that are on the plan: their ids, titles, kinds, \
 revisions and when they were updated. Use it after a compaction, or when an \
 id was lost, to find the diagram to update or export. The answer also carries \
 `session`, the name the human sees for you. It never renders anything.";
 
 /// Description of the `get_diagram` tool, written for the agent.
-const GET_DIAGRAM_DESCRIPTION: &str = "\
+pub(crate) const GET_DIAGRAM_DESCRIPTION: &str = "\
 The source document of a diagram, with its current revision. Use it to read \
 before an `update_diagram` (the revision is the one to send back), or to \
 recover a document after a compaction. It never renders anything.";
 
 /// Description of the `list_diagram_versions` tool, written for the agent
 /// (RF14; feature doc `f2-cierre.md`, R3).
-const LIST_DIAGRAM_VERSIONS_DESCRIPTION: &str = "\
+pub(crate) const LIST_DIAGRAM_VERSIONS_DESCRIPTION: &str = "\
 The versions of a diagram's source document, oldest first. Every \
 `render_diagram` and every accepted `update_diagram` writes one; the store \
 keeps the last 20 of each diagram and discards the oldest. The response is \
@@ -2094,7 +2098,7 @@ writes a new version instead of rewriting the history.";
 
 /// Description of the `get_diagram_version` tool, written for the agent
 /// (RF14, R3).
-const GET_DIAGRAM_VERSION_DESCRIPTION: &str = "\
+pub(crate) const GET_DIAGRAM_VERSION_DESCRIPTION: &str = "\
 The source document of one version of a diagram: { ok, diagram_id, version, \
 revision, updated_at, document, errors? }. Call `list_diagram_versions` \
 first to know which numbers exist; a number the diagram does not keep answers \
@@ -2104,14 +2108,14 @@ restores a version. To restore one, send that document to `render_diagram` \
 version and never rewrites the history.";
 
 /// Description of the `clear_canvas` tool, written for the agent.
-const CLEAR_CANVAS_DESCRIPTION: &str = "\
+pub(crate) const CLEAR_CANVAS_DESCRIPTION: &str = "\
 Removes diagrams from the plan. Without `scope` it clears only the diagrams \
 of this session; with `scope: \"plano\"` it clears the whole plan, \
 including the diagrams of other sessions. It does not close the window and \
 does not stop the MCP session.";
 
 /// Description of the `update_diagram` tool, written for the agent.
-const UPDATE_DIAGRAM_DESCRIPTION: &str = "\
+pub(crate) const UPDATE_DIAGRAM_DESCRIPTION: &str = "\
 Changes an existing diagram instead of creating another one. `patch` is an \
 RFC 7386 merge patch: objects merge key by key, arrays are replaced whole, \
 `null` removes a key. The merge is transactional: the result is validated \
@@ -2124,7 +2128,7 @@ write is rejected with `stale_revision`. The `kind` cannot change.";
 ///
 /// The text lives in the harness, which is where the relay reads it too: the
 /// tool is described once and both surfaces publish the same words.
-const REGISTER_SESSION_DESCRIPTION: &str = crate::harness::REGISTER_SESSION_DESCRIPTION;
+pub(crate) const REGISTER_SESSION_DESCRIPTION: &str = crate::harness::REGISTER_SESSION_DESCRIPTION;
 
 /// Parameters of the `register_session` tool (S3, D2).
 #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
@@ -2232,7 +2236,7 @@ pub struct RenderDiagramParams {
 }
 
 /// Description of the `code_search` tool, written for the agent (S5, S7).
-const CODE_SEARCH_DESCRIPTION: &str = "\
+pub(crate) const CODE_SEARCH_DESCRIPTION: &str = "\
 Search the book of this project: the symbols that the indexer extracted, \
 without reading the files. It answers the places of ONE symbol: `file`, \
 `line`, `kind`, `name`, `qname`, `content_hash` and `indexed_at`, plus the \
@@ -2256,7 +2260,7 @@ pub struct CodeSearchParams {
 }
 
 /// Description of the `code_structure` tool, written for the agent (S5, S7).
-const CODE_STRUCTURE_DESCRIPTION: &str =
+pub(crate) const CODE_STRUCTURE_DESCRIPTION: &str =
     "Read the structure of one chapter of the book. The default answer is the \
 outline: only the declarations of the chapter whose parent is `NULL`, ordered \
 by span, each with `name`, `kind`, `qname`, `line`, `column`, `end_line`, \
@@ -2316,7 +2320,7 @@ pub struct CodeStructureParams {
 }
 
 /// Description of the `code_impact` tool, written for the agent (S5, S7, D3).
-const CODE_IMPACT_DESCRIPTION: &str =
+pub(crate) const CODE_IMPACT_DESCRIPTION: &str =
     "Walk the connections of one symbol, or of one whole chapter, in the book: who \
 points at it, what it reaches, or both. The seed is exactly one of `symbol` (a \
 name, as `code_search` takes it) or `file` (a path relative to the project \
@@ -2384,7 +2388,7 @@ pub struct CodeImpactParams {
 }
 
 /// Description of the `code_diagram` tool, written for the agent (S5).
-const CODE_DIAGRAM_DESCRIPTION: &str =
+pub(crate) const CODE_DIAGRAM_DESCRIPTION: &str =
     "Build the diagram of one symbol's neighbourhood from the book, without reading \
 any file. The answer is a complete `graph` document (`version: 1`, `kind: \
 \"graph\"`, one node per symbol with its `qname` as the label, one edge per \
@@ -2435,7 +2439,7 @@ pub struct CodeDiagramParams {
 /// Description of the `code_er` tool, written for the agent (f13, S5).
 // The text is duplicated from `harness::description("code_er")`, like every
 // other book tool const, so the harness and the stdio router say the same.
-const CODE_ER_DESCRIPTION: &str =
+pub(crate) const CODE_ER_DESCRIPTION: &str =
     "Build the `er` document of one `.sql` file of the project — or of the whole \
 project with `scope: \"project\"` — its tables as \
 compartments with their columns and the keys between them — without reading the \

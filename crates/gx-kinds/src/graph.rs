@@ -56,7 +56,8 @@ pub struct GraphEdge {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GraphInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `graph`.
     pub kind: String,
@@ -84,6 +85,7 @@ impl DiagramKind for GraphKind {
     const PHASE: &'static str = "F1";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
     const LIMITS: KindLimits = KindLimits::GRAPH;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = GraphInput;
 
@@ -98,7 +100,7 @@ impl DiagramKind for GraphKind {
                     format!("nodes[{index}].id"),
                     ErrorCode::InvalidValue,
                     "el id del nodo no puede estar vacío",
-                    None,
+                    Some("escribí un id único, por ejemplo `pedido`".to_string()),
                 ));
             }
             if seen.contains(&node.id.as_str()) {

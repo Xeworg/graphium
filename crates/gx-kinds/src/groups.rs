@@ -37,7 +37,7 @@ pub fn validate_groups(node_ids: &[&str], groups: &[Group]) -> Vec<ValidationErr
                 format!("groups[{index}].id"),
                 ErrorCode::InvalidValue,
                 "el id del grupo no puede estar vacío",
-                None,
+                Some("escribí un id único para el grupo, por ejemplo `backend`".to_string()),
             ));
         }
         if declared.contains(&group.id.as_str()) {

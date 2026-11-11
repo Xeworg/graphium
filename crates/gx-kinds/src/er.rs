@@ -76,7 +76,8 @@ pub struct ErRelation {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ErInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `er`.
     pub kind: String,
@@ -115,6 +116,7 @@ impl DiagramKind for ErKind {
     const PHASE: &'static str = "F1";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
     const LIMITS: KindLimits = KindLimits::GRAPH;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = ErInput;
 
@@ -130,7 +132,7 @@ impl DiagramKind for ErKind {
                     format!("tables[{index}].name"),
                     ErrorCode::InvalidValue,
                     "el nombre de la tabla no puede estar vacío",
-                    None,
+                    Some("escribí el nombre de la tabla, por ejemplo `pedidos`".to_string()),
                 ));
             }
             if tables.contains(&table.name.as_str()) {

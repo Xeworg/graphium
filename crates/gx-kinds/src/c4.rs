@@ -104,7 +104,8 @@ pub struct C4Relation {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct C4Input {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `c4`.
     pub kind: String,
@@ -130,6 +131,7 @@ impl DiagramKind for C4Kind {
     const PHASE: &'static str = "F3";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
     const LIMITS: KindLimits = KindLimits::GRAPH;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = C4Input;
 
@@ -180,7 +182,7 @@ impl DiagramKind for C4Kind {
                     format!("elements[{index}].id"),
                     ErrorCode::InvalidValue,
                     "el id del elemento no puede estar vacío",
-                    None,
+                    Some("escribí un id único, por ejemplo `api`".to_string()),
                 ));
             }
             if ids.contains(&element.id.as_str()) {

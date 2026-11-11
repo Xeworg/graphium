@@ -43,7 +43,8 @@ pub struct Step {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SwimlaneInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `swimlane`.
     pub kind: String,
@@ -65,6 +66,7 @@ impl DiagramKind for SwimlaneKind {
     const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
     const LIMITS: KindLimits = KindLimits::TIMELINE;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = SwimlaneInput;
 
@@ -225,7 +227,7 @@ impl DiagramKind for SwimlaneKind {
             "title": "soporte",
             "lanes": [ { "id": "cliente" }, { "id": "soporte" } ],
             "steps": [
-                { "label": "reclama", "lane": "cliente" },
+                { "label": "reclama", "lane": "cliente", "connects": ["step-1"] },
                 { "label": "responde", "lane": "soporte" }
             ]
         })

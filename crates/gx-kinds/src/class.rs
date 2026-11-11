@@ -159,7 +159,8 @@ impl ClassNode {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ClassInput {
-    /// Contract version. Only `1` is supported.
+    /// Contract version. Only `1` is supported; absent means `1`.
+    #[serde(default = "crate::flow::default_version")]
     pub version: u32,
     /// Must be `class`.
     pub kind: String,
@@ -250,6 +251,7 @@ impl DiagramKind for ClassKind {
     const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
     const LIMITS: KindLimits = KindLimits::GRAPH;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = ClassInput;
 
@@ -428,7 +430,7 @@ impl DiagramKind for ClassKind {
             "title": "pedidos",
             "nodes": [
                 { "id": "Base", "label": "Base", "role": "abstract" },
-                { "id": "Order", "label": "Order" },
+                { "id": "Order", "label": "Order", "attributes": ["id: uuid"], "methods": ["cobrar()"] },
                 { "id": "Payable", "label": "Payable", "role": "interface" }
             ],
             "edges": [

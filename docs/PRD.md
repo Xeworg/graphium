@@ -492,7 +492,7 @@ graphium/
 
 ## 10. Contrato de intercambio (formato `graphium.json` v1)
 
-Común a todos los `kind`: `version`, `kind`, `title`, `emphasis?` (heredable), `notes[]`. **Campos desconocidos rechazados** con did-you-mean.
+Común a todos los `kind`: `kind` (obligatorio) y `version` (opcional; ausente vale `1`), más `title?`. `emphasis` y `notes[]` **no** son campos comunes del documento: `emphasis` vive en los nodos y las aristas que lo admiten, y `notes[]` está en el backlog F3+ hasta que exista su lectura renderizada (ver §10.1). **Campos desconocidos rechazados** con did-you-mean.
 
 ### `kind: "graph"`
 
@@ -560,7 +560,8 @@ Común a todos los `kind`: `version`, `kind`, `title`, `emphasis?` (heredable), 
 
 ### 10.1 Campos comunes y evolución del contrato
 
-- **Campos comunes a todos los kinds:** `version` (**requerido**, entero) · `kind` (**requerido**) · `title` (**requerido**, 1–120 caracteres, visible en el panel lateral) · `description?` (string) · `notes?: [{ text: string, anchor?: string }]` (máx. 20; `anchor` = id de nodo o tabla; el render textual de las notas es F3+) · `emphasis?: "highlight" | "muted"` (heredable) · `direction?: "TB"|"BT"|"LR"|"RL"` (**solo** kinds con `IrGraph`; default `"TB"`; en `er` es `unknown_field`).
+- **Campos comunes a todos los kinds:** `kind` (**requerido**) · `version` (**opcional**; tiene un único valor legal, `1`, y ausente vale `1`) · `title?` (1–120 caracteres cuando se escribe; el panel lateral lo muestra, y sin título usa el kind) · `direction?: "TB"|"BT"|"LR"|"RL"` (**solo** kinds con `IrGraph`; default `"TB"`; en `er` es `unknown_field`).
+- **Postergados a F3+ (no son campos comunes hoy):** `notes?: [{ text, anchor? }]`, `description?` y `emphasis?` de documento. Ninguno de los tres llega a los kinds: escribirlos hoy es `unknown_field`. La razón de `notes[]` es su lectura renderizada (panel de notas, §19 fila 5); `emphasis` ya existe **por nodo y por arista**, que es donde el dibujo lo usa.
 - **`groups?: [{ id, label?, members[] }]`** — **solo** kinds con documento de nodos y aristas (`graph`, `flow`, `state`, `class`, `dataflow` y `component`; en el resto es `unknown_field`). Los grupos **anidan** (RF15): un miembro es el id de un nodo o de otro grupo. Un miembro vive en un solo grupo, un grupo tiene un solo padre (`duplicate_id`), el id de un grupo no puede coincidir con el de un nodo (`duplicate_id`) y ninguno se contiene a sí mismo, directa o transitivamente (`invalid_value`).
 - **`rendered_kind`** = el `kind` efectivamente usado tras resolver el registry (hoy siempre igual al enviado; reservado para inferencia futura). `render_diagram` lo devuelve para que el agente sepa qué schema se aplicó.
 - **Evolución del contrato (RF5-bis).** `version` es la versión del **documento**, no del kind. Agregar un campo opcional con default es **aditivo y NO sube `version`** (sigue en `1`). Un campo obligatorio nuevo, un cambio de tipo o el borrado de un campo **sí** suben `version`. Cada campo declara `"x-graphium-since": "<n>"`; `get_diagram_schema` devuelve `supported_versions` y, si el kind tiene versión propia, `fields_ignored_in_this_version[]`. Un campo opcional desconocido de un kind conocido se rechaza igual (`unknown_field`), pero el `hint` dice «campo agregado en la versión N; actualizá Graphium o quitá el campo» y la respuesta incluye `min_version_required: N`. Un `kind` que esta versión no implementa → `ok: false, code: "unknown_kind"` + `available_kinds[]`.

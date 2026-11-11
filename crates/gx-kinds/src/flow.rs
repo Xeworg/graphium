@@ -124,7 +124,10 @@ pub fn validate_nodes(
                 format!("nodes[{index}].id"),
                 ErrorCode::InvalidValue,
                 "el id del nodo no puede estar vacío",
-                None,
+                Some(format!(
+                    "escribí un id único, por ejemplo `nodo{}`",
+                    if index == 0 { "" } else { "2" }
+                )),
             ));
         }
         if seen.contains(&node.id.as_str()) {
@@ -180,6 +183,13 @@ pub fn validate_refs(pairs: &[(&str, &str)], nodes: &[FlowNode]) -> Vec<Validati
     errors
 }
 
+/// The version every document means when it does not say one
+/// (`f23-contrato.md`, S5): there is exactly one legal value today, so the
+/// field stopped being boilerplate.
+pub fn default_version() -> u32 {
+    1
+}
+
 /// The `kind` and the `version` checks every kind shares.
 pub fn validate_header(
     kind: &str,
@@ -199,7 +209,7 @@ pub fn validate_header(
     if version != supported_version {
         errors.push(ValidationError::new(
             "version",
-            ErrorCode::InvalidValue,
+            ErrorCode::UnsupportedVersion,
             format!("versión de contrato no soportada: {version} (soportada: {supported_version})"),
             Some("actualizá el documento a la versión 1 del contrato".to_string()),
         ));
