@@ -7,7 +7,7 @@
 
 use gx_core::error::{ErrorCode, ValidationError};
 use gx_core::ir::{Cardinality, Direction, Ir, IrEdge, IrNode, IrRow, LayoutHint, RowKey, Shape};
-use gx_core::kind::{DiagramKind, KindLimits};
+use gx_core::kind::{DiagramKind, KindLimits, KindWarning};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -332,6 +332,59 @@ impl DiagramKind for ErKind {
         ))
     }
 
+    /// El aviso agregado de las tablas sin clave primaria (`f25-arreglos.md`,
+    /// S2): la tabla se dibuja igual —una tabla sin PK es legal en una base
+    /// real— y el aviso dice qué no puede anclar. Un solo aviso para todas
+    /// las tablas, con los nombres en el orden del documento.
+    fn warnings(&self, input: &Self::Input) -> Vec<KindWarning> {
+        /// Cuántos nombres entran en el aviso antes de contar el resto.
+        const NAMES_SHOWN: usize = 5;
+
+        // Una tabla tiene clave cuando alguna columna lo es: `pk`, o la
+        // mitad `pk` de una `pk_fk`. `key_of` ya normaliza el texto de
+        // `key`, así que se reusa en vez de re-parsearlo.
+        let keyless: Vec<&str> = input
+            .tables
+            .iter()
+            .filter(|table| {
+                !table
+                    .columns
+                    .iter()
+                    .any(|column| matches!(key_of(column), RowKey::Pk | RowKey::PkFk))
+            })
+            .map(|table| table.name.as_str())
+            .collect();
+        if keyless.is_empty() {
+            return Vec::new();
+        }
+
+        let listed = keyless
+            .iter()
+            .take(NAMES_SHOWN)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let rest = keyless.len().saturating_sub(NAMES_SHOWN);
+        let listed = if rest > 0 {
+            format!("{listed}, y {rest} más")
+        } else {
+            listed
+        };
+        let (noun, verb) = if keyless.len() == 1 {
+            ("tabla", "puede")
+        } else {
+            ("tablas", "pueden")
+        };
+
+        vec![KindWarning {
+            code: "tables_without_key",
+            message: format!(
+                "{} {noun} sin clave primaria ({listed}): no {verb} ser el origen de una relación —el origen debe ser una columna `pk`— y el puente de SQL omite las claves foráneas que apuntan a una columna que no es primaria",
+                keyless.len()
+            ),
+        }]
+    }
+
     fn schema() -> schemars::Schema {
         schemars::schema_for!(ErInput)
     }
@@ -344,6 +397,10 @@ impl DiagramKind for ErKind {
         vec![
             "Cada tabla tiene un `name` único dentro del diagrama.".to_string(),
             "Cada relación referencia tablas y columnas declaradas.".to_string(),
+            // La regla del aviso (`f25-arreglos.md`, S2): el agente tiene que
+            // leer en el schema que una tabla sin clave se dibuja igual y que
+            // lo que pierde es el anclaje, no el dibujo.
+            "Una tabla sin columna con `key: \"pk\"` se dibuja igual y la respuesta lo avisa con `tables_without_key`: esa tabla no puede ser el origen de una relación y el puente de SQL omite las claves foráneas que le apuntan.".to_string(),
         ]
     }
 
@@ -543,6 +600,73 @@ mod tests {
         let errors = ErKind.validate(&input).expect_err("must fail");
         assert_eq!(errors[0].code, gx_core::error::ErrorCode::InvalidEnum);
         assert!(errors[0].hint.clone().unwrap().contains("1:N"));
+    }
+
+    /// `f25-arreglos.md` S2: una tabla sin columna `pk` es legal y se dibuja
+    /// igual; el documento lo dice en **un solo** aviso agregado. Con `pk` en
+    /// todas las tablas no hay aviso, y varias tablas sin clave siguen siendo
+    /// un aviso (los nombres, en el orden del documento).
+    #[test]
+    fn a_schema_without_primary_keys_reports_one_aggregated_warning() {
+        let keyless = serde_json::json!({
+            "version": 1, "kind": "er",
+            "tables": [
+                { "name": "audit_log", "columns": [ { "name": "at", "type": "timestamptz" } ] },
+                { "name": "joins", "columns": [
+                    { "name": "left_id", "type": "uuid", "key": "fk" },
+                    { "name": "right_id", "type": "uuid", "key": "fk" }
+                ] }
+            ]
+        });
+        let input: ErInput = serde_json::from_value(keyless).expect("valid");
+
+        let warnings = ErKind.warnings(&input);
+
+        assert_eq!(warnings.len(), 1, "un aviso agregado: {warnings:?}");
+        assert_eq!(warnings[0].code, "tables_without_key");
+        let message = &warnings[0].message;
+        assert!(
+            message.contains("2 tablas sin clave primaria (audit_log, joins)"),
+            "{message}"
+        );
+        assert!(message.contains("columna `pk`"), "{message}");
+        assert!(message.contains("puente de SQL"), "{message}");
+
+        // Con `pk` en todas las tablas no hay nada que avisar.
+        let keyed: ErInput = serde_json::from_str(EXAMPLE).expect("valid");
+        assert!(ErKind.warnings(&keyed).is_empty());
+
+        // Una tabla cuyo único rol es `pk_fk` **tiene** clave: es la mitad
+        // `pk` de una compuesta, y el validador la acepta como origen de una
+        // relación (`key_of` la resuelve a `PkFk`).
+        let composite: ErInput = serde_json::from_value(serde_json::json!({
+            "version": 1, "kind": "er",
+            "tables": [ { "name": "enrollments", "columns": [
+                { "name": "student_id", "key": "pk_fk" },
+                { "name": "course_id", "key": "pk_fk" }
+            ] } ]
+        }))
+        .expect("valid");
+        assert!(ErKind.warnings(&composite).is_empty());
+
+        // Muchas tablas sin clave: un aviso, los primeros cinco nombres y el
+        // resto contado.
+        let names = ["t1", "t2", "t3", "t4", "t5", "t6", "t7"];
+        let tables: Vec<serde_json::Value> = names
+            .iter()
+            .map(|name| serde_json::json!({ "name": name }))
+            .collect();
+        let many: ErInput = serde_json::from_value(serde_json::json!({
+            "version": 1, "kind": "er", "tables": tables
+        }))
+        .expect("valid");
+        let warnings = ErKind.warnings(&many);
+        assert_eq!(warnings.len(), 1, "uno solo: {warnings:?}");
+        let message = &warnings[0].message;
+        assert!(
+            message.contains("7 tablas sin clave primaria (t1, t2, t3, t4, t5, y 2 más)"),
+            "{message}"
+        );
     }
 
     #[test]

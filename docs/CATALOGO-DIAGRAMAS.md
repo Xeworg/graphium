@@ -74,7 +74,7 @@ y el trabajo que falta. `—` en "kind" significa que no hay kind que la cubra.
 | 1 | Class Diagram | `class` | capacidad | agregación, multiplicidad/rol por extremo, clase asociación, adorno de arista (triángulo hueco, rombo) |
 | 2 | Sequence Diagram | `sequence` | capacidad | fragmentos (alt/opt/loop/par), guardas, crear/destruir, orden explícito |
 | 3 | Use Case Diagram | — | kind nuevo | actores, casos de uso, límite del sistema, «include»/«extend» |
-| 4 | Activity Diagram | — | kind nuevo | nodo inicial/final, acción, decisión/merge, fork/join (forma nueva), particiones; el PRD lo archiva en lanes y las particiones piden layered |
+| 4 | Activity Diagram | — | kind nuevo | nodo inicial/final, acción, decisión/merge, fork/join (forma nueva), particiones; **decidido: motor `layered`**, y el PRD ya lo dice (§6 fila 16 y §8.3.1) |
 | 5 | State Transition Diagram | `state` | capacidad | estado compuesto, entry/exit/do, choice/history, evento[guarda]/acción |
 | 6 | Component Diagram | `component` | capacidad | puertos, lollipop/socket, ensamblaje vs delegación, «subsystem» en la caja del límite |
 | 7 | Deployment Diagram | — | kind nuevo | nodos/dispositivos, entornos de ejecución y artefactos; pide caja 3D e icono de documento (forma nueva) y vocabulario de grupo |
@@ -274,10 +274,12 @@ modelo de entrada/salida.
 interrumpibles: los carriles de `swimlane` son pasivos y sus conectores van sin
 etiqueta.
 - `[DRAW]` cabezas de flecha abiertas: imposible con un solo marcador.
-- **Tensión documentada:** el PRD §8.3.1 archiva `activity` bajo `IrTimeline`
-  (`docs/PRD.md:357`, con `kind_data: {gateway}`), pero las particiones como
-  clusters piden `layered`. Una de las dos cosas tiene que ceder, y ceder hacia
-  `layered` cambia la fila del PRD, no el motor.
+- **Decisión tomada (motor):** el PRD archivaba `activity` bajo `IrTimeline` y
+  las particiones como clusters piden `layered`. Se resolvió a favor de
+  `layered` y el PRD ya lo refleja: la fila 16 de §6 y el mapeo de §8.3.1
+  movieron `activity` al grupo `IrGraph` y los conteos pasaron de 13/6 a 14/5.
+  Razón: una partición anida, `LanesEngine` no dibuja grupos, y la guarda vive
+  en la arista, que los carriles no etiquetan.
 
 **Costo:** kind propio. `flowchart` con roles hospeda el inicio, la acción, la
 decisión y el merge, y nada más: fork/join es una forma, la guarda es un campo y
@@ -424,12 +426,15 @@ fila es **un solo** `u32` por extremo (`ir.rs:227`).
 - `[SEMANTICS]` niveles conceptual, lógico y físico: hoy el documento no los
 distingue.
 
-**Deriva documental, medida:** `docs/PRD.md:557` exige «toda tabla necesita al
-menos una columna con `key: \"pk\"` (`missing_field`)» y `er.rs` **no emite ese
-error**; y `docs/PRD.md:565` dice que `direction` en `er` es `unknown_field`,
-cuando `er.rs:89` lo acepta y toma `LR` por defecto, con pruebas propias
-(`:561`). Dos líneas del PRD que mienten sobre el código: hay que decidir cuál
-lado gana antes de seguir escribiendo contrato encima.
+**Deriva documental, resuelta** (corte `f25-arreglos`, decisión del dueño): el
+PRD exigía «toda tabla necesita al menos una columna con `key: \"pk\"`
+(`missing_field`)» y `er.rs` nunca emitió ese error; y el PRD llamaba
+`unknown_field` a `direction` en `er` cuando `er.rs:89` lo acepta con `LR` por
+defecto (pruebas en `:561`). Las dos líneas se corrigieron a favor del código,
+y la PK opcional ganó un aviso propio en vez de un error: una tabla sin clave
+se dibuja y la respuesta trae `tables_without_key` diciendo qué no puede
+anclar. La razón está escrita en `docs/PRD.md` §10: una tabla sin PK es legal
+en una base real, así que el dibujo no se niega, avisa.
 
 **Costo:** casi todo reuso —pata de cuervo, badges, anclaje de fila, punteado y
 estereotipo ya están—. Entidad débil: una forma nueva. Clave y FK compuestas: un
@@ -900,12 +905,9 @@ pasada real en el motor de carriles.
 Cada uno de estos pide algo que ningún documento de hoy tiene:
 
 - **`activity`** (§5.1): fork/join (barra) y particiones. La barra es una forma
-  nueva; las particiones pueden reusar `groups` del motor layered. **Decisión
-  que hay que tomar antes de abrirlo:** el PRD §8.3.1 archiva `activity` bajo
-  `IrTimeline` (`docs/PRD.md:357`), pero las particiones como clusters piden
-  `layered`. Se abre en `layered` y se corrige la fila del PRD, o se queda en
-  `lanes` y las particiones no son particiones. Mi recomendación: `layered`, y
-  que el PRD ceda, porque el carril pasivo ya lo da `swimlane`.
+  nueva; las particiones reusan `groups` del motor layered. Motor **decidido:
+  `layered`** —el PRD ya lo refleja— porque una partición anida, `LanesEngine`
+  no dibuja grupos y la guarda vive en la arista.
 - **`deployment`** (§5.2): nodos que contienen entornos que contienen
   artefactos — anidamiento de tres niveles con etiquetas por nivel; el contrato
   de `groups` de hoy anida pero no etiqueta por nivel con vocabulario propio.
