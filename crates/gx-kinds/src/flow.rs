@@ -33,6 +33,13 @@ pub struct FlowNode {
     pub emphasis: Option<Emphasis>,
     #[serde(default)]
     pub style: Option<Style>,
+    /// The word drawn above the name, between «» (`f27-etapa1.md`, S3): the
+    /// stereotype is node vocabulary, not an edge slot, so any kind that draws
+    /// a flow box can declare one. The engine already reserves the line, the
+    /// renderer already writes it and the JS twin already paints it, which is
+    /// why this field cost no drawing work.
+    #[serde(default)]
+    pub stereotype: Option<String>,
 }
 
 /// An edge of a flow: the arrow and what it says.
@@ -98,6 +105,11 @@ pub fn validate_flow(
     errors
 }
 
+/// The longest stereotype a flow box draws above its name (`f27-etapa1.md`,
+/// D3): the line is reserved at 0.85× the text size, so it holds a word and
+/// not a sentence.
+pub const MAX_STEREOTYPE_CHARS: usize = 32;
+
 /// Validates the nodes: unique, non empty ids and a role the kind admits.
 pub fn validate_nodes(
     kind: &str,
@@ -150,6 +162,31 @@ pub fn validate_nodes(
                         "los roles de este kind son {} (por defecto `{default_role}`)",
                         admitted.join(", ")
                     )),
+                ));
+            }
+        }
+
+        // El estereotipo es una palabra sobre el nombre, no un párrafo
+        // (`f27-etapa1.md`, D3): la línea que el motor le reserva mide
+        // `text_size * 0.85` y se parte con el ancho de la caja.
+        if let Some(stereotype) = &node.stereotype {
+            let trimmed = stereotype.trim();
+            if trimmed.is_empty() {
+                errors.push(ValidationError::new(
+                    format!("nodes[{index}].stereotype"),
+                    ErrorCode::InvalidValue,
+                    "el estereotipo del nodo no puede estar en blanco".to_string(),
+                    Some("un estereotipo en blanco dibujaría «» sin nada adentro".to_string()),
+                ));
+            } else if trimmed.chars().count() > MAX_STEREOTYPE_CHARS {
+                errors.push(ValidationError::new(
+                    format!("nodes[{index}].stereotype"),
+                    ErrorCode::InvalidValue,
+                    format!(
+                        "el estereotipo `{trimmed}` tiene {} caracteres y el máximo es {MAX_STEREOTYPE_CHARS}",
+                        trimmed.chars().count()
+                    ),
+                    Some("el estereotipo va entre «» sobre el nombre: escribí una palabra, no una frase".to_string()),
                 ));
             }
         }
@@ -237,6 +274,14 @@ pub fn to_ir_nodes(nodes: &[FlowNode], roles: &[Role], default_role: &str) -> Ve
             if let Some(style) = node.style {
                 ir_node.style = style;
             }
+            // El estereotipo viaja tal cual: el motor, el renderer, el CSS y el
+            // gemelo JS ya lo dibujan desde `class` (`f27-etapa1.md`, D3).
+            ir_node.stereotype = node
+                .stereotype
+                .as_deref()
+                .map(str::trim)
+                .filter(|word| !word.is_empty())
+                .map(str::to_string);
             ir_node
         })
         .collect()

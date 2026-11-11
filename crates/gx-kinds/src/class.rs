@@ -158,6 +158,10 @@ impl ClassNode {
             role: self.role.clone(),
             emphasis: self.emphasis,
             style: self.style,
+            // `class` derives the stereotype from the role (`abstract`,
+            // `interface`), never from the document: the field is the flow
+            // vocabulary (`f27-etapa1.md`, D3).
+            stereotype: None,
         }
     }
 }
