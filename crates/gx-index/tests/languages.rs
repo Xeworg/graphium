@@ -24,7 +24,7 @@ use gx_index::lang::{parse, GRAMMARS};
 use gx_index::location::BooksRoot;
 use gx_index::structure::StructureRequest;
 use gx_index::watcher::{IndexOptions, Indexer};
-use gx_index::{ParsedFile, SearchOutcome, StructureAnswer};
+use gx_index::{LanguageResolution, ParsedFile, SearchOutcome, StructureAnswer};
 
 /// A worktree with its books root, removed when the test ends.
 struct Scratch {
@@ -167,6 +167,29 @@ fn assert_no_prose_edges(parsed: &ParsedFile) {
             parsed.edges
         );
     }
+}
+
+/// S5(a): the report row of one language, measured on a book that holds only
+/// the chapter `(path, source)` — the smallest tree that can answer it, so the
+/// arithmetic of one runtime name is the whole test.
+#[cfg(any(
+    feature = "lang-swift",
+    feature = "lang-kotlin",
+    feature = "lang-dart",
+    feature = "lang-scala",
+    feature = "lang-r"
+))]
+fn measured_rate(scratch_name: &str, path: &str, source: &str, lang: &str) -> LanguageResolution {
+    let scratch = Scratch::new(scratch_name);
+    scratch.write(path, source);
+    let book = Arc::new(scratch.open());
+    scratch.indexer(&book).run_full().expect("the index");
+    let report = book.resolution().expect("the honesty report");
+    report
+        .iter()
+        .find(|row| row.lang == lang)
+        .cloned()
+        .unwrap_or_else(|| panic!("the report has no `{lang}` row: {report:?}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -2609,6 +2632,45 @@ fn swift_relations_are_syntactic_and_never_prose() {
     assert_edge(&parsed, "uses", "String");
 }
 
+/// S5(a): the Swift chapter of the runtime rule. `print` is a function the
+/// standard library provides and no chapter of a worktree declares it;
+/// `helper` is a name the book holds.
+#[cfg(feature = "lang-swift")]
+const SWIFT_RUNTIME_ONLY: &str = r#"
+func report() {
+    print(helper())
+}
+
+func helper() {}
+"#;
+
+/// S5(a)/D5: the rate of Swift counts what a worktree CAN resolve. `print` is a
+/// name of the language's runtime and standard library
+/// ([`Grammar::builtins`]), so its edge leaves the measure — out of the
+/// numerator and out of the denominator — while `helper` stays and resolves.
+/// The graph keeps every edge: the rule is the metric's, never the book's.
+#[cfg(feature = "lang-swift")]
+#[test]
+fn the_rate_of_swift_leaves_out_the_names_its_runtime_provides() {
+    let row = measured_rate(
+        "swift-runtime",
+        "src/report.swift",
+        SWIFT_RUNTIME_ONLY,
+        "swift",
+    );
+    assert_eq!((row.resolved, row.edges), (1, 1), "{row:?}");
+    assert_eq!(row.percent(), 100.0);
+
+    let parsed =
+        parse("src/report.swift", SWIFT_RUNTIME_ONLY.as_bytes(), 0).expect("the Swift grammar");
+    assert_eq!(
+        parsed.edges.len(),
+        2,
+        "the chapter keeps its edges: {:?}",
+        parsed.edges
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Kotlin (T3 Batch 3)
 // ---------------------------------------------------------------------------
@@ -2754,6 +2816,42 @@ fn kotlin_relations_are_syntactic_and_never_prose() {
     assert_edge(&parsed, "uses", "Renderer");
 }
 
+/// S5(a): the Kotlin chapter of the runtime rule — `println` is the standard
+/// library's, `helper` is the book's.
+#[cfg(feature = "lang-kotlin")]
+const KOTLIN_RUNTIME_ONLY: &str = r#"
+fun report() {
+    println(helper())
+}
+
+fun helper() {}
+"#;
+
+/// S5(a)/D5: the same rule as Swift, asked of Kotlin: `println` is a name of
+/// the runtime (`Grammar::builtins`) and leaves the measure, `helper` is a name
+/// of the book and stays. The chapter keeps both edges.
+#[cfg(feature = "lang-kotlin")]
+#[test]
+fn the_rate_of_kotlin_leaves_out_the_names_its_runtime_provides() {
+    let row = measured_rate(
+        "kotlin-runtime",
+        "src/report.kt",
+        KOTLIN_RUNTIME_ONLY,
+        "kotlin",
+    );
+    assert_eq!((row.resolved, row.edges), (1, 1), "{row:?}");
+    assert_eq!(row.percent(), 100.0);
+
+    let parsed =
+        parse("src/report.kt", KOTLIN_RUNTIME_ONLY.as_bytes(), 0).expect("the Kotlin grammar");
+    assert_eq!(
+        parsed.edges.len(),
+        2,
+        "the chapter keeps its edges: {:?}",
+        parsed.edges
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Dart (T3 Batch 3)
 // ---------------------------------------------------------------------------
@@ -2886,6 +2984,37 @@ fn dart_relations_are_syntactic_and_never_prose() {
     assert_edge(&parsed, "uses", "Renderer");
 }
 
+/// S5(a): the Dart chapter of the runtime rule — `print` is `dart:core`'s,
+/// `helper` is the book's.
+#[cfg(feature = "lang-dart")]
+const DART_RUNTIME_ONLY: &str = r#"
+void report() {
+  print(helper());
+}
+
+void helper() {}
+"#;
+
+/// S5(a)/D5: Dart measured `7/27` before its runtime list; `print` is a name of
+/// `dart:core` (`Grammar::builtins`) and leaves the measure, `helper` stays.
+/// The chapter keeps both edges.
+#[cfg(feature = "lang-dart")]
+#[test]
+fn the_rate_of_dart_leaves_out_the_names_its_runtime_provides() {
+    let row = measured_rate("dart-runtime", "lib/report.dart", DART_RUNTIME_ONLY, "dart");
+    assert_eq!((row.resolved, row.edges), (1, 1), "{row:?}");
+    assert_eq!(row.percent(), 100.0);
+
+    let parsed =
+        parse("lib/report.dart", DART_RUNTIME_ONLY.as_bytes(), 0).expect("the Dart grammar");
+    assert_eq!(
+        parsed.edges.len(),
+        2,
+        "the chapter keeps its edges: {:?}",
+        parsed.edges
+    );
+}
+
 // ---------------------------------------------------------------------------
 // D3 for T3 Batch 3: the three new languages, measured on their own tree
 // ---------------------------------------------------------------------------
@@ -2943,10 +3072,15 @@ fn the_resolution_rate_of_the_batch_three_languages_is_measured_on_their_fixture
             .join(" | ")
     );
 
-    // The floors are the published numbers of `docs/PRD.md`, rounded down: a
-    // measurement that falls under them fails the suite. They are **measured
-    // on these fixtures**, never promises.
-    for (lang, floor) in [("swift", 20.0), ("kotlin", 23.0), ("dart", 22.0)] {
+    // The floors are the measured rate of these fixtures, rounded down: a
+    // measurement that falls under them fails the suite, and `docs/PRD.md`
+    // publishes the same numbers (T5 moves its line for S5(a)). They are
+    // **measured on these fixtures**, never promises. Since S5(a) the three
+    // languages carry the list of the names their runtime provides, so these
+    // are the measurements of the smaller denominator — Swift 7/29 = 24,1 % →
+    // 7/12 = 58,3 %, Kotlin 7/26 = 26,9 % → 7/14 = 50,0 %, Dart 7/27 = 25,9 %
+    // → 7/13 = 53,8 % — rounded down and never up.
+    for (lang, floor) in [("swift", 58.0), ("kotlin", 50.0), ("dart", 53.0)] {
         let row = by_lang(lang);
         assert!(
             row.percent() >= floor,
@@ -3109,6 +3243,42 @@ fn scala_relations_are_syntactic_and_never_prose() {
     assert_edge_owned(&parsed, "inherits", "Loader", "graphium.store.Defaults");
 }
 
+/// S5(a): the Scala chapter of the runtime rule — `println` is `scala.Predef`'s,
+/// `helper` is the book's.
+#[cfg(feature = "lang-scala")]
+const SCALA_RUNTIME_ONLY: &str = r#"
+def report() = {
+  println(helper())
+}
+
+def helper() = {}
+"#;
+
+/// S5(a)/D5: Scala measured `16/33` before its runtime list; `println` is a
+/// name of the standard library (`Grammar::builtins`) and leaves the measure,
+/// `helper` stays. The chapter keeps both edges.
+#[cfg(feature = "lang-scala")]
+#[test]
+fn the_rate_of_scala_leaves_out_the_names_its_runtime_provides() {
+    let row = measured_rate(
+        "scala-runtime",
+        "scala/report.scala",
+        SCALA_RUNTIME_ONLY,
+        "scala",
+    );
+    assert_eq!((row.resolved, row.edges), (1, 1), "{row:?}");
+    assert_eq!(row.percent(), 100.0);
+
+    let parsed =
+        parse("scala/report.scala", SCALA_RUNTIME_ONLY.as_bytes(), 0).expect("the Scala grammar");
+    assert_eq!(
+        parsed.edges.len(),
+        2,
+        "the chapter keeps its edges: {:?}",
+        parsed.edges
+    );
+}
+
 // ---------------------------------------------------------------------------
 // R (T3 Batch 4)
 // ---------------------------------------------------------------------------
@@ -3204,6 +3374,36 @@ fn r_relations_are_calls_and_the_files_a_script_reads() {
             parsed.edges
         );
     }
+}
+
+/// S5(a): the R chapter of the runtime rule — `print` is `base`'s, `helper` is
+/// the book's.
+#[cfg(feature = "lang-r")]
+const R_RUNTIME_ONLY: &str = r#"
+report <- function() {
+  print(helper())
+}
+
+helper <- function() {}
+"#;
+
+/// S5(a)/D5: R measured `4/8` before its runtime list; `print` is a function of
+/// the base package (`Grammar::builtins`) and leaves the measure, `helper`
+/// stays. The chapter keeps both edges.
+#[cfg(feature = "lang-r")]
+#[test]
+fn the_rate_of_r_leaves_out_the_names_its_runtime_provides() {
+    let row = measured_rate("r-runtime", "R/report.R", R_RUNTIME_ONLY, "r");
+    assert_eq!((row.resolved, row.edges), (1, 1), "{row:?}");
+    assert_eq!(row.percent(), 100.0);
+
+    let parsed = parse("R/report.R", R_RUNTIME_ONLY.as_bytes(), 0).expect("the R grammar");
+    assert_eq!(
+        parsed.edges.len(),
+        2,
+        "the chapter keeps its edges: {:?}",
+        parsed.edges
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -3550,10 +3750,16 @@ fn the_resolution_rate_of_the_batch_four_languages_is_measured_on_their_fixtures
             .join(" | ")
     );
 
-    // The floors are the published numbers of `docs/PRD.md`, rounded down: a
-    // measurement that falls under them fails the suite. They are **measured
-    // on these fixtures**, never promises.
-    for (lang, floor) in [("scala", 45.0), ("r", 46.0), ("lua", 76.0), ("zig", 83.0)] {
+    // The floors are the measured rate of these fixtures, rounded down: a
+    // measurement that falls under them fails the suite, and `docs/PRD.md`
+    // publishes the same numbers (T5 moves its line for S5(a)). They are
+    // **measured on these fixtures**, never promises. Since S5(a) Scala and R
+    // carry the list of the names their runtime provides, so their floors are
+    // the measurement of the smaller denominator — Scala 16/33 = 48,5 % →
+    // 16/18 = 88,9 %, R 4/8 = 50,0 % → 4/5 = 80,0 % — rounded down and never
+    // up; Lua (4/5) and Zig (7/8) keep their measurement, byte by byte, because
+    // neither language has a runtime list.
+    for (lang, floor) in [("scala", 88.0), ("r", 80.0), ("lua", 76.0), ("zig", 83.0)] {
         let row = by_lang(lang);
         assert!(
             row.percent() >= floor,

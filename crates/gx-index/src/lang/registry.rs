@@ -990,6 +990,86 @@ pub const SHELL: Grammar = Grammar {
     detail: None,
 };
 
+/// The runtime names of Swift (S5-a): what the standard library of the language
+/// provides — the types of the `Swift` module and the global functions every
+/// file can call without importing anything — folded the way `name_norm` folds
+/// a target (`Int` is the entry `int`). No chapter of a worktree declares them,
+/// so D3 leaves a relation whose target is one of them out of the rate while no
+/// chapter of the book declares that name.
+///
+/// The list is **knowledge, not a search**: the names that appear as targets in
+/// real code, and adding one is one line of data. It is deliberately **not**
+/// Foundation — `Foundation`, `Data`, `Date` or `URL` are the platform SDK, and
+/// `swift-corelibs-foundation` is a worktree that declares them — so an
+/// `import Foundation` stays the unresolved target it is (S5-a: a wrong entry
+/// hides a real edge).
+#[cfg(feature = "lang-swift")]
+const SWIFT_BUILTINS: &[&str] = &[
+    // The types of the `Swift` module.
+    "any",
+    "anyhashable",
+    "anyobject",
+    "array",
+    "binaryinteger",
+    "bool",
+    "character",
+    "closedrange",
+    "collection",
+    "comparable",
+    "decodable",
+    "dictionary",
+    "double",
+    "encodable",
+    "equatable",
+    "error",
+    "float",
+    "floatingpoint",
+    "hashable",
+    "int",
+    "int16",
+    "int32",
+    "int64",
+    "int8",
+    "iteratorprotocol",
+    "never",
+    "optional",
+    "range",
+    "rawrepresentable",
+    "result",
+    "sequence",
+    "set",
+    "signedinteger",
+    "staticstring",
+    "string",
+    "stringprotocol",
+    "substring",
+    "uint",
+    "uint16",
+    "uint32",
+    "uint64",
+    "uint8",
+    "unsignedinteger",
+    "void",
+    // The global functions every file can call with no import.
+    "abs",
+    "assert",
+    "assertionfailure",
+    "debugprint",
+    "dump",
+    "fatalerror",
+    "max",
+    "min",
+    "numericcast",
+    "precondition",
+    "preconditionfailure",
+    "print",
+    "readline",
+    "stride",
+    "swap",
+    "type",
+    "zip",
+];
+
 /// Swift: the declarations of a file with their methods, and the module named
 /// by the path of the file (Swift declares no package in the source).
 ///
@@ -1042,10 +1122,92 @@ pub const SWIFT: Grammar = Grammar {
             ("subscript_declaration", swift::member),
         ],
     }),
-    builtins: &[],
+    builtins: SWIFT_BUILTINS,
     relations: swift::relations,
     detail: None,
 };
+
+/// The runtime names of Kotlin (S5-a): the types of the `kotlin.*` packages and
+/// the top-level functions of its standard library, which no import is needed
+/// to call, folded the way `name_norm` folds a target (`Int` is the entry
+/// `int`). No chapter of a worktree declares them, so D3 leaves a relation
+/// whose target is one of them out of the rate while no chapter of the book
+/// declares that name.
+///
+/// The list is **knowledge, not a search**, and it is deliberately **not** the
+/// extension functions of the standard library (`let`, `also`, `apply`, `run`,
+/// `takeIf`, `map`, `filter`): their receiver is any type, so their names are
+/// indistinguishable from the ones a project declares and excluding them would
+/// hide a real target (S5-a).
+#[cfg(feature = "lang-kotlin")]
+const KOTLIN_BUILTINS: &[&str] = &[
+    // The types of `kotlin.*`.
+    "any",
+    "array",
+    "boolean",
+    "byte",
+    "char",
+    "charsequence",
+    "collection",
+    "comparable",
+    "double",
+    "exception",
+    "float",
+    "int",
+    "iterable",
+    "iterator",
+    "list",
+    "long",
+    "map",
+    "mutablelist",
+    "mutablemap",
+    "mutableset",
+    "nothing",
+    "number",
+    "pair",
+    "result",
+    "runtimeexception",
+    "sequence",
+    "set",
+    "short",
+    "string",
+    "stringbuilder",
+    "throwable",
+    "triple",
+    "unit",
+    // The top-level functions of the standard library (no import needed).
+    "arraylistof",
+    "arrayof",
+    "buildlist",
+    "buildmap",
+    "buildset",
+    "buildstring",
+    "check",
+    "checknotnull",
+    "emptyarray",
+    "emptylist",
+    "emptymap",
+    "emptyset",
+    "error",
+    "lazy",
+    "listof",
+    "mapof",
+    "maxof",
+    "minof",
+    "mutablelistof",
+    "mutablemapof",
+    "mutablesetof",
+    "print",
+    "println",
+    "readline",
+    "repeat",
+    "require",
+    "requirenotnull",
+    "setof",
+    "sumof",
+    "todo",
+    "typeof",
+];
 
 /// Kotlin: the types of a file with their functions, nested under the `package`
 /// the file declares — which is why the module path of a chapter comes from the
@@ -1090,10 +1252,64 @@ pub const KOTLIN: Grammar = Grammar {
             ("type_alias", kotlin::alias),
         ],
     }),
-    builtins: &[],
+    builtins: KOTLIN_BUILTINS,
     relations: kotlin::relations,
     detail: None,
 };
+
+/// The runtime names of Dart (S5-a): the types of `dart:core`, which every
+/// library imports without an `import`, and the two functions of it every
+/// program calls, folded the way `name_norm` folds a target (`DateTime` is the
+/// entry `datetime`). No chapter of a worktree declares them, so D3 leaves a
+/// relation whose target is one of them out of the rate while no chapter of the
+/// book declares that name.
+///
+/// The list is **knowledge, not a search**, and it is deliberately **not** the
+/// library names of the platform (`async`, `collection`, `math`, `io`,
+/// `convert`): each is also the name of a pub package, so excluding it would
+/// hide the import target of a worktree's own package (S5-a: a wrong entry
+/// hides a real edge).
+#[cfg(feature = "lang-dart")]
+const DART_BUILTINS: &[&str] = &[
+    // The types of `dart:core`.
+    "argumenterror",
+    "bigint",
+    "bool",
+    "comparable",
+    "datetime",
+    "double",
+    "duration",
+    "error",
+    "exception",
+    "expando",
+    "formatexception",
+    "function",
+    "future",
+    "int",
+    "iterable",
+    "iterator",
+    "list",
+    "map",
+    "match",
+    "num",
+    "object",
+    "pattern",
+    "regexp",
+    "set",
+    "sink",
+    "stateerror",
+    "stopwatch",
+    "stream",
+    "string",
+    "stringbuffer",
+    "symbol",
+    "type",
+    "unimplementederror",
+    "unsupportederror",
+    // The functions of `dart:core` every program calls.
+    "identical",
+    "print",
+];
 
 /// Dart: the types of a file with their methods and constructors, and the
 /// module named by the path of the file (a `library` directive names a library,
@@ -1148,10 +1364,82 @@ pub const DART: Grammar = Grammar {
             ("top_level_variable_declaration", dart::constants),
         ],
     }),
-    builtins: &[],
+    builtins: DART_BUILTINS,
     relations: dart::relations,
     detail: None,
 };
+
+/// The runtime names of Scala (S5-a): the types of `scala.*` and the functions
+/// of `scala.Predef`, which no import is needed to use, folded the way
+/// `name_norm` folds a target (`Int` is the entry `int`). No chapter of a
+/// worktree declares them, so D3 leaves a relation whose target is one of them
+/// out of the rate while no chapter of the book declares that name.
+///
+/// The list is **knowledge, not a search**, and it is deliberately **not** the
+/// collection combinators (`map`, `filter`, `foreach`, `foldLeft`) nor
+/// `scala.Console`/`scala.sys`: the combinators are methods of any collection a
+/// project holds, so their names are indistinguishable from a project's own
+/// functions, and excluding them would hide a real target (S5-a).
+#[cfg(feature = "lang-scala")]
+const SCALA_BUILTINS: &[&str] = &[
+    // The types and the values of `scala.*`.
+    "any",
+    "anyref",
+    "anyval",
+    "array",
+    "bigdecimal",
+    "bigint",
+    "boolean",
+    "byte",
+    "char",
+    "double",
+    "either",
+    "exception",
+    "failure",
+    "float",
+    "future",
+    "illegalargumentexception",
+    "illegalstateexception",
+    "int",
+    "iterable",
+    "iterator",
+    "left",
+    "list",
+    "long",
+    "map",
+    "none",
+    "nothing",
+    "option",
+    "ordered",
+    "ordering",
+    "promise",
+    "right",
+    "runtimeexception",
+    "seq",
+    "set",
+    "short",
+    "some",
+    "string",
+    "stringbuilder",
+    "success",
+    "throwable",
+    "try",
+    "unit",
+    "vector",
+    // The functions of `scala.Predef` (no import needed).
+    "assert",
+    "assume",
+    "classof",
+    "identity",
+    "implicitly",
+    "locally",
+    "print",
+    "printf",
+    "println",
+    "readline",
+    "require",
+    "summon",
+];
 
 /// Scala: the types of a file with their members, nested under the `package`
 /// the file declares — which is why the module path of a chapter comes from the
@@ -1209,10 +1497,101 @@ pub const SCALA: Grammar = Grammar {
             ("var_definition", scala::value),
         ],
     }),
-    builtins: &[],
+    builtins: SCALA_BUILTINS,
     relations: scala::relations,
     detail: None,
 };
+
+/// The runtime names of R (S5-a): the constructors of the base types and the
+/// functions of the base package a script calls without attaching anything,
+/// folded the way `name_norm` folds a target. No chapter of a worktree declares
+/// them, so D3 leaves a relation whose target is one of them out of the rate
+/// while no chapter of the book declares that name.
+///
+/// The list is **knowledge, not a search**, and it is deliberately **not**:
+/// `load`, which is base R but is also the member a fixture calls on its own
+/// object (`store$load()`), so excluding it would hide a real target; the
+/// packages of the distribution and of CRAN (`stats`, `utils`, `ggplot2`), which
+/// `library()`/`require()` name and a worktree can own; and the dotted base
+/// names (`as.character`, `data.frame`, `is.na`), which never reach the book as
+/// a target at all — `clean_name` keeps letters, digits and `_` — so an entry no
+/// edge can carry would only look like coverage (S5-a).
+#[cfg(feature = "lang-r")]
+const R_BUILTINS: &[&str] = &[
+    // The constructors of the types a script binds.
+    "array",
+    "character",
+    "double",
+    "factor",
+    "integer",
+    "list",
+    "logical",
+    "matrix",
+    "numeric",
+    "vector",
+    // The functions of the base package.
+    "abs",
+    "apply",
+    "c",
+    "cat",
+    "ceiling",
+    "exp",
+    "floor",
+    "format",
+    "grepl",
+    "gsub",
+    "head",
+    "identical",
+    "ifelse",
+    "invisible",
+    "lapply",
+    "length",
+    "library",
+    "log",
+    "mapply",
+    "match",
+    "max",
+    "mean",
+    "message",
+    "min",
+    "names",
+    "nchar",
+    "ncol",
+    "nrow",
+    "order",
+    "paste",
+    "paste0",
+    "print",
+    "prod",
+    "rep",
+    "require",
+    "requirenamespace",
+    "rev",
+    "round",
+    "sapply",
+    "seq",
+    "seq_along",
+    "seq_len",
+    "signif",
+    "sort",
+    "source",
+    "sprintf",
+    "sqrt",
+    "stop",
+    "stopifnot",
+    "strsplit",
+    "sub",
+    "sum",
+    "tail",
+    "tapply",
+    "trimws",
+    "trycatch",
+    "unique",
+    "unlist",
+    "vapply",
+    "warning",
+    "which",
+];
 
 /// R: the functions a script binds with `<-` as `fn` and every other binding as
 /// `const`, with the file as the module (`R/store.R` → `R.store`).
@@ -1239,7 +1618,7 @@ pub const R: Grammar = Grammar {
         // of the binding is an operand of the operator (r::assignment).
         hooks: &[("binary_operator", r::assignment)],
     }),
-    builtins: &[],
+    builtins: R_BUILTINS,
     relations: r::relations,
     detail: None,
 };
@@ -1401,16 +1780,57 @@ mod tests {
             .collect()
     }
 
-    /// T6: the runtime names of a language are folded the way the metric folds
-    /// a target (`name_norm` is a lowercase), so a lookup of an edge can never
-    /// miss a name the list means to exclude; and the list belongs to the
-    /// language whose runtime spells it. The three weak languages of T6 carry
-    /// one; the other seventeen keep publishing their rate over every relation
-    /// they read, so their numbers do not move in this cut.
+    /// D4: the runtime rule is a **census**, not the three languages T6 chose.
+    /// Every language the census names carries a folded list of the names its
+    /// runtime and standard library provide, every grammar of this build that
+    /// carries one is in the census, and the census is counted — so adding a
+    /// language stays a deliberate edit that moves a number, never a line of
+    /// data that changes a published rate by itself.
+    ///
+    /// The names are folded the way the metric folds a target (`name_norm` is a
+    /// lowercase), so a lookup of an edge can never miss a name the list means
+    /// to exclude; and the list belongs to the language whose runtime spells it
+    /// (`crate::resolution` asks each grammar for its own).
     #[test]
-    fn the_runtime_names_of_a_language_are_folded_and_its_own() {
+    fn the_runtime_census_carries_a_folded_list_per_language() {
         use crate::lang::name_norm;
 
+        // The census of D4: the languages whose published rate leaves out the
+        // names their runtime and standard library provide — the ones whose
+        // `Grammar::builtins` is not empty. T6 measured the three weak languages
+        // of C2 (Python, Go, Java); S5(a) closed the five its cut had deferred
+        // (Swift, Kotlin, Dart, Scala, R). The other twelve keep publishing
+        // their rate over every relation they read, so their numbers do not
+        // move while the census gains a name.
+        const RUNTIME_CENSUS: &[&str] = &[
+            "dart", "go", "java", "kotlin", "python", "r", "scala", "swift",
+        ];
+
+        // The count of D4: moving it is the deliberate edit that adds a language
+        // to the census, and a language arrives with its data and its measured
+        // floors, never as a silent extra line.
+        assert_eq!(
+            RUNTIME_CENSUS.len(),
+            8,
+            "the census of D4 is eight languages: {RUNTIME_CENSUS:?}"
+        );
+        // A census is a set: written in order, without repetitions, and every
+        // entry folded the way the metric folds a target.
+        for pair in RUNTIME_CENSUS.windows(2) {
+            assert!(
+                pair[0] < pair[1],
+                "the census is sorted and without repetitions: {RUNTIME_CENSUS:?}"
+            );
+        }
+        for lang in RUNTIME_CENSUS {
+            assert_eq!(*lang, name_norm(lang), "`{lang}` of the census is folded");
+        }
+
+        // The two directions are one assertion: a language of the census carries
+        // a list and every language that carries one is in the census. A census
+        // name that stops naming a language is caught here wherever the build
+        // compiles that language, and a slim build is checked against the
+        // grammars it kept (T4/C3).
         for grammar in GRAMMARS {
             for name in grammar.builtins {
                 assert_eq!(
@@ -1420,11 +1840,11 @@ mod tests {
                     grammar.lang
                 );
             }
-            let expected = matches!(grammar.lang, "python" | "go" | "java");
+            let inside = RUNTIME_CENSUS.contains(&grammar.lang);
             assert_eq!(
                 !grammar.builtins.is_empty(),
-                expected,
-                "the runtime list of `{}` is the one of T6",
+                inside,
+                "the runtime list of `{}` is not the census of D4",
                 grammar.lang
             );
         }
