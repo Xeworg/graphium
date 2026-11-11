@@ -144,4 +144,14 @@ check of T2 are corrected to `crates/gx-index/tests/languages.rs` and
 `cargo test -p gx-index --test languages`. The BEFORE numbers the worker captured
 before touching anything: swift 24.1 %, kotlin 26.9 %, dart 25.9 %, scala 48.5 %,
 r 50.0 %.
+L4 (evidence, from a live call inside this session). Mid-cut, the product was
+called against this worktree for the first time in the session:
+`code_structure{file:"crates/gx-core/src/ir.rs"}` and
+`code_impact{symbol:"parse_side",direction:"in"}`. The impact answer was correct
+and cheap (one caller, `unresolved: 0`, 1.5k), which is the same conclusion the
+session had reached by hand with `grep`. The structure answer exposed a defect
+that the analysis had missed: `progress.symbols` answers **`0`** with 163 files
+indexed, so the field the census is supposed to publish is already published as a
+lie, not merely absent. T1 owns the fix (a non-zero pinned count, and the wiring
+audited) because the census cannot be honest on top of a counter that reads zero.
 
