@@ -126,19 +126,28 @@ T5 measure and document (D7): re-measure the release binary, update `docs/PRD.md
 `docs/CATALOGO-DIAGRAMAS.md` or a new `docs/LENGUAJES.md`, and run the full gate
 set. inline. commit: `docs(odd): f28 records the coverage the book can defend`.
 
-T6 the teaching layer (owner's direction after L5): the server must teach an agent
-**when** to reach for a tool, not only what the tool does. Study the text the
-server puts in front of an agent — `harness.rs` `INSTRUCTIONS` and every tool
-description, with their sizes — and rewrite it as triggers in the agent's own
-working words ("before you grep for the callers of a name", "before you change a
-signature", "when a file you expected is missing from the index", "when a name
-answers as ambiguous"), keeping the API explanation subordinate to the trigger.
-Budgets: the whole teaching text must not grow beyond what it costs today, and
-every tool must be reachable from INSTRUCTIONS alone for an agent that reads it
-once at session start. No tool changes behaviour in this task. worker C, after
-T1 and T3 (same files). commit: `docs(harness): the server teaches when to look,
-not only what it answers`.
-
+T6 the teaching layer (owner's direction after L5). Split in two once the
+extension was studied (L6): the **timely** text belongs to the extension, the
+**reference** text to the server.
+T6a the extension teaches the moment (`extensions/pi/graphium/`): declare the
+server with `exposure: "direct"` so the 16 tools reach the model at all — today
+they do not, which is why an agent in this very session found them only by
+searching —, rewrite the 169-character `description` so it names the five book
+tools (`code_search`, `code_structure`, `code_impact`, `code_diagram`, `code_er`)
+instead of two, drop the two false claims it carries (that a PNG always works, and
+that the book is always on), and add the guide's own slot for rules keyed by tool
+name: `promptGuidelines` from `before_agent_start`, with the sentence that exists
+nowhere today — "when you are about to grep for a symbol, `code_impact` already
+knows who points at it". `verify.mjs` grows one check per new channel; it keeps
+proving the extension boots, and it now also proves what it teaches. worker C.
+commit: `feat(extension): the teaching names the moment, not only the tool`.
+T6b the server stops competing (`crates/gx-mcp/src/harness.rs`): fix the three
+sentences that are false against today's code (the 300-node cap belongs to
+`opts.extract`, not `opts.focus`; `interactive` "arrives in F3" and F3 shipped
+without it; the error path names `opts.focus.around` where the document writes
+`opts.focus.id`), and cut from `INSTRUCTIONS` the teaching the extension now owns,
+so the budget does not grow. worker C, after T3. commit: `docs(harness): the
+server keeps the contract and hands the timing to the extension`.
 ## Log
 
 L1 (owner, verbatim): the request of S1.
@@ -172,3 +181,23 @@ L5 (owner, verbatim): "no hay problema en que no sean utiles aun la extension de
 ser estudiada para ensenarle al agente cuando y como usarlas". The bar moves from
 "the tools are useful" to "the tools are findable at the moment they are useful":
 the teaching text is the deliverable, and T6 is where it lands.
+L6 (evidence, the extension study, and the correction of L5's premise). The Pi
+extension was studied against `https://pi.dev/docs/latest/extensions`. Three
+findings decide the split of T6. (a) **The tools are not declared to the model**:
+the extension registers the server with no `exposure`, the guide documents
+`exposure: "direct"` as "declared to the model while active", and in this session
+Graphium reached the agent only as a `codemode` namespace — which is why the agent
+that wrote this document reached for `grep` three times and never saw
+`code_impact`. That is a configuration fact, not a habit. (b) **The channel that
+can time text is the extension**: the guide documents `promptGuidelines` ("append
+tool-specific bullets … when the tool is active"), `before_agent_start` ("Can
+inject a message and/or modify the system prompt"), `tool_call` and `tool_result`
+("Can modify result"), while its MCP section says nothing about a server's
+`instructions` reaching a model. The extension uses none of them: one
+169-character `description` is its whole teaching. (c) **The short text is also
+the wrong text**: it names two of the five book tools, promises a PNG that needs
+`path` and the app, asserts a book that can be `book_disabled`, and omits the one
+rule the server does get right ("Never draw to compensate for not understanding
+the code: read first"). `verify.mjs` runs 19 checks against a hand-written stub:
+it proves the extension boots and never touches whether anything is taught.
+
