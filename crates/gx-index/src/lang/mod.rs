@@ -84,7 +84,8 @@ pub use model::{
 pub use registry::GRAMMARS;
 
 /// Files bigger than this are skipped with a warning (D2): a source that big is
-/// generated, and parsing it costs more than it answers.
+/// generated, and parsing it costs more than it answers. The census of the book
+/// publishes that skip as `too_large` (f28, D3), with this ceiling in `limits`.
 pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
 /// The grammar of a language, by the `lang` name.

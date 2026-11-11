@@ -7,7 +7,7 @@
 //! deleted from `symbol` **before** the `file` row, so the trigger always has
 //! its old values, and the file row goes last.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -38,6 +38,92 @@ pub enum BookError {
     InUse(String),
 }
 
+/// Why a file of the worktree did not reach the book (f28, D3).
+///
+/// The set is closed on purpose and the code is stable: an agent branches on
+/// it, and a human reads the [`SkipReason::hint`] beside it. `ignored` covers
+/// what git ignores and the directories the book never walks, `too_large` a
+/// file over [`crate::lang::MAX_FILE_BYTES`], `unsupported_language` a file
+/// whose extension no grammar of this build answers, and `unreadable` a file
+/// the book could not turn into source (a read error, a binary, or a grammar
+/// that refused it).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SkipReason {
+    /// Git ignores it, or it is one of the directories the book never walks.
+    Ignored,
+    /// Over the ceiling of [`crate::lang::MAX_FILE_BYTES`].
+    TooLarge,
+    /// No grammar of this build answers its extension.
+    UnsupportedLanguage,
+    /// The book could not turn the bytes into source.
+    Unreadable,
+}
+
+impl SkipReason {
+    /// Every code, in the order the census publishes them.
+    pub const ALL: [SkipReason; 4] = [
+        SkipReason::Ignored,
+        SkipReason::TooLarge,
+        SkipReason::UnsupportedLanguage,
+        SkipReason::Unreadable,
+    ];
+
+    /// The stable code an agent branches on (D3).
+    pub fn code(self) -> &'static str {
+        match self {
+            SkipReason::Ignored => "ignored",
+            SkipReason::TooLarge => "too_large",
+            SkipReason::UnsupportedLanguage => "unsupported_language",
+            SkipReason::Unreadable => "unreadable",
+        }
+    }
+
+    /// The sentence a human reads beside the code (D3): what to fix, not what
+    /// happened.
+    pub fn hint(self) -> &'static str {
+        match self {
+            SkipReason::Ignored => {
+                "the walk pruned it whole: it is one of the directories the book never \
+                 walks (`.git`, `.graphium`, `.graphium-book`, `target`, `node_modules`), and the \
+                 subtree is one row, never one per generated file. A file `.gitignore` hides \
+                 is pruned by the walker before the book sees it and is not named in the \
+                 census: check its rule when a file you expect is missing"
+            }
+            SkipReason::TooLarge => {
+                "the file is over the 1 MiB ceiling of the walk (`MAX_FILE_BYTES`): a source \
+                 that big is usually generated, and reading it with the file tools is the \
+                 way to see it"
+            }
+            SkipReason::UnsupportedLanguage => {
+                "no grammar of this build answers the extension of the file: the book indexes \
+                 the languages of its registry, and a slim build drops the rest"
+            }
+            SkipReason::Unreadable => {
+                "the book could not turn the file into source: it could not read it, it looks \
+                 binary, or its grammar refused it, and the pass names the exact case on stderr"
+            }
+        }
+    }
+}
+
+/// One file that did not reach the book (f28, D3): the path the pass saw,
+/// relative to the root of the worktree, and the stable code of its reason.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SkippedFile {
+    pub path: String,
+    pub reason: SkipReason,
+}
+
+/// How many rows of one reason the published census keeps (f28, D3).
+///
+/// The count of [`Progress::files_failed`] still covers every skip, so the
+/// sample never hides a problem: a tree full of `.md` files costs a sample of
+/// fifty rows, never fifty thousand.
+pub const MAX_SKIPS_PER_REASON: usize = 50;
+
 /// How far the first index is (the `meta.progress` row of S9).
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Progress {
@@ -58,9 +144,19 @@ pub struct Progress {
     /// Unix epoch milliseconds.
     #[serde(default)]
     pub updated_at: i64,
-    /// Files skipped as binary or oversized (D2).
+    /// Files skipped as unreadable or oversized (D2).
     #[serde(default)]
     pub warnings: i64,
+    /// How many files did not reach the book, counted by the stable code of the
+    /// reason (f28, D3): the four codes of [`SkipReason::ALL`] are always here.
+    #[serde(default)]
+    pub skipped_by_reason: BTreeMap<String, i64>,
+    /// A sample of those files — at most [`MAX_SKIPS_PER_REASON`] per reason —
+    /// with the path the walk saw and its code, in the order the pass found
+    /// them. The census is the one of the last **full** pass: an incremental
+    /// sync writes no census of its own.
+    #[serde(default)]
+    pub skips: Vec<SkippedFile>,
 }
 
 impl Progress {
@@ -75,12 +171,17 @@ impl Progress {
 pub struct CommitReport {
     /// Files whose symbols were replaced.
     pub files_written: usize,
-    /// Files whose content hash did not change.
+    /// Files whose content hash did not change, plus the chapters the batch
+    /// refused (they are named in [`CommitReport::skips`]).
     pub files_skipped: usize,
     /// Symbols written.
     pub symbols: i64,
     /// Chapters removed because the file is gone.
     pub files_removed: usize,
+    /// The chapters that did not reach the book, with the stable code of the
+    /// reason (f28, D3): a language this build has no grammar for, or a
+    /// chapter the write refused. Before f28 they were counted and dropped.
+    pub skips: Vec<SkippedFile>,
 }
 
 /// The identity and the state of one open book.
@@ -252,6 +353,10 @@ impl Book {
                     file.path, file.lang
                 );
                 report.files_skipped += 1;
+                report.skips.push(SkippedFile {
+                    path: file.path.clone(),
+                    reason: SkipReason::UnsupportedLanguage,
+                });
                 continue;
             }
             let savepoint = format!("chapter_{index}");
@@ -269,6 +374,10 @@ impl Book {
                         .execute_batch(&format!("ROLLBACK TO {savepoint}; RELEASE {savepoint}"))?;
                     eprintln!("gx-index: the chapter `{}` was skipped: {error}", file.path);
                     report.files_skipped += 1;
+                    report.skips.push(SkippedFile {
+                        path: file.path.clone(),
+                        reason: SkipReason::Unreadable,
+                    });
                 }
             }
         }

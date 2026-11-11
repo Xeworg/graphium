@@ -172,7 +172,30 @@ project (`path`, relative to the project root with `/` separators) — or, with 
 document, with `files` counting the chapters it parsed: its tables \
 as compartments with their columns and the keys between them, in `diagram`, \
 ready for `validate_diagram` and then `render_diagram` — the picture of a \
-database read live from the file instead of from the code. The book is \
+database read live from the file instead of from the code. \
+`code_index` answers the census of the book itself, with no subject to look up: \
+the state of the first pass, `files { total, done, failed_total, by_reason, \
+failed[] }`, `symbols`, `languages[]` and the `limits` in force. Ask it when the \
+human wants to know what the index covers before trusting a search: a symbol that \
+is not there may live in a file the book never took. Every `failed[]` row carries \
+the stable code of the reason plus a hint a human reads: `ignored` (it is one of \
+the directories the book never walks — `.git`, `.graphium`, `target`, \
+`node_modules` — and a pruned subtree is one row; a path `.gitignore` hides is \
+pruned by the walker before the book sees it and is not named in the census), \
+`too_large` (over \
+the 1 MiB ceiling), `unsupported_language` (no grammar of this build answers the \
+extension) and `unreadable` (it does not read as source: a read error, a binary, \
+or a grammar that refused it). Branch on `reason`, never on the sentence. The list \
+is a sample of at most fifty rows per reason — `failed_total` and `by_reason` \
+count every skip — so a file the book does not have is never a silent absence. \
+Each row of `languages` reports `files`, `symbols` and `resolution { edges, \
+resolved, percent, comparable }`: `percent` is `resolved / edges`, never a share \
+of files or of symbols, and `comparable` is true only for a language that carries \
+a runtime-name list, so read two rates against each other only when both are \
+`true` — a `false` row counts its runtime targets as unresolved. `limits` names \
+the ceilings in force (`max_file_bytes`, `max_name_fanout`, `max_parse_threads`, \
+`max_batch_bytes`, `hard_exclusions`). It takes no required argument and `lang` \
+only narrows `languages`. The book is \
 on by default: `book_disabled` only answers when the owner opted out with \
 `GRAPHIUM_BOOK=off`, and a book that cannot be opened answers \
 `book_unavailable`. `progress.state` tells whether the first pass is still \
@@ -221,6 +244,7 @@ pub fn description(name: &str) -> &'static str {
         "code_impact" => crate::CODE_IMPACT_DESCRIPTION,
         "code_diagram" => crate::CODE_DIAGRAM_DESCRIPTION,
         "code_er" => crate::CODE_ER_DESCRIPTION,
+        "code_index" => crate::CODE_INDEX_DESCRIPTION,
         _ => "",
     }
 }
@@ -308,6 +332,7 @@ mod tests {
             "code_impact",
             "code_diagram",
             "code_er",
+            "code_index",
         ] {
             let text = description(tool);
             assert!(
@@ -593,6 +618,41 @@ mod tests {
         assert!(
             INSTRUCTIONS.contains("code_er"),
             "THE BOOK section has to name the tool"
+        );
+    }
+
+    /// f28 S4/D1/D2/D3: the agent learns that the census exists, that a rate
+    /// says whether it may be compared, and which codes a file that did not
+    /// reach the book carries.
+    #[test]
+    fn the_harness_teaches_the_census_of_the_book() {
+        assert!(
+            crate::dispatch::TOOL_NAMES.contains(&"code_index"),
+            "the census is a tool: {:?}",
+            crate::dispatch::TOOL_NAMES
+        );
+        let text = description("code_index");
+        assert!(text.len() > 120, "code_index needs a real description");
+        assert_ne!(text, description("nope"), "code_index is a fallback");
+        for needle in [
+            "comparable",
+            "`lang`",
+            "ignored",
+            "too_large",
+            "unsupported_language",
+            "unreadable",
+            "on by default",
+            "GRAPHIUM_BOOK=off",
+        ] {
+            assert!(text.contains(needle), "code_index lacks `{needle}`: {text}");
+            assert!(
+                INSTRUCTIONS.contains(needle),
+                "the instructions lack `{needle}`"
+            );
+        }
+        assert!(
+            INSTRUCTIONS.contains("`code_index`"),
+            "THE BOOK section has to name the census tool"
         );
     }
 }

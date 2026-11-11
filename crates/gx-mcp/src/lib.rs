@@ -1136,6 +1136,110 @@ pub mod book {
         document_answer(opened, path, document, None)
     }
 
+    /// Runs `code_index` for the session with the configuration of the owner.
+    pub fn code_index(session_id: &str, lang: Option<&str>) -> Value {
+        let config = gx_index::BooksConfig::from_env();
+        code_index_with(&config, project_of(session_id).as_deref(), lang)
+    }
+
+    /// Reads the census of the book (f28, D1/D2/D3): the state of the last full
+    /// pass, the files that did not reach the book with the stable code of the
+    /// reason and the hint a human reads, the declaration count, one row per
+    /// language with its rate and whether that rate may be compared, and the
+    /// limits in force.
+    ///
+    /// Nothing here is a new measurement: `files` is the `progress` row, the
+    /// rows of `languages` are [`gx_index::Book::resolution`], `symbols` is the
+    /// count of the book, and `limits` are the constants the walk and the
+    /// resolution actually apply — so the answer can never disagree with the
+    /// engine that produced it. `lang` narrows the rows of `languages` and
+    /// nothing else: the book stays the whole book, and a language no chapter
+    /// has is an empty census rather than an error.
+    pub fn code_index_with(
+        config: &gx_index::BooksConfig,
+        project: Option<&str>,
+        lang: Option<&str>,
+    ) -> Value {
+        let lang = optional_text(lang);
+        let opened = match open(config, project) {
+            Ok(opened) => opened,
+            Err(response) => return response,
+        };
+        let book = opened.handle.book();
+        let symbols = match book.counts() {
+            Ok((_, symbols)) => symbols,
+            Err(error) => return failure("book", UNAVAILABLE_CODE, &error.to_string(), None),
+        };
+        let resolution = match book.resolution() {
+            Ok(resolution) => resolution,
+            Err(error) => return failure("book", UNAVAILABLE_CODE, &error.to_string(), None),
+        };
+        let progress = book.progress().unwrap_or_default();
+
+        let mut response = base(&opened);
+        response["ok"] = json!(true);
+        response["files"] = json!({
+            "total": progress.files_total,
+            "done": progress.files_done,
+            "failed_total": progress.files_failed,
+            "by_reason": skipped_by_reason(&progress),
+            "failed": progress
+                .skips
+                .iter()
+                .map(|skip| json!({
+                    "path": skip.path,
+                    "reason": skip.reason.code(),
+                    "hint": skip.reason.hint(),
+                }))
+                .collect::<Vec<Value>>(),
+        });
+        response["symbols"] = json!(symbols);
+        response["languages"] = json!(resolution
+            .iter()
+            .filter(|row| lang.is_none_or(|lang| row.lang == lang))
+            .map(language_json)
+            .collect::<Vec<Value>>());
+        response["limits"] = json!({
+            "max_file_bytes": gx_index::lang::MAX_FILE_BYTES,
+            "max_name_fanout": gx_index::impact::MAX_NAME_FANOUT,
+            "max_parse_threads": gx_index::watcher::MAX_PARSE_THREADS,
+            "max_batch_bytes": gx_index::watcher::MAX_BATCH_BYTES,
+            "hard_exclusions": gx_index::watcher::HARD_EXCLUSIONS,
+        });
+        response
+    }
+
+    /// One row of the census: the language, its chapters, its declarations and
+    /// the rate of the relations that resolve (D1).
+    fn language_json(row: &gx_index::LanguageResolution) -> Value {
+        json!({
+            "lang": row.lang,
+            "files": row.files,
+            "symbols": row.symbols,
+            "resolution": {
+                "edges": row.edges,
+                "resolved": row.resolved,
+                "percent": row.percent(),
+                "comparable": row.comparable,
+            },
+        })
+    }
+
+    /// The skips of the pass counted by code, the four codes always present so
+    /// an agent branches on a key that exists even at zero (D3).
+    fn skipped_by_reason(progress: &gx_index::Progress) -> Value {
+        let mut counts = serde_json::Map::new();
+        for reason in gx_index::book::SkipReason::ALL {
+            let total = progress
+                .skipped_by_reason
+                .get(reason.code())
+                .copied()
+                .unwrap_or(0);
+            counts.insert(reason.code().to_string(), json!(total));
+        }
+        Value::Object(counts)
+    }
+
     /// The document of the whole project (`scope: "project"`, f15 S2/S3): the
     /// detail of every `.sql` chapter of the book, parsed **live** from disk in
     /// the book's chapter order and merged, with the named file part of the
@@ -2483,6 +2587,47 @@ pub struct CodeErParams {
     pub scope: Option<String>,
 }
 
+/// Description of the `code_index` tool, written for the agent (f28, D2).
+// The text is duplicated from `harness::description("code_index")`, like every
+// other book tool const, so the harness and the stdio router say the same.
+pub(crate) const CODE_INDEX_DESCRIPTION: &str =
+    "Answer what the book of the project knows without a subject to look up: the \
+state of the first pass, the files that did not reach it and why, the declarations \
+it holds, one row per language and the limits in force. `files` carries `total` (the \
+files the last full pass found), `done`, `failed_total`, `by_reason` — the four \
+codes always present, even at zero — and `failed[]`, one row per file with `path`, \
+`reason` and `hint`: `ignored` (it is one of the directories the book never \
+walks: `.git`, `.graphium`, `.graphium-book`, `target`, `node_modules`, and a \
+pruned subtree is one row, not one per generated file; a path `.gitignore` hides \
+is pruned by the walker before the book sees it and is not named in the census), \
+`too_large` (over the 1 MiB ceiling of the walk), `unsupported_language` (no grammar \
+of this build answers its extension) and `unreadable` (the book could not turn it \
+into source: a read error, a binary, or a grammar that refused it). Branch on \
+`reason`; the `hint` says what to fix. `failed[]` is a sample of at most fifty rows \
+per reason, while `failed_total` and `by_reason` count every skip, so a missing file \
+is never a silent absence. `languages[]` carries `lang`, `files`, `symbols` and \
+`resolution { edges, resolved, percent, comparable }`: `percent` is `resolved / \
+edges` — never a share of files or of symbols — and `comparable` is true only for a \
+language that carries a runtime-name list, so two rates may be read against each \
+other only when both are `true`; a `false` row counts the names of its runtime as \
+unresolved. `limits` names the ceilings in force: `max_file_bytes`, \
+`max_name_fanout` (a name resolves only while the book holds at most five \
+declarations of it), `max_parse_threads`, `max_batch_bytes` and the \
+`hard_exclusions`. No argument is required; `lang` narrows `languages` to one row \
+and leaves the rest of the census describing the whole book, and a language no \
+chapter has is an empty list rather than an error. It is read-only: it never \
+renders, never touches the plan and never reindexes. The book is on by default \
+(`book_disabled` only with an explicit `GRAPHIUM_BOOK=off`).";
+
+/// Parameters of the `code_index` tool (f28, D2): no required argument.
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeIndexParams {
+    /// The optional filter: answer only this language's row of `languages`.
+    #[serde(default)]
+    pub lang: Option<String>,
+}
+
 /// The MCP server of Graphium.
 ///
 /// It is a plain [`ServerHandler`]: the tool router comes from the
@@ -2949,6 +3094,33 @@ impl GraphiumServer {
         })
         .await
         .map_err(|error| ErrorData::internal_error(format!("the er task failed: {error}"), None))?;
+        structured(response)
+    }
+
+    #[tool(
+        name = "code_index",
+        description = CODE_INDEX_DESCRIPTION,
+        annotations(
+            title = "Read the census of the book: languages, symbols, missing files",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn code_index(
+        &self,
+        Parameters(params): Parameters<CodeIndexParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session_id = self.session_id.clone();
+        let lang = params.lang.clone();
+        // The census reads the book: the query runs off the async loop.
+        let response =
+            tokio::task::spawn_blocking(move || book::code_index(&session_id, lang.as_deref()))
+                .await
+                .map_err(|error| {
+                    ErrorData::internal_error(format!("the census task failed: {error}"), None)
+                })?;
         structured(response)
     }
 }
@@ -6129,5 +6301,223 @@ CREATE TABLE posts (\n\
             .expect("the grammar is an answer");
         assert_eq!(empty["ok"], false, "{empty}");
         assert_eq!(empty["errors"][0]["code"], "invalid_value", "{empty}");
+    }
+
+    // -----------------------------------------------------------------
+    // f28 — `code_index`: the census of the book and why a file is missing
+    // -----------------------------------------------------------------
+
+    /// The language that carries no runtime list (D1/S3): `shell` is one of the
+    /// two the census uses as the incomparable case, never a language T2 is
+    /// adding a list to.
+    const INCOMPARABLE: &str = "shell";
+
+    /// D1/D2/D3: the tool answers the state of the book, the files that did not
+    /// reach it with their stable code and a hint, the symbols, one row per
+    /// language with its rate and whether that rate may be compared, and the
+    /// limits in force.
+    #[test]
+    fn code_index_answers_the_census_and_why_a_file_is_missing() {
+        let scratch = BookScratch::new("code-index");
+        scratch.write("src/lib.rs", "pub fn one() {}\npub fn two() {}\n");
+        scratch.write("src/app.py", "def main():\n    return len('x')\n");
+        scratch.write("src/run.sh", "main() {\n  echo hi\n}\n");
+        scratch.write("docs/notes.md", "# no grammar of this build reads it\n");
+        scratch.write("target/generated.rs", "pub fn generated() {}\n");
+        std::fs::write(
+            scratch.root().join("src/generated.rs"),
+            vec![b'/'; gx_index::lang::MAX_FILE_BYTES as usize + 1],
+        )
+        .expect("the oversized file");
+        let handle = scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let answer = crate::book::code_index_with(&scratch.config(), Some(&project), None);
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert_eq!(answer["book_key"], handle.book().key(), "{answer}");
+
+        // `files`: the trail of the first pass, and one row per file that did
+        // not reach the book, each with its code and a hint a human can read.
+        let files = &answer["files"];
+        assert_eq!(files["done"], files["total"], "{answer}");
+        assert!(files["total"].as_i64().is_some_and(|total| total >= 3));
+        let failed = files["failed"].as_array().expect("the failed rows");
+        let row = |path: &str| {
+            failed
+                .iter()
+                .find(|row| row["path"] == path)
+                .unwrap_or_else(|| panic!("`{path}` is not in the census: {answer}"))
+        };
+        // D3: one code per cause, never a sentence an agent has to parse.
+        assert_eq!(row("docs/notes.md")["reason"], "unsupported_language");
+        assert_eq!(row("src/generated.rs")["reason"], "too_large");
+        assert_eq!(row("target")["reason"], "ignored");
+        for row in failed {
+            assert!(
+                row["hint"].as_str().is_some_and(|hint| hint.len() > 40),
+                "every code comes with a hint: {row}"
+            );
+        }
+        assert_eq!(files["failed_total"], failed.len(), "{answer}");
+        for code in ["ignored", "too_large", "unsupported_language", "unreadable"] {
+            assert!(
+                files["by_reason"][code].as_i64().is_some(),
+                "`{code}` is counted, even at zero: {answer}"
+            );
+        }
+
+        // `languages`: the census of the book, with the honest rate.
+        let languages = answer["languages"].as_array().expect("the rows");
+        let language = |lang: &str| {
+            languages
+                .iter()
+                .find(|row| row["lang"] == lang)
+                .unwrap_or_else(|| panic!("`{lang}` is not in the census: {answer}"))
+        };
+        let rust = language("rust");
+        assert_eq!(rust["files"], 1, "{rust}");
+        assert_eq!(rust["symbols"], 2, "{rust}");
+        for key in ["edges", "resolved", "percent", "comparable"] {
+            assert!(
+                rust["resolution"].get(key).is_some(),
+                "the rate carries `{key}`: {rust}"
+            );
+        }
+        assert!(
+            rust["resolution"]["percent"]
+                .as_f64()
+                .is_some_and(|percent| (0.0..=100.0).contains(&percent)),
+            "{rust}"
+        );
+        // D1/S3: the flag says which numbers may be read together.
+        assert_eq!(
+            language("python")["resolution"]["comparable"],
+            true,
+            "python carries the list of its runtime: {answer}"
+        );
+        assert_eq!(
+            language(INCOMPARABLE)["resolution"]["comparable"],
+            false,
+            "`{INCOMPARABLE}` carries no list, so its rate is not comparable: {answer}"
+        );
+        assert_eq!(answer["symbols"], 4, "{answer}");
+        // The `progress` row a book tool publishes cannot contradict the count
+        // beside it: a second pass finds every chapter unchanged.
+        assert_eq!(answer["progress"]["symbols"], answer["symbols"], "{answer}");
+
+        // The optional `lang` narrows the rows of `languages`, never the book.
+        let one = crate::book::code_index_with(&scratch.config(), Some(&project), Some("rust"));
+        assert_eq!(one["ok"], true, "{one}");
+        let narrowed = one["languages"].as_array().expect("the rows");
+        assert_eq!(narrowed.len(), 1, "{one}");
+        assert_eq!(narrowed[0]["lang"], "rust", "{one}");
+        assert_eq!(one["symbols"], 4, "the book is still the whole book: {one}");
+        // A language no chapter has is an empty census, not an error.
+        let none = crate::book::code_index_with(&scratch.config(), Some(&project), Some("zig"));
+        assert_eq!(none["ok"], true, "{none}");
+        assert_eq!(
+            none["languages"].as_array().map(Vec::len),
+            Some(0),
+            "{none}"
+        );
+
+        // The limits in force: the numbers a reader needs to explain the census.
+        let limits = &answer["limits"];
+        assert_eq!(limits["max_file_bytes"], 1_048_576, "{answer}");
+        assert_eq!(limits["max_name_fanout"], 5, "{answer}");
+        assert_eq!(limits["max_parse_threads"], 4, "{answer}");
+        assert_eq!(limits["max_batch_bytes"], 2_097_152, "{answer}");
+        assert!(
+            limits["hard_exclusions"]
+                .as_array()
+                .is_some_and(|names| names.contains(&serde_json::json!("target"))),
+            "the hard exclusions travel with the census: {answer}"
+        );
+    }
+
+    /// D2: the tool refuses exactly like the rest of the book family — a
+    /// session without a project gets the book's own `invalid_value`.
+    #[test]
+    fn code_index_states_the_precondition_of_the_book() {
+        let scratch = BookScratch::new("code-index-precondition");
+        let answer = crate::book::code_index_with(&scratch.config(), None, None);
+        assert_eq!(answer["ok"], false, "{answer}");
+        assert_eq!(answer["errors"][0]["code"], "invalid_value", "{answer}");
+        assert_eq!(answer["errors"][0]["path"], "session.project", "{answer}");
+    }
+
+    /// f28/D2: every answer of the book publishes the symbols it holds, never a
+    /// zero that contradicts the fixture.
+    ///
+    /// The live product answered `code_structure` with `progress: { files_total:
+    /// 163, files_done: 163, state: "indexed", symbols: 0 }` on a book with 163
+    /// chapters: the field was wired (this `base()` copies it), the counter was
+    /// the lie — a pass that finds every chapter unchanged published zero.
+    #[test]
+    fn the_book_answers_the_symbols_it_holds() {
+        let scratch = BookScratch::new("symbols");
+        scratch.write("src/lib.rs", "pub fn one() {}\npub fn two() {}\n");
+        scratch.write("src/store.rs", "pub struct Three;\n");
+        let handle = scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let answer = crate::book::code_structure_query_with(
+            &scratch.config(),
+            Some(&project),
+            Some("src/lib.rs"),
+            None,
+            &gx_index::StructureRequest::default(),
+        );
+        assert_eq!(answer["ok"], true, "{answer}");
+        let symbols = handle.book().counts().expect("the counts").1;
+        assert_eq!(symbols, 3, "the fixture declares three symbols");
+        assert!(symbols > 0);
+        assert_eq!(
+            answer["progress"]["symbols"], symbols,
+            "the book answer publishes the symbols it holds: {answer}"
+        );
+        assert_eq!(answer["progress"]["state"], "indexed", "{answer}");
+    }
+
+    /// D2: the census is advertised over stdio too — read-only, with a real
+    /// description and the optional `lang` — because a tool the dispatcher
+    /// answers and the router does not advertise is invisible to every client
+    /// config that speaks stdio (the half-shipped tool of the previous cut).
+    #[test]
+    fn the_stdio_router_advertises_code_index_as_read_only() {
+        let tools = GraphiumServer::tool_router().list_all();
+        let census = tools
+            .iter()
+            .find(|tool| tool.name == "code_index")
+            .unwrap_or_else(|| panic!("code_index is advertised: {tools:?}"));
+        assert!(
+            census
+                .description
+                .as_deref()
+                .is_some_and(|text| text.len() > 120),
+            "code_index needs a real description"
+        );
+        assert!(
+            census
+                .annotations
+                .as_ref()
+                .is_some_and(|annotations| annotations.read_only_hint.unwrap_or(false)),
+            "code_index is read-only: {:?}",
+            census.annotations
+        );
+        assert!(
+            census.input_schema["properties"].get("lang").is_some(),
+            "code_index takes `lang`: {:?}",
+            census.input_schema
+        );
+        assert!(
+            census
+                .input_schema
+                .get("required")
+                .and_then(serde_json::Value::as_array)
+                .is_none_or(|required| required.is_empty()),
+            "code_index requires no argument: {:?}",
+            census.input_schema
+        );
     }
 }
