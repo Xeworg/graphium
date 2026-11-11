@@ -199,7 +199,7 @@ pub fn validate_header(
     if version != supported_version {
         errors.push(ValidationError::new(
             "version",
-            ErrorCode::InvalidValue,
+            ErrorCode::UnsupportedVersion,
             format!("versión de contrato no soportada: {version} (soportada: {supported_version})"),
             Some("actualizá el documento a la versión 1 del contrato".to_string()),
         ));

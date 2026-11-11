@@ -77,6 +77,7 @@ impl DiagramKind for GanttKind {
     const PHASE: &'static str = "F3";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Lanes;
     const LIMITS: KindLimits = KindLimits::TIMELINE;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = GanttInput;
 

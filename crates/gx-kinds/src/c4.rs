@@ -130,6 +130,7 @@ impl DiagramKind for C4Kind {
     const PHASE: &'static str = "F3";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
     const LIMITS: KindLimits = KindLimits::GRAPH;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = C4Input;
 

@@ -140,7 +140,7 @@ pub fn validate_diagram(document: &str) -> ValidateResponse {
             )),
             projected_svg_bytes: Some(projected_svg_bytes(kind.limits(), &parsed)),
             errors_truncated: false,
-            supported_versions: Vec::new(),
+            supported_versions: supported_versions(),
         };
     }
 
@@ -154,7 +154,7 @@ pub fn validate_diagram(document: &str) -> ValidateResponse {
         warnings: None,
         projected_svg_bytes: None,
         errors_truncated: truncated,
-        supported_versions: Vec::new(),
+        supported_versions: supported_versions(),
     }
 }
 
@@ -233,6 +233,10 @@ pub struct SchemaResponse {
     /// The kind that was asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+    /// The contract version the kind serves (`f23-contrato.md`, S2): the
+    /// generation the schema below describes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind_version: Option<u32>,
     /// The JSON Schema of the kind.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<Value>,
@@ -309,6 +313,7 @@ pub fn get_diagram_schema(kind: Option<&str>) -> SchemaResponse {
             ok: true,
             kinds: Some(kinds),
             kind: None,
+            kind_version: None,
             schema: None,
             rules: None,
             shapes: None,
@@ -327,6 +332,7 @@ pub fn get_diagram_schema(kind: Option<&str>) -> SchemaResponse {
             ok: false,
             kinds: None,
             kind: Some(kind_name.to_string()),
+            kind_version: None,
             schema: None,
             rules: None,
             shapes: None,
@@ -366,7 +372,8 @@ pub fn get_diagram_schema(kind: Option<&str>) -> SchemaResponse {
         ok: true,
         kinds: None,
         kind: Some(kind_name.to_string()),
-        schema: Some(schema),
+        kind_version: Some(handler.kind_version()),
+        schema: Some(annotate_since(schema, handler.kind_version())),
         rules: Some(rules_of(kind_name)),
         shapes: Some(shapes_of(kind_name)),
         required: Some(required),
@@ -381,6 +388,42 @@ pub fn get_diagram_schema(kind: Option<&str>) -> SchemaResponse {
 /// The contract versions this build understands (PRD §7 RF5).
 fn supported_versions() -> Vec<u32> {
     vec![1]
+}
+
+/// Stamps every field of the schema with the version it exists since
+/// (`f23-contrato.md`, S2): the promise PRD §10.1 makes
+/// (`x-graphium-since`, `docs/PRD.md:566`) that the code never published.
+/// Every field of the current generation exists since 1 — f22's opt-in
+/// fields included — so the default is uniform and a future field declares
+/// its own later by carrying the key already.
+fn annotate_since(schema: Value, version: u32) -> Value {
+    fn walk(value: &mut Value, version: u32) {
+        let Value::Object(map) = value else {
+            return;
+        };
+        // Every field of a `properties` map — at the top of the schema or
+        // inside `$defs` — is a field of the contract: it says its since.
+        if let Some(Value::Object(props)) = map.get_mut("properties") {
+            for (_name, prop) in props.iter_mut() {
+                if prop.is_object() {
+                    if let Value::Object(prop_map) = prop {
+                        prop_map
+                            .entry("x-graphium-since")
+                            .or_insert_with(|| Value::from(version));
+                    }
+                    walk(prop, version);
+                }
+            }
+        }
+        for (key, child) in map.iter_mut() {
+            if key != "properties" {
+                walk(child, version);
+            }
+        }
+    }
+    let mut schema = schema;
+    walk(&mut schema, version);
+    schema
 }
 
 /// The layout engine of a kind (PRD §8.3.1).
@@ -1960,5 +2003,51 @@ mod tests {
         for key in ["ok", "diagrams", "session"] {
             assert!(object.contains_key(key), "falta `{key}`: {object:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod version_truth {
+    use super::{get_diagram_schema, validate_diagram};
+    use serde_json::json; // (queda para el assert)
+
+    // T1 (`f23-contrato.md`, S2): the schema answers WHEN a field exists —
+    // the kind's contract version travels in the response, and every field
+    // of the schema carries `x-graphium-since`.
+    #[test]
+    fn the_schema_publishes_the_kind_version_and_the_field_since() {
+        let response = get_diagram_schema(Some("sequence"));
+        assert!(response.ok);
+        assert_eq!(response.kind_version, Some(1), "la versión del kind viaja");
+
+        let schema = response.schema.expect("el schema del kind");
+        // schemars parks the structs in $defs: the opt-in field of f22 lives
+        // there, and the stamp reaches it through the same walk.
+        let activation = &schema["$defs"]["Message"]["properties"]["activation"];
+        assert_eq!(
+            activation["x-graphium-since"],
+            json!(1),
+            "el campo opt-in dice desde cuándo existe: {activation}"
+        );
+        assert_eq!(
+            schema["properties"]["participants"]["x-graphium-since"],
+            json!(1),
+            "todo campo declara su since: {schema}"
+        );
+    }
+
+    // T1: `validate_diagram` answers with the versions this build supports —
+    // it always returned an empty list (contract.rs:97-157).
+    #[test]
+    fn validate_diagram_carries_the_supported_versions() {
+        crate::bootstrap();
+        let document = r#"{
+            "version": 1, "kind": "graph",
+            "nodes": [ { "id": "a" }, { "id": "b" } ],
+            "edges": [ { "from": "a", "to": "b" } ]
+        }"#;
+        let response = validate_diagram(document);
+        assert!(response.ok, "{response:?}");
+        assert_eq!(response.supported_versions, vec![1]);
     }
 }

@@ -65,6 +65,7 @@ impl DiagramKind for StateKind {
     const PHASE: &'static str = "F2";
     const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
     const LIMITS: KindLimits = KindLimits::GRAPH;
+    const KIND_VERSION: u32 = SUPPORTED_VERSION;
 
     type Input = StateInput;
 

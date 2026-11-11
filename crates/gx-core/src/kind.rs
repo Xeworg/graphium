@@ -117,6 +117,9 @@ pub trait DiagramKind: Send + Sync + Default {
     const PHASE: &'static str;
     const LAYOUT_HINT: LayoutHint;
     const LIMITS: KindLimits;
+    /// The contract version the kind serves (`f23-contrato.md`, S2): beside
+    /// the other consts, so a kind that forgets it does not compile.
+    const KIND_VERSION: u32;
 
     /// The JSON contract. `deny_unknown_fields` is part of the schema, so the
     /// contract the agent reads is the contract that is validated.
@@ -172,6 +175,11 @@ pub trait KindHandler: Send + Sync {
     fn layout_hint(&self) -> LayoutHint;
     fn limits(&self) -> KindLimits;
     fn schema(&self) -> schemars::Schema;
+
+    /// The contract version the kind serves (`f23-contrato.md`, S2): the
+    /// `kind_version` the schema response publishes, so an agent knows which
+    /// generation of the contract it is reading.
+    fn kind_version(&self) -> u32;
 
     /// The shapes the kind draws (`f19-formas.md`, S4).
     fn shapes(&self) -> Vec<Shape>;
@@ -231,6 +239,10 @@ impl<K: DiagramKind> KindHandler for KindAdapter<K> {
 
     fn schema(&self) -> schemars::Schema {
         K::schema()
+    }
+
+    fn kind_version(&self) -> u32 {
+        K::KIND_VERSION
     }
 
     fn shapes(&self) -> Vec<Shape> {
@@ -438,6 +450,7 @@ mod tests {
             max_lanes: 1,
             max_events: 1,
         };
+        const KIND_VERSION: u32 = 1;
         type Input = DemoInput;
 
         fn validate(&self, _input: &Self::Input) -> Result<(), Vec<ValidationError>> {
@@ -517,6 +530,7 @@ mod tests {
             const PHASE: &'static str = "F0";
             const LAYOUT_HINT: LayoutHint = LayoutHint::Layered;
             const LIMITS: KindLimits = KindLimits::GRAPH;
+            const KIND_VERSION: u32 = 1;
             type Input = DemoInput;
 
             fn validate(&self, _input: &Self::Input) -> Result<(), Vec<ValidationError>> {
