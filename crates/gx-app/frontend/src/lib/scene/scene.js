@@ -233,26 +233,32 @@ function nodeOf(raw) {
   };
 }
 
-/** The crow's foot of an edge, when the kind has one. */
-function cardinalityOf(raw) {
+/** The glyphs of the vocabulary, the names the IR serialises (`Adornment`). */
+const ADORNMENTS = ["arrow", "open_arrow", "hollow_triangle", "diamond", "hollow_diamond"];
+
+/**
+ * What one end of an edge draws (`f26-adornos.md`, S2): a glyph of the
+ * vocabulary or the crow's foot of a relation. The IR already decided who owns
+ * the tip, so the painter reads the answer and never picks one.
+ */
+function endOf(raw) {
   if (raw === undefined || raw === null) {
     return null;
   }
-  if (
-    !isRecord(raw) ||
-    !BOUNDS.includes(raw.from_min) ||
-    !MAXIMA.includes(raw.from_max) ||
-    !BOUNDS.includes(raw.to_min) ||
-    !MAXIMA.includes(raw.to_max)
-  ) {
+  if (!isRecord(raw)) {
     return undefined;
   }
-  return {
-    from_min: raw.from_min,
-    from_max: raw.from_max,
-    to_min: raw.to_min,
-    to_max: raw.to_max,
-  };
+  if (raw.kind === "marker") {
+    return ADORNMENTS.includes(raw.adornment)
+      ? { kind: "marker", adornment: raw.adornment }
+      : undefined;
+  }
+  if (raw.kind === "crow_foot") {
+    return BOUNDS.includes(raw.min) && MAXIMA.includes(raw.max)
+      ? { kind: "crow_foot", min: raw.min, max: raw.max }
+      : undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -274,8 +280,9 @@ function edgeOf(raw) {
     }
     points.push(at);
   }
-  const cardinality = cardinalityOf(raw.cardinality);
-  if (cardinality === undefined) {
+  const head = endOf(raw.head);
+  const tail = endOf(raw.tail);
+  if (head === undefined || tail === undefined) {
     return null;
   }
   const labelAt = raw.label_at === undefined || raw.label_at === null ? null : point(raw.label_at);
@@ -292,10 +299,10 @@ function edgeOf(raw) {
     label: isText(raw.label) ? raw.label : null,
     emphasis: EMPHASES.includes(raw.emphasis) ? raw.emphasis : "normal",
     style: raw.style === "dashed" ? "dashed" : "solid",
-    arrow: raw.arrow === true,
+    head,
+    tail,
     from_row: isNumber(raw.from_row) ? raw.from_row : null,
     to_row: isNumber(raw.to_row) ? raw.to_row : null,
-    cardinality,
     points,
     label_at: labelAt,
   };
