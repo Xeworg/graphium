@@ -2051,3 +2051,95 @@ mod version_truth {
         assert_eq!(response.supported_versions, vec![1]);
     }
 }
+
+#[cfg(test)]
+mod error_paths {
+    use crate::contract::validate_diagram;
+    use gx_core::error::ErrorCode;
+
+    /// The first error of a document the tool rejects.
+    fn first(document: &str) -> crate::contract::ErrorPayload {
+        let response = validate_diagram(document);
+        assert!(!response.ok, "el documento debe ser inválido: {document}");
+        response.errors.into_iter().next().expect("un error")
+    }
+
+    // T2 (`f23-contrato.md`, S3): an unknown field says WHERE it is, with the
+    // index style every other error uses (`nodes[0].labl`), not a bare name.
+    #[test]
+    fn an_unknown_field_reports_its_place_in_the_document() {
+        let error = first(
+            r#"{ "version": 1, "kind": "graph",
+                 "nodes": [ { "id": "a", "labl": "A" } ], "edges": [] }"#,
+        );
+        assert_eq!(error.code, ErrorCode::UnknownField.as_str());
+        assert_eq!(
+            error.path, "nodes[0].labl",
+            "el path dice dónde está el campo: {}",
+            error.path
+        );
+        let hint = error.hint.expect("el hint propone el campo correcto");
+        assert!(hint.contains("label"), "did you mean label: {hint}");
+    }
+
+    // T2: a field with the wrong type — or a missing required field — reports
+    // the path instead of the empty string the schema failure used to return.
+    #[test]
+    fn a_schema_failure_reports_the_field_it_failed_in() {
+        let wrong_type = first(
+            r#"{ "version": 1, "kind": "graph",
+                 "nodes": "no soy una lista", "edges": [] }"#,
+        );
+        assert_eq!(wrong_type.path, "nodes", "{}", wrong_type.message);
+        assert_eq!(wrong_type.code, ErrorCode::InvalidSchema.as_str());
+
+        // `nodes` carries `serde(default)`: the missing field is `version`.
+        let missing = first(r#"{ "kind": "graph", "nodes": [], "edges": [] }"#);
+        assert_eq!(missing.path, "version", "{}", missing.message);
+        assert_eq!(missing.code, ErrorCode::MissingField.as_str());
+        assert!(
+            missing.hint.is_some(),
+            "todo error dice cómo arreglarse: {missing:?}"
+        );
+
+        // Nested: a message without its label.
+        let nested = first(
+            r#"{ "version": 1, "kind": "sequence",
+                 "participants": [ { "id": "api" } ], "messages": [ { "from": "api", "to": "api" } ] }"#,
+        );
+        assert_eq!(nested.path, "messages[0].label", "{}", nested.message);
+    }
+
+    // T2: the empty id — a rule every writer breaks at least once — carries a
+    // hint in the kinds that had `None`.
+    #[test]
+    fn an_empty_id_says_what_to_write() {
+        for (kind, document) in [
+            (
+                "sequence",
+                r#"{ "version": 1, "kind": "sequence", "participants": [ { "id": "  " } ] }"#,
+            ),
+            (
+                "graph",
+                r#"{ "version": 1, "kind": "graph", "nodes": [ { "id": "" } ], "edges": [] }"#,
+            ),
+        ] {
+            let error = first(document);
+            assert_eq!(
+                error.path,
+                "participants[0].id".replace(
+                    "participants",
+                    if kind == "graph" {
+                        "nodes"
+                    } else {
+                        "participants"
+                    }
+                )
+            );
+            let hint = error
+                .hint
+                .unwrap_or_else(|| panic!("{kind}: el id vacío dice qué escribir"));
+            assert!(!hint.is_empty(), "{kind}: {hint}");
+        }
+    }
+}

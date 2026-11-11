@@ -124,7 +124,10 @@ pub fn validate_nodes(
                 format!("nodes[{index}].id"),
                 ErrorCode::InvalidValue,
                 "el id del nodo no puede estar vacío",
-                None,
+                Some(format!(
+                    "escribí un id único, por ejemplo `nodo{}`",
+                    if index == 0 { "" } else { "2" }
+                )),
             ));
         }
         if seen.contains(&node.id.as_str()) {

@@ -101,7 +101,7 @@ impl DiagramKind for SequenceKind {
                     format!("participants[{index}].id"),
                     ErrorCode::InvalidValue,
                     "el id del participante no puede estar vacío",
-                    None,
+                    Some("escribí un id único, por ejemplo `cliente`".to_string()),
                 ));
             }
             if seen.contains(&actor.id.as_str()) {

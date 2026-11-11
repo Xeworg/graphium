@@ -131,7 +131,7 @@ impl DiagramKind for ErKind {
                     format!("tables[{index}].name"),
                     ErrorCode::InvalidValue,
                     "el nombre de la tabla no puede estar vacío",
-                    None,
+                    Some("escribí el nombre de la tabla, por ejemplo `pedidos`".to_string()),
                 ));
             }
             if tables.contains(&table.name.as_str()) {

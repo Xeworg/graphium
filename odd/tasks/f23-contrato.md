@@ -98,3 +98,19 @@ work (Ctrl+C source copy, clear-canvas banner, onboarding — §19 rows 1, 4, 6)
   0, 850 tests (two new contract tests). Trap: the worktree needed the
   `frontend/dist` stub or `gx-app` does not compile (tauri's
   `frontendDist`) — same as f22.
+
+- L5 (2026-11-10, execution, T2): the error paths now name the place. Discovery
+  that changed the design: serde's own messages carry NO path at all — verified
+  with a scratch crate (`unknown field \`labl\`…`, `missing field \`id\``, no
+  location), so the old `replace('.', "[")` surgery could never have recovered
+  one. The fix is a schema-guided locator in `parse_input`: when serde rejects a
+  document, `first_mismatch` walks it against the kind's JSON Schema (the
+  subset schemars emits: `$ref` into `$defs`, `type` as name or list,
+  `properties`, `required`, `items`, `additionalProperties: false`) and reports
+  the exact path in the same style every kind rule already uses —
+  `nodes[0].labl` — with the serde message as the reason. The six kinds whose
+  empty-id error had no hint now say what to write. Gates: fmt/clippy 0, 853
+  tests (three new: unknown field place, schema-failure place including a
+  nested `messages[0].label`, empty-id hint). Test-authoring trap: `graph.nodes`
+  carries `serde(default)`, so a document without it is legal — the missing-field
+  case needed `version`, which is structurally required.

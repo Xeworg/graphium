@@ -292,11 +292,17 @@ impl<K: DiagramKind> KindHandler for KindAdapter<K> {
 /// hint with the closest admitted name (PRD §7 RF5).
 fn parse_input<K: DiagramKind>(document: &Value) -> Result<K::Input, Vec<ValidationError>> {
     serde_json::from_value(document.clone()).map_err(|error| {
-        let message = error.to_string();
-        if message.contains("unknown field") {
-            return vec![unknown_field_error(&message, K::KIND)];
+        // Serde does not say WHERE it failed: its message carries no path
+        // (`f23-contrato.md`, S3). The schema of the kind does, so the
+        // document is walked against it to name the place, and the serde
+        // message rides along as the reason.
+        let schema = serde_json::to_value(K::schema()).unwrap_or(Value::Null);
+        if let Some(found) = first_mismatch(&schema, document) {
+            return vec![found.with_reason(&error.to_string(), K::KIND)];
         }
-        let code = if message.contains("missing field") {
+        // The walk covers the schema subset schemars emits; anything it does
+        // not model still reports the reason, at the document root.
+        let code = if error.to_string().contains("missing field") {
             ErrorCode::MissingField
         } else {
             ErrorCode::InvalidSchema
@@ -304,60 +310,192 @@ fn parse_input<K: DiagramKind>(document: &Value) -> Result<K::Input, Vec<Validat
         vec![ValidationError::new(
             "",
             code,
-            format!("el JSON no cumple el contrato de `{}`: {message}", K::KIND),
+            format!("el JSON no cumple el contrato de `{}`: {error}", K::KIND),
             Some("consultá get_diagram_schema para ver los campos admitidos".to_string()),
         )]
     })
 }
 
-/// Builds the error of an unknown field, with the closest admitted name.
-fn unknown_field_error(message: &str, kind: &str) -> ValidationError {
-    let unknown = message
-        .split("unknown field `")
-        .nth(1)
-        .and_then(|rest| rest.split('`').next())
-        .unwrap_or_default();
-    let field = unknown.rsplit('.').next().unwrap_or(unknown);
-    let path = unknown.replace('.', "[") + if unknown.contains('.') { "]" } else { "" };
-
-    let hint = closest_field(field, kind)
-        .map(|closest| format!("did you mean `{closest}`?"))
-        .unwrap_or_else(|| "consultá get_diagram_schema para ver los campos admitidos".to_string());
-
-    ValidationError::new(
-        path,
-        ErrorCode::UnknownField,
-        format!("campo desconocido `{field}` en el documento de `{kind}`"),
-        Some(hint),
-    )
+/// One segment of an error path: a field name or an array index.
+#[derive(Clone)]
+enum Segment {
+    Key(String),
+    Index(usize),
 }
 
-/// The admitted fields of a kind, read from its schema.
-fn admitted_fields(kind: &str) -> Vec<String> {
-    let Some(handler) = crate::kind::for_kind(kind) else {
-        return Vec::new();
-    };
-    let schema = handler.schema();
-    let mut fields = Vec::new();
-    if let Some(object) = schema.get("properties").and_then(|value| value.as_object()) {
-        fields.extend(object.keys().cloned());
-    }
-    if let Some(definitions) = schema.get("$defs").and_then(|value| value.as_object()) {
-        for definition in definitions.values() {
-            if let Some(object) = definition
-                .get("properties")
-                .and_then(|value| value.as_object())
-            {
-                fields.extend(object.keys().cloned());
+impl Segment {
+    fn push_render(&self, out: &mut String) {
+        match self {
+            Segment::Key(key) => {
+                if !out.is_empty() {
+                    out.push('.');
+                }
+                out.push_str(key);
+            }
+            Segment::Index(index) => {
+                out.push('[');
+                out.push_str(&index.to_string());
+                out.push(']');
             }
         }
     }
-    fields
 }
 
-/// The admitted field closest to `field`, by edit distance.
-fn closest_field(field: &str, kind: &str) -> Option<String> {
-    let admitted = admitted_fields(kind);
+/// The mismatch the walk found: its place, its reason and its remedy.
+struct Mismatch {
+    path: String,
+    code: ErrorCode,
+    message: String,
+    hint: Option<String>,
+}
+
+impl Mismatch {
+    fn with_reason(self, reason: &str, kind: &str) -> ValidationError {
+        ValidationError::new(
+            self.path,
+            self.code,
+            format!("{} en el documento de `{kind}`: {reason}", self.message),
+            self.hint,
+        )
+    }
+}
+
+/// Walks a document against the JSON Schema of its kind and names the first
+/// mismatch (`f23-contrato.md`, S3).
+///
+/// The walk covers the subset schemars emits: `$ref` into `$defs`, `type`
+/// (a name or a list of names), `properties`, `required`, `items` and
+/// `additionalProperties: false`. It is a locator, not a validator: serde
+/// already rejected the document, and this only says where.
+fn first_mismatch(schema: &Value, document: &Value) -> Option<Mismatch> {
+    let defs = schema.get("$defs").cloned().unwrap_or(Value::Null);
+    let mut path = Vec::new();
+    walk(schema, &defs, document, &mut path)
+}
+
+fn walk(schema: &Value, defs: &Value, value: &Value, path: &mut Vec<Segment>) -> Option<Mismatch> {
+    // A reference into `$defs` (the structs of the document).
+    if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
+        let name = reference.rsplit('/').next().unwrap_or_default();
+        if let Some(target) = defs.get(name) {
+            return walk(target, defs, value, path);
+        }
+    }
+
+    let render = |path: &[Segment]| {
+        let mut out = String::new();
+        for segment in path {
+            segment.push_render(&mut out);
+        }
+        out
+    };
+
+    // `type`: one name or a list of them; `null` admits an absent value.
+    if let Some(types) = schema.get("type") {
+        if !admits(types, value) {
+            return Some(Mismatch {
+                path: render(path),
+                code: ErrorCode::InvalidSchema,
+                message: format!("el campo `{}` no es del tipo esperado", render(path)),
+                hint: Some(
+                    "consultá get_diagram_schema para ver el tipo de cada campo".to_string(),
+                ),
+            });
+        }
+    }
+
+    match value {
+        Value::Object(map) => {
+            // `required`: the fields the document owes.
+            if let Some(required) = schema.get("required").and_then(Value::as_array) {
+                for field in required.iter().filter_map(Value::as_str) {
+                    if !map.contains_key(field) {
+                        path.push(Segment::Key(field.to_string()));
+                        let at = render(path);
+                        path.pop();
+                        return Some(Mismatch {
+                            path: at.clone(),
+                            code: ErrorCode::MissingField,
+                            message: format!("falta `{field}`"),
+                            hint: Some(format!("agregá `{field}` a `{}`", render(path))),
+                        });
+                    }
+                }
+            }
+            let properties = schema.get("properties").and_then(Value::as_object);
+            if schema.get("additionalProperties") == Some(&Value::Bool(false)) {
+                if let Some(properties) = properties {
+                    for key in map.keys() {
+                        if !properties.contains_key(key) {
+                            let mut at = path.clone();
+                            at.push(Segment::Key(key.clone()));
+                            let admitted: Vec<String> = properties.keys().cloned().collect();
+                            let hint = closest_name(key, &admitted)
+                                .map(|closest| format!("did you mean `{closest}`?"))
+                                .unwrap_or_else(|| {
+                                    format!("los campos de este objeto son {}", admitted.join(", "))
+                                });
+                            return Some(Mismatch {
+                                path: render(&at),
+                                code: ErrorCode::UnknownField,
+                                message: format!("campo desconocido `{key}`"),
+                                hint: Some(hint),
+                            });
+                        }
+                    }
+                }
+            }
+            if let Some(properties) = properties {
+                for (key, child_schema) in properties {
+                    if let Some(child) = map.get(key) {
+                        path.push(Segment::Key(key.clone()));
+                        if let Some(found) = walk(child_schema, defs, child, path) {
+                            return Some(found);
+                        }
+                        path.pop();
+                    }
+                }
+            }
+            None
+        }
+        Value::Array(items) => {
+            if let Some(item_schema) = schema.get("items") {
+                for (index, item) in items.iter().enumerate() {
+                    path.push(Segment::Index(index));
+                    if let Some(found) = walk(item_schema, defs, item, path) {
+                        return Some(found);
+                    }
+                    path.pop();
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Whether a `type` clause admits the JSON value.
+fn admits(types: &Value, value: &Value) -> bool {
+    let names: Vec<&str> = match types {
+        Value::String(name) => vec![name.as_str()],
+        Value::Array(items) => items.iter().filter_map(Value::as_str).collect(),
+        _ => return true,
+    };
+    names.iter().any(|name| match (*name, value) {
+        ("string", Value::String(_)) => true,
+        ("boolean", Value::Bool(_)) => true,
+        ("integer", Value::Number(number)) => number.is_i64() || number.is_u64(),
+        ("number", Value::Number(_)) => true,
+        ("array", Value::Array(_)) => true,
+        ("object", Value::Object(_)) => true,
+        ("null", Value::Null) => true,
+        _ => false,
+    })
+}
+
+/// The admitted name closest to a written one, when the distance is small
+/// enough to be a typo and not a different word.
+fn closest_name(field: &str, admitted: &[String]) -> Option<String> {
     admitted
         .iter()
         .map(|candidate| (levenshtein(field, candidate), candidate))

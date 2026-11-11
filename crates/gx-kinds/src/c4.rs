@@ -181,7 +181,7 @@ impl DiagramKind for C4Kind {
                     format!("elements[{index}].id"),
                     ErrorCode::InvalidValue,
                     "el id del elemento no puede estar vacío",
-                    None,
+                    Some("escribí un id único, por ejemplo `api`".to_string()),
                 ));
             }
             if ids.contains(&element.id.as_str()) {
