@@ -360,6 +360,57 @@ mod tests {
         assert_eq!(errors[0].path, "kind");
         assert_eq!(errors[1].path, "version");
     }
+    /// S3 de `f27-etapa1.md`: el estereotipo es vocabulario de **nodo**, así
+    /// que una caja de flujo lo lleva hasta la IR, donde el motor ya le
+    /// reserva la línea y el renderer lo escribe entre angulillos.
+    #[test]
+    fn a_flow_box_carries_the_stereotype_it_draws() {
+        let document = input(
+            r#"{ "version": 1, "kind": "flowchart",
+                 "nodes": [ { "id": "inicio", "role": "start" },
+                            { "id": "cobro", "label": "Cobrar",
+                              "role": "process", "stereotype": "servicio" } ],
+                 "edges": [ { "from": "inicio", "to": "cobro" } ] }"#,
+        );
+
+        FlowchartKind
+            .validate(&document)
+            .expect("un estereotipo corto es legal");
+        let Ir::Graph(graph) = FlowchartKind.to_ir(&document) else {
+            panic!("un flowchart es un grafo")
+        };
+        assert_eq!(graph.nodes[1].stereotype.as_deref(), Some("servicio"));
+        assert_eq!(graph.nodes[0].stereotype, None);
+    }
+
+    /// La regla de longitud, con el path del campo: un estereotipo es una
+    /// palabra sobre el nombre, no un párrafo (1 a 32 caracteres).
+    #[test]
+    fn a_stereotype_outside_the_length_rule_is_reported() {
+        let long = "x".repeat(33);
+        let document: crate::flowchart::FlowchartInput = input(&format!(
+            r#"{{ "version": 1, "kind": "flowchart",
+                  "nodes": [ {{ "id": "a", "stereotype": "{long}" }} ],
+                  "edges": [] }}"#
+        ));
+
+        let errors = FlowchartKind
+            .validate(&document)
+            .expect_err("33 caracteres no entran sobre el nombre");
+        assert_eq!(errors[0].path, "nodes[0].stereotype");
+        assert_eq!(errors[0].code, ErrorCode::InvalidValue);
+
+        let blank = input(
+            r#"{ "version": 1, "kind": "flowchart",
+                 "nodes": [ { "id": "a", "stereotype": "   " } ],
+                 "edges": [] }"#,
+        );
+        let errors = FlowchartKind
+            .validate(&blank)
+            .expect_err("un estereotipo en blanco no dice nada");
+        assert_eq!(errors[0].path, "nodes[0].stereotype");
+        assert_eq!(errors[0].code, ErrorCode::InvalidValue);
+    }
 }
 
 #[cfg(test)]
