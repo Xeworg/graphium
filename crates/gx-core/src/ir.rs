@@ -365,7 +365,10 @@ impl Cardinality {
 fn parse_side(text: &str) -> Option<CardinalityMax> {
     match text.trim().to_ascii_uppercase().as_str() {
         "1" => Some(CardinalityMax::One),
-        "N" => Some(CardinalityMax::Many),
+        // `M` es el lado "muchos" de la forma `N:M` que el contrato anuncia
+        // (`f27-etapa1.md`, T4): sin él, el ejemplo del propio hint se
+        // rechazaba a sí mismo.
+        "N" | "M" => Some(CardinalityMax::Many),
         _ => None,
     }
 }
@@ -902,5 +905,22 @@ mod tests {
                 adornment: Adornment::Diamond
             })
         );
+    }
+
+    /// `f27-etapa1.md`, T4: la forma corta que el contrato **anuncia** es la
+    /// misma que acepta. `N:M` estaba en `SHORT_FORMS` pero su lado derecho no
+    /// se parseaba, así que el agente que copiaba el ejemplo del hint recibía
+    /// un rechazo que nombraba ese mismo ejemplo como válido.
+    #[test]
+    fn every_advertised_short_form_parses() {
+        for short in Cardinality::SHORT_FORMS {
+            assert!(
+                Cardinality::from_short(short, false).is_some(),
+                "el contrato anuncia `{short}` y no lo acepta"
+            );
+        }
+        let many_to_many = Cardinality::from_short("N:M", false).expect("N:M es legal");
+        assert_eq!(many_to_many.from_max, CardinalityMax::Many);
+        assert_eq!(many_to_many.to_max, CardinalityMax::Many);
     }
 }
