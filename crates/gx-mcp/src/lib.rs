@@ -112,9 +112,10 @@ pub mod book {
             Err(response) => return response,
         };
         let book = opened.handle.book();
-        let outcome = match book.search(&gx_index::SearchRequest {
+        let request = gx_index::SearchRequest {
             query: query.to_string(),
-        }) {
+        };
+        let outcome = match book.search(&request) {
             Ok(outcome) => outcome,
             Err(error) => return failure("book", UNAVAILABLE_CODE, &error.to_string(), None),
         };
@@ -136,7 +137,21 @@ pub mod book {
                 base
             }
             gx_index::SearchOutcome::Ambiguous(candidates) => {
-                ambiguous_answer(base, "query", query, &candidates)
+                // f28 D6: the cut is visible. `search` names at most
+                // `CANDIDATE_LIMIT` candidates, so an answer that stopped there
+                // would read as «this name has five owners»; the count of the
+                // same match says how many declaration places the query fits.
+                let total = match book.with_writer(|connection| {
+                    gx_index::search::candidate_total(connection, &request)
+                }) {
+                    Ok(total) => total,
+                    Err(error) => {
+                        return failure("book", UNAVAILABLE_CODE, &error.to_string(), None)
+                    }
+                };
+                let mut answer = ambiguous_answer(base, "query", query, &candidates);
+                answer["truncated"] = candidate_cut(&candidates, total);
+                answer
             }
         }
     }
@@ -430,11 +445,12 @@ pub mod book {
     /// Runs `code_impact` with the bounded answer of T5.
     ///
     /// The seed is exactly one of `symbol` or `file`. A file seed walks from
-    /// every declaration of the chapter — the file as a node — and adds the
-    /// grouping of the connected files. The walk follows at most 3 hops, the
-    /// edge kinds of `edges`, and its own query budget (`budget` nodes, 600 by
-    /// default, 2000 at most), decoupled from the 300/600 ceilings of the
-    /// `graph` kind.
+    /// every declaration of the chapter — the file as a node — and answers the
+    /// grouping of the connected files; a symbol seed groups the walk it
+    /// already carries by file (f28, D6), so both seeds answer `files[]`. The
+    /// walk follows at most 3 hops, the edge kinds of `edges`, and its own
+    /// query budget (`budget` nodes, 600 by default, 2000 at most), decoupled
+    /// from the 300/600 ceilings of the `graph` kind.
     pub fn code_impact_query_with(
         config: &gx_index::BooksConfig,
         project: Option<&str>,
@@ -574,8 +590,12 @@ pub mod book {
                     }
                 };
                 seed_args.insert("symbol".to_string(), json!(symbol));
+                // f28 D6: a symbol seed groups the walk it already carries, so
+                // «what does changing X affect» arrives grouped by file
+                // instead of leaving the agent to group the nodes itself.
+                let grouped = symbol_files(&hit, &impact);
                 asked = Some(hit);
-                (impact, Vec::new())
+                (impact, grouped)
             }
             // The grammar above rejected zero and two selectors.
             (None, None) => unreachable!("the selector grammar runs first"),
@@ -658,9 +678,11 @@ pub mod book {
         if !packed.pointers.is_empty() {
             response["pointers"] = json!(packed.pointers);
         }
-        if seed_file.is_some() {
-            response["files"] = json!(packed.extras);
-        }
+        // f28 D6: both seeds answer the grouping. A file seed's rows are the
+        // ones the walk computed; a symbol seed's are derived from the same
+        // walk (`symbol_files`), and an empty list is the answer «nothing else
+        // is connected», never an absent field.
+        response["files"] = json!(packed.extras);
         response
     }
 
@@ -1343,10 +1365,14 @@ pub mod book {
                 ),
             );
         };
-        // f14 S2: `chars` is the size of the string the bridge handed over,
-        // measured on that string before it is parsed — never a re-serialized
-        // copy that could differ from the document the agent sends onward.
-        let chars = document.len();
+        // f28 D6: `chars` counts **characters**, like every other tool of
+        // the book counts them (`code_structure`'s and `code_impact`'s
+        // `chars`): the size of the string the bridge handed over, measured on
+        // that string before it is parsed — never a byte count, which is a
+        // different number for any document with a non-ASCII letter, and never
+        // a re-serialized copy that could differ from the document the agent
+        // sends onward.
+        let chars = document.chars().count();
         let document: Value = match serde_json::from_str(&document) {
             Ok(document) => document,
             Err(error) => {
@@ -1567,6 +1593,60 @@ pub mod book {
         })
     }
 
+    /// The `files[]` grouping of a symbol seed (f28, D6): the same rows a file
+    /// seed answers, derived from the walk the answer already carries.
+    ///
+    /// One row per file the walk reached, and the chapter that declares the
+    /// seed is never a row — the invariant a file seed already keeps. The
+    /// counts are the walk's own: `imports_out` is the edges that leave the
+    /// seed symbol towards the file, `referenced_by_in` the edges that arrive
+    /// at the seed symbol from it, and `symbols` the nodes of this answer the
+    /// file declares. No second query: the grouping says what the answer says.
+    fn symbol_files(
+        seed: &gx_index::SymbolHit,
+        impact: &gx_index::Impact,
+    ) -> Vec<gx_index::FileLink> {
+        let mut links: std::collections::BTreeMap<String, gx_index::FileLink> =
+            std::collections::BTreeMap::new();
+        for node in &impact.nodes {
+            if node.file != seed.file {
+                file_link(&mut links, &node.file).symbols += 1;
+            }
+        }
+        let file_of: std::collections::BTreeMap<i64, &str> = impact
+            .nodes
+            .iter()
+            .map(|node| (node.id, node.file.as_str()))
+            .collect();
+        for edge in &impact.edges {
+            let (Some(from), Some(to)) = (file_of.get(&edge.from), file_of.get(&edge.to)) else {
+                continue;
+            };
+            if edge.from == seed.id && *to != seed.file {
+                file_link(&mut links, to).imports_out += 1;
+            }
+            if edge.to == seed.id && *from != seed.file {
+                file_link(&mut links, from).referenced_by_in += 1;
+            }
+        }
+        links.into_values().collect()
+    }
+
+    /// One row of a grouping, created at zero the first time its file is seen.
+    fn file_link<'a>(
+        links: &'a mut std::collections::BTreeMap<String, gx_index::FileLink>,
+        file: &str,
+    ) -> &'a mut gx_index::FileLink {
+        links
+            .entry(file.to_string())
+            .or_insert_with(|| gx_index::FileLink {
+                file: file.to_string(),
+                imports_out: 0,
+                referenced_by_in: 0,
+                symbols: 0,
+            })
+    }
+
     /// The files connected to a chapter seed (T5), as the agent reads them.
     fn files_json(files: &[gx_index::FileLink]) -> Vec<Value> {
         files
@@ -1704,6 +1784,25 @@ pub mod book {
             ),
         }]);
         response
+    }
+
+    /// The notice of a candidate cut (f28, D6), or `null` when the answer
+    /// names every candidate the query has.
+    ///
+    /// It is the `{reason, shown, total, next}` object every other tool of the
+    /// book answers a cut with, in the unit of `candidates[]`: `shown` is how
+    /// many rows this answer names and `total` how many declaration places the
+    /// query fits. `next` is `null` on purpose — this cut has no page cursor,
+    /// and the way to the rest is a narrower query, never a guess at what the
+    /// hidden candidates are.
+    fn candidate_cut(candidates: &[gx_index::SymbolCandidate], total: usize) -> Value {
+        if total <= candidates.len() {
+            return Value::Null;
+        }
+        truncated_json(
+            &gx_index::Truncation::new(gx_index::CutReason::Nodes, candidates.len(), Some(total)),
+            None,
+        )
     }
 
     /// A failure that still carries the book it was asked about.
@@ -2349,7 +2448,15 @@ word has to match (`render config` finds a symbol whose name carries both); \
 CamelCase and snake_case are both indexed. When the query fits more than one \
 declaration the tool answers `ok: false` with code `ambiguous_symbol` and \
 `candidates[]` (`name`, `kind`, `qname`, `file`, `line`, `occurrences`): send \
-the words of one candidate's qname to narrow it, never guess. The book is on \
+the words of one candidate's qname to narrow it, never guess. The candidate \
+list stops at five and the cut is visible: `truncated` is the \
+`{reason, shown, total, next}` object the other tools of the book answer a cut \
+with — `reason: \"nodes\"`, `shown` the `candidates[]` rows this answer names, \
+`total` how many declaration places the query fits — so `shown < total` means \
+the query is still too broad and the answer would not be honest about how many \
+owners the name has. `next` is `null`: this cut has no page cursor, and the \
+way to the rest is a narrower query, never a guess at the hidden candidates. \
+`truncated` is `null` when nothing was cut. The book is on \
 by default: `book_disabled` only answers when the owner opted out with \
 `GRAPHIUM_BOOK=off`, and a book that cannot be opened answers \
 `book_unavailable`. `progress.state == \"indexing\"` means the first pass is \
@@ -2428,11 +2535,16 @@ pub(crate) const CODE_IMPACT_DESCRIPTION: &str =
     "Walk the connections of one symbol, or of one whole chapter, in the book: who \
 points at it, what it reaches, or both. The seed is exactly one of `symbol` (a \
 name, as `code_search` takes it) or `file` (a path relative to the project \
-root): a file seed is the connections view — every declaration of the chapter \
-starts the walk, the answer adds `file` and a `files` grouping of the \
-connected files (`imports_out`, `referenced_by_in`, `symbols`; the seed file is \
-never a row of `files`), and its \
-default `direction` is `both`. `direction` is `in` (the default of a symbol \
+root). Both seeds answer `files[]`, one row per connected file with \
+`imports_out`, `referenced_by_in` and `symbols`, and the chapter of the seed is \
+never a row. A file seed is the connections view — every declaration of the \
+chapter starts the walk, its rows are the files the chapter connects to, and \
+its default `direction` is `both`. A symbol seed groups the walk it already \
+carries: `imports_out` is the edges that leave the seed symbol towards the \
+file, `referenced_by_in` the edges that arrive at the seed symbol from it, and \
+`symbols` the nodes of this answer the file declares — read the grouping \
+instead of grouping `nodes` yourself, and an empty `files` means nothing else \
+is connected. `direction` is `in` (the default of a symbol \
 seed: the edges that point at it, so what a change would affect), `out` (what \
 the symbol calls, imports or uses) or `both`; `edges` narrows which kinds the \
 walk follows (`calls`, `imports`, `inherits`, `uses`). The edges are \
@@ -2565,8 +2677,10 @@ file anchors — and answers one document, with `files` reporting how many \
 chapters were parsed and a chapter that no longer reads skipped. `path` stays \
 required under both scopes: it names the file of the answer, and under \
 `\"project\"` its tables take part in the merge like any other chapter's. \
-Beside `diagram` the answer reports `tables`, `relations` and `chars` (the byte \
-length of the document), so its size is read without counting the JSON. The \
+Beside `diagram` the answer reports `tables`, `relations` and `chars` — the \
+length of the document in **characters**, the unit `chars` has in every tool of \
+the book, so a table or column with a non-ASCII letter counts once and not \
+twice — so its size is read without counting the JSON. The \
 ceilings of the `er` kind apply at the render — a schema bigger than the kind \
 accepts is refused there with `too_large` — and a document already over them \
 warns first, with `er_over_kind` in `warnings[]`: `ok` stays `true`, the \
@@ -4024,12 +4138,69 @@ mod tests {
         assert!(candidates
             .iter()
             .all(|candidate| candidate["occurrences"] == 2));
+        // D6 (f28): two candidates are not a cut, so the answer carries no
+        // notice — the field only appears when something was left out.
+        assert!(
+            response["truncated"].is_null(),
+            "two candidates are not a cut: {response}"
+        );
 
         // Narrowing with the words of one qname answers that one symbol.
         let narrowed =
             crate::book::code_search_with(&scratch.config(), Some(&project), "one parse");
         assert_eq!(narrowed["ok"], true, "{narrowed}");
         assert_eq!(narrowed["results"][0]["qname"], "one::parse", "{narrowed}");
+    }
+
+    /// D6 (f28): the candidate cut is **visible**. A query that fits more
+    /// declaration places than the answer names says how many it fits, in the
+    /// same `truncated` shape the other tools of the book answer with, so
+    /// «five candidates» never reads as «five owners».
+    #[test]
+    fn the_candidate_cut_says_how_many_the_query_fits() {
+        let scratch = BookScratch::new("f28-candidate-cut");
+        for index in 0..7 {
+            scratch.write(&format!("src/f{index}.rs"), "pub fn parse() {}\n");
+        }
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let response = crate::book::code_search_with(&scratch.config(), Some(&project), "parse");
+        assert_eq!(response["ok"], false, "{response}");
+        let candidates = response["candidates"]
+            .as_array()
+            .expect("the candidates travel");
+        assert_eq!(
+            candidates.len(),
+            gx_index::search::CANDIDATE_LIMIT,
+            "the answer still names five: {response}"
+        );
+
+        let truncated = &response["truncated"];
+        assert_eq!(
+            truncated,
+            &serde_json::json!({ "reason": "nodes", "shown": 5, "total": 7, "next": null }),
+            "the same shape the other tools of the book answer a cut with: {response}"
+        );
+        assert_eq!(
+            truncated["shown"],
+            candidates.len(),
+            "`shown` counts the rows the answer names: {response}"
+        );
+        assert_eq!(
+            truncated["total"], 7,
+            "the seven declaration places the query fits: {response}"
+        );
+        assert!(
+            truncated["next"].is_null(),
+            "this cut has no page cursor: {response}"
+        );
+
+        // The name of one chapter narrows the same query to one answer, and a
+        // narrow answer is not a cut.
+        let narrowed = crate::book::code_search_with(&scratch.config(), Some(&project), "f3 parse");
+        assert_eq!(narrowed["ok"], true, "{narrowed}");
+        assert!(narrowed["truncated"].is_null(), "{narrowed}");
     }
 
     /// D4: the book is the one of the session's project, read from the
@@ -4920,7 +5091,7 @@ pub fn e() { a(); b(); c(); d(); }\n";
         );
         assert_eq!(response["unresolved"], 0, "{response}");
 
-        // The symbol seed keeps the shape it had: no `file`, no `files`.
+        // The symbol seed keeps the shape it had: no `file`.
         let symbol = crate::book::code_impact_query_with(
             &scratch.config(),
             Some(&project),
@@ -4932,8 +5103,82 @@ pub fn e() { a(); b(); c(); d(); }\n";
         );
         assert_eq!(symbol["ok"], true, "{symbol}");
         assert!(symbol["file"].is_null(), "{symbol}");
-        assert!(symbol["files"].is_null(), "{symbol}");
         assert_eq!(symbol["symbol"]["qname"], "api::build", "{symbol}");
+    }
+
+    /// D6 (f28): the `files[]` grouping is not a privilege of the `file` seed.
+    /// A symbol seed answers the same rows, derived from the walk the answer
+    /// already carries, so «what does changing X affect» is grouped by file
+    /// without the agent grouping the nodes itself.
+    #[test]
+    fn a_symbol_seed_groups_the_walk_by_file() {
+        let scratch = BookScratch::new("f28-symbol-seed-files");
+        write_file_seed_chapters(&scratch);
+        scratch.write("src/lonely.rs", "pub fn lonely() -> u8 { 1 }\n");
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+        let ask = |question: crate::book::ImpactQuestion| {
+            crate::book::code_impact_query_with(&scratch.config(), Some(&project), &question)
+        };
+
+        // The call the seed makes leaves its chapter: one row for the file the
+        // walk reached, and the chapter of the seed is never a row.
+        let out = ask(crate::book::ImpactQuestion {
+            symbol: Some("build".to_string()),
+            direction: Some("out".to_string()),
+            ..crate::book::ImpactQuestion::default()
+        });
+        assert_eq!(out["ok"], true, "{out}");
+        let files = out["files"]
+            .as_array()
+            .expect("a symbol seed answers the `files` grouping too");
+        assert_eq!(files.len(), 1, "{out}");
+        assert_eq!(files[0]["file"], "src/store.rs", "{out}");
+        assert_eq!(
+            files[0]["imports_out"], 1,
+            "the call the seed makes into that file: {out}"
+        );
+        assert_eq!(files[0]["referenced_by_in"], 0, "{out}");
+        assert_eq!(
+            files[0]["symbols"], 1,
+            "the nodes of the answer the file declares: {out}"
+        );
+        assert!(
+            files.iter().all(|row| row["file"] != "src/api.rs"),
+            "the chapter that declares the seed is never a row: {out}"
+        );
+
+        // The mirror question: the callers' file is the row, the seed's is not.
+        let incoming = ask(crate::book::ImpactQuestion {
+            symbol: Some("handler".to_string()),
+            ..crate::book::ImpactQuestion::default()
+        });
+        assert_eq!(incoming["ok"], true, "{incoming}");
+        assert_eq!(incoming["direction"], "in", "{incoming}");
+        let files = incoming["files"]
+            .as_array()
+            .expect("the grouping of the incoming walk");
+        assert_eq!(files.len(), 1, "{incoming}");
+        assert_eq!(files[0]["file"], "src/store.rs", "{incoming}");
+        assert_eq!(files[0]["imports_out"], 0, "{incoming}");
+        assert_eq!(
+            files[0]["referenced_by_in"], 1,
+            "the call that arrives at the seed from that file: {incoming}"
+        );
+        assert_eq!(files[0]["symbols"], 1, "{incoming}");
+
+        // A symbol no other chapter touches answers an empty grouping, not an
+        // absent one: «nothing else is connected» is an answer.
+        let lonely = ask(crate::book::ImpactQuestion {
+            symbol: Some("lonely".to_string()),
+            ..crate::book::ImpactQuestion::default()
+        });
+        assert_eq!(lonely["ok"], true, "{lonely}");
+        assert_eq!(
+            lonely["files"],
+            serde_json::json!([]),
+            "the grouping travels and it is empty: {lonely}"
+        );
     }
 
     /// T5: a seed is exactly one of `symbol` or `file`, with the same grammar
@@ -5174,9 +5419,10 @@ CREATE TABLE posts (\n\
     }
 
     /// f14 S2: the answer says how big the document is — the counts the agent
-    /// would otherwise read out of the JSON, and `chars`, the byte length of
-    /// the string the bridge handed over (the same meaning `code_structure`'s
-    /// `chars` has). The document itself is untouched (f13, S6).
+    /// would otherwise read out of the JSON, and `chars`, the length in
+    /// **characters** of the string the bridge handed over (the same meaning
+    /// `code_structure`'s `chars` has, f28 D6). The document itself is
+    /// untouched (f13, S6).
     #[test]
     fn code_er_reports_the_size_of_the_document_it_answers() {
         let scratch = BookScratch::new("code-er-size");
@@ -5199,15 +5445,15 @@ CREATE TABLE posts (\n\
             "the document still travels whole"
         );
 
-        // `chars` is the bridge's own string measured byte for byte: the
+        // `chars` is the bridge's own string, measured in characters: the
         // answer never re-serializes the document to guess its size.
         let source = std::fs::read_to_string(scratch.root().join("db/schema.sql")).expect("read");
         let direct = gx_index::lang::sql::er_bridge::chapter_document("db/schema.sql", &source)
             .expect("the bridge builds it");
         assert_eq!(
             answer["chars"],
-            direct.len(),
-            "chars is the byte length of the bridge's document"
+            serde_json::json!(direct.chars().count()),
+            "chars is the character length of the bridge's document"
         );
 
         // A document inside the ceilings of the kind carries no warning: the
@@ -5216,6 +5462,49 @@ CREATE TABLE posts (\n\
             answer["warnings"].is_null(),
             "a small schema needs no warning: {}",
             answer["warnings"]
+        );
+    }
+
+    /// A schema whose names carry a two-byte letter: the DDL the SQL grammar
+    /// reads (it admits `\u00C0-\u017F` in an identifier) and the fixture of
+    /// the unit test.
+    const CODE_ER_CAFE: &str = "\
+CREATE TABLE caf\u{e9} (\n\
+  id INTEGER PRIMARY KEY,\n\
+  cr\u{e8}me TEXT NOT NULL\n\
+);\n";
+
+    /// D6 (f28): `code_er`'s `chars` counts **characters**, like every other
+    /// tool of the book counts them — a non-ASCII letter is one character and
+    /// two bytes, and the answer says the number a reader counts.
+    #[test]
+    fn code_er_counts_characters_and_never_bytes() {
+        let scratch = BookScratch::new("f28-code-er-chars");
+        scratch.write("db/cafe.sql", CODE_ER_CAFE);
+        scratch.indexed();
+        let project = scratch.root().to_string_lossy().to_string();
+
+        let answer =
+            crate::book::code_er_query_with(&scratch.config(), Some(&project), "db/cafe.sql", None);
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert_eq!(answer["tables"], 1, "{answer}");
+
+        let source = std::fs::read_to_string(scratch.root().join("db/cafe.sql")).expect("read");
+        let direct = gx_index::lang::sql::er_bridge::chapter_document("db/cafe.sql", &source)
+            .expect("the bridge builds the document");
+        assert!(
+            direct.len() > direct.chars().count(),
+            "the fixture has to carry a multi-byte letter: {direct}"
+        );
+        assert_eq!(
+            answer["chars"],
+            serde_json::json!(direct.chars().count()),
+            "chars counts characters, the unit every tool of the book uses"
+        );
+        assert_ne!(
+            answer["chars"],
+            serde_json::json!(direct.len()),
+            "never the byte length: {direct}"
         );
     }
 

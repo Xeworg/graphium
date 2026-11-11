@@ -130,8 +130,13 @@ that answered. Use it to locate the code behind a diagram, or to find a \
 function by name before drawing its flow. Every word of `query` has to match \
 and the tool never guesses: a query that fits more than one declaration \
 answers `ok: false` with `code_search`'s `ambiguous_symbol` code and \
-`candidates[]`, so send the words of one candidate's `qname` to narrow it. \
-`code_structure` reads a chapter (`file`) or the chapter that declares one \
+`candidates[]`, so send the words of one candidate's `qname` to narrow it. Its \
+candidate list stops at five and says so: `truncated: {reason: \"nodes\", \
+shown, total, next}`, where `total` is how many declaration places the query \
+fits — so `shown < total` means the query is still too broad — and `next` is \
+`null`, because there is no page cursor: narrowing the query is the way to the \
+rest, never a guess at the hidden candidates. `code_structure` reads a \
+chapter (`file`) or the chapter that declares one \
 symbol (`symbol`) and answers the outline by default: only the declarations \
 whose parent is `NULL`, with `total` and \
 `collapsed: {hidden_symbols, declarations_with_children, next}`, where `next` \
@@ -144,7 +149,12 @@ change would affect), `out` (what it calls or imports) or `both` — or of a \
 whole chapter with a file seed, `file`: the file as a node (the connections \
 view), where every declaration of it starts the walk and the answer adds a \
 `files` grouping of `imports_out`, `referenced_by_in` and `symbols` per \
-connected file (the seed file is `file`, never a row of `files`). `edges` narrows the kinds it follows (`calls`, `imports`, `inherits`, \
+connected file (the seed file is `file`, never a row of `files`). A symbol \
+seed answers the same `files[]`, derived from the walk it already carries: \
+`imports_out` towards the file, `referenced_by_in` from it, `symbols` the \
+nodes of the answer that file declares, and the chapter of the seed never a \
+row — so «what does changing this symbol affect» arrives grouped by file \
+instead of as a flat `nodes` list. `edges` narrows the kinds it follows (`calls`, `imports`, `inherits`, \
 `uses`) and `budget` sets the query budget in nodes (600 by default, 2000 at \
 most, the edges at twice the nodes — its own number, decoupled from the 300/600 \
 a diagram document can render). The walk stops at 3 hops, answers a cycle once, \
@@ -161,6 +171,9 @@ past the envelope the head keeps the full rows, the tail cliffs to one-line \
 `next`. `code_search` and `code_er` have no envelope: `code_search` answers one \
 row or `candidates[]`, `code_er` answers the whole document, and a `max_chars` \
 sent to either is refused as an unknown field (`deny_unknown_fields`). \
+`code_er`'s `chars` counts **characters**, the unit `chars` has in every \
+answer of this server, so a `.sql` file with `é` in a table name is not \
+counted twice. \
 `code_diagram` turns the same neighbourhood into a `graph` \
 document in `diagram`, ready to send to `render_diagram` with no repair: that \
 is the cheap diagram, drawn from the book instead of from the code; it takes \
@@ -653,6 +666,78 @@ mod tests {
         assert!(
             INSTRUCTIONS.contains("`code_index`"),
             "THE BOOK section has to name the census tool"
+        );
+    }
+
+    /// D6 (f28): both seeds of `code_impact` answer the `files[]` grouping, and
+    /// the agent learns it without reading any other document — including what
+    /// the row of a symbol seed counts.
+    #[test]
+    fn the_harness_teaches_the_files_grouping_of_a_symbol_seed() {
+        let impact = description("code_impact");
+        for needle in [
+            "`files[]`",
+            "`imports_out`",
+            "`referenced_by_in`",
+            "never a row",
+        ] {
+            assert!(impact.contains(needle), "code_impact lacks `{needle}`");
+            assert!(
+                INSTRUCTIONS.contains(needle),
+                "the instructions lack `{needle}`"
+            );
+        }
+        assert!(
+            INSTRUCTIONS.contains("derived from the walk it already carries"),
+            "the instructions say where a symbol seed's grouping comes from"
+        );
+    }
+
+    /// D6 (f28): `chars` is characters everywhere in this server, and the
+    /// `code_er` answer says so before the agent compares it with a byte count.
+    #[test]
+    fn the_harness_says_chars_counts_characters() {
+        let er = description("code_er");
+        for text in [er, INSTRUCTIONS] {
+            assert!(
+                text.contains("**characters**"),
+                "`chars` is taught in characters: {text}"
+            );
+            assert!(
+                !text.contains("the byte length"),
+                "the byte-length sentence is gone: {text}"
+            );
+        }
+    }
+
+    /// D6 (f28): the candidate cut of `code_search` is visible, and the agent
+    /// learns what `shown` and `total` count — plus that there is no page.
+    #[test]
+    fn the_harness_teaches_the_visible_candidate_cut() {
+        let search = description("code_search");
+        for text in [search, INSTRUCTIONS] {
+            for needle in [
+                "truncated",
+                "shown",
+                "total",
+                "\"nodes\"",
+                "declaration places",
+                "no page cursor",
+            ] {
+                assert!(
+                    text.contains(needle),
+                    "the candidate cut lacks `{needle}`: {text}"
+                );
+            }
+        }
+        // The reason is the shared vocabulary of the other cuts.
+        assert!(
+            search.contains("`reason: \"nodes\"`"),
+            "code_search names the reason of the cut: {search}"
+        );
+        assert!(
+            !search.contains("`next` is a page"),
+            "there is no page cursor to promise: {search}"
         );
     }
 }
