@@ -124,15 +124,18 @@
       "to": "posts",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": false,
+      "head": {
+        "kind": "crow_foot",
+        "min": "optional",
+        "max": "many"
+      },
+      "tail": {
+        "kind": "crow_foot",
+        "min": "required",
+        "max": "one"
+      },
       "from_row": 0,
       "to_row": 1,
-      "cardinality": {
-        "from_min": "required",
-        "from_max": "one",
-        "to_min": "optional",
-        "to_max": "many"
-      },
       "points": [
         {
           "x": 151.8447265625,

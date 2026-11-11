@@ -179,7 +179,7 @@ impl DiagramKind for MindmapKind {
         for node in &nodes {
             if let Some((head, _)) = node.id.rsplit_once('/') {
                 let mut edge = IrEdge::new(head.to_string(), node.id.clone());
-                edge.arrow = false;
+                edge.head = None;
                 edges.push(edge);
             }
         }
@@ -245,7 +245,7 @@ mod tests {
             .find(|node| node.id == "Graphium/MCP")
             .expect("la rama destacada");
         assert_eq!(mcp.emphasis, Emphasis::Highlight);
-        assert!(graph.edges.iter().all(|edge| !edge.arrow));
+        assert!(graph.edges.iter().all(|edge| edge.head.is_none()));
         assert!(graph
             .edges
             .iter()

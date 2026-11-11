@@ -289,7 +289,7 @@ impl DiagramKind for ErKind {
                 let mut edge = IrEdge::new(relation.from.table.clone(), relation.to.table.clone());
                 // The crow's foot is the notation of a relation: an arrowhead
                 // on top of it would only add noise.
-                edge.arrow = false;
+                edge.head = None;
                 // The edge anchors to the foreign key row, which is where a
                 // schema reader looks for the relation.
                 edge.to_row = row_index(input, &relation.to.table, &relation.to.column);

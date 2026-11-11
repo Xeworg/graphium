@@ -10,7 +10,7 @@
 
 use gx_core::error::{ErrorCode, ValidationError};
 use gx_core::ir::{
-    Direction, Emphasis, IrEdge, IrGraph, IrGroup, IrNode, LayoutHint, Shape, Style,
+    Adornment, Direction, Emphasis, IrEdge, IrGraph, IrGroup, IrNode, LayoutHint, Shape, Style,
 };
 use gx_core::kind::Role;
 use schemars::JsonSchema;
@@ -266,7 +266,7 @@ pub fn to_graph(
                 ir_edge.style = style;
             }
             if let Some(arrow) = edge.arrow {
-                ir_edge.arrow = arrow;
+                ir_edge.head = arrow.then_some(Adornment::Arrow);
             }
             ir_edge
         })

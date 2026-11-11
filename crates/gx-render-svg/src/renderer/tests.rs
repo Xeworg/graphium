@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use gx_core::{
-    fmt_num, Cardinality, CardinalityBound, CardinalityMax, Direction, Ir, IrEdge, IrGraph, IrNode,
-    IrRow, IrTimeline, LayoutEdge, LayoutGraph, LayoutHint, NodeBox, Palette, Point, Rect, RowKey,
-    Shape, Size, SvgRenderer as SvgRendererContract, TOKENS,
+    fmt_num, Adornment, Cardinality, CardinalityBound, CardinalityMax, Direction, Ir, IrEdge,
+    IrGraph, IrNode, IrRow, IrTimeline, LayoutEdge, LayoutGraph, LayoutHint, NodeBox, Palette,
+    Point, Rect, RowKey, Shape, Size, SvgRenderer as SvgRendererContract, TOKENS,
 };
 use roxmltree::Document;
 
@@ -1089,7 +1089,7 @@ fn the_crow_foot_opens_towards_the_table() {
     to.rows = vec![IrRow::new("user_id")];
 
     let mut edge = IrEdge::new("users", "posts");
-    edge.arrow = false;
+    edge.head = None;
     edge.cardinality = Some(Cardinality {
         from_min: CardinalityBound::Required,
         from_max: CardinalityMax::One,
@@ -1448,5 +1448,81 @@ fn a_divider_row_draws_the_compartment_rule() {
         svg.matches("<line class=\"node-stroke\"").count(),
         1,
         "sin divisores la tabla tiene su única regla: {svg}"
+    );
+}
+
+/// `f26-adornos.md`, S5 y S6: cada glifo del vocabulario llega al dibujo, en el
+/// extremo que le toca, con su id, su trazo y su regla.
+///
+/// El extremo de origen no lo usa todavía ningún documento (`class` sólo pinta
+/// el destino), así que esta prueba es la única que fija `marker-start`: sin
+/// ella, la mitad de la ranura viajaría sin una sola aserción encima.
+#[test]
+fn every_glyph_of_the_vocabulary_reaches_the_drawing() {
+    let mut ir = fixture::emphasized_ir();
+    let Ir::Graph(graph) = &mut ir else {
+        panic!("the fixture is a graph");
+    };
+    graph.edges[0].head = Some(Adornment::Diamond);
+    graph.edges[1].head = None;
+    graph.edges[1].tail = Some(Adornment::OpenArrow);
+    graph.edges[2].head = Some(Adornment::HollowDiamond);
+
+    let svg = render(&ir, &fixture::emphasized_layout(), &Palette::plano());
+
+    // El rombo lleno, en el destino: la punta sobre el ancla y el cuerpo hacia
+    // la línea, que es el lado de siempre.
+    assert!(
+        svg.contains("marker-end=\"url(#diamond-normal)\""),
+        "el rombo se dibuja en el destino: {svg}"
+    );
+    assert!(
+        svg.contains(
+            "<marker id=\"diamond-normal\" viewBox=\"0.00 0.00 10.00 10.00\" refX=\"10.00\" refY=\"5.00\""
+        ),
+        "el marcador del rombo ancla en su punta: {svg}"
+    );
+    assert!(
+        svg.contains("<path class=\"diamond-normal\" d=\"M 0.00 5.00 L 5.00 0.00 L 10.00 5.00 L 5.00 10.00 Z\"/>"),
+        "el rombo tiene sus cuatro vértices: {svg}"
+    );
+    assert!(
+        svg.contains(".diamond-normal{fill:rgba(138, 138, 150, 1.00)}"),
+        "y su regla lo rellena: {svg}"
+    );
+
+    // La flecha abierta, en el origen: el trazo es el espejo y `refX` cae en el
+    // lado cercano, así la punta toca la caja y el cuerpo corre hacia la línea.
+    assert!(
+        svg.contains("marker-start=\"url(#open-arrow-highlight-start)\""),
+        "la flecha abierta se dibuja en el origen: {svg}"
+    );
+    assert!(
+        svg.contains(
+            "<marker id=\"open-arrow-highlight-start\" viewBox=\"0.00 0.00 10.00 10.00\" refX=\"0.00\" refY=\"5.00\""
+        ),
+        "el marcador del origen ancla en el lado cercano: {svg}"
+    );
+    assert!(
+        svg.contains(
+            "<path class=\"open-arrow-highlight\" d=\"M 10.00 0.00 L 0.00 5.00 L 10.00 10.00\"/>"
+        ),
+        "la flecha abierta son dos trazos, nunca un triángulo cerrado: {svg}"
+    );
+    assert!(
+        svg.contains(
+            ".open-arrow-highlight{fill:none;stroke:rgba(110, 168, 254, 1.00);stroke-width:1.00}"
+        ),
+        "y su regla no la rellena: {svg}"
+    );
+
+    // El rombo hueco, la otra familia sin relleno.
+    assert!(
+        svg.contains("marker-end=\"url(#hollow-diamond-muted)\""),
+        "el rombo hueco se dibuja en el destino: {svg}"
+    );
+    assert!(
+        svg.contains(".hollow-diamond-muted{fill:none;stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;opacity:0.55}"),
+        "y su regla lo deja hueco: {svg}"
     );
 }

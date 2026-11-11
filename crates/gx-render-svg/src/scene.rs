@@ -263,10 +263,10 @@ impl<'a> Drawing<'a> {
                     label: edge.label.clone(),
                     emphasis: edge.emphasis,
                     style: edge.style,
-                    arrow: edge.arrow,
+                    head: edge.head_end(),
+                    tail: edge.tail_end(),
                     from_row: edge.from_row,
                     to_row: edge.to_row,
-                    cardinality: edge.cardinality,
                     points: route.points.clone(),
                     label_at: route.label_at,
                 })

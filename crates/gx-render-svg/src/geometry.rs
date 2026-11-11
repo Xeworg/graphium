@@ -16,7 +16,7 @@
 use gx_core::ir::Span;
 use gx_core::scene::BandKind;
 use gx_core::{
-    fmt_num, Emphasis, IrEdge, IrEvent, IrGraph, IrNode, IrRow, LayoutEdge, LayoutGraph,
+    fmt_num, Adornment, Emphasis, IrEdge, IrEvent, IrGraph, IrNode, IrRow, LayoutEdge, LayoutGraph,
     LayoutGroup, LayoutHint, NodeBox, Point, Rect, RowKey, Shape, TOKENS,
 };
 
@@ -285,11 +285,95 @@ pub(crate) fn lane_id(id: &str) -> String {
 }
 
 /// The marker of an emphasis: the arrowheads of `<defs>` (PRD §8.5.1).
-pub(crate) fn marker_id(emphasis: Emphasis) -> &'static str {
-    match emphasis {
-        Emphasis::Normal => "arrow-normal",
-        Emphasis::Highlight => "arrow-highlight",
-        Emphasis::Muted => "arrow-muted",
+///
+/// The plain arrow at the target end keeps the ids it had before
+/// `f26-adornos.md` (`arrow-<emphasis>`), so every golden that was already
+/// drawn stays byte-identical (S3, S5). A glyph at the **source** end gets its
+/// own id (`-start`) because its geometry is mirrored: the tip has to sit on
+/// the anchor with the body running away from the box.
+pub(crate) fn marker_id(adornment: Adornment, emphasis: Emphasis, at_start: bool) -> String {
+    let glyph = match adornment {
+        Adornment::Arrow => "arrow",
+        Adornment::OpenArrow => "open-arrow",
+        Adornment::HollowTriangle => "hollow-triangle",
+        Adornment::Diamond => "diamond",
+        Adornment::HollowDiamond => "hollow-diamond",
+    };
+    let stress = match emphasis {
+        Emphasis::Normal => "normal",
+        Emphasis::Highlight => "highlight",
+        Emphasis::Muted => "muted",
+    };
+    match at_start {
+        true => format!("{glyph}-{stress}-start"),
+        false => format!("{glyph}-{stress}"),
+    }
+}
+
+/// The class a glyph is painted with: the glyph and its emphasis, never the end
+/// of the line, so a hollow diamond has one rule for both ends.
+pub(crate) fn marker_class(adornment: Adornment, emphasis: Emphasis) -> String {
+    let stress = match emphasis {
+        Emphasis::Normal => "normal",
+        Emphasis::Highlight => "highlight",
+        Emphasis::Muted => "muted",
+    };
+    let glyph = match adornment {
+        Adornment::Arrow => "arrow",
+        Adornment::OpenArrow => "open-arrow",
+        Adornment::HollowTriangle => "hollow-triangle",
+        Adornment::Diamond => "diamond",
+        Adornment::HollowDiamond => "hollow-diamond",
+    };
+    format!("{glyph}-{stress}")
+}
+
+/// Whether the glyph is drawn with a stroke and no fill.
+pub(crate) fn marker_is_hollow(adornment: Adornment) -> bool {
+    matches!(
+        adornment,
+        Adornment::OpenArrow | Adornment::HollowTriangle | Adornment::HollowDiamond
+    )
+}
+
+/// The path of a glyph in its marker box, as an attribute and never as a style
+/// (S5).
+///
+/// The box is `ARROW_LENGTH` on both sides and the tip of the glyph sits on the
+/// anchor: at `x = ARROW_LENGTH` for the target end, at `x = 0` for the source
+/// end, which is why the second one is the mirror of the first.
+pub(crate) fn marker_path(adornment: Adornment, at_start: bool) -> String {
+    let zero = fmt_num(0.0);
+    let length = fmt_num(ARROW_LENGTH);
+    let half = fmt_num(ARROW_LENGTH / 2.0);
+    let (back, tip) = match at_start {
+        true => (length.clone(), zero.clone()),
+        false => (zero.clone(), length.clone()),
+    };
+    match adornment {
+        // The closed triangle of a plain arrow: filled or hollow, the same
+        // path.
+        Adornment::Arrow | Adornment::HollowTriangle => {
+            format!("M {back} {zero} L {tip} {half} L {back} {length} Z")
+        }
+        // The open V of a dependency: two strokes that meet at the tip, so the
+        // path is never closed.
+        Adornment::OpenArrow => format!("M {back} {zero} L {tip} {half} L {back} {length}"),
+        // The rhombus of a whole/part relation: filled or hollow, the same
+        // diamond with a vertex on the anchor and one on each side.
+        Adornment::Diamond | Adornment::HollowDiamond => {
+            format!("M {back} {half} L {half} {zero} L {tip} {half} L {half} {length} Z")
+        }
+    }
+}
+
+/// The x of the anchor inside the box of a marker (`refX`): the tip of the
+/// glyph, which is the far side for the target end and the near side for the
+/// source one.
+pub(crate) fn marker_ref_x(at_start: bool) -> f64 {
+    match at_start {
+        true => 0.0,
+        false => ARROW_LENGTH,
     }
 }
 

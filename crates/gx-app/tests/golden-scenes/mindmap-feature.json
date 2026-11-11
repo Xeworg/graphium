@@ -160,7 +160,6 @@
       "to": "Graphium/MCP",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": false,
       "points": [
         {
           "x": 199.61181640625,
@@ -178,7 +177,6 @@
       "to": "Graphium/Plano",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": false,
       "points": [
         {
           "x": 199.61181640625,
@@ -196,7 +194,6 @@
       "to": "Graphium/MCP/harness",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": false,
       "points": [
         {
           "x": 87.86962890625,
@@ -214,7 +211,6 @@
       "to": "Graphium/MCP/tools",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": false,
       "points": [
         {
           "x": 87.86962890625,
@@ -232,7 +228,6 @@
       "to": "Graphium/Plano/culling",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": false,
       "points": [
         {
           "x": 307.4814453125,
@@ -250,7 +245,6 @@
       "to": "Graphium/Plano/cámara",
       "emphasis": "normal",
       "style": "solid",
-      "arrow": false,
       "points": [
         {
           "x": 307.4814453125,

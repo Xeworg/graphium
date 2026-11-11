@@ -68,6 +68,7 @@
   class={classes}
   points={paint.points}
   marker-end={paint.marker ?? undefined}
+  marker-start={paint.markerStart ?? undefined}
   {...hit}
 />
 

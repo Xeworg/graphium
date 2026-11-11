@@ -640,7 +640,7 @@ document.
 | `src/lib/SettingsPanel.svelte` | the settings dialog: the 12 controls, the 7 theme chips, Escape/focus |
 | `src/lib/CloneTools.svelte` | the pill of a clone: history, `↻` and the `×` that removes the view |
 | `src/lib/scene/scene.js` | the door from the wire to the painter: `sceneFromPayload` → the `Scene` the plan mounts, or `null` when the payload carries none |
-| `src/lib/scene/glyph.js` | the arithmetic of `gx-render-svg/src/geometry.rs` in JS (labels, boxes, crow's foot, rim, fold, diamond, markers, lifelines) and the one paint plan of a scene (`diagramPaint`) |
+| `src/lib/scene/glyph.js` | the arithmetic of `gx-render-svg/src/geometry.rs` in JS (labels, boxes, crow's foot, rim, fold, diamond, markers, lifelines) and the one paint plan of a scene (`diagramPaint`). The markers are the edge vocabulary of `f26-adornos`: one per glyph, emphasis and end, with the path built from the tokens and the source-end glyph mirrored (`markerPath`, `markerRefX`) |
 | `src/lib/scene/DiagramScene.svelte` | the mounted `<svg class="graphium">`: the layer order of the emitter, the markers of `<defs>` and the scene, keyed by the id of the drawing |
 | `src/lib/scene/SceneNode.svelte`, `SceneEdge.svelte`, `SceneBand.svelte`, `SceneText.svelte` | one node (or table), one routed edge with its glyphs, one container/lane and one text, each in the SVG namespace |
 | `.gitignore` | `dist/`, `node_modules/` |
