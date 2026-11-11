@@ -135,3 +135,13 @@ reasons still hold (S5, S6), and the utility the index gives an agent (the seed
 grammar, the fanout drop, the invisible skips, the missing listing tool, the
 `chars` unit mismatch). Their findings are the evidence quoted in the specs; no
 claim here was inherited from a summary.
+L3 (correction, my error in the brief). T2's first dispatch named
+`crates/gx-app/tests/languages.rs` as the surface of the floors. That file does
+not exist: the per-language floors, the fixtures and the rate tests live in
+`crates/gx-index/tests/languages.rs`, and `gx-app` does not depend on `gx-index`
+at all, so `Book::resolution()` is not even callable there. The surface and the
+check of T2 are corrected to `crates/gx-index/tests/languages.rs` and
+`cargo test -p gx-index --test languages`. The BEFORE numbers the worker captured
+before touching anything: swift 24.1 %, kotlin 26.9 %, dart 25.9 %, scala 48.5 %,
+r 50.0 %.
+
