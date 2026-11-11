@@ -6,13 +6,24 @@
 //! the diagram answers the question a schema diagram exists for.
 
 use gx_core::error::{ErrorCode, ValidationError};
-use gx_core::ir::{Cardinality, Direction, Ir, IrEdge, IrNode, IrRow, LayoutHint, RowKey, Shape};
+use gx_core::ir::{
+    Cardinality, CardinalityBound, Direction, Ir, IrEdge, IrNode, IrRow, LayoutHint, RowKey, Shape,
+};
 use gx_core::kind::{DiagramKind, KindLimits, KindWarning};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 /// Contract version supported by this build (PRD §10.1).
 pub const SUPPORTED_VERSION: u32 = 1;
+
+/// El vocabulario cerrado del mínimo de cada extremo (`f27-etapa1.md`, D6):
+/// las palabras de `CardinalityBound` tal como el contrato las escribe.
+const BOUNDS: [&str; 2] = ["required", "optional"];
+
+/// La forma corta que una relación sin `cardinality` declara: el extremo
+/// destino es el lado de muchos, que es lo que `er` dibuja desde la primera
+/// versión.
+const DEFAULT_SHORT: &str = "1:N";
 
 /// A column of a table.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -70,6 +81,17 @@ pub struct ErRelation {
     /// One of `1:1`, `1:N`, `N:1`, `N:M`.
     #[serde(default)]
     pub cardinality: Option<String>,
+    /// Minimum at the `from` end: `required` (the default) or `optional`
+    /// (`f27-etapa1.md`, D6). The source end is the key that is referenced,
+    /// so it is mandatory unless the document says otherwise; `optional`
+    /// draws the circle there.
+    #[serde(default)]
+    pub from_min: Option<String>,
+    /// Minimum at the `to` end: `required` or `optional`. Absent, the target
+    /// column's `nullable` decides —a nullable foreign key allows zero rows—
+    /// and a written value wins over that derivation.
+    #[serde(default)]
+    pub to_min: Option<String>,
 }
 
 /// The JSON contract of the `er` kind.
@@ -109,6 +131,40 @@ fn key_of(column: &ErColumn) -> RowKey {
         Some(value) if value == "pk_fk" || value == "pkfk" => RowKey::PkFk,
         _ => RowKey::None,
     }
+}
+
+/// El mínimo de un extremo, si la palabra declarada pertenece al vocabulario
+/// cerrado de `CardinalityBound`. `validate` rechaza lo demás; devolver `None`
+/// acá es lo que deja intacto el valor derivado si alguien llama a `to_ir`
+/// con un documento sin validar.
+fn bound(word: &str) -> Option<CardinalityBound> {
+    match word {
+        "required" => Some(CardinalityBound::Required),
+        "optional" => Some(CardinalityBound::Optional),
+        _ => None,
+    }
+}
+
+/// La cardinalidad que la relación dibuja: el único punto donde el mínimo
+/// escrito (`from_min`/`to_min`) y el derivado se encuentran
+/// (`f27-etapa1.md`, D6). Lo escrito gana; lo que el documento omite conserva
+/// los bytes de siempre —`required` en el origen y, en el extremo destino, el
+/// `nullable` de la columna—, y ese default es el mismo que la forma corta ya
+/// deriva con `Cardinality::from_short`, no una segunda derivación.
+fn cardinality_of(relation: &ErRelation, nullable: bool) -> Cardinality {
+    let mut cardinality = relation
+        .cardinality
+        .as_deref()
+        .and_then(|short| Cardinality::from_short(short, nullable))
+        .or_else(|| Cardinality::from_short(DEFAULT_SHORT, nullable))
+        .expect("`1:N` es una forma corta válida de cardinalidad");
+    if let Some(minimum) = relation.from_min.as_deref().and_then(bound) {
+        cardinality.from_min = minimum;
+    }
+    if let Some(minimum) = relation.to_min.as_deref().and_then(bound) {
+        cardinality.to_min = minimum;
+    }
+    cardinality
 }
 
 impl DiagramKind for ErKind {
@@ -247,6 +303,27 @@ impl DiagramKind for ErKind {
                     ));
                 }
             }
+
+            // El mínimo de cada extremo (`f27-etapa1.md`, D6): vocabulario
+            // cerrado, y el camino del error nombra el campo que lo escribió.
+            for (field, minimum) in [
+                ("from_min", relation.from_min.as_deref()),
+                ("to_min", relation.to_min.as_deref()),
+            ] {
+                if let Some(word) = minimum {
+                    if bound(word).is_none() {
+                        errors.push(ValidationError::new(
+                            format!("relations[{index}].{field}"),
+                            ErrorCode::InvalidEnum,
+                            format!("mínimo inválido en `{field}`: `{word}`"),
+                            Some(format!(
+                                "el vocabulario del mínimo de cada extremo es {}: `required` exige al menos una fila y `optional` admite cero",
+                                BOUNDS.join(", ")
+                            )),
+                        ));
+                    }
+                }
+            }
         }
 
         if errors.is_empty() {
@@ -297,22 +374,7 @@ impl DiagramKind for ErKind {
                 let nullable = find_column(input, &relation.to.table, &relation.to.column)
                     .map(|column| column.nullable.unwrap_or(false))
                     .unwrap_or(false);
-                edge.cardinality = Some(
-                    relation
-                        .cardinality
-                        .as_deref()
-                        .and_then(|short| Cardinality::from_short(short, nullable))
-                        .unwrap_or(Cardinality {
-                            from_min: gx_core::ir::CardinalityBound::Required,
-                            from_max: gx_core::ir::CardinalityMax::One,
-                            to_min: if nullable {
-                                gx_core::ir::CardinalityBound::Optional
-                            } else {
-                                gx_core::ir::CardinalityBound::Required
-                            },
-                            to_max: gx_core::ir::CardinalityMax::Many,
-                        }),
-                );
+                edge.cardinality = Some(cardinality_of(relation, nullable));
                 // The crow's foot already says the cardinality: a label on
                 // top of it repeats the same data and adds noise.
                 edge.label = None;
@@ -401,6 +463,10 @@ impl DiagramKind for ErKind {
             // leer en el schema que una tabla sin clave se dibuja igual y que
             // lo que pierde es el anclaje, no el dibujo.
             "Una tabla sin columna con `key: \"pk\"` se dibuja igual y la respuesta lo avisa con `tables_without_key`: esa tabla no puede ser el origen de una relación y el puente de SQL omite las claves foráneas que le apuntan.".to_string(),
+            // El mínimo de cada extremo (`f27-etapa1.md`, D6): el agente lee
+            // en el schema que se declara, con qué palabras y cuál gana.
+            "El mínimo de cada extremo se declara con `from_min` y `to_min`, y su vocabulario es `required` u `optional`.".to_string(),
+            "Sin `from_min` ni `to_min` la relación dibuja `required` en el origen y, en el extremo, el `nullable` de la columna destino: un valor escrito gana sobre ese default.".to_string(),
         ]
     }
 
@@ -562,6 +628,131 @@ mod tests {
         );
     }
 
+    /// `f27-etapa1.md` D6: el mínimo de un extremo se declara en el contrato.
+    /// `from_min: "optional"` dibuja el círculo en el extremo origen, que hoy
+    /// no se puede expresar de ninguna manera: la derivación lo fija en
+    /// `required`.
+    #[test]
+    fn a_declared_source_minimum_reaches_the_source_end() {
+        let document = EXAMPLE.replace(
+            r#""cardinality": "1:N""#,
+            r#""cardinality": "1:N", "from_min": "optional""#,
+        );
+        let input: ErInput = serde_json::from_str(&document).expect("valid");
+        assert!(ErKind.validate(&input).is_ok());
+        let ir = ErKind.to_ir(&input);
+        let edge = &ir.graph().expect("graph").edges[0];
+        assert_eq!(
+            edge.tail_end(),
+            Some(gx_core::ir::EndAdornment::CrowFoot {
+                min: gx_core::ir::CardinalityBound::Optional,
+                max: gx_core::ir::CardinalityMax::One,
+            })
+        );
+        assert_eq!(
+            edge.cardinality.expect("cardinality").from_min,
+            gx_core::ir::CardinalityBound::Optional
+        );
+    }
+
+    /// D6: un valor escrito gana sobre la derivación. La columna destino es
+    /// `nullable`, así que sin el campo el extremo sería `optional` (lo fija
+    /// `a_nullable_foreign_key_makes_the_relation_optional`); escrito
+    /// `required`, el extremo exige una fila y no dibuja el círculo.
+    #[test]
+    fn a_declared_target_minimum_beats_the_nullable_column() {
+        let document = EXAMPLE
+            .replace(
+                r#"{ "name": "user_id", "type": "uuid", "key": "fk" }"#,
+                r#"{ "name": "user_id", "type": "uuid", "key": "fk", "nullable": true }"#,
+            )
+            .replace(
+                r#""cardinality": "1:N""#,
+                r#""cardinality": "1:N", "to_min": "required""#,
+            );
+        let input: ErInput = serde_json::from_str(&document).expect("valid");
+        assert!(ErKind.validate(&input).is_ok());
+        let ir = ErKind.to_ir(&input);
+        let edge = &ir.graph().expect("graph").edges[0];
+        assert_eq!(
+            edge.head_end(),
+            Some(gx_core::ir::EndAdornment::CrowFoot {
+                min: gx_core::ir::CardinalityBound::Required,
+                max: gx_core::ir::CardinalityMax::Many,
+            })
+        );
+        assert_eq!(
+            edge.cardinality.expect("cardinality").to_min,
+            gx_core::ir::CardinalityBound::Required
+        );
+    }
+
+    /// D6 / S5: el vocabulario del mínimo es cerrado —`required` u
+    /// `optional`— y la palabra que no pertenece se rechaza con el camino del
+    /// campo que la escribió y el vocabulario en el hint.
+    #[test]
+    fn a_minimum_outside_the_vocabulary_is_rejected() {
+        for field in ["from_min", "to_min"] {
+            let document = EXAMPLE.replace(
+                r#""cardinality": "1:N""#,
+                &format!(r#""cardinality": "1:N", "{field}": "a veces""#),
+            );
+            let input: ErInput = serde_json::from_str(&document).expect("valid");
+            let errors = ErKind.validate(&input).expect_err("must fail");
+            assert_eq!(errors.len(), 1, "{field}: {errors:?}");
+            assert_eq!(errors[0].code, gx_core::error::ErrorCode::InvalidEnum);
+            assert_eq!(errors[0].path, format!("relations[0].{field}"));
+            let hint = errors[0].hint.clone().expect("hint");
+            assert!(
+                hint.contains("required") && hint.contains("optional"),
+                "{field}: {hint}"
+            );
+        }
+    }
+
+    /// D6, los bytes de siempre: sin `from_min`/`to_min` escritos, la
+    /// relación dibuja lo que dibujaba —`required` en el origen y, en el
+    /// destino, el `nullable` de la columna como lo resuelve
+    /// `Cardinality::from_short`— para todas las formas cortas, y `1:N`
+    /// cuando el documento no declara ninguna.
+    ///
+    /// `N:M` no entra en la lista: `parse_side` de `gx-core` solo admite `1`
+    /// y `N`, así que esa forma —que `SHORT_FORMS` anuncia— no resuelve hoy
+    /// (defecto anterior a este cambio, fuera de la superficie de este kind).
+    #[test]
+    fn absent_minimums_keep_the_derived_cardinality() {
+        for short in [None, Some("1:1"), Some("1:N"), Some("N:1")] {
+            for nullable in [false, true] {
+                let document = serde_json::json!({
+                    "version": 1, "kind": "er",
+                    "tables": [
+                        { "name": "users", "columns": [ { "name": "id", "key": "pk" } ] },
+                        { "name": "posts", "columns": [
+                            { "name": "id", "key": "pk" },
+                            { "name": "user_id", "key": "fk", "nullable": nullable }
+                        ] }
+                    ],
+                    "relations": [ {
+                        "from": { "table": "users", "column": "id" },
+                        "to": { "table": "posts", "column": "user_id" },
+                        "cardinality": short
+                    } ]
+                });
+                let input: ErInput = serde_json::from_value(document).expect("valid");
+                let ir = ErKind.to_ir(&input);
+                let edge = &ir.graph().expect("graph").edges[0];
+                let expected =
+                    gx_core::ir::Cardinality::from_short(short.unwrap_or("1:N"), nullable)
+                        .expect("una forma corta válida");
+                assert_eq!(
+                    edge.cardinality,
+                    Some(expected),
+                    "forma {short:?}, nullable={nullable}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_duplicated_table_is_rejected() {
         let document = serde_json::json!({
@@ -701,5 +892,38 @@ mod direction_tests {
             panic!("un diagrama de `er` es un grafo");
         };
         assert_eq!(graph.direction, Direction::LR);
+    }
+
+    /// T4 de `f27-etapa1.md`: la forma `N:M` que el contrato anuncia llega al
+    /// dibujo. El defecto era del núcleo: `SHORT_FORMS` la ofrecía y su lado
+    /// derecho (`M`) no se parseaba, así que el agente copiaba el ejemplo del
+    /// hint y recibía un rechazo que nombraba ese mismo ejemplo como válido.
+    #[test]
+    fn the_many_to_many_short_form_reaches_the_drawing() {
+        let parsed: crate::er::ErInput = crate::test_support::input(
+            r#"{ "version": 1, "kind": "er",
+                 "tables": [
+                   { "name": "students",
+                     "columns": [ { "name": "id", "type": "uuid", "key": "pk" } ] },
+                   { "name": "courses",
+                     "columns": [
+                       { "name": "id", "type": "uuid", "key": "pk" },
+                       { "name": "student_id", "type": "uuid", "key": "fk" } ] } ],
+                 "relations": [ { "from": { "table": "students", "column": "id" },
+                                  "to": { "table": "courses", "column": "student_id" },
+                                  "cardinality": "N:M" } ] }"#,
+        );
+
+        ErKind
+            .validate(&parsed)
+            .expect("N:M es una de las formas que el contrato anuncia");
+        let Ir::Graph(graph) = ErKind.to_ir(&parsed) else {
+            panic!("un diagrama de `er` es un grafo");
+        };
+        let cardinality = graph.edges[0]
+            .cardinality
+            .expect("la relación dibuja pata de cuervo");
+        assert_eq!(cardinality.from_max, gx_core::ir::CardinalityMax::Many);
+        assert_eq!(cardinality.to_max, gx_core::ir::CardinalityMax::Many);
     }
 }

@@ -15,7 +15,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::error::{ErrorCode, ValidationError};
-use crate::ir::{Ir, LayoutHint, Shape};
+use crate::ir::{Adornment, Ir, LayoutHint, Shape, Style};
 
 /// Limits declared by a kind (PRD §7.3). They live in one place: the kind
 /// module, never repeated in another crate.
@@ -106,6 +106,97 @@ impl Role {
     }
 }
 
+/// One relation a kind admits: how the line is drawn, whether it is a
+/// specialization, and the word that names it when the document writes none.
+///
+/// The two adornments are the notation of the relation (`f26-adornos.md`, S2):
+/// the table decides which pairs a kind may express and the document only
+/// writes the name. The table used to live inside `class`; it lives here since
+/// `f27-etapa1.md` (T1) because `component`, `use_case`, `activity` and
+/// `deployment` need the same vocabulary and a second copy would drift.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EdgeKind {
+    /// The name the document writes, e.g. `extends`.
+    pub name: &'static str,
+    /// Line style of the relation.
+    pub style: Style,
+    /// The glyph at the target end, when the relation gives it one.
+    pub head: Option<Adornment>,
+    /// The glyph at the source end, when the relation gives it one.
+    pub tail: Option<Adornment>,
+    /// Whether the relation is an "is a": those are the ones a kind may
+    /// police for cycles. A kind that does not care ignores the flag.
+    pub specialization: bool,
+    /// The word the line shows when the document gives no label. `None` is for
+    /// the relation that needs none: a plain arrow says what it says.
+    pub label: Option<&'static str>,
+}
+
+impl EdgeKind {
+    pub const fn new(
+        name: &'static str,
+        style: Style,
+        head: Option<Adornment>,
+        specialization: bool,
+        label: Option<&'static str>,
+    ) -> Self {
+        Self {
+            name,
+            style,
+            head,
+            tail: None,
+            specialization,
+            label,
+        }
+    }
+
+    /// The row the document named, or `None` when the kind does not admit it.
+    ///
+    /// This is the one place a resolution happens (`f27-etapa1.md`, D2), so the
+    /// precedence rule between a relation and an explicit glyph is written once
+    /// instead of in every kind that adopts the vocabulary.
+    pub fn find<'table>(table: &'table [EdgeKind], name: &str) -> Option<&'table EdgeKind> {
+        table.iter().find(|edge_kind| edge_kind.name == name)
+    }
+
+    /// The names a kind admits, in table order: what an error message lists.
+    pub fn names(table: &[EdgeKind]) -> Vec<&'static str> {
+        table.iter().map(|edge_kind| edge_kind.name).collect()
+    }
+
+    /// The word the contract uses for the style of the line.
+    pub const fn style_word(&self) -> &'static str {
+        match self.style {
+            Style::Solid => "sólida",
+            Style::Dashed => "punteada",
+        }
+    }
+
+    /// The word the contract uses for the glyph at the target end, when the
+    /// relation gives it one.
+    pub const fn head_word(&self) -> Option<&'static str> {
+        Self::adornment_word(self.head)
+    }
+
+    /// The word the contract uses for the glyph at the source end.
+    pub const fn tail_word(&self) -> Option<&'static str> {
+        Self::adornment_word(self.tail)
+    }
+
+    /// The word of a glyph of the closed vocabulary (`f26-adornos.md`, S5): the
+    /// one name the table and the rule line share.
+    pub const fn adornment_word(adornment: Option<Adornment>) -> Option<&'static str> {
+        match adornment {
+            Some(Adornment::Arrow) => Some("flecha"),
+            Some(Adornment::OpenArrow) => Some("flecha abierta"),
+            Some(Adornment::HollowTriangle) => Some("triángulo hueco"),
+            Some(Adornment::Diamond) => Some("diamante relleno"),
+            Some(Adornment::HollowDiamond) => Some("diamante hueco"),
+            None => None,
+        }
+    }
+}
+
 /// A non-fatal note about a document that is still valid (`f25-arreglos.md`,
 /// S2): the kind says what the document cannot anchor, never that it refuses
 /// to draw it. It travels in the answer's `warnings[]` with the shape the
@@ -171,6 +262,14 @@ pub trait DiagramKind: Send + Sync + Default {
         None
     }
 
+    /// The relations the kind admits, in the order its rules teach them
+    /// (`f27-etapa1.md`, T1). Empty when the kind draws its lines from the
+    /// document alone, which is what every kind does until it adopts the
+    /// vocabulary.
+    fn edge_kinds() -> &'static [EdgeKind] {
+        &[]
+    }
+
     /// The rules JSON Schema cannot express, in the words the agent reads
     /// (`f20-reuso.md`, S11): what is genuinely the kind's own teaching. The
     /// contract adds the generic rules and the line of the vocabulary.
@@ -208,6 +307,9 @@ pub trait KindHandler: Send + Sync {
 
     /// The role of a node that declares none.
     fn default_role(&self) -> Option<&'static str>;
+
+    /// The relations the kind admits (`f27-etapa1.md`, T1).
+    fn edge_kinds(&self) -> &'static [EdgeKind];
 
     /// The kind's own cross rules, in the words the agent reads.
     fn rules(&self) -> Vec<String>;
@@ -281,6 +383,10 @@ impl<K: DiagramKind> KindHandler for KindAdapter<K> {
 
     fn default_role(&self) -> Option<&'static str> {
         K::default_role()
+    }
+
+    fn edge_kinds(&self) -> &'static [EdgeKind] {
+        K::edge_kinds()
     }
 
     fn rules(&self) -> Vec<String> {

@@ -1,0 +1,355 @@
+{
+  "canvas": {
+    "x": -12.0,
+    "y": -12.0,
+    "w": 306.655029296875,
+    "h": 645.5
+  },
+  "tokens": {
+    "text_size": 14.0,
+    "node_padding": 12.0,
+    "corner_radius": 6.0,
+    "border_width": 1.0,
+    "line_height": 1.25,
+    "regular_weight": 400,
+    "semibold_weight": 600,
+    "arrow_length": 10.0,
+    "crow_foot": 22.0,
+    "crow_foot_spread": 0.85,
+    "badge_width": 26.0,
+    "muted_opacity": 0.55,
+    "lifeline_dash": [
+      4.0,
+      4.0
+    ],
+    "dash_pattern": [
+      6.0,
+      4.0
+    ],
+    "group_dash": [
+      8.0,
+      5.0
+    ],
+    "circle_diameter": 24.0,
+    "activation_width": 10.0
+  },
+  "direction": "TB",
+  "layout_hint": "layered",
+  "palette": {
+    "source": "css-vars",
+    "theme": "dark",
+    "bg": "var(--bg)",
+    "node_fill": "var(--node-fill)",
+    "node_stroke": "var(--node-stroke)",
+    "node_text": "var(--node-text)",
+    "edge_stroke": "var(--edge-stroke)",
+    "edge_text": "var(--edge-text)",
+    "accent": "var(--accent)"
+  },
+  "nodes": [
+    {
+      "id": "g-cliente",
+      "label": "Cliente",
+      "shape": "box",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 131.656494140625,
+        "y": 20.75
+      },
+      "size": {
+        "w": 71.5712890625,
+        "h": 41.5
+      },
+      "meta": {
+        "level": {
+          "int": 2
+        }
+      }
+    },
+    {
+      "id": "g-cobra",
+      "label": "P2 · cobra el total",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 131.656494140625,
+        "y": 449.75
+      },
+      "size": {
+        "w": 141.1953125,
+        "h": 41.5
+      },
+      "meta": {
+        "level": {
+          "int": 2
+        }
+      }
+    },
+    {
+      "id": "g-pagos",
+      "label": "pagos",
+      "shape": "cylinder",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 32.94189453125,
+        "y": 594.75
+      },
+      "size": {
+        "w": 65.8837890625,
+        "h": 53.5
+      },
+      "meta": {
+        "level": {
+          "int": 2
+        }
+      }
+    },
+    {
+      "id": "g-pasarela",
+      "label": "pasarela",
+      "shape": "box",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 183.902099609375,
+        "y": 594.75
+      },
+      "size": {
+        "w": 81.873046875,
+        "h": 41.5
+      },
+      "meta": {
+        "level": {
+          "int": 2
+        }
+      }
+    },
+    {
+      "id": "g-pedidos",
+      "label": "pedidos",
+      "shape": "cylinder",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 131.656494140625,
+        "y": 304.75
+      },
+      "size": {
+        "w": 78.3662109375,
+        "h": 53.5
+      },
+      "meta": {
+        "level": {
+          "int": 2
+        }
+      }
+    },
+    {
+      "id": "g-valida",
+      "label": "P1 · valida el pedido",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 131.656494140625,
+        "y": 159.75
+      },
+      "size": {
+        "w": 156.384765625,
+        "h": 41.5
+      },
+      "meta": {
+        "level": {
+          "int": 2
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "m-cliente-valida",
+      "from": "cliente",
+      "to": "valida",
+      "label": "pedido",
+      "emphasis": "normal",
+      "style": "solid",
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
+      "points": [
+        {
+          "x": 131.656494140625,
+          "y": 41.5
+        },
+        {
+          "x": 131.656494140625,
+          "y": 90.25
+        },
+        {
+          "x": 131.656494140625,
+          "y": 139.0
+        }
+      ],
+      "label_at": {
+        "x": 164.488525390625,
+        "y": 90.25
+      }
+    },
+    {
+      "id": "m-cobra-pagos",
+      "from": "cobra",
+      "to": "pagos",
+      "label": "pago",
+      "emphasis": "normal",
+      "style": "solid",
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
+      "points": [
+        {
+          "x": 102.18414965293391,
+          "y": 470.5
+        },
+        {
+          "x": 32.94189453125,
+          "y": 519.25
+        },
+        {
+          "x": 32.94189453125,
+          "y": 568.0
+        }
+      ],
+      "label_at": {
+        "x": 59.71728515625,
+        "y": 519.25
+      }
+    },
+    {
+      "id": "m-cobra-pasarela",
+      "from": "cobra",
+      "to": "pasarela",
+      "label": "cargo",
+      "emphasis": "normal",
+      "style": "solid",
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
+      "points": [
+        {
+          "x": 162.85351035577787,
+          "y": 470.5
+        },
+        {
+          "x": 236.147705078125,
+          "y": 519.25
+        },
+        {
+          "x": 198.260991178601,
+          "y": 574.0
+        }
+      ],
+      "label_at": {
+        "x": 265.155029296875,
+        "y": 519.25
+      }
+    },
+    {
+      "id": "m-pasarela-cobra",
+      "from": "pasarela",
+      "to": "cobra",
+      "label": "aprobación",
+      "emphasis": "normal",
+      "style": "solid",
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
+      "points": [
+        {
+          "x": 169.543208040149,
+          "y": 574.0
+        },
+        {
+          "x": 131.656494140625,
+          "y": 519.25
+        },
+        {
+          "x": 131.656494140625,
+          "y": 470.5
+        }
+      ],
+      "label_at": {
+        "x": 178.902099609375,
+        "y": 519.25
+      }
+    },
+    {
+      "id": "m-pedidos-cobra",
+      "from": "pedidos",
+      "to": "cobra",
+      "label": "total",
+      "emphasis": "normal",
+      "style": "solid",
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
+      "points": [
+        {
+          "x": 131.656494140625,
+          "y": 331.5
+        },
+        {
+          "x": 131.656494140625,
+          "y": 380.25
+        },
+        {
+          "x": 131.656494140625,
+          "y": 429.0
+        }
+      ],
+      "label_at": {
+        "x": 156.025634765625,
+        "y": 380.25
+      }
+    },
+    {
+      "id": "m-valida-pedidos",
+      "from": "valida",
+      "to": "pedidos",
+      "label": "pedido válido",
+      "emphasis": "normal",
+      "style": "solid",
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
+      "points": [
+        {
+          "x": 131.656494140625,
+          "y": 180.5
+        },
+        {
+          "x": 131.656494140625,
+          "y": 229.25
+        },
+        {
+          "x": 131.656494140625,
+          "y": 278.0
+        }
+      ],
+      "label_at": {
+        "x": 186.161865234375,
+        "y": 229.25
+      }
+    }
+  ],
+  "bands": [],
+  "events": []
+}
