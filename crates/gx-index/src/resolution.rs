@@ -12,6 +12,14 @@
 //! tables the tools read, and the test that guards the numbers of `docs/PRD.md`
 //! runs on the fixtures of `tests/languages.rs`.
 //!
+//! **An incomplete number has to say so.** The runtime rule below is
+//! per-language, so the rate of a language that carries a list is measured on a
+//! narrower denominator than the rate of one that does not, and comparing them
+//! is not a comparison of the same thing (S3). Every row therefore carries
+//! [`LanguageResolution::comparable`] — true only for a language with a
+//! non-empty runtime list — so the answer itself names which numbers may be
+//! read together (D1), instead of a comment here saying so.
+//!
 //! **The runtime rule (T6).** A relation whose target is a name the language's
 //! runtime or standard library provides (`str`, `len`, `path` in Python;
 //! `fmt`, `string` in Go; `String`, `List` in Java — the list is the
@@ -45,6 +53,10 @@ pub struct LanguageResolution {
     pub edges: i64,
     /// How many of those relations resolve to a declaration (D3).
     pub resolved: i64,
+    /// Whether this language carries a runtime-name list, and so whether its
+    /// rate may be compared with the others' (D1, S3): only then is the
+    /// runtime excluded from the denominator.
+    pub comparable: bool,
 }
 
 impl LanguageResolution {
@@ -85,6 +97,8 @@ pub fn resolution_by_language(
             symbols: row.get(2)?,
             edges: 0,
             resolved: 0,
+            // Set from the runtime lists once the row exists (D1).
+            comparable: false,
         })
     })?;
     for row in rows {
@@ -121,6 +135,13 @@ pub fn resolution_by_language(
         }
     }
 
+    // D1: the flag is the language's, not the row's, and it is the same data
+    // the rule above reads, so the answer can never claim a comparability the
+    // measurement did not have.
+    for row in report.values_mut() {
+        row.comparable = carries_a_runtime_list(&runtime, &row.lang);
+    }
+
     Ok(report.into_values().collect())
 }
 
@@ -146,6 +167,19 @@ fn provides_the_runtime(
     norm: &str,
 ) -> bool {
     runtime.get(lang).is_some_and(|names| names.contains(norm))
+}
+
+/// Whether the language carries a runtime-name list at all (D1, S3).
+///
+/// A list that does not exist excludes nothing, so the rate of that language
+/// counts its runtime targets as unresolved and is measured on a wider
+/// denominator: it is honest, but it is not the same number as its neighbours',
+/// and only the flag says which is which.
+fn carries_a_runtime_list(
+    runtime: &BTreeMap<&'static str, BTreeSet<&'static str>>,
+    lang: &str,
+) -> bool {
+    runtime.get(lang).is_some_and(|names| !names.is_empty())
 }
 
 /// How many declarations of the book carry each folded name.
@@ -177,6 +211,7 @@ mod tests {
             symbols: 4,
             edges: 10,
             resolved: 3,
+            comparable: true,
         };
         assert_eq!(row.percent(), 30.0);
         assert_eq!(

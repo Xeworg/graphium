@@ -34,11 +34,22 @@
 //! - `uses` — every type a declaration spells: a parameter, a return type, a
 //!   field, a top-level variable, the type an `extension` extends.
 //!
-//! A `mixin C = Base with M;` (`mixin_application_class`) is not read as a
-//! declaration: the book keeps the class the source declares with a body, and
-//! that form is rare enough to stay out until a fixture needs it (it is noted
-//! here rather than silently forgotten). A field is not a declaration of the
-//! book and a function body is not walked.
+//! A **mixin application class** — `class C = Base with M;` — is a declaration
+//! of the book: the grammar spells it as a `class_declaration` with **no `name`
+//! field** wrapping the `mixin_application_class` that holds the identifier, so
+//! the class is a hook of the chapter (the tables can read a `name` field and
+//! nothing else). The name is the one the document gives the declaration and the
+//! kind is the one the source spells: a mixin application class is a class, with
+//! the `with` clause of its application as its `inherits`.
+//!
+//! The spelling `mixin C = Base with M;` that this note carried is **not Dart**:
+//! no version of the language declares a mixin application with the `mixin`
+//! keyword, and the grammar recovers that text as a `top_level_variable_declaration`
+//! (a `const C` of a type spelled `mixin`), which is a separate defect of the
+//! recovery and not this chapter's business. The node the note meant,
+//! `mixin_application_class`, is what `class C = Base with M;` parses to.
+//!
+//! A field is not a declaration of the book and a function body is not walked.
 //!
 //! What is Dart's alone is here; the declarations the book keeps are the tables
 //! of [`crate::lang::registry::DART`] and the pipeline is
@@ -63,6 +74,51 @@ pub fn language(_path: &str) -> tree_sitter::Language {
 /// (`lib/store.dart` → `lib.store`).
 pub fn module_path(relative: &str) -> String {
     dotted_module(relative, &[])
+}
+
+/// A `class_declaration`: the class the source declares with a body, and the
+/// mixin application class `class C = Base with M;`, which spells its name one
+/// level down (`mixin_application_class`) and has no body of its own (S5-c).
+///
+/// The hook is the one node kind of this chapter the tables cannot read: a
+/// container is emitted from the `name` field, and that form has none.
+pub(crate) fn class_declaration(
+    node: &Node,
+    nesting: &Nesting,
+    source: &[u8],
+    out: &mut Vec<ParsedSymbol>,
+) -> Option<Body> {
+    let Some(name) = node
+        .child_by_field_name("name")
+        .and_then(|name| text(&name, source))
+    else {
+        // `class C = Base with M;`: the declaration's name is the identifier of
+        // its application, and it nests no declaration of its own.
+        let name = application_name(node, source)?;
+        emit_named(node, "class", &name, nesting.prefix, nesting.parent, out)?;
+        return None;
+    };
+    let index = emit_named(node, "class", &name, nesting.prefix, nesting.parent, out)?;
+    Some(Body {
+        index,
+        prefix: format!("{}{}.", nesting.prefix, name),
+        container: "class",
+    })
+}
+
+/// The name of a `mixin_application_class`: the identifier it spells before its
+/// `mixin_application` (`class DiagramStore = Base with Loggable;` →
+/// `DiagramStore`), which is the name the document gives the declaration.
+fn application_name(node: &Node, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    let application = node
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "mixin_application_class")?;
+    let mut inner = application.walk();
+    let name = application
+        .named_children(&mut inner)
+        .find(|child| child.kind() == "identifier")?;
+    text(&name, source)
 }
 
 /// A declaration of a file or of a type: the name is the one its signature

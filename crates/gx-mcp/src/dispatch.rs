@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use crate::contract;
 
 /// Every tool of the server, in the order the index reports them.
-pub const TOOL_NAMES: [&str; 16] = [
+pub const TOOL_NAMES: [&str; 17] = [
     "render_diagram",
     "validate_diagram",
     "get_diagram_schema",
@@ -27,6 +27,7 @@ pub const TOOL_NAMES: [&str; 16] = [
     "code_impact",
     "code_diagram",
     "code_er",
+    "code_index",
 ];
 
 /// Calls a tool by name with its JSON arguments.
@@ -251,6 +252,13 @@ pub fn call_tool(name: &str, arguments: &Value, session_id: &str) -> Result<Valu
             });
             Ok(crate::book::code_er(session_id, path, scope.as_deref()))
         }
+        "code_index" => {
+            // No required argument (f28, D2): the census of the book, with an
+            // optional `lang` that narrows `languages` and nothing else, so a
+            // forwarded client answers exactly like a local one.
+            let lang = arguments.get("lang").and_then(Value::as_str);
+            Ok(crate::book::code_index(session_id, lang))
+        }
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -470,6 +478,15 @@ pub fn tool_schema(name: &str) -> Value {
                 }
             },
             "required": ["path"]
+        }),
+        "code_index" => json!({
+            "type": "object",
+            "properties": {
+                "lang": {
+                    "type": ["string", "null"],
+                    "description": "Narrow `languages` to this language of the book; the rest of the census still describes the whole book. A language no chapter has answers an empty list, never an error."
+                }
+            }
         }),
         _ => json!({ "type": "object" }),
     }
@@ -886,5 +903,58 @@ mod tests {
             required.is_some_and(|required| required.contains(&serde_json::json!("path"))),
             "`path` is required: {schema}"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // f28 — `code_index`: the census of the book through the door
+    // -----------------------------------------------------------------
+
+    /// D2: the census tool answers through the dispatcher instead of an
+    /// unknown-tool error, and it needs no argument. Without a session project
+    /// the answer is the book's own `invalid_value`, which is still the tool
+    /// answering.
+    #[test]
+    fn code_index_is_reachable_through_the_dispatcher() {
+        assert!(
+            super::TOOL_NAMES.contains(&"code_index"),
+            "the census tool is in the index: {:?}",
+            super::TOOL_NAMES
+        );
+        let answered = call_tool("code_index", &serde_json::json!({}), "session-no-project")
+            .expect("the tool answers");
+        assert_eq!(answered["ok"], false, "{answered}");
+        assert_eq!(answered["errors"][0]["code"], "invalid_value", "{answered}");
+        assert_eq!(
+            answered["errors"][0]["path"], "session.project",
+            "{answered}"
+        );
+    }
+
+    /// D2: `code_index` documents `lang` and requires nothing, so an agent that
+    /// never saw the tool calls it right on both doors.
+    #[test]
+    fn the_schema_of_code_index_has_an_optional_lang() {
+        let schema = super::tool_schema("code_index");
+        assert_eq!(schema["type"], "object", "{schema}");
+        assert!(schema["properties"]["lang"].is_object(), "{schema}");
+        assert!(
+            schema.get("required").is_none(),
+            "no argument is required: {schema}"
+        );
+    }
+
+    /// The set is one: every name the index reports carries a schema of its own
+    /// in the dispatcher, never the fallback of an unknown tool. This is the
+    /// half-shipped tool of the previous cut, caught from the index side.
+    #[test]
+    fn every_tool_of_the_index_publishes_a_schema_of_its_own() {
+        for name in super::TOOL_NAMES {
+            let schema = super::tool_schema(name);
+            assert_eq!(schema["type"], "object", "{name}: {schema}");
+            assert!(
+                schema["properties"].is_object(),
+                "{name} has a schema of its own, not the fallback: {schema}"
+            );
+        }
     }
 }

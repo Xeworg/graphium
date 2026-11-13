@@ -8,7 +8,7 @@ mano, y un comando para el humano.
 
 | Cliente | Estado | Qué agrega |
 |---|---|---|
-| [Pi](pi/graphium/README.md) | ✅ | Registra el servidor MCP solo, lo describe con el libro a la vista y agrega `/graphium` (estado y `open`) |
+| [Pi](pi/graphium/README.md) | ✅ | Registra el servidor MCP solo, en `direct` para que sus tools se declaren al modelo, les suma una guía por tool con el momento de usarlas y agrega `/graphium` (estado y `open`) |
 
 Cada integración es independiente: no comparte código con el workspace de Rust y
 no cambia nada del binario. Si una se rompe, las otras siguen.
