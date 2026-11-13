@@ -141,12 +141,12 @@ nowhere today — "when you are about to grep for a symbol, `code_impact` alread
 knows who points at it". `verify.mjs` grows one check per new channel; it keeps
 proving the extension boots, and it now also proves what it teaches. worker C.
 commit: `feat(extension): the teaching names the moment, not only the tool`.
-T6b the server stops competing (`crates/gx-mcp/src/harness.rs`): fix the three
-sentences that are false against today's code (the 300-node cap belongs to
-`opts.extract`, not `opts.focus`; `interactive` "arrives in F3" and F3 shipped
-without it; the error path names `opts.focus.around` where the document writes
-`opts.focus.id`), and cut from `INSTRUCTIONS` the teaching the extension now owns,
-so the budget does not grow. worker C, after T3. commit: `docs(harness): the
+T6b the server stops competing (`crates/gx-mcp/src/{harness.rs,lib.rs,tools.rs}`,
+per L7): fix the three sentences that are false against today's code (the
+300-node cap belongs to `opts.extract`, not `opts.focus`; `interactive` "arrives
+in F3" and F3 shipped without it; the error path names `opts.focus.around` where
+the document writes `opts.focus.id`), and cut from `INSTRUCTIONS` the teaching the
+extension now owns, so the budget does not grow. worker C, after T3. commit: `docs(harness): the
 server keeps the contract and hands the timing to the extension`.
 ## Log
 
@@ -201,3 +201,57 @@ rule the server does get right ("Never draw to compensate for not understanding
 the code: read first"). `verify.mjs` runs 19 checks against a hand-written stub:
 it proves the extension boots and never touches whether anything is taught.
 
+
+L7 (scope correction, found while deriving the handoff). T6b's surface said
+`harness.rs` alone, but two of the three lies live outside it and both are read
+by the model before any instruction body: `lib.rs::RENDER_DIAGRAM_DESCRIPTION`
+(line 2215) and the `RenderDiagramParams.opts` doc comment (line 2436) still
+promise "`opts.interactive` arrives in F3", and the third lie — the error path —
+is in `tools.rs::focus_box`, which answers `opts.focus.around` for a document
+field the parser itself calls `opts.focus.id` (`tools.rs:1094`), so one tool
+disagrees with itself. The cap lie is the opposite direction: `focus_box` unions
+the boxes of every node reached within `depth` hops and has no cap at all; the
+300 belongs to `MAX_EXTRACT_NODES` (`gx-core/src/ir.rs:548`) and to
+`opts.extract`. Fixing only `harness.rs` would leave the false promise in the
+text the model reads first, so T6b's surface becomes
+`crates/gx-mcp/src/{harness.rs,lib.rs,tools.rs}` and the tests that pin the old
+sentences (`harness.rs:427-435`, `tools.rs:1836`) move with it.
+
+L8 (T6b landed, and what the trim actually cost). The four lies are gone. The
+`opts.focus` sentence no longer borrows `opts.extract`'s ceiling: it says the
+camera frames the nodes within `depth` hops, that it has no node cap, that it
+changes what the camera shows and never the document, and that an unknown id
+answers `unknown_ref`. `opts.interactive` stopped promising a phase in four
+places — `INSTRUCTIONS`, `RENDER_DIAGRAM_DESCRIPTION`, the
+`RenderDiagramParams.opts` doc comment and the `opts_ignored` warning text — and
+all four now say it is not honoured, costs a warning and never the diagram. The
+error path is `opts.focus.id` in both `focus_box` errors, which is the field the
+document writes; `parse_focus` still accepts `around` as a tolerated alias, and
+that is left alone because an alias is compatibility, not a lie.
+
+The trim: `THE CHEAP PATH` became `FROM THE BOOK`, half the size and the half the
+extension cannot own — a document the book hands you goes to `validate_diagram`
+and `render_diagram` unchanged, and JSON is hand-written only when the subject is
+not in the index. The routing sentences it carried (what `code_search` locates,
+what `code_diagram` draws, what a `.sql` file becomes) are exactly the
+`BOOK_TOOL_GUIDELINES` bullets of `extensions/pi/graphium/index.ts`, so the server
+stopped repeating them; the one sentence in THE BOOK that taught when to search
+("Use it to locate the code behind a diagram…") went the same way. `INSTRUCTIONS`
+is 14,288 bytes, down 98 from 14,386, so the budget did not grow while the text
+got truer.
+
+One test moved rather than died: `the_instructions_teach_the_cheap_path_of_the_book`
+pinned the routing paragraph, so it became
+`the_instructions_keep_the_book_contract_and_hand_the_routing_to_the_extension` —
+it keeps the contract half, asserts the routing paragraph is absent from the
+server, and keeps the `WHEN TO USE IT` mention of `code_er`. The two constraints
+of T6b still hold by test: `INSTRUCTIONS.len() > 1200` and the `max_chars`
+sentence. Evidence: RED observed with the tests flipped and the text untouched —
+`the_harness_teaches_opts_extract_and_the_layout_deadline` panicking on
+"`interactive` is still not honoured" and
+`focus_on_an_unknown_node_stores_nothing` on `left: "opts.focus.around", right:
+"opts.focus.id"`, 244 passed / 2 failed; then 246 passed / 0 failed, `cargo
+clippy -p gx-mcp --all-targets -- -D warnings` clean, `rustfmt --check` clean on
+the three files. The diff is string literals, one doc comment and tests: no
+control flow, so the differential check on `opts.focus` with a valid id is the
+existing positive test that still passes byte for byte.

@@ -49,11 +49,10 @@ the human sees you.
 merge patch and the `revision` you read: it is transactional, so a bad patch \
 leaves the diagram untouched. Do not render a new one to replace it.
 
-THE CHEAP PATH. If the subject is in this project's index, do not write JSON by \
-hand: `code_search` locates a symbol, `code_diagram` draws its neighbourhood as a \
-ready `graph` document, and a `.sql` file becomes the `er` document of `code_er`; \
-the two documents go to `validate_diagram` and `render_diagram` unchanged. \
-Hand-write a document only when the subject is not in the index.
+FROM THE BOOK. A document the book hands you — `code_diagram`'s `graph`, \
+`code_er`'s `er` — needs no repair: send it to `validate_diagram` and \
+`render_diagram` unchanged. Hand-write a document only when the subject is not \
+in the index.
 
 BIG DIAGRAMS. Hundreds of nodes are not one picture: they are a view of one. \
 `render_diagram` accepts `opts.extract: { around: \"<id>\", depth }` (default \
@@ -69,9 +68,11 @@ depth 8 with two laying out at a time: when the queue is full the answer is \
 `ok: false` with code `busy`, `queue_depth` and `retry_after_ms`, so wait that \
 long and send it again instead of retrying in a loop. `opts.focus: { id, depth? }` \
 puts the camera on one node and, with `depth`, on its neighbourhood (default 1, \
-max 300 nodes). `opts.replace_id` is honoured today: it replaces the document of \
+the nodes within that many hops): it has no node cap, it changes what the camera \
+shows and never the document, and an id that is not in the diagram answers \
+`unknown_ref`. `opts.replace_id` is honoured today: it replaces the document of \
 the named diagram, and an unknown id answers `unknown_diagram` and creates \
-nothing. `opts.interactive` still arrives in F3: sending it today costs a warning \
+nothing. `opts.interactive` is not honoured: sending it costs a warning \
 (`opts_ignored`), never the diagram.
 
 ERRORS. Every failure carries `{ path, code, message, hint? }` with a stable code \
@@ -126,8 +127,7 @@ without a project gets `ok: false` with `invalid_value` at `session.project`. \
 `code_search` answers from the index of the project instead of \
 reading files: it returns the `file`, `line`, `kind`, `name`, `qname`, \
 `content_hash` and `indexed_at` of one symbol, plus the `book_key` of the book \
-that answered. Use it to locate the code behind a diagram, or to find a \
-function by name before drawing its flow. Every word of `query` has to match \
+that answered. Every word of `query` has to match \
 and the tool never guesses: a query that fits more than one declaration \
 answers `ok: false` with `code_search`'s `ambiguous_symbol` code and \
 `candidates[]`, so send the words of one candidate's `qname` to narrow it. Its \
@@ -423,17 +423,35 @@ mod tests {
             INSTRUCTIONS.contains("an unknown id answers `unknown_diagram` and creates nothing"),
             "the instructions have to say what an unknown `replace_id` does"
         );
+        // L7: `interactive` is not honoured and F3 shipped without it, so the
+        // text cannot promise a phase that already closed.
         assert!(
-            INSTRUCTIONS.contains("`opts.interactive` still arrives in F3"),
+            INSTRUCTIONS.contains("`opts.interactive` is not honoured"),
             "the instructions have to say `interactive` is still not honoured"
         );
         assert!(
             INSTRUCTIONS.contains("costs a warning"),
             "the instructions have to say what `interactive` costs"
         );
+        for stale in ["arrive in F2/F3", "arrives in F3"] {
+            assert!(
+                !INSTRUCTIONS.contains(stale) && !render.contains(stale),
+                "the stale promise `{stale}` is gone from the instructions and the description"
+            );
+        }
+        // L7: 300 is `opts.extract`'s ceiling (`MAX_EXTRACT_NODES`); `opts.focus`
+        // caps nothing, it unions the boxes within `depth` hops.
         assert!(
-            !INSTRUCTIONS.contains("arrive in F2/F3"),
-            "the stale sentence is gone"
+            INSTRUCTIONS.contains("at most 300 nodes in the subgraph"),
+            "the instructions keep the extract cap"
+        );
+        assert!(
+            !INSTRUCTIONS.contains("max 300 nodes"),
+            "`opts.focus` cannot claim the extract cap"
+        );
+        assert!(
+            INSTRUCTIONS.contains("no node cap"),
+            "`opts.focus` has to say it caps nothing"
         );
     }
 
@@ -474,33 +492,35 @@ mod tests {
         );
     }
 
-    /// S3: the cheap path comes before BIG DIAGRAMS: a subject in the index is
-    /// drawn from the book, and JSON is hand-written only when it is not there.
+    /// S3 (L7): the server keeps the half of the cheap path the extension cannot
+    /// own — a document the book hands you is ready — and stops repeating the
+    /// routing the extension now teaches next to the declarations.
     #[test]
-    fn the_instructions_teach_the_cheap_path_of_the_book() {
-        let cheap = INSTRUCTIONS
-            .find("THE CHEAP PATH.")
-            .expect("the instructions name the cheap path");
+    fn the_instructions_keep_the_book_contract_and_hand_the_routing_to_the_extension() {
+        let book = INSTRUCTIONS
+            .find("FROM THE BOOK.")
+            .expect("the instructions keep the book contract");
         let big = INSTRUCTIONS
             .find("BIG DIAGRAMS.")
             .expect("BIG DIAGRAMS stays");
         let manual = INSTRUCTIONS.find("HOW, IN ORDER.").expect("HOW stays");
         assert!(
-            manual < cheap && cheap < big,
-            "the cheap path comes after HOW and before BIG DIAGRAMS"
+            manual < book && book < big,
+            "the book contract comes after HOW and before BIG DIAGRAMS"
         );
-        for needle in [
-            "`code_search` locates a symbol",
-            "`code_diagram` draws its neighbourhood as a ready `graph` document",
-            "`.sql` file becomes the `er` document of `code_er`",
-            "go to `validate_diagram` and `render_diagram` unchanged",
-            "Hand-write a document only when the subject is not in the index",
-        ] {
-            assert!(
-                INSTRUCTIONS.contains(needle),
-                "the cheap path lacks `{needle}`"
-            );
-        }
+        assert!(
+            INSTRUCTIONS.contains("send it to `validate_diagram` and `render_diagram` unchanged"),
+            "a document the book hands you needs no repair"
+        );
+        assert!(
+            INSTRUCTIONS
+                .contains("Hand-write a document only when the subject is not in the index"),
+            "the hand-write rule stays"
+        );
+        assert!(
+            !INSTRUCTIONS.contains("THE CHEAP PATH."),
+            "the routing paragraph the extension now owns is gone from the server"
+        );
         assert!(
             INSTRUCTIONS.contains("which `code_er` draws from a `.sql` file"),
             "the WHEN TO USE IT database bullet names `code_er`"

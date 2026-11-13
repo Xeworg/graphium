@@ -1039,7 +1039,7 @@ pub fn parse_opts(
         warnings.push(Warning {
             code: "opts_ignored".to_string(),
             message: format!(
-                "`opts.{}` todavía se ignora: `opts.interactive` llega en F3; esta versión honra `opts.extract`, `opts.focus`, `opts.replace_id` y `opts.layout_timeout_ms`",
+                "`opts.{}` todavía se ignora: esta versión honra `opts.extract`, `opts.focus`, `opts.replace_id` y `opts.layout_timeout_ms`; `opts.interactive` no se honra",
                 ignored.join("`, `opts.")
             ),
         });
@@ -1180,7 +1180,7 @@ fn focus_box(
 
     if !layout.nodes.contains_key(&focus.around) {
         return Err(ValidationError::new(
-            "opts.focus.around",
+            "opts.focus.id",
             ErrorCode::UnknownRef,
             format!("no hay ningún nodo `{}` en el diagrama", focus.around),
             Some("usá el `id` de un nodo de este diagrama".to_string()),
@@ -1227,7 +1227,7 @@ fn focus_box(
     }
     union.ok_or_else(|| {
         ValidationError::without_hint(
-            "opts.focus.around",
+            "opts.focus.id",
             ErrorCode::UnknownRef,
             "no hay ninguna caja que mostrar para `opts.focus`",
         )
@@ -1825,6 +1825,10 @@ mod tests {
 
     /// Un `opts.focus` que apunta a un nodo que no existe deja el plano como
     /// estaba: no hay nada que mostrar y el agente tiene que enterarse.
+    ///
+    /// L7: el path es `opts.focus.id`, el campo que el documento escribe, no
+    /// `opts.focus.around`, que es el nombre interno con el que lo lee el
+    /// validador. La misma herramienta no puede llamarlo de dos formas.
     #[test]
     fn focus_on_an_unknown_node_stores_nothing() {
         let _guard = lock_renders_blocking();
@@ -1833,7 +1837,7 @@ mod tests {
 
         assert!(!response.ok, "{response:?}");
         assert_eq!(error_codes(&response), vec!["unknown_ref"]);
-        assert_eq!(response.errors[0].path, "opts.focus.around");
+        assert_eq!(response.errors[0].path, "opts.focus.id");
         assert!(diagram_store().list().is_empty());
     }
 

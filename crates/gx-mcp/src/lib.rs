@@ -2212,7 +2212,8 @@ its neighbourhood. `opts.replace_id: \"<diagram_id>\"` replaces the document of 
 that diagram instead of creating another one — the same cycle as an update plus \
 the render —, an unknown id answers `unknown_diagram` and creates nothing, and \
 the answer names the diagram in `replaced`; without it the render sums to the \
-plan. `opts.interactive` arrives in F3 and is ignored for now.";
+plan. `opts.interactive` is not honoured: it is ignored, the answer carries an \
+`opts_ignored` warning, and the diagram still renders.";
 
 /// Description of the `export_diagram` tool, written for the agent.
 pub(crate) const EXPORT_DIAGRAM_DESCRIPTION: &str = "\
@@ -2433,7 +2434,7 @@ pub struct RenderDiagramParams {
     pub diagram: serde_json::Value,
     /// Options of the render: `extract { around, depth? }`,
     /// `focus { id, depth? }`, `replace_id` and `layout_timeout_ms`.
-    /// `interactive` arrives in F3 and is ignored for now.
+    /// `interactive` is not honoured and is ignored.
     #[serde(default)]
     pub opts: Option<serde_json::Value>,
 }
