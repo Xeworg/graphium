@@ -838,13 +838,26 @@ select_agents() {
 # Instala la extensión en los hosts elegidos: reporta cada uno y saltea los que
 # no están en esta máquina.
 install_agents() {
-  local installed_any=0 env
+  local installed_any=0 env dest
+  # Dos hosts pueden resolver al mismo directorio: `pi` sigue a
+  # PI_CODING_AGENT_DIR cuando está definida, y en una sesión de gentle-shell
+  # esa variable apunta justo al agente de gentle-shell. Copiar dos veces al
+  # mismo destino no rompe nada, pero decir «instalado» dos veces sí es una
+  # mentira, así que el segundo host lo dice y se saltea.
+  local -A done_dirs=()
   for env in "$@"; do
     agent_env_present "$env" || {
       printf '%s: el host no está en esta máquina (%s); se omite.\n' \
         "$env" "$(agent_env_dir "$env")"
       continue
     }
+    dest="$(agent_env_dir "$env")"
+    if [[ -n "${done_dirs[$dest]:-}" ]]; then
+      printf '%s: mismo destino que %s (%s); se instala una vez.\n' \
+        "$env" "${done_dirs[$dest]}" "$dest"
+      continue
+    fi
+    done_dirs[$dest]="$env"
     install_extension "$env"
     installed_any=1
   done

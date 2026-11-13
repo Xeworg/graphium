@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -167,6 +167,46 @@ check("findBinary finds the checkout from the extension itself, not the cwd", ()
     assert.ok(found.includes("target/"), `sale del checkout, no del cwd: ${found}`);
   } finally {
     if (previous !== undefined) process.env.GRAPHIUM_BIN = previous;
+  }
+});
+
+check("findBinary serves the installed binary on PATH before a build in the cwd", () => {
+  const previous = process.env.GRAPHIUM_BIN;
+  const previousPath = process.env.PATH;
+  delete process.env.GRAPHIUM_BIN;
+  const scratch = mkdtempSync(join(tmpdir(), "graphium-path-"));
+  try {
+    // The cwd is the human's project and it happens to hold a build. It is a
+    // different file from the installed one, so the two answers cannot be
+    // confused and the check cannot pass by accident.
+    const cwd = join(scratch, "proyecto-del-humano");
+    mkdirSync(join(cwd, "target", "release"), { recursive: true });
+    const fromCwd = join(cwd, "target", "release", "graphium");
+    writeFileSync(fromCwd, "#!/bin/sh\necho build-del-proyecto\n");
+
+    const pathDirectory = join(scratch, "bin");
+    mkdirSync(pathDirectory, { recursive: true });
+    const installed = join(pathDirectory, "graphium");
+    writeFileSync(installed, "#!/bin/sh\necho binario-instalado\n");
+
+    // The extension lives outside any checkout, so its own walk up finds
+    // nothing and the only candidates are the two files this layout wrote.
+    const extension = join(scratch, "extension");
+    mkdirSync(extension, { recursive: true });
+    process.env.PATH = pathDirectory;
+
+    const found = findBinary(cwd, extension);
+    assert.notEqual(
+      found,
+      fromCwd,
+      "un build bajo el cwd no responde por el binario instalado",
+    );
+    assert.equal(found, installed, `la respuesta viene del PATH, no de ${found}`);
+  } finally {
+    if (previous === undefined) delete process.env.GRAPHIUM_BIN;
+    else process.env.GRAPHIUM_BIN = previous;
+    process.env.PATH = previousPath;
+    rmSync(scratch, { recursive: true, force: true });
   }
 });
 

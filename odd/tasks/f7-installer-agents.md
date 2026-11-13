@@ -77,3 +77,41 @@ directo, y que la lista de agentes sea un registro extensible.
   (`170c6e2`), docs (`27c29e9`). Pendiente abierto: la nota de `ln -s` manual
   en docs/QUICKSTART.md quedó fuera de la superficie del worker; revisar en la
   integración.
+
+## Posterior (2026-11-12): la extensión que se instala dice qué versión es
+
+Tres defectos aparecieron al instalar la extensión nueva de `f28-lenguajes` (la
+que registra el servidor con `exposure: "direct"`) en la máquina del dueño:
+
+1. **El release publicaba la versión del checkout, no la del release.**
+   `scripts/package-release.sh` copiaba `extensions/pi/graphium` tal cual al
+   tarball, así que cada release viajaba con `0.1.0` y el instalador mostraba esa
+   cifra al lado de un binario más nuevo. Ahora el empaquetador estampa la versión
+   del release en el `package.json` del tarball **y verifica el estampado**: un
+   `sed` que no matchee tiene que romper el empaquetado, no publicar la versión
+   equivocada. La extensión del árbol declara además la versión del producto
+   (`0.2.0`), para que una instalación desde el repositorio no mienta.
+2. **`pi` y `gentle-shell` pueden resolver al mismo directorio.** `pi` sigue a
+   `PI_CODING_AGENT_DIR`, y una sesión de gentle-shell la apunta justo al agente
+   de gentle-shell. Con `--all`, el instalador copiaba dos veces al mismo destino
+   y decía «instalado» dos veces. La instalación se deduplica por destino y el
+   segundo host lo dice: «mismo destino que `pi` (...); se instala una vez».
+3. **La extensión servía un build viejo por culpa del cwd.** `findBinary` subía
+   desde el cwd antes de mirar el `PATH`, así que una extensión instalada corriendo
+   dentro de un checkout con un build viejo servía ese build viejo: el dueño
+   recargó Pi y Graphium siguió usando un binario de 45.925.016 B en vez del
+   instalado de 46.207.640 B. El orden pasó a `GRAPHIUM_BIN` → el checkout de la
+   propia extensión → `PATH` → cwd al final, con la razón escrita en el código y
+   en el `README`: el cwd es el proyecto del humano, no el checkout de Graphium.
+
+Pruebas: `tests/installer/extension_package_test.sh` (el tarball lleva la versión
+pedida, con una versión sintética para que el test no pueda pasar sin estampar),
+`tests/installer/agents_same_dir_test.sh` (una sola copia cuando dos hosts
+coinciden) y el check 23 de `extensions/pi/graphium/verify.mjs` (`findBinary`
+prefiere el `PATH` antes que un build del cwd). Los tres se vieron rojos antes del
+arreglo.
+
+**Entrega:** este corte viaja con `f28-lenguajes` y `f29-componente` en el mismo
+PR `staging` → `main`; las slices son los commits, y este es uno solo porque los
+tres defectos se arreglan en el mismo camino (empaquetar, elegir destino, elegir
+binario) y ninguno se puede probar sin los otros dos en su lugar.
