@@ -112,3 +112,33 @@ worktree has no `crates/gx-app/frontend/dist`, so `tauri::generate_context!`
 panics until the Vite bundle exists; the bundle of the same clone stands in
 (f29 touches no frontend source).
 
+
+L4 (surface of T4, and one correction that is not f29's). T4 writes two files:
+`docs/CATALOGO-DIAGRAMAS.md` (§3 row 12, §5 row 12, §6 Etapa 0/1) and
+`docs/PRD.md` (§10 for the edge `kind` field and the nine relations, §10.1 if
+that is where the edge fields live). The `mixin C = Base with M` prose that f28
+T4 found wrong is Dart and belongs to `f28-lenguajes` T5, not here: the catalog
+has no mixin line, and two cuts editing the same file in different worktrees is
+a merge conflict bought for nothing.
+
+L5 (T4 landed, and the rows outside row 12 that the same cut made false). The
+docs now match the shipped code in eight places, not four: the §2 table of what
+this build has today (ten roles and `edges{kind?}` in the `component` row), §3
+row 12's state, §5.1 row 6 — the UML component diagram shares the kind, so its
+"Hoy" paragraph and its assembly-vs-delegation bullet were stale too: `edge.kind`
+exists, the kind's table simply has no `provides`/`requires` relation yet —, §5.3
+row 12 (Hoy, Falta, Costo), §6 Etapa 0 as closed by this cut, §6 Etapa 1 row 12 as
+done, §6 R2's `edge.kind` bullet (the platform piece shipped and the engine now
+draws from the table instead of ignoring it), and PRD §10, where the edge `kind`
+is documented with its rejection rule and the nine relations. Everything is
+quoted from `crates/gx-kinds/src/component.rs` (`ROLES` :37, `EXTERNAL_ROLE` :53,
+`STEREOTYPED_ROLES` :59, `RELATIONS` :78) and `flow.rs` (`FlowEdge.kind` :69,
+`validate_edge_kinds` :142). One correction of my own while checking: the first
+draft of the PRD paragraph said the vocabulary never travels in the schema, which
+is false — `get_diagram_schema` answers `rules[]`, `rules_of` extends it with
+`handler.rules()`, and `component::rules` starts with `relations_rule()`, which
+names every relation with its style and glyph. The document says that instead.
+The levels stay open (D5), and the `mixin` correction stays in f28 T5 (L4).
+Verified: docs only — no test runs, because no code and no schema changed; the
+claims were checked line by line against the two source files and against
+`crates/gx-mcp/src/contract.rs` (`SchemaResponse`, `rules_of`).
