@@ -59,6 +59,13 @@ S7 (the binary figure is stale): `docs/PRD.md:300-301` and the CI step
 (45,806,232 B), although f11 to f27 landed afterwards, including `er_bridge.rs`
 in `gx-index`. No decision may cite that number until it is measured again.
 
+S8 (owner, verbatim, 2026-11-12): "debemos aumentar el limite del binario ya
+que este no debera ser mas una limitante el proyecto ha crecido y trabaja en
+optimas condiciones". The shape the owner chose: `RNF1` becomes "Binario único <
+64 MB" and the CI gate becomes **67.108.864 B (64 MiB)**, 31,1 % of air over the
+46.203.544 B measured in this cut. The gate stops being a growth plan and
+becomes an accident alarm.
+
 ## Decisions
 
 D1 (what gets published, and how it stays honest). The rate is published as
@@ -255,3 +262,50 @@ clippy -p gx-mcp --all-targets -- -D warnings` clean, `rustfmt --check` clean on
 the three files. The diff is string literals, one doc comment and tests: no
 control flow, so the differential check on `opts.focus` with a valid id is the
 existing positive test that still passes byte for byte.
+
+L9 (T5 landed, and the owner moved the ceiling). Measured both release builds in
+this worktree on 2026-11-12, because the PRD quoted two f10 figures and both had
+aged: the default (`cargo build --release --bin graphium`, `du -b`) is
+**46.203.544 B** — 44,06 MiB, **+397.312 B** over f10 across f11 to f28 — and the
+thin build (`--no-default-features --features lang-rust,lang-typescript`) is
+**13.618.328 B**, **+376.832 B** over the 13.241.496 B that the PRD still called
+"byte-idéntico". That claim is dead: `gx-index` grew for both builds. The
+per-language table lives in the new `docs/LENGUAJES.md` — twenty rows measured on
+the fixtures of `crates/gx-index/tests/languages.rs`, each with the floor that
+pins it, the `comparable` flag explained by the runtime-list asymmetry, and the
+two reductions this cut bought (Go package imports 83,3 % → 100 % on the two-file
+fixture; the Dart mixin application now a declaration, with the correction that
+`mixin C = Base with M;` is not Dart — the catalog never had that line, so the
+correction lives there).
+
+Mid-cut the owner changed the requirement (S8, verbatim): the ceiling stops being
+a design target. `RNF1` is now **< 64 MB** and the CI gate **67.108.864 B (64
+MiB)**, which leaves **20.905.320 B (31,1 %)** of air over today's measurement
+(68,8 % of the gate). The 48 MB ceiling and the 50.300.000 B gate are history by
+that same decision. No breakdown of the 64 MB was invented: the F0 budget (15 MB)
+is the history of its phase, not a partition of today's ceiling. The three PRD
+places (RNF1, RNF1-quater, the "los lenguajes viajan en el binario" bullet), the
+`ci.yml` comment and threshold, and the binary section of `docs/LENGUAJES.md` all
+agree with the measurement now. One more stale promise of the same family fell
+while checking: PRD §11 said `opts.interactive` "en F3", which is the lie T6b
+fixed in four places inside the server; it now says the field is accepted, not
+honoured, and costs an `opts_ignored` warning.
+
+L10 (the workspace suite caught what the crate suite could not, and the fix
+belongs to T6b). `cargo test -p gx-mcp` was green with the new text, but
+`crates/gx-app/src/relay.rs` had a test asserting the initialize answer contains
+`THE CHEAP PATH` — it pinned the paragraph T6b removed instead of the contract it
+was standing for, so the workspace suite failed after the commit. The test now
+compares the answer against `gx_mcp::harness::INSTRUCTIONS` byte for byte, which
+is exactly what it means: the socket client and the stdio client read the same
+bytes, whatever the text says. Amended into `52c8d38` because the change and its
+test are one unit; `-p gx-app` is 56 passed / 0 failed afterwards.
+
+L11 (delivery strategy, so the slice warning has an answer). This branch is a
+feature line, not a change: 235 commits over `origin/main` because it carries
+f28 complete (T1-T6b and now T5). Its review slices are the T commits
+themselves — each one is a unit with its tests and its docs — and the delivery is
+the one f18 to f27 used: `git merge --no-ff feature/f28-lenguajes` into
+`staging`, push, and one PR `staging` → `main` that the owner squashes. No
+further splitting is possible without breaking the commits apart; the protection
+is that every slice is independently readable and the PR body names them.
