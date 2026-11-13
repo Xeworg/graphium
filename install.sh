@@ -35,6 +35,15 @@
 
 set -euo pipefail
 
+# ¿stdin viene abierto? Un fd 0 cerrado (`0<&-`) no es interactivo. Se anota
+# acá arriba y una sola vez, antes de cualquier `$(...)`: bash ocupa el 0 libre
+# con el pipe de la sustitución, así que más tarde la comprobación diría que
+# stdin está abierto. Lo consulta agent_term_open.
+AGENT_STDIN_OPEN=0
+if { true 9<&0; } 2>/dev/null; then
+  AGENT_STDIN_OPEN=1
+fi
+
 usage() {
   local name env_name default_dir
   printf '%s\n' \
@@ -47,8 +56,14 @@ usage() {
     'Instala graphium en $HOME/.local/bin. Corrido desde el repositorio' \
     'compila el árbol de trabajo con cargo; servido desde un release (o' \
     'pipeado desde la red) baja el binario publicado y verifica su checksum.' \
-    'Correrlo de nuevo sobreescribe el binario y, si hay un release más' \
-    'nuevo, actualiza.' \
+    'Correrlo de nuevo sobreescribe el binario: primero dice qué versión hay' \
+    'instalada y cuál la reemplaza, y en una terminal actualiza la extensión' \
+    'de los agentes que ya la tenían.' \
+    '' \
+    'La terminal de control es la evidencia de un humano, no stdin: con' \
+    '`curl -fsSL …/install.sh | bash` stdin es el script, así que los prompts' \
+    'se abren en /dev/tty. Sin terminal de control (cron, CI, docker sin -t,' \
+    'stdin cerrado) no pregunta: deja el mensaje con el siguiente paso.' \
     '' \
     'Versión: sin --version baja el último release publicado. Con' \
     '--version <semver> (o GRAPHIUM_VERSION en el entorno) baja ESE release,' \
@@ -59,21 +74,27 @@ usage() {
     'ejercitar el camino publicado contra un servidor local.' \
     '' \
     'Comandos:' \
-    '  install    Instala (el comando por omisión). Con un release más nuevo' \
+    '  install    Instala (el comando por omisión) y dice qué había instalado' \
+    '             y con qué versión se reemplaza. Con un release más nuevo' \
     '             publicado, actualiza el binario instalado. En una terminal' \
-    '             termina ofreciendo conectar la extensión en tus agentes,' \
-    '             con opción de saltear; sin tty solo deja el siguiente paso.' \
-    '  agent      Instala la extensión de Graphium (extensions/pi/graphium)' \
-    '             en los agentes de IA elegidos. Detecta los hosts presentes' \
-    '             (ver «Hosts de agente»), en cuáles ya está instalada y abre' \
-    '             un checklist: ↑/↓ para moverte, espacio para marcar o' \
-    '             desmarcar, «a» para todos, Enter para confirmar y q o Esc' \
-    '             para salir sin instalar nada. Arranca con los hosts' \
-    '             detectados ya marcados. Si la terminal no da para el' \
-    '             checklist (TERM tonta, sin tput/terminfo) pregunta con' \
-    '             números. Sin tty hay que pasar --env <name> (uno o más)' \
-    '             o --all. Con --version instala la extensión de ese release' \
-    '             en vez de la del último.' \
+    '             (la de control, aunque el script llegue por un pipe) termina' \
+    '             ofreciendo conectar o actualizar la extensión en tus' \
+    '             agentes, con opción de saltear; sin terminal de control solo' \
+    '             deja el siguiente paso.' \
+    '  agent      Instala o actualiza la extensión de Graphium' \
+    '             (extensions/pi/graphium) en los agentes de IA elegidos.' \
+    '             Cada fila del checklist dice si el host está en la máquina,' \
+    '             si ya tiene la extensión y con qué versión, y a qué versión' \
+    '             la lleva esta corrida. Los prompts se abren en la terminal' \
+    '             de control (/dev/tty), así que andan aunque el script llegue' \
+    '             pipeado. ↑/↓ para moverte, espacio para marcar o desmarcar,' \
+    '             «a» para todos, Enter para confirmar y q o Esc para salir sin' \
+    '             instalar nada. Arranca con los hosts detectados ya marcados.' \
+    '             Si la terminal no da para el checklist (TERM tonta, sin' \
+    '             tput/terminfo) pregunta con números. Sin terminal de control' \
+    '             hay que pasar --env <name> (uno o más) o --all. Con' \
+    '             --version instala la extensión de ese release en vez de la' \
+    '             del último.' \
     '  update     Si hay un release más nuevo que lo instalado, actualiza el' \
     '             binario y refresca la extensión en cada agente que ya la' \
     '             tiene. Antes del primer release avisa y no hace nada.' \
@@ -195,6 +216,19 @@ cargo_target_dir() {
     /*) printf '%s\n' "$dir" ;;
     *) printf '%s\n' "$SCRIPT_DIR/$dir" ;;
   esac
+}
+
+# La versión que declara el árbol de trabajo (workspace.package.version): es la
+# que va a reportar el binario compilado acá, y por lo tanto la que el
+# instalador puede prometer en sus mensajes.
+repo_version() {
+  awk '
+    /^\[workspace\.package\]$/ { in_ws = 1; next }
+    /^\[/ { in_ws = 0 }
+    in_ws && /^version *= *"/ {
+      sub(/^version *= *"/, ""); sub(/".*$/, ""); print; exit
+    }
+  ' "$SCRIPT_DIR/Cargo.toml"
 }
 
 # --- el instalador online ---------------------------------------------------
@@ -377,9 +411,10 @@ install_binary_from_release() {
   printf 'Instalado %s\n' "$GRAPHIUM_BIN"
 }
 
-# Instala o actualiza el binario, eligiendo el modo según el script. Con
-# announce_update en 1, un binario viejo instalado genera el aviso de
-# actualización (el modo release baja el nuevo; el modo repo compila).
+# Instala o actualiza el binario, eligiendo el modo según el script. Antes de
+# tocar el disco dice qué hay instalado y qué lo reemplaza (T2/S4): lo
+# instalado se lee primero, y con announce_update en 1 el final repite el
+# cambio de versión.
 #
 # `requested` es la versión que pidió el humano (`--version` o
 # `GRAPHIUM_VERSION`). Con versión se baja ese release exacto; sin versión se
@@ -387,25 +422,43 @@ install_binary_from_release() {
 # bajaba `/latest` aunque el humano hubiera fijado una versión.
 install_binary() {
   local announce_update="${1:-0}" requested="${2:-$RELEASE_VERSION}"
-  local previous
+  local previous target
   previous="$(installed_version)"
   if ((IN_REPO == 1)); then
-    if [[ -n "$previous" ]] && version_is_newer "$previous" "$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"; then
-      printf 'Actualizando: %s -> ' "$previous"
-    elif [[ -n "$previous" ]]; then
-      printf 'Reinstalando (compilación del árbol de trabajo)...\n'
-    fi
+    target="$(repo_version)"
+    announce_binary_plan "$previous" "$target" "árbol de trabajo"
     install_binary_from_source_repo
   else
-    local latest=""
-    latest="${requested:-$(latest_release_version 2>/dev/null || true)}"
-    if [[ -n "$previous" && -n "$latest" ]] && version_is_newer "$previous" "$latest"; then
-      printf 'Actualizando: %s -> %s\n' "$previous" "$latest"
-    fi
+    target="${requested:-$(latest_release_version 2>/dev/null || true)}"
+    announce_binary_plan "$previous" "$target" "release"
     install_binary_from_release "$requested"
   fi
+  # La versión que esta corrida instala es la que las filas del checklist
+  # pueden prometer. Se anota para no resolverla dos veces: resolver el último
+  # release es una consulta de red.
+  AGENT_TARGET_VERSION="$target"
+  AGENT_TARGET_KNOWN=1
   if ((announce_update == 1)) && [[ -n "$previous" ]]; then
     printf 'La versión anterior era %s; ahora es %s.\n' "$previous" "$(installed_version)"
+  fi
+}
+
+# El mensaje que dice qué se reemplaza y por qué versión, antes de instalar.
+# `previous` vacío significa que no hay nada instalado; `target` vacío, que no
+# se sabe la versión (sin release publicado o sin red para resolverlo).
+announce_binary_plan() {
+  local previous="$1" target="$2" source="$3" what
+  if [[ -n "$target" ]]; then
+    what="v$target del $source"
+  else
+    what="el último release publicado"
+  fi
+  if [[ -n "$previous" ]]; then
+    printf 'Binario: se reemplaza v%s en %s por %s.\n' \
+      "$previous" "$GRAPHIUM_BIN" "$what"
+  else
+    printf 'Binario: no hay nada instalado en %s; se instala %s.\n' \
+      "$GRAPHIUM_BIN" "$what"
   fi
 }
 
@@ -468,14 +521,14 @@ agent_env_present() {
   [[ -d "$(dirname -- "$dir")" ]]
 }
 
-# Instala la extensión en un host desde el árbol del repositorio.
+# Instala la extensión en un host desde el árbol del repositorio. No informa:
+# el mensaje lo arma install_extension, que sabe qué había antes.
 install_extension_from_repo() {
   local env="$1" dest
   dest="$(agent_env_dir "$env")"
   mkdir -p -- "$dest"
   rm -rf -- "$dest/graphium"
   cp -R -- "$SCRIPT_DIR/extensions/pi/graphium" "$dest/graphium"
-  printf 'Extensión instalada en %s (graphium)\n' "$dest"
 }
 
 # Instala la extensión en un host desde un release publicado: la extensión
@@ -500,16 +553,34 @@ install_extension_from_release() {
   rm -rf -- "$dest/graphium"
   cp -R -- "$DOWNLOAD_DIR/extract/graphium" "$dest/graphium"
   rm -rf -- "$DOWNLOAD_DIR"
-  printf 'Extensión instalada en %s (graphium)\n' "$dest"
 }
 
+# Instala o actualiza la extensión en un host y dice qué hizo (T2/S4):
+# «actualizada» con la versión vieja y la nueva cuando el host ya la tenía,
+# «instalada» cuando es la primera vez.
 install_extension() {
-  local env="$1"
+  local env="$1" dir dest previous current what
+  dir="$(agent_env_dir "$env")"
+  dest="$dir/graphium"
+  previous="$(extension_installed_version "$dest")"
   if ((IN_REPO == 1)); then
-    install_extension_from_repo "$env"
+    install_extension_from_repo "$env" || return 1
   else
-    install_extension_from_release "$env"
+    install_extension_from_release "$env" || return 1
   fi
+  current="$(extension_installed_version "$dest")"
+  if [[ -n "$previous" ]]; then
+    if [[ -n "$current" ]]; then
+      what="actualizada en $dir (graphium, v$previous -> v$current)"
+    else
+      what="actualizada en $dir (graphium)"
+    fi
+  elif [[ -n "$current" ]]; then
+    what="instalada en $dir (graphium, v$current)"
+  else
+    what="instalada en $dir (graphium)"
+  fi
+  printf 'Extensión %s\n' "$what"
 }
 
 # Línea de estado de un host: «presente»/«no presente», versión instalada.
@@ -526,19 +597,83 @@ agent_env_status() {
   fi
 }
 
-# Estado corto de un host para el checklist: presencia y versión instalada.
+# Estado corto de un host para el checklist (T3): presencia, si ya tiene la
+# extensión y con qué versión, y a qué versión la lleva esta corrida. La fila
+# la recorta agent_tui_fit, así que el detalle va en orden de importancia:
+# primero si el host está, después la versión instalada, por último la nueva.
 agent_env_detail() {
-  local env="$1" version=""
+  local env="$1" version="" target=""
   if ! agent_env_present "$env"; then
     printf 'host ausente en esta máquina'
     return 0
   fi
   version="$(extension_installed_version "$(agent_env_dir "$env")/graphium")"
-  if [[ -n "$version" ]]; then
-    printf 'host presente, extensión instalada v%s' "$version"
-  else
+  if [[ -z "$version" ]]; then
     printf 'host presente, extensión no instalada'
+    return 0
   fi
+  target="$(agent_target_version)"
+  if [[ -n "$target" && "$target" != "$version" ]]; then
+    printf 'host presente, extensión v%s (se instala v%s)' "$version" "$target"
+  else
+    printf 'host presente, extensión v%s' "$version"
+  fi
+}
+
+# La versión que esta corrida va a dejar instalada: la del árbol cuando se
+# compila o la pedida (--version/GRAPHIUM_VERSION) cuando se baja el release.
+# install_binary la anota cuando resuelve el último release. Queda vacía cuando
+# no se sabe, y ahí las filas del checklist no prometen una versión: resolverla
+# en cada fila sería una consulta de red por tecla, y una consulta por dibujar
+# el checklist para mostrar una versión es peor que no mostrarla.
+AGENT_TARGET_VERSION=""
+AGENT_TARGET_KNOWN=0
+agent_target_version() {
+  if ((AGENT_TARGET_KNOWN == 0)); then
+    if ((IN_REPO == 1)); then
+      AGENT_TARGET_VERSION="$(repo_version)"
+    elif [[ -n "$RELEASE_VERSION" ]]; then
+      AGENT_TARGET_VERSION="$RELEASE_VERSION"
+    fi
+    AGENT_TARGET_KNOWN=1
+  fi
+  printf '%s\n' "$AGENT_TARGET_VERSION"
+}
+
+# --- la terminal de control --------------------------------------------------
+#
+# `[[ -t 0 ]]` no es la prueba de que hay un humano: con
+# `curl -fsSL …/install.sh | bash` stdin es el propio script, así que no es una
+# tty aunque el humano esté mirando una terminal. La evidencia es la terminal
+# de control (/dev/tty), que existe mientras la sesión tenga una; si stdin ya
+# es una tty se sigue leyendo de ahí, como siempre.
+#
+# AGENT_TERM_IN es el fd del que se lee una tecla y AGENT_TERM_OUT el fd al que
+# se dibuja. Cuando hay que abrir /dev/tty son el mismo fd (3); cuando stdin ya
+# es la terminal son 0 y 2, el comportamiento de siempre.
+AGENT_TERM_IN=0
+AGENT_TERM_OUT=2
+AGENT_TERM_FD=0
+
+# Deja la terminal de control lista para leer y dibujar. Devuelve 1 solo cuando
+# no hay ninguna: cron, CI, `docker run` sin -t, stdin cerrado. Ahí el
+# instalador no pregunta y deja el mensaje accionable.
+agent_term_open() {
+  local fd=3
+  ((AGENT_TERM_FD == 0)) || return 0
+  if [[ -t 0 ]]; then
+    AGENT_TERM_IN=0
+    AGENT_TERM_OUT=2
+    return 0
+  fi
+  ((AGENT_STDIN_OPEN == 1)) || return 1
+  # El grupo lleva `2>/dev/null` para que el «no such device» de una sesión sin
+  # terminal de control no ensucie la salida; el exec abre el fd en este shell.
+  { exec 3<>/dev/tty; } 2>/dev/null || return 1
+  AGENT_TERM_FD="$fd"
+  AGENT_TERM_IN="$fd"
+  AGENT_TERM_OUT="$fd"
+  return 0
 }
 
 # --- selector interactivo (checklist) ---------------------------------------
@@ -572,10 +707,11 @@ agent_tui_tput() {
   printf '%s\n' "$value"
 }
 
-# ¿La terminal soporta el checklist? Sin tty en stdin y stderr, con TERM tonta
+# ¿La terminal soporta el checklist? Sin terminal de control, con TERM tonta
 # o sin stty/tput/terminfo se usa el prompt numerico de siempre (R3).
 agent_tui_capable() {
-  [[ -t 0 && -t 2 ]] || return 1
+  agent_term_open || return 1
+  [[ -t "$AGENT_TERM_IN" && -t "$AGENT_TERM_OUT" ]] || return 1
   [[ -n "${TERM:-}" && "${TERM}" != "dumb" ]] || return 1
   command -v stty >/dev/null 2>&1 || return 1
   command -v tput >/dev/null 2>&1 || return 1
@@ -584,20 +720,22 @@ agent_tui_capable() {
 }
 
 # Modo crudo: sin eco y sin canónico, una tecla por lectura. No se toca isig:
-# Ctrl-C sigue interrumpiendo y el trap restaura la terminal.
+# Ctrl-C sigue interrumpiendo y el trap restaura la terminal. stty va sobre el
+# fd de la terminal de control, no sobre stdin: con el script pipeado stdin es
+# el script y no tiene ajustes de terminal.
 agent_tui_raw_on() {
-  AGENT_TUI_STTY="$(stty -g)" || return 1
-  if ! stty -echo -icanon min 1 time 0; then
+  AGENT_TUI_STTY="$(stty -g <&"$AGENT_TERM_IN")" || return 1
+  if ! stty -echo -icanon min 1 time 0 <&"$AGENT_TERM_IN"; then
     agent_tui_raw_off
     return 1
   fi
   AGENT_TUI_ACTIVE=1
-  printf '\033[?25l' >&2
+  printf '\033[?25l' >&"$AGENT_TERM_OUT"
 }
 
 agent_tui_raw_off() {
   [[ -n "$AGENT_TUI_STTY" ]] || return 0
-  stty "$AGENT_TUI_STTY" 2>/dev/null || true
+  stty "$AGENT_TUI_STTY" <&"$AGENT_TERM_IN" 2>/dev/null || true
   AGENT_TUI_STTY=""
 }
 
@@ -605,7 +743,7 @@ agent_tui_raw_off() {
 agent_tui_cleanup() {
   ((AGENT_TUI_ACTIVE == 1)) || return 0
   agent_tui_raw_off
-  printf '\033[?25h' >&2
+  printf '\033[?25h' >&"$AGENT_TERM_OUT"
   AGENT_TUI_ACTIVE=0
 }
 
@@ -626,18 +764,18 @@ agent_tui_fit() {
 agent_tui_draw() {
   local i pointer mark line
   if ((AGENT_TUI_DRAWN > 0)); then
-    printf '\033[%dA' "$AGENT_TUI_DRAWN" >&2
+    printf '\033[%dA' "$AGENT_TUI_DRAWN" >&"$AGENT_TERM_OUT"
   fi
-  printf '\r\033[J' >&2
-  printf '%s\n' "$(agent_tui_fit "$AGENT_TUI_HEADER")" >&2
+  printf '\r\033[J' >&"$AGENT_TERM_OUT"
+  printf '%s\n' "$(agent_tui_fit "$AGENT_TUI_HEADER")" >&"$AGENT_TERM_OUT"
   for i in "${!AGENT_TUI_NAMES[@]}"; do
     if ((i == AGENT_TUI_CURSOR)); then pointer='>'; else pointer=' '; fi
     if [[ "${AGENT_TUI_SELECTED[i]}" == 1 ]]; then mark='[x]'; else mark='[ ]'; fi
     line="$(printf '%s %s %-14s %s' "$pointer" "$mark" \
       "${AGENT_TUI_NAMES[i]}" "$(agent_env_detail "${AGENT_TUI_NAMES[i]}")")"
-    printf '%s\n' "$(agent_tui_fit "$line")" >&2
+    printf '%s\n' "$(agent_tui_fit "$line")" >&"$AGENT_TERM_OUT"
   done
-  printf '%s\n' "$(agent_tui_fit "$AGENT_TUI_FOOTER")" >&2
+  printf '%s\n' "$(agent_tui_fit "$AGENT_TUI_FOOTER")" >&"$AGENT_TERM_OUT"
   AGENT_TUI_DRAWN=$((${#AGENT_TUI_NAMES[@]} + 2))
 }
 
@@ -645,7 +783,7 @@ agent_tui_draw() {
 # línea, donde el llamador escribe el resumen de la elección.
 agent_tui_erase() {
   if ((AGENT_TUI_DRAWN > 0)); then
-    printf '\033[%dA\r\033[J' "$AGENT_TUI_DRAWN" >&2
+    printf '\033[%dA\r\033[J' "$AGENT_TUI_DRAWN" >&"$AGENT_TERM_OUT"
     AGENT_TUI_DRAWN=0
   fi
 }
@@ -656,7 +794,7 @@ agent_tui_erase() {
 agent_tui_read_key() {
   local key="" rest=""
   AGENT_TUI_KEY="otro"
-  IFS= read -rsn1 key || return 1
+  IFS= read -rsn1 -u "$AGENT_TERM_IN" key || return 1
   case "$key" in
     '' | $'\r' | $'\n') AGENT_TUI_KEY=enter ;;
     ' ') AGENT_TUI_KEY=space ;;
@@ -665,12 +803,12 @@ agent_tui_read_key() {
     j) AGENT_TUI_KEY=down ;;
     k) AGENT_TUI_KEY=up ;;
     $'\033')
-      IFS= read -rsn1 -t 0.05 rest || {
+      IFS= read -rsn1 -t 0.05 -u "$AGENT_TERM_IN" rest || {
         AGENT_TUI_KEY=quit
         return 0
       }
       if [[ "$rest" == '[' ]]; then
-        IFS= read -rsn1 -t 0.05 rest || {
+        IFS= read -rsn1 -t 0.05 -u "$AGENT_TERM_IN" rest || {
           AGENT_TUI_KEY=quit
           return 0
         }
@@ -768,15 +906,17 @@ agent_select_tui() {
 }
 
 # Respaldo sin checklist (R3): el prompt numerico de siempre, alimentado por
-# el registro. Enter omite, «all» elige todos, un número elige esa posición.
+# el registro. Enter omite, «all» elige todos, un número elige esa posición. Se
+# escribe y se lee en la terminal de control, no en stdout/stdin: el
+# llamador captura stdout para quedarse con los nombres elegidos.
 agent_select_prompt() {
   local env answer="" total pick
   while IFS= read -r env; do
-    agent_env_status "$env" >&2
+    agent_env_status "$env" >&"$AGENT_TERM_OUT"
   done <<<"$(agent_envs)"
-  printf 'Agentes a instalar/actualizar (números separados por espacio,' >&2
-  printf ' «all», o Enter para omitir): ' >&2
-  read -r answer || answer=""
+  printf 'Agentes a instalar/actualizar (números separados por espacio,' >&"$AGENT_TERM_OUT"
+  printf ' «all», o Enter para omitir): ' >&"$AGENT_TERM_OUT"
+  IFS= read -r -u "$AGENT_TERM_IN" answer || answer=""
   [[ -n "$answer" ]] || return 0
   if [[ "$answer" == "all" || "$answer" == "ALL" ]]; then
     agent_envs
@@ -813,9 +953,9 @@ agent_select_interactive() {
   agent_select_prompt
 }
 
-# Selección de hosts. Interactiva en una tty (checklist con marcado, o prompt
-# numerico si la terminal no da para el checklist); sin tty exige --env o
-# --all.
+# Selección de hosts. Interactiva cuando hay terminal de control: checklist con
+# marcado, o prompt numerico si la terminal no da para el checklist. Sin
+# terminal de control exige --env o --all, así un script no se cuelga.
 select_agents() {
   local requested_all=0
   local -a requested_envs=()
@@ -849,7 +989,7 @@ select_agents() {
     return 0
   fi
 
-  if [[ ! -t 0 ]]; then
+  if ! agent_term_open; then
     error "sin terminal no se pregunta en qué agentes instalar:"
     error "pasá --env <name> ($(agent_envs_list)) o --all."
     return 1
@@ -914,13 +1054,15 @@ install_selected_agents() {
 }
 
 # `./install.sh` termina ofreciendo la elección de agentes (R5): el checklist
-# en una tty (o el prompt numerico si la terminal no lo soporta), con una
-# salida clara para saltear y conectar el agente después a mano. Sin tty deja
-# el «Siguiente paso» de siempre, así los scripts no se cuelgan (R4).
+# en una terminal (o el prompt numerico si la terminal no lo soporta), con una
+# salida clara para saltear y conectar el agente después a mano. La terminal es
+# la de control: con `curl … | bash` stdin es el script y aun así el humano
+# está en una terminal. Sin terminal de control deja el «Siguiente paso» de
+# siempre, así los scripts no se cuelgan (R4).
 offer_agent_install() {
   local selected next_step
   next_step='Siguiente paso: ./install.sh agent conecta la extensión de tu agente.'
-  if [[ ! -t 0 ]]; then
+  if ! agent_term_open; then
     printf '%s\n' "$next_step"
     return 0
   fi
