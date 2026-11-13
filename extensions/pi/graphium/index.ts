@@ -117,6 +117,10 @@ function here(): string {
  * Release before debug: the release build is what the human uses, the debug one
  * is what the tests build. The depth is bounded because walking to `/` from a
  * deep directory is not a search, it is a guess.
+ *
+ * `findBinary` calls it with two different meanings. From `here()` a hit is the
+ * checkout the extension itself ships in; from the cwd, last, a hit is only the
+ * human's working directory and never outranks the installed binary.
  */
 function walkUpForBinary(start: string): string | null {
   let directory = resolve(start);
@@ -137,9 +141,19 @@ function walkUpForBinary(start: string): string | null {
 /**
  * Finds the Graphium binary, or `null` when this machine has none.
  *
- * The extension's own location comes first, not the working directory: this
- * file is shipped inside the Graphium checkout, so walking up from here finds
- * the build even when Pi is started in another project.
+ * The order, and why it is this order:
+ *
+ * 1. `GRAPHIUM_BIN` wins over everything: a human who sets it has answered.
+ * 2. The extension's own location: this file ships inside the Graphium checkout,
+ *    so walking up from here finds that checkout's build even when Pi is started
+ *    in another project. That is how a developer tests a change.
+ * 3. The `PATH`: a `graphium` there is the installed product, and the extension
+ *    is supposed to serve the product.
+ * 4. Walking up from the cwd, last: the cwd is the human's project, not
+ *    Graphium's checkout, so a build found there is a coincidence and must never
+ *    shadow the installed binary. It stays as the last resort for the case where
+ *    the extension is loaded from somewhere else and the human wants their
+ *    working directory's build.
  */
 export function findBinary(
   cwd: string = process.cwd(),
@@ -150,12 +164,13 @@ export function findBinary(
     return explicit;
   }
 
-  const checkout = walkUpForBinary(near) ?? walkUpForBinary(cwd);
+  // The checkout this extension belongs to, not the one Pi happens to run in.
+  const checkout = walkUpForBinary(near);
   if (checkout) {
     return checkout;
   }
 
-  // An installed binary, on the PATH.
+  // The installed binary, on the PATH.
   const path = process.env.PATH ?? "";
   for (const directory of path.split(":")) {
     if (!directory) continue;
@@ -164,7 +179,9 @@ export function findBinary(
       return candidate;
     }
   }
-  return null;
+
+  // Last: a build under whatever directory the human is working in.
+  return walkUpForBinary(cwd);
 }
 
 /** The exports root Graphium writes to (PRD §7 RNF4). */

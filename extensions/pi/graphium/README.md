@@ -51,10 +51,16 @@ binario, registra el servidor MCP para la sesión y agrega el comando
 
 Dónde busca el binario, en orden:
 
-1. `GRAPHIUM_BIN`, si está definida y existe.
-2. `target/release/graphium` y después `target/debug/graphium` en el directorio
-   actual (un checkout de Graphium).
-3. `graphium` en el `PATH`.
+1. `GRAPHIUM_BIN`, si está definida y existe: quien la define ya respondió.
+2. Subiendo desde el directorio de la extensión: `target/release/graphium` y
+   después `target/debug/graphium` del checkout al que la extensión pertenece,
+   que es como se prueba un cambio en desarrollo.
+3. `graphium` en el `PATH`: es el producto instalado, y la extensión sirve al
+   producto.
+4. Al final, subiendo desde el directorio de trabajo: un build ahí es una
+   coincidencia del proyecto en el que estás, así que nunca le gana al binario
+   instalado. Queda como último recurso para cuando la extensión se carga desde
+   otro lado y querés el build de tu directorio.
 
 ## Instalar
 
