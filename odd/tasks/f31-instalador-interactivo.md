@@ -83,3 +83,45 @@ red before and green after.
 ## Log
 
 L1 (owner, verbatim): the request of S1.
+
+L2 (T1-T3 landed). The installer opens the controlling terminal once, when stdin
+is not a tty, and reuses that same descriptor to draw and to read: `/dev/tty` is
+opened with `exec 3<>/dev/tty`, so a piped `curl | bash` shows the checklist and
+accepts keys while a `docker run` without `-t` still gets the actionable message
+and exits. The branches that decide «no terminal» are now only two: `/dev/tty`
+could not be opened, or stdin was closed when the script started — the second
+matters because a command substitution steals fd 0, so «closed» is only
+observable at startup, not later. `read -r -u "$fd" name` is the other trap the
+worker hit: the redirection options come before the variable names or `read`
+takes `-u` as a variable. Before touching anything the run says what is installed
+and what replaces it; a host that already had the extension reports
+«actualizada en … (graphium, vOLD -> vNEW)», and the checklist row names presence,
+the installed version and the target version. Two tests pin it:
+`tests/installer/terminal_test.sh` (a piped script inside a pty reaches the
+checklist; `setsid -w` gives the no-controlling-terminal message; closed stdin is
+not interactive) and `tests/installer/update_story_test.sh` (a second run reports
+the update and the installed `package.json` carries the new version).
+
+L3 (the hang was a test that measured the wrong thing, not the TUI). T4's
+diagnosis: the pty case had a 60 s cap, and a repo-mode `install` takes 61-64 s on
+this machine because it compiles — so `timeout` killed the shell at 124 before any
+assertion ran, and the runner reported «1 test(s) failed» with no FAIL line to
+point at. The cap is now 300 s with `GRAPHIUM_TEST_TIMEOUT` as the override,
+`timeout -k 5`, a fixed 40x100 pty, and a named diagnosis when the cap is what
+hits. Nothing in the checklist was broken; what was broken was the budget of the
+test that watches it, which is why it looked like a hang from the outside.
+
+L4 (a rule the README taught that is no longer true, fixed by the parent because
+it fell outside the worker's surfaces). `README.md:83` said «Sin terminal
+(scripts, pipes) hay que pedir los agentes explícitos»: that is exactly the
+behaviour this cut removes. The README now says the controlling terminal is the
+evidence of a human, that the checklist appears in a piped run, and that only
+without a controlling terminal does the installer ask for `--env`/`--all` and
+finish without waiting for a key.
+
+L5 (delivery). This branch stacks on `feature/f30-instalador-extension` (not on
+`staging`) because it changes the same file and assumes its `RELEASE_VERSION` and
+`GRAPHIUM_RELEASES_URL`. Slices: `6bd2dae` the document, then one commit for T1-T3
+plus T4 with the two new tests. The gate before any merge is
+`bash scripts/test-installer.sh` on the committed tree, with the runner's own exit
+status read directly instead of through a pipe.
