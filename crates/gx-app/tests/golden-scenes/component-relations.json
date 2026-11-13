@@ -1,0 +1,485 @@
+{
+  "canvas": {
+    "x": -12.0,
+    "y": -12.0,
+    "w": 621.2581665039062,
+    "h": 775.875
+  },
+  "tokens": {
+    "text_size": 14.0,
+    "node_padding": 12.0,
+    "corner_radius": 6.0,
+    "border_width": 1.0,
+    "line_height": 1.25,
+    "regular_weight": 400,
+    "semibold_weight": 600,
+    "arrow_length": 10.0,
+    "crow_foot": 22.0,
+    "crow_foot_spread": 0.85,
+    "badge_width": 26.0,
+    "muted_opacity": 0.55,
+    "lifeline_dash": [
+      4.0,
+      4.0
+    ],
+    "dash_pattern": [
+      6.0,
+      4.0
+    ],
+    "group_dash": [
+      8.0,
+      5.0
+    ],
+    "circle_diameter": 24.0,
+    "activation_width": 10.0
+  },
+  "direction": "TB",
+  "layout_hint": "layered",
+  "palette": {
+    "source": "css-vars",
+    "theme": "dark",
+    "bg": "var(--bg)",
+    "node_fill": "var(--node-fill)",
+    "node_stroke": "var(--node-stroke)",
+    "node_text": "var(--node-text)",
+    "edge_stroke": "var(--edge-stroke)",
+    "edge_text": "var(--edge-text)",
+    "accent": "var(--accent)"
+  },
+  "nodes": [
+    {
+      "id": "g-api",
+      "label": "API",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 469.30968017578124,
+        "y": 375.9375
+      },
+      "size": {
+        "w": 65.190966796875,
+        "h": 56.375
+      },
+      "stereotype": "service"
+    },
+    {
+      "id": "g-cache",
+      "label": "caché",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 386.09128417968753,
+        "y": 529.8125
+      },
+      "size": {
+        "w": 100.1181640625,
+        "h": 56.375
+      },
+      "stereotype": "infrastructure"
+    },
+    {
+      "id": "g-cola",
+      "label": "Cola",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 213.685546875,
+        "y": 529.8125
+      },
+      "size": {
+        "w": 60.38564453125,
+        "h": 56.375
+      },
+      "stereotype": "broker"
+    },
+    {
+      "id": "g-db",
+      "label": "Pedidos",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 441.46774902343753,
+        "y": 683.6875
+      },
+      "size": {
+        "w": 78.5576171875,
+        "h": 56.375
+      },
+      "stereotype": "storage"
+    },
+    {
+      "id": "g-host",
+      "label": "Kubernetes",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 213.685546875,
+        "y": 375.9375
+      },
+      "size": {
+        "w": 102.271484375,
+        "h": 56.375
+      },
+      "stereotype": "runtime"
+    },
+    {
+      "id": "g-portal",
+      "label": "Portal",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 296.503662109375,
+        "y": 28.1875
+      },
+      "size": {
+        "w": 85.55693359375,
+        "h": 56.375
+      },
+      "stereotype": "application"
+    },
+    {
+      "id": "g-web",
+      "label": "Web",
+      "shape": "rounded",
+      "emphasis": "normal",
+      "style": "solid",
+      "center": {
+        "x": 296.503662109375,
+        "y": 182.0625
+      },
+      "size": {
+        "w": 85.55693359375,
+        "h": 56.375
+      },
+      "stereotype": "application"
+    }
+  ],
+  "edges": [
+    {
+      "id": "m-api-cache",
+      "from": "api",
+      "to": "cache",
+      "label": "reads",
+      "emphasis": "normal",
+      "style": "dashed",
+      "head": {
+        "kind": "marker",
+        "adornment": "open_arrow"
+      },
+      "points": [
+        {
+          "x": 456.2037663798328,
+          "y": 404.125
+        },
+        {
+          "x": 433.53721923828124,
+          "y": 452.875
+        },
+        {
+          "x": 403.4739947494891,
+          "y": 501.625
+        }
+      ],
+      "label_at": {
+        "x": 462.11729736328124,
+        "y": 452.875
+      }
+    },
+    {
+      "id": "m-api-cola",
+      "from": "api",
+      "to": "cola",
+      "label": "publishes",
+      "emphasis": "normal",
+      "style": "solid",
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
+      "points": [
+        {
+          "x": 436.7141967773437,
+          "y": 395.3483903759155
+        },
+        {
+          "x": 340.11339111328124,
+          "y": 452.875
+        },
+        {
+          "x": 243.878369140625,
+          "y": 511.4386973218226
+        }
+      ],
+      "label_at": {
+        "x": 381.82530517578124,
+        "y": 452.875
+      }
+    },
+    {
+      "id": "m-api-db",
+      "from": "api",
+      "to": "db",
+      "label": "writes",
+      "emphasis": "normal",
+      "style": "solid",
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
+      "points": [
+        {
+          "x": 488.79466879974046,
+          "y": 404.125
+        },
+        {
+          "x": 522.4937622070313,
+          "y": 452.875
+        },
+        {
+          "x": 522.4937622070313,
+          "y": 529.8125
+        },
+        {
+          "x": 522.4937622070313,
+          "y": 606.75
+        },
+        {
+          "x": 471.1531527162083,
+          "y": 655.5
+        }
+      ],
+      "label_at": {
+        "x": 552.6187622070313,
+        "y": 529.8125
+      }
+    },
+    {
+      "id": "m-cache-db",
+      "from": "cache",
+      "to": "db",
+      "label": "depends_on",
+      "emphasis": "normal",
+      "style": "dashed",
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
+      "points": [
+        {
+          "x": 386.09128417968753,
+          "y": 558.0
+        },
+        {
+          "x": 386.09128417968753,
+          "y": 606.75
+        },
+        {
+          "x": 421.17953972649906,
+          "y": 655.5
+        }
+      ],
+      "label_at": {
+        "x": 436.46774902343753,
+        "y": 606.75
+      }
+    },
+    {
+      "id": "m-host-cola",
+      "from": "host",
+      "to": "cola",
+      "label": "hosts",
+      "emphasis": "normal",
+      "style": "solid",
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
+      "points": [
+        {
+          "x": 213.685546875,
+          "y": 404.125
+        },
+        {
+          "x": 213.685546875,
+          "y": 452.875
+        },
+        {
+          "x": 213.685546875,
+          "y": 501.625
+        }
+      ],
+      "label_at": {
+        "x": 241.63330078125,
+        "y": 452.875
+      }
+    },
+    {
+      "id": "m-portal-web",
+      "from": "portal",
+      "to": "web",
+      "label": "connects_to",
+      "emphasis": "normal",
+      "style": "solid",
+      "points": [
+        {
+          "x": 296.503662109375,
+          "y": 56.375
+        },
+        {
+          "x": 296.503662109375,
+          "y": 105.125
+        },
+        {
+          "x": 296.503662109375,
+          "y": 153.875
+        }
+      ],
+      "label_at": {
+        "x": 346.579345703125,
+        "y": 105.125
+      }
+    },
+    {
+      "id": "m-web-api",
+      "from": "web",
+      "to": "api",
+      "label": "calls",
+      "emphasis": "normal",
+      "style": "solid",
+      "head": {
+        "kind": "marker",
+        "adornment": "arrow"
+      },
+      "points": [
+        {
+          "x": 339.28212890625,
+          "y": 201.10852817663326
+        },
+        {
+          "x": 469.30968017578124,
+          "y": 259.0
+        },
+        {
+          "x": 469.30968017578124,
+          "y": 307.75
+        },
+        {
+          "x": 469.30968017578124,
+          "y": 347.75
+        }
+      ],
+      "label_at": {
+        "x": 494.39317626953124,
+        "y": 259.0
+      }
+    },
+    {
+      "id": "m-web-cache",
+      "from": "web",
+      "to": "cache",
+      "label": "uses",
+      "emphasis": "normal",
+      "style": "solid",
+      "points": [
+        {
+          "x": 305.08183528302067,
+          "y": 210.25
+        },
+        {
+          "x": 319.91770019531253,
+          "y": 259.0
+        },
+        {
+          "x": 319.91770019531253,
+          "y": 307.75
+        },
+        {
+          "x": 319.91770019531253,
+          "y": 375.9375
+        },
+        {
+          "x": 319.91770019531253,
+          "y": 452.875
+        },
+        {
+          "x": 361.84734723658994,
+          "y": 501.625
+        }
+      ],
+      "label_at": {
+        "x": 345.52756347656253,
+        "y": 375.9375
+      }
+    },
+    {
+      "id": "m-web-cola",
+      "from": "web",
+      "to": "cola",
+      "label": "subscribes",
+      "emphasis": "normal",
+      "style": "dashed",
+      "head": {
+        "kind": "marker",
+        "adornment": "open_arrow"
+      },
+      "points": [
+        {
+          "x": 253.72519531249998,
+          "y": 194.89377212344107
+        },
+        {
+          "x": 40.00000000000001,
+          "y": 259.0
+        },
+        {
+          "x": 40.00000000000001,
+          "y": 307.75
+        },
+        {
+          "x": 40.00000000000001,
+          "y": 375.9375
+        },
+        {
+          "x": 40.00000000000001,
+          "y": 452.875
+        },
+        {
+          "x": 183.492724609375,
+          "y": 516.4379832088398
+        }
+      ],
+      "label_at": {
+        "x": 86.27490234375,
+        "y": 375.9375
+      }
+    }
+  ],
+  "bands": [
+    {
+      "id": "cluster-plataforma",
+      "label": "Plataforma",
+      "bbox": {
+        "x": 0.0,
+        "y": 307.75,
+        "w": 597.2581665039062,
+        "h": 444.125
+      },
+      "depth": 0,
+      "members": [
+        "api",
+        "cola",
+        "db",
+        "cache",
+        "host"
+      ],
+      "kind": "cluster"
+    }
+  ],
+  "events": []
+}

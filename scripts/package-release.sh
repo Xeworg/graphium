@@ -151,11 +151,21 @@ add_checksum "$OUTDIR/$asset"
 # --- the pi extension artifact ----------------------------------------------
 # Platform-independent, so the workflow packages it once (the x86_64 job);
 # --no-extension skips it for the other platforms.
+#
+# The tarball's `package.json` reports the release, not the checkout. Without
+# this every release ships the version the file happens to carry, so an
+# installed extension cannot be told apart from an older one and `install.sh`
+# shows the checkout's number next to a newer binary. The stamp is verified
+# below: a silent no-op would ship the wrong version again.
 if [[ "${SKIP_EXTENSION:-0}" != "1" ]]; then
   rm -rf -- "$stage/graphium"
   cp -R -- "$REPO_ROOT/extensions/pi/graphium" "$stage/graphium"
+  sed -i "s/\"version\"[[:space:]]*:[[:space:]]*\"[^\"]*\"/\"version\": \"$VERSION\"/" \
+    "$stage/graphium/package.json"
+  grep -q "\"version\": \"$VERSION\"" "$stage/graphium/package.json" ||
+    die "the extension's package.json did not take the version stamp"
   ext_asset="graphium-pi-extension.tar.gz"
   tar -czf "$OUTDIR/$ext_asset" -C "$stage" graphium
-  printf 'Packaged %s\n' "$ext_asset"
+  printf 'Packaged %s (%s)\n' "$ext_asset" "$VERSION"
   add_checksum "$OUTDIR/$ext_asset"
 fi

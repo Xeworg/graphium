@@ -16,7 +16,7 @@ use gx_core::kind::{DiagramKind, KindLimits, Role};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::flow::{to_graph, validate_flow, validate_header, FlowEdge, FlowNode};
+use crate::flow::{to_graph, validate_flow, validate_header, FlowEdge, FlowNode, FlowVocabulary};
 use crate::groups::{to_ir_groups, validate_groups, Group};
 
 /// Contract version supported by this build (PRD §10.1).
@@ -31,6 +31,15 @@ pub const ROLES: [Role; 3] = [
     Role::new("state", Shape::Rounded),
     Role::new("final", Shape::RingDot),
 ];
+
+/// El vocabulario del kind para la maquinaria compartida (`f29-componente.md`,
+/// D2): una máquina de estados no declara relaciones, así que su tabla está
+/// vacía y S6 rechaza cualquier `kind` que una transición escriba.
+const VOCABULARY: FlowVocabulary<'static> = FlowVocabulary {
+    roles: &ROLES,
+    default_role: DEFAULT_ROLE,
+    edge_kinds: &[],
+};
 
 /// The JSON contract of the `state` kind.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -92,8 +101,7 @@ impl DiagramKind for StateKind {
             Self::KIND,
             &input.nodes,
             &input.edges,
-            &ROLES,
-            DEFAULT_ROLE,
+            &VOCABULARY,
         ));
 
         let node_ids: Vec<&str> = input.nodes.iter().map(|node| node.id.as_str()).collect();
@@ -135,8 +143,7 @@ impl DiagramKind for StateKind {
         let graph = to_graph(
             &input.nodes,
             &input.edges,
-            &ROLES,
-            DEFAULT_ROLE,
+            &VOCABULARY,
             input.direction,
             Self::LAYOUT_HINT,
             to_ir_groups(&input.groups),

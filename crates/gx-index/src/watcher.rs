@@ -16,12 +16,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use notify::{RecursiveMode, Watcher};
 
-use crate::book::{Book, BookError, Progress};
+use crate::book::{Book, BookError, Progress, SkipReason, SkippedFile, MAX_SKIPS_PER_REASON};
 use crate::lang::{self, ParsedFile};
 
 /// The byte ceiling of one batch (ideas §10.1: `cache_spill` takes an
@@ -58,6 +58,86 @@ pub const HARD_EXCLUSIONS: [&str; 5] = [
 /// Renders in flight in this process: the watcher parses with one thread only
 /// while there is one (ideas §10.1, «Backpressure»).
 static RENDERS_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+/// The skips of one pass (f28, D3): every file that did not reach the book,
+/// with the stable code of its reason, and how many of each.
+///
+/// Cloning it shares the rows: the filter of a walk is `'static` and records the
+/// directories it prunes **while the walk reads**, which is the only place a
+/// pruned directory is visible — the walker never yields an entry it skips.
+#[derive(Debug, Clone, Default)]
+pub struct SkipLog(Arc<Mutex<SkipRows>>);
+
+#[derive(Debug, Default)]
+struct SkipRows {
+    rows: Vec<SkippedFile>,
+    counts: BTreeMap<SkipReason, (usize, i64)>,
+}
+
+impl SkipLog {
+    /// Records one file that did not reach the book.
+    ///
+    /// The counts cover every skip; the rows stop at [`MAX_SKIPS_PER_REASON`]
+    /// per reason, because the census travels inside the `progress` row and a
+    /// tree full of `.md` files is not a finding.
+    pub fn record(&self, path: &str, reason: SkipReason) {
+        let mut rows = self.0.lock().expect("the skip log lock");
+        let entry = rows.counts.entry(reason).or_insert((0, 0));
+        entry.1 += 1;
+        if entry.0 < MAX_SKIPS_PER_REASON {
+            entry.0 += 1;
+            rows.rows.push(SkippedFile {
+                path: path.to_string(),
+                reason,
+            });
+        }
+    }
+
+    /// How many files the pass saw that did not reach the book.
+    pub fn total(&self) -> i64 {
+        let rows = self.0.lock().expect("the skip log lock");
+        rows.counts.values().map(|(_, total)| total).sum()
+    }
+
+    /// The rows, capped per reason, in the order the pass found them.
+    pub fn rows(&self) -> Vec<SkippedFile> {
+        self.0.lock().expect("the skip log lock").rows.clone()
+    }
+
+    /// How many skips each code counted, the four always present (D3).
+    pub fn by_reason(&self) -> BTreeMap<String, i64> {
+        let rows = self.0.lock().expect("the skip log lock");
+        SkipReason::ALL
+            .iter()
+            .map(|reason| {
+                let total = rows.counts.get(reason).map_or(0, |(_, total)| *total);
+                (reason.code().to_string(), total)
+            })
+            .collect()
+    }
+
+    /// The skips of D2's warning: the unreadable and the oversized ones. A file
+    /// with no grammar and a pruned directory are not warnings, they are the
+    /// census.
+    pub fn warnings(&self) -> i64 {
+        let rows = self.0.lock().expect("the skip log lock");
+        [SkipReason::TooLarge, SkipReason::Unreadable]
+            .iter()
+            .map(|reason| rows.counts.get(reason).map_or(0, |(_, total)| *total))
+            .sum()
+    }
+}
+
+/// Publishes the skips of the pass into its `progress` row (f28, D3).
+///
+/// The row is written once before the first batch and again after each one, so
+/// a tool that reads it while the pass runs sees the skips found so far.
+fn publish_skips(progress: &mut Progress, skips: &SkipLog) {
+    progress.files_failed = skips.total();
+    progress.warnings = skips.warnings();
+    progress.skipped_by_reason = skips.by_reason();
+    progress.skips = skips.rows();
+}
 
 /// How many renders are in flight.
 pub fn renders_in_flight() -> usize {
@@ -212,7 +292,8 @@ impl Indexer {
     pub fn run_full(&self) -> Result<IndexSummary, BookError> {
         let _in_flight = PassInFlight::enter(self);
         let started = Instant::now();
-        let files = scan_tree(&self.root, &self.options);
+        let skips = SkipLog::default();
+        let files = scan_tree_logged(&self.root, &self.options, &skips);
         let on_disk: BTreeSet<String> = files.iter().map(|file| file.relative.clone()).collect();
         let known = self.book.all_paths()?;
         let deletions: Vec<String> = known.difference(&on_disk).cloned().collect();
@@ -220,13 +301,13 @@ impl Indexer {
         let mut progress = Progress {
             state: "indexing".to_string(),
             files_total: files.len() as i64,
-            files_done: 0,
-            files_failed: 0,
-            symbols: 0,
             started_at: unix_ms(),
             updated_at: unix_ms(),
-            warnings: 0,
+            ..Progress::default()
         };
+        // D3: what the walk pruned is published before the first chapter is
+        // written, so a book with nothing to index still answers why.
+        publish_skips(&mut progress, &skips);
         self.book.set_progress(&progress)?;
 
         let mut summary = IndexSummary {
@@ -239,24 +320,31 @@ impl Indexer {
         }
 
         for batch in batches(files, self.options.max_batch_bytes) {
-            let sources = self.load_batch(&batch, false, &mut summary)?;
-            let parsed = self.parse_batch(&sources, &mut summary);
+            let sources = self.load_batch(&batch, false, &mut summary, &skips)?;
+            let parsed = self.parse_batch(&sources, &mut summary, &skips);
             let report = self.book.commit_batch(&parsed, &[], unix_ms())?;
+            record_committed(&skips, &report);
             summary.files += report.files_written;
             summary.symbols += report.symbols;
             summary.skipped += report.files_skipped;
             progress.files_done += batch.len() as i64;
-            progress.files_failed = summary.skipped as i64;
             progress.symbols += report.symbols;
             progress.updated_at = unix_ms();
+            publish_skips(&mut progress, &skips);
             self.book.set_progress(&progress)?;
             // The queue is empty here, between batches: this is the only
             // moment a PASSIVE checkpoint is allowed (ideas §10.1).
             let _ = self.book.checkpoint_passive();
         }
 
+        // The row reports the book, not what this pass happened to write: a
+        // second pass finds every chapter unchanged and would publish zero
+        // symbols, and the census reads this row (f28, D2). A census cannot
+        // contradict the count beside it.
+        progress.symbols = self.book.counts()?.1;
         progress.state = "indexed".to_string();
         progress.updated_at = unix_ms();
+        publish_skips(&mut progress, &skips);
         self.book.set_progress(&progress)?;
         // Counted after the row says `indexed`: a waiter that sees this pass
         // counted sees a pass that has already published its state.
@@ -278,13 +366,17 @@ impl Indexer {
         let mut summary = IndexSummary::default();
         let mut candidates: Vec<SourceFile> = Vec::new();
         let mut seen: BTreeSet<String> = BTreeSet::new();
+        // An incremental sync records its skips but publishes no census: the
+        // `progress` census is the one of the last full pass, and replacing it
+        // with the handful of files one edit touched would hide the rest.
+        let skips = SkipLog::default();
 
         for dir in dirs {
             let Ok(relative_dir) = dir.strip_prefix(&self.root) else {
                 continue;
             };
             let relative_dir = relative_path(relative_dir);
-            let on_disk: Vec<SourceFile> = scan_dir(dir, &self.root, &self.options);
+            let on_disk: Vec<SourceFile> = scan_dir_logged(dir, &self.root, &self.options, &skips);
             let local: BTreeSet<String> =
                 on_disk.iter().map(|file| file.relative.clone()).collect();
 
@@ -309,12 +401,13 @@ impl Indexer {
             // Only the files whose bytes changed are parsed: the book stores
             // the content hash, so an edit that does not change the bytes is
             // free and a save without changes costs nothing.
-            let sources = self.load_batch(&batch, true, &mut summary)?;
+            let sources = self.load_batch(&batch, true, &mut summary, &skips)?;
             if sources.is_empty() {
                 continue;
             }
-            let parsed = self.parse_batch(&sources, &mut summary);
+            let parsed = self.parse_batch(&sources, &mut summary, &skips);
             let report = self.book.commit_batch(&parsed, &[], unix_ms())?;
+            record_committed(&skips, &report);
             summary.files += report.files_written;
             summary.symbols += report.symbols;
             summary.skipped += report.files_skipped;
@@ -341,6 +434,7 @@ impl Indexer {
         batch: &[SourceFile],
         skip_unchanged: bool,
         summary: &mut IndexSummary,
+        skips: &SkipLog,
     ) -> Result<Vec<(SourceFile, Vec<u8>)>, BookError> {
         let mut sources = Vec::with_capacity(batch.len());
         for file in batch {
@@ -348,12 +442,14 @@ impl Indexer {
                 Ok(bytes) => bytes,
                 Err(error) => {
                     eprintln!("gx-index: cannot read `{}`: {error}", file.relative);
+                    skips.record(&file.relative, SkipReason::Unreadable);
                     summary.skipped += 1;
                     continue;
                 }
             };
             if lang::looks_binary(&bytes) {
                 eprintln!("gx-index: skipping `{}`: it looks binary", file.relative);
+                skips.record(&file.relative, SkipReason::Unreadable);
                 summary.skipped += 1;
                 continue;
             }
@@ -374,6 +470,7 @@ impl Indexer {
         &self,
         sources: &[(SourceFile, Vec<u8>)],
         summary: &mut IndexSummary,
+        skips: &SkipLog,
     ) -> Vec<ParsedFile> {
         let threads = self.parse_threads().min(sources.len()).max(1);
         if threads == 1 || sources.len() == 1 {
@@ -383,6 +480,7 @@ impl Indexer {
                     Ok(parsed) => Some(parsed),
                     Err(reason) => {
                         eprintln!("gx-index: {reason}");
+                        skips.record(&file.relative, SkipReason::Unreadable);
                         summary.skipped += 1;
                         None
                     }
@@ -391,14 +489,14 @@ impl Indexer {
         }
 
         let chunk_size = sources.len().div_ceil(threads);
-        let results: Vec<Vec<Option<ParsedFile>>> = std::thread::scope(|scope| {
+        let results: Vec<Vec<(String, Result<ParsedFile, String>)>> = std::thread::scope(|scope| {
             let handles: Vec<_> = sources
                 .chunks(chunk_size)
                 .map(|chunk| {
                     scope.spawn(move || {
                         chunk
                             .iter()
-                            .map(|(file, bytes)| parse_source(file, bytes).ok())
+                            .map(|(file, bytes)| (file.relative.clone(), parse_source(file, bytes)))
                             .collect::<Vec<_>>()
                     })
                 })
@@ -411,10 +509,14 @@ impl Indexer {
 
         let mut parsed = Vec::with_capacity(sources.len());
         for chunk in results {
-            for file in chunk {
+            for (path, file) in chunk {
                 match file {
-                    Some(file) => parsed.push(file),
-                    None => summary.skipped += 1,
+                    Ok(file) => parsed.push(file),
+                    Err(reason) => {
+                        eprintln!("gx-index: {reason}");
+                        skips.record(&path, SkipReason::Unreadable);
+                        summary.skipped += 1;
+                    }
                 }
             }
         }
@@ -576,6 +678,11 @@ impl WatcherHandle {
 
 /// Walks the whole root, respecting `.gitignore` (D3).
 pub fn scan_tree(root: &Path, options: &IndexOptions) -> Vec<SourceFile> {
+    scan_tree_logged(root, options, &SkipLog::default())
+}
+
+/// Walks the whole root and records every file it prunes (f28, D3).
+pub fn scan_tree_logged(root: &Path, options: &IndexOptions, skips: &SkipLog) -> Vec<SourceFile> {
     let mut builder = ignore::WalkBuilder::new(root);
     builder
         .standard_filters(true)
@@ -583,12 +690,22 @@ pub fn scan_tree(root: &Path, options: &IndexOptions) -> Vec<SourceFile> {
         // too: D3 is about what git ignores, not about needing git.
         .require_git(false)
         .follow_links(false)
-        .filter_entry(|entry| !is_hard_excluded(entry.path()));
-    collect(builder, root, options, None)
+        .filter_entry(prune_filter(root, skips));
+    collect(builder, root, options, None, skips)
 }
 
 /// Walks the direct children of one directory (the incremental path).
 pub fn scan_dir(dir: &Path, root: &Path, options: &IndexOptions) -> Vec<SourceFile> {
+    scan_dir_logged(dir, root, options, &SkipLog::default())
+}
+
+/// Walks one directory and records every file it prunes (f28, D3).
+pub fn scan_dir_logged(
+    dir: &Path,
+    root: &Path,
+    options: &IndexOptions,
+    skips: &SkipLog,
+) -> Vec<SourceFile> {
     if !dir.exists() {
         return Vec::new();
     }
@@ -598,8 +715,41 @@ pub fn scan_dir(dir: &Path, root: &Path, options: &IndexOptions) -> Vec<SourceFi
         .require_git(false)
         .follow_links(false)
         .max_depth(Some(1))
-        .filter_entry(|entry| !is_hard_excluded(entry.path()));
-    collect(builder, root, options, Some(dir))
+        .filter_entry(prune_filter(root, skips));
+    collect(builder, root, options, Some(dir), skips)
+}
+
+/// The filter of a walk: the hard exclusions, recorded as `ignored` (f28, D3).
+///
+/// The walker never yields an entry it prunes, so this closure is the only
+/// place a pruned directory is visible. The row is the directory, never one row
+/// per generated file inside it: `target/` is one skip, not the thirty-one
+/// build scripts behind it.
+fn prune_filter(
+    root: &Path,
+    skips: &SkipLog,
+) -> impl Fn(&ignore::DirEntry) -> bool + Send + Sync + 'static {
+    let root = root.to_path_buf();
+    let skips = skips.clone();
+    move |entry| {
+        if !is_hard_excluded(entry.path()) {
+            return true;
+        }
+        let path = entry
+            .path()
+            .strip_prefix(&root)
+            .map(relative_path)
+            .unwrap_or_else(|_| relative_path(entry.path()));
+        skips.record(&path, SkipReason::Ignored);
+        false
+    }
+}
+
+/// Records the chapters a commit refused, so the census names them too.
+fn record_committed(skips: &SkipLog, report: &crate::book::CommitReport) {
+    for skip in &report.skips {
+        skips.record(&skip.path, skip.reason);
+    }
 }
 
 /// Collects the accepted files of a walk.
@@ -608,6 +758,7 @@ fn collect(
     root: &Path,
     options: &IndexOptions,
     only_dir: Option<&Path>,
+    skips: &SkipLog,
 ) -> Vec<SourceFile> {
     let mut files = Vec::new();
     for entry in builder.build().flatten() {
@@ -620,10 +771,18 @@ fn collect(
         if !entry.file_type().is_some_and(|kind| kind.is_file()) {
             continue;
         }
+        let Ok(relative_to_root) = path.strip_prefix(root) else {
+            continue;
+        };
+        let relative = relative_path(relative_to_root);
+        // D3: a file the build has no grammar for is not a silent hole; it
+        // carries `unsupported_language` like the rest of the census.
         if lang::language_for(path).is_none() {
+            skips.record(&relative, SkipReason::UnsupportedLanguage);
             continue;
         }
         let Ok(metadata) = entry.metadata() else {
+            skips.record(&relative, SkipReason::Unreadable);
             continue;
         };
         if metadata.len() > options.max_file_bytes {
@@ -633,14 +792,12 @@ fn collect(
                 metadata.len(),
                 options.max_file_bytes
             );
+            skips.record(&relative, SkipReason::TooLarge);
             continue;
         }
-        let Ok(relative) = path.strip_prefix(root) else {
-            continue;
-        };
         files.push(SourceFile {
             absolute: path.to_path_buf(),
-            relative: relative_path(relative),
+            relative,
             size: metadata.len(),
             mtime_ns: mtime_ns(&metadata),
         });
@@ -776,9 +933,13 @@ fn parent_dirs(root: &Path, paths: &BTreeSet<PathBuf>) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
-    use super::{batches, is_hard_excluded, SourceFile};
+    use super::{batches, is_hard_excluded, IndexOptions, Indexer, SourceFile};
+    use crate::book::{Book, Progress};
+    use crate::location::BooksRoot;
 
     fn file(dir: &str, name: &str, size: u64) -> SourceFile {
         SourceFile {
@@ -858,5 +1019,239 @@ mod tests {
             PathBuf::from("/r/.graphium/libro.sqlite").as_path()
         ));
         assert!(!is_hard_excluded(PathBuf::from("/r/src/main.rs").as_path()));
+    }
+
+    // -----------------------------------------------------------------
+    // f28 — the census of the book and why a file is missing (D1, D3)
+    // -----------------------------------------------------------------
+
+    /// A worktree with its books root inside the system temp directory,
+    /// removed when the test ends (nothing here touches the repository).
+    struct Scratch {
+        base: PathBuf,
+        root: PathBuf,
+        books: PathBuf,
+    }
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static COUNTER: AtomicUsize = AtomicUsize::new(0);
+            let base = std::env::temp_dir().join(format!(
+                "gx-census-{name}-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::SeqCst)
+            ));
+            let root = base.join("worktree");
+            fs::create_dir_all(root.join("src")).expect("the worktree");
+            Self {
+                books: base.join("books"),
+                base,
+                root,
+            }
+        }
+
+        fn write(&self, relative: &str, text: &str) {
+            self.write_bytes(relative, text.as_bytes());
+        }
+
+        fn write_bytes(&self, relative: &str, bytes: &[u8]) {
+            let path = self.root.join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("the parent dir");
+            }
+            fs::write(path, bytes).expect("the file");
+        }
+
+        fn canonical_root(&self) -> PathBuf {
+            fs::canonicalize(&self.root).expect("canonical root")
+        }
+
+        fn open(&self) -> Book {
+            let books = BooksRoot::at(&self.books);
+            let location = books.locate(&self.root).expect("locate");
+            Book::open(location, &books.registry_path()).expect("open the book")
+        }
+
+        fn indexer(&self, book: &Arc<Book>) -> Indexer {
+            Indexer::new(book.clone(), self.canonical_root(), IndexOptions::default())
+        }
+
+        fn index(&self, book: &Arc<Book>) {
+            self.indexer(book).run_full().expect("the first pass");
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.base);
+        }
+    }
+
+    /// The stable code of the reason one path carries, or a panic that names
+    /// what the pass did publish.
+    fn reason_of(progress: &Progress, path: &str) -> &'static str {
+        progress
+            .skips
+            .iter()
+            .find(|skip| skip.path == path)
+            .unwrap_or_else(|| panic!("`{path}` is not in the skips: {:?}", progress.skips))
+            .reason
+            .code()
+    }
+
+    /// D3: a file over the 1 MiB ceiling of the walk does not reach the book,
+    /// and the pass says so with a stable code instead of a silent hole.
+    #[test]
+    fn a_file_over_the_ceiling_is_published_as_too_large() {
+        let scratch = Scratch::new("too-large");
+        scratch.write("src/kept.rs", "pub fn kept() {}\n");
+        scratch.write_bytes(
+            "src/generated.rs",
+            &vec![b'/'; crate::lang::MAX_FILE_BYTES as usize + 1],
+        );
+        let book = Arc::new(scratch.open());
+        scratch.index(&book);
+
+        let progress = book.progress().expect("the progress row");
+        assert_eq!(reason_of(&progress, "src/generated.rs"), "too_large");
+        assert_eq!(
+            progress.files_failed, 1,
+            "one skip, and the chapter that fits is not one: {progress:?}"
+        );
+        assert_eq!(book.counts().expect("the counts").0, 1);
+    }
+
+    /// D3: a file whose extension no grammar of this build answers is not a
+    /// silent hole either: it carries `unsupported_language`.
+    #[test]
+    fn a_file_with_no_grammar_is_published_as_unsupported_language() {
+        let scratch = Scratch::new("unsupported");
+        scratch.write("src/kept.rs", "pub fn kept() {}\n");
+        scratch.write("docs/notes.md", "# a file no grammar of this build reads\n");
+        let book = Arc::new(scratch.open());
+        scratch.index(&book);
+
+        let progress = book.progress().expect("the progress row");
+        assert_eq!(
+            reason_of(&progress, "docs/notes.md"),
+            "unsupported_language"
+        );
+        assert_eq!(progress.files_failed, 1, "{progress:?}");
+    }
+
+    /// D3: a `target/` subtree is one row of the census, never one row per
+    /// generated file: the walk prunes it whole and the code says why.
+    #[test]
+    fn a_directory_the_book_never_walks_is_published_as_ignored() {
+        let scratch = Scratch::new("ignored");
+        scratch.write("src/kept.rs", "pub fn kept() {}\n");
+        scratch.write("target/generated.rs", "pub fn generated() {}\n");
+        let book = Arc::new(scratch.open());
+        scratch.index(&book);
+
+        let progress = book.progress().expect("the progress row");
+        assert_eq!(reason_of(&progress, "target"), "ignored");
+        assert_eq!(
+            progress.files_failed, 1,
+            "the pruned directory is one skip: {progress:?}"
+        );
+    }
+
+    /// D3: a chapter the book could not turn into source keeps a code too. A
+    /// binary that reached the batch is the deterministic case; a file that no
+    /// longer reads is the same code.
+    #[test]
+    fn a_binary_chapter_is_published_as_unreadable() {
+        let scratch = Scratch::new("unreadable");
+        scratch.write_bytes("src/blob.rs", b"pub fn hidden\x00\x01");
+        let book = Arc::new(scratch.open());
+        scratch.index(&book);
+
+        let progress = book.progress().expect("the progress row");
+        assert_eq!(reason_of(&progress, "src/blob.rs"), "unreadable");
+        assert_eq!(progress.files_failed, 1, "{progress:?}");
+    }
+
+    /// D1/S3: the rate publishes whether it may be compared at all. `shell`
+    /// carries no runtime-name list, so its rate is measured on a different
+    /// denominator than `python`'s, and the answer says which is which.
+    #[test]
+    fn the_rate_says_which_languages_are_comparable() {
+        let scratch = Scratch::new("comparable");
+        scratch.write("src/run.sh", "main() {\n  echo hi\n}\n");
+        scratch.write("src/app.py", "def main():\n    return len('x')\n");
+        let book = Arc::new(scratch.open());
+        scratch.index(&book);
+
+        let report = book.resolution().expect("the honesty report");
+        let row = |lang: &str| {
+            report
+                .iter()
+                .find(|row| row.lang == lang)
+                .unwrap_or_else(|| panic!("the report has no `{lang}` row: {report:?}"))
+                .clone()
+        };
+        // S3: no runtime list, so the rate is over a wider denominator and may
+        // not be compared with the languages that carry one.
+        let shell = row("shell");
+        assert!(!shell.comparable, "`shell` carries no list: {shell:?}");
+        // `python` carries the list of its runtime.
+        let python = row("python");
+        assert!(python.comparable, "`python` carries the list: {python:?}");
+        for row in [&shell, &python] {
+            assert!((0.0..=100.0).contains(&row.percent()), "{row:?}");
+        }
+    }
+
+    /// f28/D2: `progress.symbols` is the symbols of the book, not what the last
+    /// pass happened to write.
+    ///
+    /// The live product answered `{ files_total: 163, files_done: 163, state:
+    /// "indexed", symbols: 0 }`: the watcher's own first pass runs right after
+    /// any pass of the caller, finds every chapter unchanged (`write_chapter`
+    /// reports `symbols: 0` for an unchanged hash) and published a zero. The
+    /// row a tool copies into every book answer has to count the book.
+    #[test]
+    fn the_progress_row_counts_the_symbols_of_the_book_once_it_is_indexed() {
+        let scratch = Scratch::new("symbols");
+        scratch.write("src/a.rs", "pub fn one() {}\npub fn two() {}\n");
+        scratch.write("src/b.rs", "pub struct Three;\n");
+        let book = Arc::new(scratch.open());
+        let indexer = scratch.indexer(&book);
+        indexer.run_full().expect("the first pass");
+        // The live shape: a second full pass, with every chapter unchanged.
+        indexer.run_full().expect("the second pass");
+
+        let (_, symbols) = book.counts().expect("the counts");
+        assert_eq!(symbols, 3, "the fixture declares three symbols");
+        let progress = book.progress().expect("the progress row");
+        assert_eq!(
+            progress.symbols, symbols,
+            "the row counts the book, not this pass: {progress:?}"
+        );
+        assert!(progress.symbols > 0, "{progress:?}");
+    }
+
+    /// D3: the sample of `progress.skips` is capped per reason, and the count
+    /// keeps covering every skip, so the cap never hides a problem.
+    #[test]
+    fn the_skips_of_one_reason_are_published_up_to_the_cap() {
+        let scratch = Scratch::new("cap");
+        let total = crate::book::MAX_SKIPS_PER_REASON + 1;
+        for index in 0..total {
+            scratch.write(&format!("docs/note-{index}.md"), "# notes\n");
+        }
+        let book = Arc::new(scratch.open());
+        scratch.index(&book);
+
+        let progress = book.progress().expect("the progress row");
+        assert_eq!(progress.files_failed, total as i64, "{progress:?}");
+        assert_eq!(progress.skips.len(), crate::book::MAX_SKIPS_PER_REASON);
+        assert_eq!(
+            progress.skipped_by_reason.get("unsupported_language"),
+            Some(&(total as i64)),
+            "{progress:?}"
+        );
     }
 }

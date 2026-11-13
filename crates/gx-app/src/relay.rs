@@ -444,12 +444,17 @@ mod tests {
         assert_eq!(value["id"], 1);
         assert_eq!(value["result"]["serverInfo"]["name"], "graphium");
         // The harness travels with the initialize: an agent over the socket
-        // reads the same instructions a direct stdio client reads.
+        // reads the same instructions a direct stdio client reads, byte for
+        // byte. Asserting against the constant, not against a paragraph, is
+        // what keeps this true when the text moves: `f28-lenguajes` T6b cut a
+        // paragraph and this test was pinning the paragraph instead of the
+        // contract.
         let instructions = value["result"]["instructions"]
             .as_str()
             .expect("the instructions travel");
-        assert!(
-            instructions.contains("THE CHEAP PATH"),
+        assert_eq!(
+            instructions,
+            gx_mcp::harness::INSTRUCTIONS,
             "the instructions are the harness's own"
         );
     }

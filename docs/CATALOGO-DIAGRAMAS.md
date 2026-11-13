@@ -45,7 +45,7 @@ motores de layout (`LayoutHint: Layered | Tree | Lanes | Sankey | Git`).
 | `sequence` | lanes | — | `participants{id,label}`, `messages{from,to,label,reply,activation}` | F2 |
 | `class` | layered | `class`, `abstract`, `interface`, `enum` | `nodes{attributes[],methods[]}`, `edges{relation}` | F2 |
 | `state` | layered | `initial` (Dot), `state`, `final` (RingDot) | `nodes{role}`, `edges`, `groups` | F2 |
-| `component` | layered | `container`, `component`, `database`, `external` | `groups` = límites anidables, `edges` | F2 |
+| `component` | layered | `container`, `component`, `database`, `external` + `application`, `service`, `infrastructure`, `broker`, `storage`, `runtime` | `groups` = límites anidables, `edges{kind?}` con las nueve relaciones | F2 |
 | `dataflow` | layered | `process`, `store`, `external` | `nodes{role}`, `edges`, `groups` | F2 |
 | `tree` | tree | — | `root{name,note,children[]}` recursivo | F2 |
 | `mindmap` | tree | — | `root{topic,emphasis,branches[]}` recursivo | F2 |
@@ -82,7 +82,7 @@ y el trabajo que falta. `—` en "kind" significa que no hay kind que la cubra.
 | 9 | Relational Schema | `er` (+ `code_er`) | capacidad | UNIQUE, CHECK, DEFAULT, acciones referenciales, índices, PK/FK compuestas |
 | 10 | Document Database Diagram | — | kind nuevo | anidamiento de documentos dentro de una colección; `IrNode` tiene filas, no hijos |
 | 11 | Normalization Diagram | capacidad de `er` | capacidad | dependencia funcional como arista de conjunto a conjunto; el cálculo de la forma normal no es un kind |
-| 12 | System Component Map | `component` / `c4` | capacidad | tipos de componente y tipos de relación semánticos del §5 de la referencia; hoy las aristas solo llevan texto |
+| 12 | System Component Map | `component` / `c4` | capacidad | tipos de componente y tipos de relación semánticos del §5 de la referencia; **hecho en `f29-componente`**: diez roles, el estereotipo de los seis tipos y las nueve relaciones tipadas como `kind` de arista |
 | 13 | Hierarchical Diagram | `tree` / `mindmap` | capacidad | metadatos y niveles ya son datos en `tree` (corte `f27-etapa1`); las agrupaciones no: el motor de árbol no dibuja clusters y `mindmap` no tiene el canal |
 | 14 | Timeline Diagram | `timeline` | casi hecho | dependencias entre eventos (el eje, los intervalos y el hito ya existen) |
 | 15 | Flowchart | `flowchart` | capacidad | paralogramo de entrada/salida (hoy `data` es una caja lisa, glifo equivocado), conectores y el resto de los símbolos ISO: la factura de formas más grande del catálogo |
@@ -327,12 +327,13 @@ verificación que la fila 1.
 **Marca:** igual que la fila 1: nombre descriptivo sí, producto o certificación
 no.
 
-**Hoy:** cuatro roles —`container`, `component`, `database`, `external`
-(`crates/gx-kinds/src/component.rs:29`)— y solo `external` cambia algo más que la
-forma: borde punteado por defecto (`:135`). Los límites son los `groups`
-compartidos: anidan, un solo padre, sin ciclos
-(`crates/gx-kinds/src/groups.rs:35`). Las aristas son el `FlowEdge` genérico,
-sin tipo (`crates/gx-kinds/src/flow.rs:41`).
+**Hoy:** diez roles —los cuatro de siempre (`container`, `component`, `database`,
+`external`, `crates/gx-kinds/src/component.rs:37`) y los seis que sumó
+`f29-componente` (`:37`)—; solo `external` cambia algo más que la forma: borde
+punteado por defecto (`:53`). Los límites son los `groups` compartidos: anidan,
+un solo padre, sin ciclos (`crates/gx-kinds/src/groups.rs:35`). Las aristas son
+`FlowEdge` con `kind` opcional (`crates/gx-kinds/src/flow.rs:69`): `component`
+declara las nueve relaciones del mapa de componentes (§5 fila 12), no las de UML.
 
 **Falta:**
 
@@ -340,8 +341,10 @@ sin tipo (`crates/gx-kinds/src/flow.rs:41`).
   y un `Role` es solo `{nombre, forma}` (`crates/gx-core/src/kind.rs:96`).
 - `[SHAPE]`/`[DRAW]` ni lollipop (círculo con tallo) ni socket (semicírculo):
   `Shape` tiene nueve miembros y ninguno es esos (`ir.rs:45`).
-- `[CONTRACT]` interfaz provista vs requerida y ensamblaje vs delegación: sin
-  `edge.kind` las dos son la misma línea.
+- `[CONTRACT]` interfaz provista vs requerida y ensamblaje vs delegación:
+  `edge.kind` ya existe (`f29-componente`), pero la tabla de `component` no
+  declara `provides`/`requires` ni ensamblaje/delegación, así que las dos siguen
+  siendo la misma línea hasta que el vocabulario las nombre.
 - `[SEMANTICS]` una interfaz solo se puede simular como caja redondeada; no hay
   rol `interface` en este kind.
 - `[DRAW]` la caja de un límite no puede decir «subsystem»: `IrGroup` es
@@ -550,35 +553,38 @@ decir «System Component Map de Graphium» y «el pariente más cercano es el
 diagrama de contenedores de C4»; no se puede decir «diagrama C4» —no tiene
 persona ni nivel y agrega brokers e infraestructura— ni «ArchiMate».
 
-**Hoy:** cuatro roles —`container`, `component`, `database`, `external`
-(`crates/gx-kinds/src/component.rs:29`)— y solo `external` carga semántica más
-allá de la forma: borde punteado (`:138`). Las relaciones son **texto libre**:
-`FlowEdge` tiene `label` y nada más (`crates/gx-kinds/src/flow.rs:41`) y el
-propio kind la describe como «el protocolo o la llamada» (`component.rs:155`);
-`IrEdge` no tiene campo de tipo (`crates/gx-core/src/ir.rs:218`). Los límites
-anidan, con un solo padre y sin ciclos (`crates/gx-kinds/src/groups.rs:88`).
-Puertos: no existen; lo más cerca es el anclaje de fila (`ir.rs:226`). **El
-tipo no se dibuja:** `IrNode.stereotype` existe y se pinta arriba de la etiqueta
-(`ir.rs:184`, `crates/gx-render-svg/src/renderer.rs:820`) pero `component` nunca
-lo llena; `c4` usa filas en su lugar (`crates/gx-kinds/src/c4.rs:270`).
+**Hoy:** diez roles —los cuatro de siempre (`container`, `component`, `database`,
+`external`, `crates/gx-kinds/src/component.rs:37`) y los seis tipos de componente
+que sumó `f29-componente` (`application`, `service`, `infrastructure`, `broker`,
+`storage`, `runtime`, `:37`)—: los cuatro de antes conservan su forma y siguen
+callados, y solo `external` carga además el borde punteado (`:53`). Los seis
+nuevos comparten la caja redondeada y **escriben su nombre** en el hueco del
+estereotipo que abrió `f27-etapa1` (`STEREOTYPED_ROLES`, `:59`), porque el
+catálogo lo dijo con todas las letras: «no hace falta forma nueva: un broker se
+lee por su palabra, no por un glifo». Un documento que escribe su propio
+`stereotype` gana; ninguno de los cuatro roles viejos lo llena, y por eso ningún
+golden anterior se movió. Las relaciones son **tipadas**: `FlowEdge.kind` es
+opcional (`crates/gx-kinds/src/flow.rs:69`) y una arista que lo escribe resuelve
+estilo, glifo y palabra en la tabla del kind (`RELATIONS`,
+`crates/gx-kinds/src/component.rs:78`) por una sola vía (`EdgeKind::find`):
+`uses` y `connects_to` sólidas sin adorno; `calls`, `writes`, `publishes` y
+`hosts` sólidas con flecha; `reads` y `subscribes` punteadas con flecha abierta;
+`depends_on` punteada con flecha. **Cada fila nombra su línea** —cuatro comparten
+familia de glifo y la palabra es lo que las distingue— y una `label` del
+documento pisa la implícita. Con `kind` escrito, `arrow` y `style` no se
+consultan; sin él, la arista es la de siempre. Un kind que no declara
+vocabulario rechaza el campo en vez de aceptarlo y callarlo. Los límites anidan,
+con un solo padre y sin ciclos (`crates/gx-kinds/src/groups.rs:88`). Puertos: no
+existen; lo más cerca es el anclaje de fila (`ir.rs:226`).
 
 **Falta:**
 
-- `[CONTRACT]` los seis tipos de componente que faltan (`application`, `service`,
-  `infrastructure`, `broker`, `storage`, `runtime`) como roles: una línea por rol,
-  y el contrato y el schema se derivan solos de `roles()`.
-- `[DRAW]` el tipo escrito arriba de la caja: se llena `stereotype`, que ya se
-  pinta. No hace falta forma nueva: un broker se lee por su palabra, no por un
-  glifo.
-- `[CONTRACT]` **vocabulario de relación tipada**: `uses`, `calls`, `reads`,
-  `writes`, `publishes`, `subscribes`, `depends_on`, `hosts`, `connects_to`.
-  Esto no es un campo de `component`: hoy **ningún kind** tiene tipo de arista
-  (solo `er` tiene cardinalidad y `sequence` tiene `reply`), así que es un
-  concepto compartido nuevo: `edge.kind` opcional con vocabulario por kind, que
-  validan los kinds y que el motor ignora para dibujar (el render ya decide
-  estilo por rol).
-- `[CONTRACT]` puertos: explícitamente **fuera** de este corte; la referencia
-  misma los marca opcionales, y sin contrato de arista tipada no significan nada.
+- `[CONTRACT]` puertos: siguen **fuera**. La referencia misma los marca
+  opcionales y ningún uso real los pidió todavía, que es la regla del catálogo
+  (RF29: un kind sin uso declarado no gasta techo).
+- `[CONTRACT]` **niveles**: las bandas y el vocabulario de nivel siguen abiertos.
+  La fila 12 cierra con roles, relaciones y estereotipo; los niveles cambian el
+  documento y son un corte aparte, como lo fue `c4`.
 - `[LAYOUT]` ninguno: layered con clusters alcanza, y el tope de hijos por
   cluster ya está documentado (PRD §8.4).
 
@@ -586,6 +592,10 @@ lo llena; `c4` usa filas en su lugar (`crates/gx-kinds/src/c4.rs:270`).
 para el vocabulario de relación tipada, que es plataforma y no kind. Un kind
 nuevo no aporta nada acá: el precedente `c4` se creó como segundo kind porque
 **cambia el documento** (niveles), no porque `component` no diera abasto.
+**Costó** lo que la estimación decía: los roles y el estereotipo fueron una
+línea por rol; el vocabulario fue plataforma —`EdgeKind` compartido en
+`gx-core`, la tabla como parámetro de `to_graph` y `validate_flow`—, y por eso
+`kind` dejó de ser de `component` y pasó a ser del motor.
 
 #### 13. Hierarchical Diagram → capacidad de `tree`
 
@@ -834,12 +844,14 @@ cronograma, la cronología, el workflow y el esquema relacional se cierran así.
 **R2. Plataforma antes que catálogo.** Hay tres piezas que varias filas necesitan
 y que hoy no existen en ningún kind:
 
-- **`edge.kind`: vocabulario de relación tipada.** Hoy ningún kind tiene tipo de
-  arista (solo `er` tiene cardinalidad y `sequence` tiene `reply`); el
-  vocabulario vive en el texto libre de `label` (`crates/gx-kinds/src/flow.rs:41`).
-  Lo piden el mapa de componentes, el activity, el use case («include»/«extend»)
-  y el deployment (protocolos). Se implementa una vez, como campo opcional con
-  vocabulario por kind, y el motor lo ignora para dibujar.
+- **`edge.kind`: vocabulario de relación tipada.** **Entregado en
+  `f29-componente`:** `FlowEdge.kind` es opcional (`crates/gx-kinds/src/flow.rs:69`),
+  cada kind declara su tabla por `edge_kinds()`, y el estilo, el glifo y la
+  etiqueta salen de esa tabla por una sola vía (`EdgeKind::find`); un kind que no
+  declara vocabulario rechaza el campo. Lo estrena el mapa de componentes con sus
+  nueve relaciones, y el activity, el use case («include»/«extend») y el
+  deployment (protocolos) lo reciben gratis cuando escriban su tabla: el dibujo
+  sale de la tabla, no del documento.
 - **Anclas múltiples de fila.** Un extremo de arista se ancla a **una** fila
   (`from_row`/`to_row` son un `u32`, `crates/gx-core/src/ir.rs:227`). Sin lista
   de anclas no hay clave compuesta, ni FK compuesta, ni dependencia funcional
@@ -895,9 +907,11 @@ tabla y su resolución única (`EdgeKind::find`), y cada kind publica la suya po
 por la que `component` va a enseñar sus nueve relaciones. El tipo compartido no
 cambió un solo documento, y el estereotipo es un campo opcional que ningún
 documento fijado escribe: los goldens de `f26` siguen byte a byte.
-**Falta de la etapa 0:** el campo `kind` en la arista —el vocabulario de
-relación tipada escrito en el documento—, que entra con las nueve relaciones de
-`component` en la etapa 1; la etapa 0 dejó la mesa puesta, no el campo.
+**Cerrado en `f29-componente` (2026-11-11):** el campo `kind` en la arista —el
+vocabulario de relación tipada escrito en el documento—. La etapa 0 dejó la mesa
+puesta (el `EdgeKind` compartido y `edge_kinds()` en el trait) y la etapa 1 puso
+el campo con las nueve relaciones de `component`; el reparto quedó como se pensó:
+un solo punto de resolución y ningún kind obligado a tener vocabulario.
 
 ### Etapa 1 — capacidades sobre kinds existentes (cierra diez filas sin gastar techo)
 
@@ -905,7 +919,7 @@ relación tipada escrito en el documento—, que entra con las nueve relaciones 
 |---|---|---|
 | 20 Cronograma | `gantt` | `progress`, hito con rombo, dependencia `{to,type,lag}`, guardia de ciclos y coherencia con `start`/`end` |
 | 14 Cronología | `timeline` | campo de dependencias (el dibujo ya existe en `scene.rs`) |
-| 12 Mapa de componentes | `component` | seis roles nuevos + estereotipo dibujado + las nueve relaciones tipadas de la etapa 0 |
+| 12 Mapa de componentes | `component` | seis roles nuevos + estereotipo dibujado + las nueve relaciones tipadas de la etapa 0 — **hecho en `f29-componente`** |
 | 13 Jerárquico | `tree` | `meta` y nivel como dato por el canal existente; agrupaciones **no** (requieren clusters en el motor de árbol) |
 | 8 ERD | `er` | cardinalidad mínima y opcionalidad en el contrato, no en el texto de la etiqueta |
 | 9 Esquema relacional | `er` | índices, UNIQUE/CHECK y PK compuesta marcada; el puente SQL (`er_bridge.rs`) ya trae tipos y FK |

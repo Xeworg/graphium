@@ -70,10 +70,11 @@ while IFS='|' read -r name env_name default_dir; do
   assert_file "$override/extensions/graphium/index.ts"
 done <<<"$entries"
 
-# --all instala en todos los hosts del registro (sus directorios por defecto
-# ya existen de la vuelta anterior).
+# --all vuelve a pasar por todos los hosts del registro: sus directorios por
+# defecto ya existen y ya tienen la extensión de la vuelta anterior, así que el
+# mensaje es «actualizada», no «instalada» (T2 distingue las dos cosas).
 out="$(run_installer agent --all)"
-assert_contains "$out" "Extensión instalada"
+assert_contains "$out" "Extensión actualizada"
 while IFS='|' read -r _name _env_name default_dir; do
   assert_file "$SCRATCH_HOME/$default_dir/extensions/graphium/index.ts"
 done <<<"$entries"

@@ -19,7 +19,10 @@
 //!    declaration of the chapter, so the chapter gets one synthetic `module`
 //!    symbol (the grammar builds it) to anchor those edges. The anchor is only
 //!    appended when a file-scope relation exists: a file with no relations
-//!    keeps the exact symbol list it declared.
+//!    keeps the exact symbol list it declared. A chapter whose grammar already
+//!    declares its module — Go declares the package every `import` of the
+//!    directory names (S5-b) — keeps that one declaration: the anchor is the
+//!    symbol it wrote, never a second one beside it.
 
 use std::collections::BTreeSet;
 
@@ -78,6 +81,9 @@ pub fn push_edges(out: &mut Vec<RawEdge>, byte: usize, kind: &'static str, names
 /// no declaration (a file-scope `use` in Rust, a top-level `require` in the
 /// languages of C2): it is appended to `symbols` **only when one of them needs
 /// it**, so a file with no relations keeps the exact symbol list it declared.
+/// When the chapter already wrote that very symbol — the package a Go file
+/// declares is the module an `import` of it names (S5-b) — the anchor reuses it
+/// instead of appending a second, identical row.
 pub fn attach(
     mut raw: Vec<RawEdge>,
     symbols: &mut Vec<ParsedSymbol>,
@@ -106,8 +112,10 @@ pub fn attach(
     }
 
     if needs_anchor {
-        symbols.push(anchor);
-        let anchor = symbols.len() - 1;
+        let anchor = declared_anchor(symbols, &anchor).unwrap_or_else(|| {
+            symbols.push(anchor);
+            symbols.len() - 1
+        });
         for entry in &mut pending {
             if entry.0.is_none() {
                 entry.0 = Some(anchor);
@@ -131,6 +139,20 @@ pub fn attach(
         });
     }
     edges
+}
+
+/// The anchor a chapter already declares, when it does: the same `module`
+/// symbol — same name, same `qname` — with no span. A declaration of the
+/// chapter always has the span of its source (a Lua table that names the
+/// module of its file is still a table), and the synthetic anchor never owns a
+/// byte, so the empty span is what tells the two apart.
+fn declared_anchor(symbols: &[ParsedSymbol], anchor: &ParsedSymbol) -> Option<usize> {
+    symbols.iter().position(|symbol| {
+        symbol.kind == "module"
+            && symbol.name == anchor.name
+            && symbol.qname == anchor.qname
+            && symbol.start_byte == symbol.end_byte
+    })
 }
 
 /// The innermost symbol whose span contains `byte`.

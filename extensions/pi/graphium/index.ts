@@ -10,6 +10,12 @@
  * is, where the exports land and what is already there; `/graphium open` opens
  * the plan without asking the agent for a diagram.
  *
+ * What it teaches: the server is registered `exposure: "direct"`, so its tools
+ * are declared to the model instead of waiting in a codemode namespace; one
+ * sentence in `description` says what the server offers; and
+ * `before_agent_start` attaches a short rule to each book tool, so the model
+ * reaches for the book at the moment it is useful (f28 T6a).
+ *
  * What it declares: the identity of the session it runs in, through the `env`
  * of the registration, so Graphium shows `Pi` as the agent family and keeps the
  * same session across a reconnect (f3 S4/D1). The identity is self-declared and
@@ -20,6 +26,8 @@
  *   the version is read inside the command that needs it;
  * - every failure is a notify with the next step, never a throw: an extension
  *   that breaks must not take the session down.
+ * - the teaching never replaces the prompt: it fills the per-tool guidelines
+ *   slot, which is text Pi appends, while the server keeps the contract.
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -42,11 +50,57 @@ const EXPLICIT = "GRAPHIUM_BIN";
 /** How many exported files the status lists. */
 const RECENT_EXPORTS = 3;
 
-/** What the server offers, in a sentence: `/mcp` and the system prompt read it. */
+/** What the server offers, in a sentence: tool search ranks the server's tools by
+ * it, codemode's `describeNamespace()` returns it, and a model-facing tool
+ * listing shows it once under the group heading (Pi docs, "Configure servers",
+ * and `ToolNamespace`).
+ *
+ * With `exposure: "direct"` the server leaves the `mcp_servers` prompt section,
+ * which only lists indirect servers; the sentence still answers anyone who asks
+ * what the server is, which is how tool search and codemode find it.
+ *
+ * The budget is 169 characters and the text earns each one: the five tools of
+ * the book by name (the old text named two), the export it can always keep
+ * (`svg`; a `png` needs `path` and the rasterizer the app provides, so it is
+ * left to `export_diagram`'s own description), and the condition it used to
+ * hide — the book needs a project, and it can be off with `GRAPHIUM_BOOK=off`
+ * or fail to open, answering `book_disabled` or `book_unavailable`. The
+ * contract is the server's job, not this line's. */
 const DESCRIPTION =
-  "Graphium: dibuja diagramas en una ventana sobre un plano y los exporta a SVG o PNG. " +
-  "Lee el índice del proyecto (el libro) y dibuja desde ahí: `code_diagram` para el " +
-  "código y `code_er` para un `.sql`.";
+  "Dibuja diagramas y exporta SVG; responde desde el libro: `code_search`, " +
+  "`code_structure`, `code_impact`, `code_diagram` y `code_er` (con proyecto y libro activo).";
+
+/**
+ * The rules this extension owns, keyed by the name the server gives the tool.
+ *
+ * They carry the moments no text carries today: a server's instructions are not
+ * part of any tool description (Pi docs, "Control tool exposure"), and a tool
+ * description teaches the contract, not when to reach for it. Each bullet names
+ * its tool because it is read next to the declarations, where a rule with no
+ * name is a rule for no tool. It is a handful on purpose: the server owns the
+ * details, this file only teaches the moment.
+ */
+const BOOK_TOOL_GUIDELINES: Record<string, readonly string[]> = {
+  code_search: [
+    "Para ubicar un símbolo por su nombre, `code_search` responde del libro antes que cualquier grep.",
+  ],
+  code_structure: [
+    "Antes de abrir un archivo para entenderlo, `code_structure` da su silueta de declaraciones.",
+  ],
+  code_impact: [
+    "Si estás por grepear quién usa un símbolo, `code_impact` ya sabe quién apunta a él.",
+    "Antes de cambiar una firma, `code_impact` recorre sus llamadores.",
+  ],
+  code_diagram: [
+    "Para el dibujo sin escribir JSON a mano, `code_diagram` entrega el `graph` del vecindario ya armado.",
+  ],
+  code_er: [
+    "Para el `er` de un `.sql`, `code_er` lo arma del archivo: no escribas el documento a mano.",
+  ],
+  code_index: [
+    "Si un archivo que esperabas no está en el libro, `code_index` dice por qué lo saltó.",
+  ],
+};
 
 /** The directory this extension lives in, wherever Pi resolved it from. */
 function here(): string {
@@ -63,6 +117,10 @@ function here(): string {
  * Release before debug: the release build is what the human uses, the debug one
  * is what the tests build. The depth is bounded because walking to `/` from a
  * deep directory is not a search, it is a guess.
+ *
+ * `findBinary` calls it with two different meanings. From `here()` a hit is the
+ * checkout the extension itself ships in; from the cwd, last, a hit is only the
+ * human's working directory and never outranks the installed binary.
  */
 function walkUpForBinary(start: string): string | null {
   let directory = resolve(start);
@@ -83,9 +141,19 @@ function walkUpForBinary(start: string): string | null {
 /**
  * Finds the Graphium binary, or `null` when this machine has none.
  *
- * The extension's own location comes first, not the working directory: this
- * file is shipped inside the Graphium checkout, so walking up from here finds
- * the build even when Pi is started in another project.
+ * The order, and why it is this order:
+ *
+ * 1. `GRAPHIUM_BIN` wins over everything: a human who sets it has answered.
+ * 2. The extension's own location: this file ships inside the Graphium checkout,
+ *    so walking up from here finds that checkout's build even when Pi is started
+ *    in another project. That is how a developer tests a change.
+ * 3. The `PATH`: a `graphium` there is the installed product, and the extension
+ *    is supposed to serve the product.
+ * 4. Walking up from the cwd, last: the cwd is the human's project, not
+ *    Graphium's checkout, so a build found there is a coincidence and must never
+ *    shadow the installed binary. It stays as the last resort for the case where
+ *    the extension is loaded from somewhere else and the human wants their
+ *    working directory's build.
  */
 export function findBinary(
   cwd: string = process.cwd(),
@@ -96,12 +164,13 @@ export function findBinary(
     return explicit;
   }
 
-  const checkout = walkUpForBinary(near) ?? walkUpForBinary(cwd);
+  // The checkout this extension belongs to, not the one Pi happens to run in.
+  const checkout = walkUpForBinary(near);
   if (checkout) {
     return checkout;
   }
 
-  // An installed binary, on the PATH.
+  // The installed binary, on the PATH.
   const path = process.env.PATH ?? "";
   for (const directory of path.split(":")) {
     if (!directory) continue;
@@ -110,7 +179,9 @@ export function findBinary(
       return candidate;
     }
   }
-  return null;
+
+  // Last: a build under whatever directory the human is working in.
+  return walkUpForBinary(cwd);
 }
 
 /** The exports root Graphium writes to (PRD §7 RNF4). */
@@ -250,6 +321,17 @@ function sameIdentity(left: Record<string, string>, right: Record<string, string
 }
 
 /**
+ * The name Pi declares a tool of this server with: `mcp__<server>__<tool>`
+ * (Pi docs, "Configuration rules").
+ *
+ * The template is exact, not an approximation: the server name has no character
+ * Pi would sanitize, and every book tool is lowercase with underscores.
+ */
+export function declaredToolName(tool: string): string {
+  return `mcp__${SERVER}__${tool}`;
+}
+
+/**
  * The one line `/graphium` prints about the book the agent will see.
  *
  * It reads the two sources that decide it and invents none: the identity env
@@ -320,6 +402,12 @@ export default function graphium(
       args: ["--stdio"],
       env: identity,
       description: DESCRIPTION,
+      // `direct` is "declared to the model while active" (Pi docs, "Tool
+      // exposure"). Without it a registered server falls back to `codemode`,
+      // which leaves the tools callable only from a script and declared to
+      // nobody: that is the defect this flag fixes, and the reason an agent
+      // reached for `grep` while `code_impact` was connected.
+      exposure: "direct",
     });
     registered = identity;
   };
@@ -383,6 +471,30 @@ export default function graphium(
       } catch {
         // No UI left to say it with.
       }
+    }
+  });
+
+  // The guide's per-tool slot is `toolGuidelines` in the options of
+  // `before_agent_start`: "Guideline bullets contributed by each tool, keyed by
+  // tool name", rendered while the tool is active — the same mechanism as the
+  // `promptGuidelines` of a tool this extension could register itself. Pi
+  // registers the MCP tools, so this hook is the only place the extension can
+  // attach a rule to them. The keys are written even while the tools are not
+  // declared, because codemode carries a tool's guidelines into its
+  // declarations when a human overrides the exposure.
+  //
+  // Pi reports a throwing handler and goes on (Pi docs, "Errors and cleanup"),
+  // but this file's rule is stricter: a failure of the teaching never leaves
+  // this extension. The next run gets the text again.
+  pi.on("before_agent_start", (event) => {
+    try {
+      const options = event.systemPromptOptions;
+      if (!options) return;
+      for (const [tool, bullets] of Object.entries(BOOK_TOOL_GUIDELINES)) {
+        options.toolGuidelines[declaredToolName(tool)] = [...bullets];
+      }
+    } catch {
+      // Lose the line, never the run.
     }
   });
 

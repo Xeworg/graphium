@@ -1326,7 +1326,7 @@ dependencies = [
 
 [[package]]
 name = "gx-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gx-core",
  "gx-kinds",
@@ -1343,7 +1343,7 @@ dependencies = [
 
 [[package]]
 name = "gx-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "schemars 1.2.3",
  "serde",
@@ -1353,7 +1353,7 @@ dependencies = [
 
 [[package]]
 name = "gx-index"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ignore",
  "notify",
@@ -1387,7 +1387,7 @@ dependencies = [
 
 [[package]]
 name = "gx-kinds"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gx-core",
  "schemars 1.2.3",
@@ -1397,7 +1397,7 @@ dependencies = [
 
 [[package]]
 name = "gx-layout"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dagre",
  "gx-core",
@@ -1405,7 +1405,7 @@ dependencies = [
 
 [[package]]
 name = "gx-mcp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gx-core",
  "gx-index",
@@ -1419,7 +1419,7 @@ dependencies = [
 
 [[package]]
 name = "gx-render-svg"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gx-core",
  "resvg",

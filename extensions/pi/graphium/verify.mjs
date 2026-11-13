@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -55,21 +55,64 @@ function stubPi() {
   };
 }
 
+/**
+ * The budget the ODD task gives the server description (f28 T6a): the one
+ * sentence tool search ranks and codemode returns, so it does not grow.
+ */
+const DESCRIPTION_BUDGET = 169;
+
+/**
+ * Every check, in declaration order, with its outcome. A failing check does not
+ * stop the ones after it: one run reports all of them, which is what a RED is
+ * worth reading.
+ */
 const checks = [];
 const pending = [];
 function check(name, body) {
-  const result = body();
-  if (result instanceof Promise) {
-    pending.push(result.then(() => checks.push(name)));
-    return;
+  const outcome = { name, error: undefined };
+  checks.push(outcome);
+  const failed = (error) => {
+    outcome.error = error ?? new Error("check failed");
+  };
+  try {
+    const result = body();
+    if (result instanceof Promise) {
+      pending.push(result.then(() => {}, failed));
+      return;
+    }
+  } catch (error) {
+    failed(error);
   }
-  checks.push(name);
 }
 
 /** A stub of an `ExtensionContext`: the extension reads `cwd` and the id, no more. */
 function stubContext(cwd, sessionId) {
   return { cwd, sessionManager: { getSessionId: () => sessionId } };
 }
+
+/**
+ * A `before_agent_start` event with the shape Pi hands the handler: the
+ * normalized options of the run, which a handler may fill in.
+ */
+function promptEvent(selectedTools) {
+  return {
+    type: "before_agent_start",
+    messageType: "user",
+    prompt: "¿quién usa parse_side?",
+    systemPromptOptions: {
+      selectedTools,
+      toolGuidelines: {},
+      promptGuidelines: [],
+    },
+  };
+}
+
+/**
+ * The prefix Pi declares an MCP tool with: `mcp__<server>__<tool>` (docs/mcp.md,
+ * "Configuration rules"). Spelled here instead of imported, so the check holds
+ * the extension to the documented name and not to its own helper.
+ */
+const TOOL_PREFIX = "mcp__graphium__";
 
 /**
  * Runs `body` with a known `PI_SESSION_ID` in the process, then puts the real
@@ -127,6 +170,46 @@ check("findBinary finds the checkout from the extension itself, not the cwd", ()
   }
 });
 
+check("findBinary serves the installed binary on PATH before a build in the cwd", () => {
+  const previous = process.env.GRAPHIUM_BIN;
+  const previousPath = process.env.PATH;
+  delete process.env.GRAPHIUM_BIN;
+  const scratch = mkdtempSync(join(tmpdir(), "graphium-path-"));
+  try {
+    // The cwd is the human's project and it happens to hold a build. It is a
+    // different file from the installed one, so the two answers cannot be
+    // confused and the check cannot pass by accident.
+    const cwd = join(scratch, "proyecto-del-humano");
+    mkdirSync(join(cwd, "target", "release"), { recursive: true });
+    const fromCwd = join(cwd, "target", "release", "graphium");
+    writeFileSync(fromCwd, "#!/bin/sh\necho build-del-proyecto\n");
+
+    const pathDirectory = join(scratch, "bin");
+    mkdirSync(pathDirectory, { recursive: true });
+    const installed = join(pathDirectory, "graphium");
+    writeFileSync(installed, "#!/bin/sh\necho binario-instalado\n");
+
+    // The extension lives outside any checkout, so its own walk up finds
+    // nothing and the only candidates are the two files this layout wrote.
+    const extension = join(scratch, "extension");
+    mkdirSync(extension, { recursive: true });
+    process.env.PATH = pathDirectory;
+
+    const found = findBinary(cwd, extension);
+    assert.notEqual(
+      found,
+      fromCwd,
+      "un build bajo el cwd no responde por el binario instalado",
+    );
+    assert.equal(found, installed, `la respuesta viene del PATH, no de ${found}`);
+  } finally {
+    if (previous === undefined) delete process.env.GRAPHIUM_BIN;
+    else process.env.GRAPHIUM_BIN = previous;
+    process.env.PATH = previousPath;
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 check("the exports root is the one Graphium writes to", () => {
   const previous = process.env.GRAPHIUM_EXPORTS_ROOT;
   process.env.GRAPHIUM_EXPORTS_ROOT = "/tmp/graphium-exports-check";
@@ -166,13 +249,37 @@ check("the factory registers the MCP server and the /graphium command", () => {
   assert.equal(pi.commands.get("graphium").description.includes("open"), true);
 });
 
-check("the description sells the book and its two diagram routes", () => {
+check("the book is declared direct, so its tools reach the model without a search", () => {
+  const pi = stubPi();
+  graphium(pi, process.execPath);
+  assert.equal(
+    pi.registered.get("graphium").exposure,
+    "direct",
+    "without `exposure` the server falls back to codemode and the model never sees its tools",
+  );
+});
+
+check("the description names the five book tools and promises nothing it cannot keep", () => {
   const pi = stubPi();
   graphium(pi, process.execPath);
   const description = pi.registered.get("graphium").description;
-  assert.match(description, /índice/);
-  assert.match(description, /code_diagram/);
-  assert.match(description, /code_er/);
+
+  for (const tool of ["code_search", "code_structure", "code_impact", "code_diagram", "code_er"]) {
+    assert.ok(description.includes(`\`${tool}\``), `the description names ${tool}: ${description}`);
+  }
+  // A PNG needs `path` and the rasterizer the app provides: naming it without
+  // naming `path` is the false claim the old text carried.
+  assert.ok(
+    !/PNG/i.test(description) || /path/.test(description),
+    `a PNG is not promised without \`path\`: ${description}`,
+  );
+  // The book is not read unconditionally: without a project it answers
+  // `invalid_value`, and `GRAPHIUM_BOOK=off` makes it `book_disabled`.
+  assert.match(description, /requiere proyecto|sin proyecto|con proyecto/, description);
+  assert.ok(
+    description.length <= DESCRIPTION_BUDGET,
+    `the description stays inside its budget (${description.length} > ${DESCRIPTION_BUDGET})`,
+  );
 });
 
 check("the status names the binary, the MCP server and the exports root", () => {
@@ -365,8 +472,73 @@ check("a re-registration that fails tells the human and does not throw out of th
   });
 });
 
+check("the guidelines are keyed by tool and each one names its tool", async () => {
+  const pi = stubPi();
+  graphium(pi, process.execPath);
+  const handler = pi.handlers.get("before_agent_start");
+  assert.equal(typeof handler, "function", "before_agent_start is wired");
+
+  const event = promptEvent(["read", `${TOOL_PREFIX}code_impact`]);
+  await handler(event, stubContext("/tmp/graphium-proyecto", "sesion-uno"));
+  const written = event.systemPromptOptions.toolGuidelines;
+
+  assert.ok(written, "the guidelines land in the run's toolGuidelines");
+  for (const tool of ["code_search", "code_structure", "code_impact", "code_diagram", "code_er"]) {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(written, `${TOOL_PREFIX}${tool}`),
+      `there is a guideline for ${tool}: ${Object.keys(written).join(" ")}`,
+    );
+  }
+  for (const key of Object.keys(written)) {
+    assert.ok(key.startsWith(TOOL_PREFIX), `the guideline is keyed by the declared name: ${key}`);
+    assert.ok(written[key].length > 0, `${key} carries at least one bullet`);
+    // Each bullet is read next to the tool it belongs to, so it says which
+    // tool it is talking about instead of leaving the reader to guess.
+    const tool = key.slice(TOOL_PREFIX.length);
+    assert.ok(
+      written[key].join(" ").includes(tool),
+      `the guideline of ${key} names ${tool}: ${written[key].join(" | ")}`,
+    );
+  }
+});
+
+check("the hooks are wired and a guideline that fails cannot break the session", async () => {
+  const pi = stubPi();
+  graphium(pi, process.execPath);
+  for (const event of ["session_start", "before_agent_start"]) {
+    assert.equal(typeof pi.handlers.get(event), "function", `${event} is wired`);
+  }
+  const handler = pi.handlers.get("before_agent_start");
+  const ctx = stubContext("/tmp/graphium-proyecto", "sesion-uno");
+
+  // An event without options, and one whose options refuse the write: neither
+  // may throw out of the handler, or the run is lost to a teaching line.
+  await handler({}, ctx);
+  const frozen = promptEvent(["read"]);
+  Object.freeze(frozen.systemPromptOptions.toolGuidelines);
+  await handler(frozen, ctx);
+
+  // The next run starts with the options it declared, not with a half-written
+  // object left behind by the failure.
+  const event = promptEvent(["read", `${TOOL_PREFIX}code_impact`]);
+  await handler(event, ctx);
+  assert.deepEqual(
+    event.systemPromptOptions.selectedTools,
+    ["read", `${TOOL_PREFIX}code_impact`],
+    "the run keeps the tools it declared",
+  );
+});
+
 await Promise.all(pending);
 
-const failures = checks.length;
-console.log(`ok — ${failures} checks`);
-for (const name of checks) console.log(`  · ${name}`);
+const failed = checks.filter((outcome) => outcome.error !== undefined);
+if (failed.length > 0) {
+  for (const outcome of failed) {
+    console.log(`✗ ${outcome.name}\n    ${outcome.error?.message ?? outcome.error}`);
+  }
+  console.log(`\n${failed.length} de ${checks.length} checks fallan`);
+  process.exitCode = 1;
+} else {
+  console.log(`ok — ${checks.length} checks`);
+  for (const outcome of checks) console.log(`  · ${outcome.name}`);
+}

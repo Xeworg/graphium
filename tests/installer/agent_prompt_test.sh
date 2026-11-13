@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 #
 # Elección de agentes en una terminal:
-# - sin tty, agent sin --env/--all falla nombrando todos los hosts del registro;
+# - sin terminal de control, agent sin --env/--all falla nombrando todos los
+#   hosts del registro;
 # - con TERM=dumb no hay checklist: se usa el prompt numérico, donde Enter
 #   omite, un número instala solo ese host y un número inválido falla sin
 #   instalar;
 # - con una terminal normal el checklist arranca con los hosts detectados
 #   marcados: flechas y espacio cambian el marcado, «a» marca/desmarca todo,
 #   Enter instala y q o Esc cancelan sin instalar;
+# - cada fila dice si el host está, qué versión tiene instalada y a cuál la
+#   lleva esta corrida; los hosts ausentes se nombran como tales;
 # - ./install.sh ofrece la elección al final y se puede saltear.
 
 set -euo pipefail
@@ -111,3 +114,21 @@ assert_file "$SCRATCH_HOME/.local/bin/graphium"
 out="$(run_installer_pty dumb $'\n' install)"
 assert_contains "$out" "Agentes a instalar/actualizar"
 assert_contains "$out" "Siguiente paso: ./install.sh agent"
+
+# 11) Cada fila del checklist dice si el host está en la máquina y qué versión
+# tiene instalada: una extensión vieja se marca con su versión y con la que
+# esta corrida va a dejar.
+old_ext="$SCRATCH_HOME/$first_dir/extensions/graphium"
+mkdir -p "$old_ext"
+printf '{\n  "name": "@xeworg/graphium-pi",\n  "version": "0.0.1"\n}\n' \
+  >"$old_ext/package.json"
+# El segundo host ya no está: su fila tiene que decirlo, no callarse.
+if [[ -n "$second_host" ]]; then
+  rm -rf -- "$SCRATCH_HOME/$(printf '%s\n' "$entries" | sed -n '2s/^[^|]*|[^|]*|//p')"
+fi
+out="$(run_installer_pty xterm-256color 'q' agent)"
+assert_contains "$out" "host presente, extensión v0.0.1"
+assert_contains "$out" "se instala v$(tree_version)"
+if [[ -n "$second_host" ]]; then
+  assert_contains "$out" "host ausente en esta máquina"
+fi

@@ -49,11 +49,10 @@ the human sees you.
 merge patch and the `revision` you read: it is transactional, so a bad patch \
 leaves the diagram untouched. Do not render a new one to replace it.
 
-THE CHEAP PATH. If the subject is in this project's index, do not write JSON by \
-hand: `code_search` locates a symbol, `code_diagram` draws its neighbourhood as a \
-ready `graph` document, and a `.sql` file becomes the `er` document of `code_er`; \
-the two documents go to `validate_diagram` and `render_diagram` unchanged. \
-Hand-write a document only when the subject is not in the index.
+FROM THE BOOK. A document the book hands you — `code_diagram`'s `graph`, \
+`code_er`'s `er` — needs no repair: send it to `validate_diagram` and \
+`render_diagram` unchanged. Hand-write a document only when the subject is not \
+in the index.
 
 BIG DIAGRAMS. Hundreds of nodes are not one picture: they are a view of one. \
 `render_diagram` accepts `opts.extract: { around: \"<id>\", depth }` (default \
@@ -69,9 +68,11 @@ depth 8 with two laying out at a time: when the queue is full the answer is \
 `ok: false` with code `busy`, `queue_depth` and `retry_after_ms`, so wait that \
 long and send it again instead of retrying in a loop. `opts.focus: { id, depth? }` \
 puts the camera on one node and, with `depth`, on its neighbourhood (default 1, \
-max 300 nodes). `opts.replace_id` is honoured today: it replaces the document of \
+the nodes within that many hops): it has no node cap, it changes what the camera \
+shows and never the document, and an id that is not in the diagram answers \
+`unknown_ref`. `opts.replace_id` is honoured today: it replaces the document of \
 the named diagram, and an unknown id answers `unknown_diagram` and creates \
-nothing. `opts.interactive` still arrives in F3: sending it today costs a warning \
+nothing. `opts.interactive` is not honoured: sending it costs a warning \
 (`opts_ignored`), never the diagram.
 
 ERRORS. Every failure carries `{ path, code, message, hint? }` with a stable code \
@@ -126,12 +127,16 @@ without a project gets `ok: false` with `invalid_value` at `session.project`. \
 `code_search` answers from the index of the project instead of \
 reading files: it returns the `file`, `line`, `kind`, `name`, `qname`, \
 `content_hash` and `indexed_at` of one symbol, plus the `book_key` of the book \
-that answered. Use it to locate the code behind a diagram, or to find a \
-function by name before drawing its flow. Every word of `query` has to match \
+that answered. Every word of `query` has to match \
 and the tool never guesses: a query that fits more than one declaration \
 answers `ok: false` with `code_search`'s `ambiguous_symbol` code and \
-`candidates[]`, so send the words of one candidate's `qname` to narrow it. \
-`code_structure` reads a chapter (`file`) or the chapter that declares one \
+`candidates[]`, so send the words of one candidate's `qname` to narrow it. Its \
+candidate list stops at five and says so: `truncated: {reason: \"nodes\", \
+shown, total, next}`, where `total` is how many declaration places the query \
+fits — so `shown < total` means the query is still too broad — and `next` is \
+`null`, because there is no page cursor: narrowing the query is the way to the \
+rest, never a guess at the hidden candidates. `code_structure` reads a \
+chapter (`file`) or the chapter that declares one \
 symbol (`symbol`) and answers the outline by default: only the declarations \
 whose parent is `NULL`, with `total` and \
 `collapsed: {hidden_symbols, declarations_with_children, next}`, where `next` \
@@ -144,7 +149,12 @@ change would affect), `out` (what it calls or imports) or `both` — or of a \
 whole chapter with a file seed, `file`: the file as a node (the connections \
 view), where every declaration of it starts the walk and the answer adds a \
 `files` grouping of `imports_out`, `referenced_by_in` and `symbols` per \
-connected file (the seed file is `file`, never a row of `files`). `edges` narrows the kinds it follows (`calls`, `imports`, `inherits`, \
+connected file (the seed file is `file`, never a row of `files`). A symbol \
+seed answers the same `files[]`, derived from the walk it already carries: \
+`imports_out` towards the file, `referenced_by_in` from it, `symbols` the \
+nodes of the answer that file declares, and the chapter of the seed never a \
+row — so «what does changing this symbol affect» arrives grouped by file \
+instead of as a flat `nodes` list. `edges` narrows the kinds it follows (`calls`, `imports`, `inherits`, \
 `uses`) and `budget` sets the query budget in nodes (600 by default, 2000 at \
 most, the edges at twice the nodes — its own number, decoupled from the 300/600 \
 a diagram document can render). The walk stops at 3 hops, answers a cycle once, \
@@ -161,6 +171,9 @@ past the envelope the head keeps the full rows, the tail cliffs to one-line \
 `next`. `code_search` and `code_er` have no envelope: `code_search` answers one \
 row or `candidates[]`, `code_er` answers the whole document, and a `max_chars` \
 sent to either is refused as an unknown field (`deny_unknown_fields`). \
+`code_er`'s `chars` counts **characters**, the unit `chars` has in every \
+answer of this server, so a `.sql` file with `é` in a table name is not \
+counted twice. \
 `code_diagram` turns the same neighbourhood into a `graph` \
 document in `diagram`, ready to send to `render_diagram` with no repair: that \
 is the cheap diagram, drawn from the book instead of from the code; it takes \
@@ -172,7 +185,30 @@ project (`path`, relative to the project root with `/` separators) — or, with 
 document, with `files` counting the chapters it parsed: its tables \
 as compartments with their columns and the keys between them, in `diagram`, \
 ready for `validate_diagram` and then `render_diagram` — the picture of a \
-database read live from the file instead of from the code. The book is \
+database read live from the file instead of from the code. \
+`code_index` answers the census of the book itself, with no subject to look up: \
+the state of the first pass, `files { total, done, failed_total, by_reason, \
+failed[] }`, `symbols`, `languages[]` and the `limits` in force. Ask it when the \
+human wants to know what the index covers before trusting a search: a symbol that \
+is not there may live in a file the book never took. Every `failed[]` row carries \
+the stable code of the reason plus a hint a human reads: `ignored` (it is one of \
+the directories the book never walks — `.git`, `.graphium`, `target`, \
+`node_modules` — and a pruned subtree is one row; a path `.gitignore` hides is \
+pruned by the walker before the book sees it and is not named in the census), \
+`too_large` (over \
+the 1 MiB ceiling), `unsupported_language` (no grammar of this build answers the \
+extension) and `unreadable` (it does not read as source: a read error, a binary, \
+or a grammar that refused it). Branch on `reason`, never on the sentence. The list \
+is a sample of at most fifty rows per reason — `failed_total` and `by_reason` \
+count every skip — so a file the book does not have is never a silent absence. \
+Each row of `languages` reports `files`, `symbols` and `resolution { edges, \
+resolved, percent, comparable }`: `percent` is `resolved / edges`, never a share \
+of files or of symbols, and `comparable` is true only for a language that carries \
+a runtime-name list, so read two rates against each other only when both are \
+`true` — a `false` row counts its runtime targets as unresolved. `limits` names \
+the ceilings in force (`max_file_bytes`, `max_name_fanout`, `max_parse_threads`, \
+`max_batch_bytes`, `hard_exclusions`). It takes no required argument and `lang` \
+only narrows `languages`. The book is \
 on by default: `book_disabled` only answers when the owner opted out with \
 `GRAPHIUM_BOOK=off`, and a book that cannot be opened answers \
 `book_unavailable`. `progress.state` tells whether the first pass is still \
@@ -221,6 +257,7 @@ pub fn description(name: &str) -> &'static str {
         "code_impact" => crate::CODE_IMPACT_DESCRIPTION,
         "code_diagram" => crate::CODE_DIAGRAM_DESCRIPTION,
         "code_er" => crate::CODE_ER_DESCRIPTION,
+        "code_index" => crate::CODE_INDEX_DESCRIPTION,
         _ => "",
     }
 }
@@ -308,6 +345,7 @@ mod tests {
             "code_impact",
             "code_diagram",
             "code_er",
+            "code_index",
         ] {
             let text = description(tool);
             assert!(
@@ -385,17 +423,35 @@ mod tests {
             INSTRUCTIONS.contains("an unknown id answers `unknown_diagram` and creates nothing"),
             "the instructions have to say what an unknown `replace_id` does"
         );
+        // L7: `interactive` is not honoured and F3 shipped without it, so the
+        // text cannot promise a phase that already closed.
         assert!(
-            INSTRUCTIONS.contains("`opts.interactive` still arrives in F3"),
+            INSTRUCTIONS.contains("`opts.interactive` is not honoured"),
             "the instructions have to say `interactive` is still not honoured"
         );
         assert!(
             INSTRUCTIONS.contains("costs a warning"),
             "the instructions have to say what `interactive` costs"
         );
+        for stale in ["arrive in F2/F3", "arrives in F3"] {
+            assert!(
+                !INSTRUCTIONS.contains(stale) && !render.contains(stale),
+                "the stale promise `{stale}` is gone from the instructions and the description"
+            );
+        }
+        // L7: 300 is `opts.extract`'s ceiling (`MAX_EXTRACT_NODES`); `opts.focus`
+        // caps nothing, it unions the boxes within `depth` hops.
         assert!(
-            !INSTRUCTIONS.contains("arrive in F2/F3"),
-            "the stale sentence is gone"
+            INSTRUCTIONS.contains("at most 300 nodes in the subgraph"),
+            "the instructions keep the extract cap"
+        );
+        assert!(
+            !INSTRUCTIONS.contains("max 300 nodes"),
+            "`opts.focus` cannot claim the extract cap"
+        );
+        assert!(
+            INSTRUCTIONS.contains("no node cap"),
+            "`opts.focus` has to say it caps nothing"
         );
     }
 
@@ -436,33 +492,35 @@ mod tests {
         );
     }
 
-    /// S3: the cheap path comes before BIG DIAGRAMS: a subject in the index is
-    /// drawn from the book, and JSON is hand-written only when it is not there.
+    /// S3 (L7): the server keeps the half of the cheap path the extension cannot
+    /// own — a document the book hands you is ready — and stops repeating the
+    /// routing the extension now teaches next to the declarations.
     #[test]
-    fn the_instructions_teach_the_cheap_path_of_the_book() {
-        let cheap = INSTRUCTIONS
-            .find("THE CHEAP PATH.")
-            .expect("the instructions name the cheap path");
+    fn the_instructions_keep_the_book_contract_and_hand_the_routing_to_the_extension() {
+        let book = INSTRUCTIONS
+            .find("FROM THE BOOK.")
+            .expect("the instructions keep the book contract");
         let big = INSTRUCTIONS
             .find("BIG DIAGRAMS.")
             .expect("BIG DIAGRAMS stays");
         let manual = INSTRUCTIONS.find("HOW, IN ORDER.").expect("HOW stays");
         assert!(
-            manual < cheap && cheap < big,
-            "the cheap path comes after HOW and before BIG DIAGRAMS"
+            manual < book && book < big,
+            "the book contract comes after HOW and before BIG DIAGRAMS"
         );
-        for needle in [
-            "`code_search` locates a symbol",
-            "`code_diagram` draws its neighbourhood as a ready `graph` document",
-            "`.sql` file becomes the `er` document of `code_er`",
-            "go to `validate_diagram` and `render_diagram` unchanged",
-            "Hand-write a document only when the subject is not in the index",
-        ] {
-            assert!(
-                INSTRUCTIONS.contains(needle),
-                "the cheap path lacks `{needle}`"
-            );
-        }
+        assert!(
+            INSTRUCTIONS.contains("send it to `validate_diagram` and `render_diagram` unchanged"),
+            "a document the book hands you needs no repair"
+        );
+        assert!(
+            INSTRUCTIONS
+                .contains("Hand-write a document only when the subject is not in the index"),
+            "the hand-write rule stays"
+        );
+        assert!(
+            !INSTRUCTIONS.contains("THE CHEAP PATH."),
+            "the routing paragraph the extension now owns is gone from the server"
+        );
         assert!(
             INSTRUCTIONS.contains("which `code_er` draws from a `.sql` file"),
             "the WHEN TO USE IT database bullet names `code_er`"
@@ -593,6 +651,113 @@ mod tests {
         assert!(
             INSTRUCTIONS.contains("code_er"),
             "THE BOOK section has to name the tool"
+        );
+    }
+
+    /// f28 S4/D1/D2/D3: the agent learns that the census exists, that a rate
+    /// says whether it may be compared, and which codes a file that did not
+    /// reach the book carries.
+    #[test]
+    fn the_harness_teaches_the_census_of_the_book() {
+        assert!(
+            crate::dispatch::TOOL_NAMES.contains(&"code_index"),
+            "the census is a tool: {:?}",
+            crate::dispatch::TOOL_NAMES
+        );
+        let text = description("code_index");
+        assert!(text.len() > 120, "code_index needs a real description");
+        assert_ne!(text, description("nope"), "code_index is a fallback");
+        for needle in [
+            "comparable",
+            "`lang`",
+            "ignored",
+            "too_large",
+            "unsupported_language",
+            "unreadable",
+            "on by default",
+            "GRAPHIUM_BOOK=off",
+        ] {
+            assert!(text.contains(needle), "code_index lacks `{needle}`: {text}");
+            assert!(
+                INSTRUCTIONS.contains(needle),
+                "the instructions lack `{needle}`"
+            );
+        }
+        assert!(
+            INSTRUCTIONS.contains("`code_index`"),
+            "THE BOOK section has to name the census tool"
+        );
+    }
+
+    /// D6 (f28): both seeds of `code_impact` answer the `files[]` grouping, and
+    /// the agent learns it without reading any other document — including what
+    /// the row of a symbol seed counts.
+    #[test]
+    fn the_harness_teaches_the_files_grouping_of_a_symbol_seed() {
+        let impact = description("code_impact");
+        for needle in [
+            "`files[]`",
+            "`imports_out`",
+            "`referenced_by_in`",
+            "never a row",
+        ] {
+            assert!(impact.contains(needle), "code_impact lacks `{needle}`");
+            assert!(
+                INSTRUCTIONS.contains(needle),
+                "the instructions lack `{needle}`"
+            );
+        }
+        assert!(
+            INSTRUCTIONS.contains("derived from the walk it already carries"),
+            "the instructions say where a symbol seed's grouping comes from"
+        );
+    }
+
+    /// D6 (f28): `chars` is characters everywhere in this server, and the
+    /// `code_er` answer says so before the agent compares it with a byte count.
+    #[test]
+    fn the_harness_says_chars_counts_characters() {
+        let er = description("code_er");
+        for text in [er, INSTRUCTIONS] {
+            assert!(
+                text.contains("**characters**"),
+                "`chars` is taught in characters: {text}"
+            );
+            assert!(
+                !text.contains("the byte length"),
+                "the byte-length sentence is gone: {text}"
+            );
+        }
+    }
+
+    /// D6 (f28): the candidate cut of `code_search` is visible, and the agent
+    /// learns what `shown` and `total` count — plus that there is no page.
+    #[test]
+    fn the_harness_teaches_the_visible_candidate_cut() {
+        let search = description("code_search");
+        for text in [search, INSTRUCTIONS] {
+            for needle in [
+                "truncated",
+                "shown",
+                "total",
+                "\"nodes\"",
+                "declaration places",
+                "no page cursor",
+            ] {
+                assert!(
+                    text.contains(needle),
+                    "the candidate cut lacks `{needle}`: {text}"
+                );
+            }
+        }
+        // The reason is the shared vocabulary of the other cuts.
+        assert!(
+            search.contains("`reason: \"nodes\"`"),
+            "code_search names the reason of the cut: {search}"
+        );
+        assert!(
+            !search.contains("`next` is a page"),
+            "there is no page cursor to promise: {search}"
         );
     }
 }

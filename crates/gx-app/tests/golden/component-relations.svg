@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="graphium" viewBox="-12.00 -12.00 621.26 775.88" width="621.26" height="775.88">
+<style>
+.bg{fill:rgba(27, 27, 27, 1.00)}
+.node-fill{fill:rgba(42, 42, 48, 1.00)}
+.node-stroke{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.node-text{fill:rgba(233, 233, 236, 1.00)}
+.edge-stroke{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.edge-text{fill:rgba(185, 185, 194, 1.00)}
+.accent{fill:rgba(110, 168, 254, 1.00);stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight{stroke:rgba(110, 168, 254, 1.00)}
+.emphasis-highlight-text{fill:rgba(110, 168, 254, 1.00)}
+.emphasis-muted{opacity:0.55}
+.group-box{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.12;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:8.00 5.00}
+.group-label{fill:rgba(185, 185, 194, 1.00)}
+.lane-band{fill:rgba(42, 42, 48, 1.00);fill-opacity:0.35;stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.lane-label{fill:rgba(185, 185, 194, 1.00)}
+.lifeline{stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00;stroke-dasharray:4.00 4.00;fill:none}
+.activation{fill:rgba(42, 42, 48, 1.00);stroke:rgba(77, 77, 87, 1.00);stroke-width:1.00}
+.stroke-dashed{stroke-dasharray:6.00 4.00}
+.text{font-family:Inter, sans-serif}
+.cardinality{fill:none;stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00}
+.arrow-normal{fill:rgba(138, 138, 150, 1.00)}
+.arrow-highlight{fill:rgba(110, 168, 254, 1.00)}
+.arrow-muted{fill:rgba(138, 138, 150, 1.00);opacity:0.55}
+.row-badge{fill:rgba(185, 185, 194, 1.00)}
+.row-note{fill:rgba(185, 185, 194, 1.00)}
+.row-key{font-weight:600}
+.row-nullable{opacity:0.75}
+.shape-dot{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.shape-ring_dot{fill:none}
+.ring-dot-core{fill:rgba(233, 233, 236, 1.00);stroke:none}
+.node-stereotype{fill:rgba(185, 185, 194, 1.00)}
+.axis-line{stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00;fill:none}
+.axis-value{fill:rgba(185, 185, 194, 1.00)}
+.open-arrow-normal{fill:none;stroke:rgba(138, 138, 150, 1.00);stroke-width:1.00}
+</style>
+<defs>
+<marker id="arrow-normal" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
+<path class="arrow-normal" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00 Z"/>
+</marker>
+<marker id="open-arrow-normal" viewBox="0.00 0.00 10.00 10.00" refX="10.00" refY="5.00" markerWidth="10.00" markerHeight="10.00" markerUnits="userSpaceOnUse" orient="auto">
+<path class="open-arrow-normal" d="M 0.00 0.00 L 10.00 5.00 L 0.00 10.00"/>
+</marker>
+</defs>
+<g class="layer-groups">
+<rect id="cluster-plataforma" class="group-box" x="0.00" y="307.75" width="597.26" height="444.12" rx="6.00" ry="6.00"/>
+<text class="group-label text" x="12.00" y="321.75" font-size="14.00" text-anchor="start" dominant-baseline="central">Plataforma</text>
+</g>
+<g class="layer-edges">
+<polyline id="m-api-cache" class="edge-stroke stroke-dashed" points="456.20,404.12 433.54,452.88 403.47,501.62" marker-end="url(#open-arrow-normal)"/>
+<text class="edge-text text" x="462.12" y="452.88" font-size="14.00" text-anchor="middle" dominant-baseline="central">reads</text>
+<polyline id="m-api-cola" class="edge-stroke" points="436.71,395.35 340.11,452.88 243.88,511.44" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="381.83" y="452.88" font-size="14.00" text-anchor="middle" dominant-baseline="central">publishes</text>
+<polyline id="m-api-db" class="edge-stroke" points="488.79,404.12 522.49,452.88 522.49,529.81 522.49,606.75 471.15,655.50" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="552.62" y="529.81" font-size="14.00" text-anchor="middle" dominant-baseline="central">writes</text>
+<polyline id="m-cache-db" class="edge-stroke stroke-dashed" points="386.09,558.00 386.09,606.75 421.18,655.50" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="436.47" y="606.75" font-size="14.00" text-anchor="middle" dominant-baseline="central">depends_on</text>
+<polyline id="m-host-cola" class="edge-stroke" points="213.69,404.12 213.69,452.88 213.69,501.62" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="241.63" y="452.88" font-size="14.00" text-anchor="middle" dominant-baseline="central">hosts</text>
+<polyline id="m-portal-web" class="edge-stroke" points="296.50,56.38 296.50,105.12 296.50,153.88"/>
+<text class="edge-text text" x="346.58" y="105.12" font-size="14.00" text-anchor="middle" dominant-baseline="central">connects_to</text>
+<polyline id="m-web-api" class="edge-stroke" points="339.28,201.11 469.31,259.00 469.31,307.75 469.31,347.75" marker-end="url(#arrow-normal)"/>
+<text class="edge-text text" x="494.39" y="259.00" font-size="14.00" text-anchor="middle" dominant-baseline="central">calls</text>
+<polyline id="m-web-cache" class="edge-stroke" points="305.08,210.25 319.92,259.00 319.92,307.75 319.92,375.94 319.92,452.88 361.85,501.62"/>
+<text class="edge-text text" x="345.53" y="375.94" font-size="14.00" text-anchor="middle" dominant-baseline="central">uses</text>
+<polyline id="m-web-cola" class="edge-stroke stroke-dashed" points="253.73,194.89 40.00,259.00 40.00,307.75 40.00,375.94 40.00,452.88 183.49,516.44" marker-end="url(#open-arrow-normal)"/>
+<text class="edge-text text" x="86.27" y="375.94" font-size="14.00" text-anchor="middle" dominant-baseline="central">subscribes</text>
+</g>
+<g class="layer-nodes">
+<rect id="g-api" class="node-fill node-stroke shape-rounded" x="436.71" y="347.75" width="65.19" height="56.38" rx="6.00" ry="6.00"/>
+<text class="node-stereotype text" x="469.31" y="367.19" font-size="11.90" text-anchor="middle" dominant-baseline="central">«service»</text>
+<text class="node-text text" x="469.31" y="383.38" font-size="14.00" text-anchor="middle" dominant-baseline="central">API</text>
+<rect id="g-cache" class="node-fill node-stroke shape-rounded" x="336.03" y="501.62" width="100.12" height="56.38" rx="6.00" ry="6.00"/>
+<text class="node-stereotype text" x="386.09" y="521.06" font-size="11.90" text-anchor="middle" dominant-baseline="central">«infrastructure»</text>
+<text class="node-text text" x="386.09" y="537.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">caché</text>
+<rect id="g-cola" class="node-fill node-stroke shape-rounded" x="183.49" y="501.62" width="60.39" height="56.38" rx="6.00" ry="6.00"/>
+<text class="node-stereotype text" x="213.69" y="521.06" font-size="11.90" text-anchor="middle" dominant-baseline="central">«broker»</text>
+<text class="node-text text" x="213.69" y="537.25" font-size="14.00" text-anchor="middle" dominant-baseline="central">Cola</text>
+<rect id="g-db" class="node-fill node-stroke shape-rounded" x="402.19" y="655.50" width="78.56" height="56.38" rx="6.00" ry="6.00"/>
+<text class="node-stereotype text" x="441.47" y="674.94" font-size="11.90" text-anchor="middle" dominant-baseline="central">«storage»</text>
+<text class="node-text text" x="441.47" y="691.12" font-size="14.00" text-anchor="middle" dominant-baseline="central">Pedidos</text>
+<rect id="g-host" class="node-fill node-stroke shape-rounded" x="162.55" y="347.75" width="102.27" height="56.38" rx="6.00" ry="6.00"/>
+<text class="node-stereotype text" x="213.69" y="367.19" font-size="11.90" text-anchor="middle" dominant-baseline="central">«runtime»</text>
+<text class="node-text text" x="213.69" y="383.38" font-size="14.00" text-anchor="middle" dominant-baseline="central">Kubernetes</text>
+<rect id="g-portal" class="node-fill node-stroke shape-rounded" x="253.73" y="0.00" width="85.56" height="56.38" rx="6.00" ry="6.00"/>
+<text class="node-stereotype text" x="296.50" y="19.44" font-size="11.90" text-anchor="middle" dominant-baseline="central">«application»</text>
+<text class="node-text text" x="296.50" y="35.62" font-size="14.00" text-anchor="middle" dominant-baseline="central">Portal</text>
+<rect id="g-web" class="node-fill node-stroke shape-rounded" x="253.73" y="153.88" width="85.56" height="56.38" rx="6.00" ry="6.00"/>
+<text class="node-stereotype text" x="296.50" y="173.31" font-size="11.90" text-anchor="middle" dominant-baseline="central">«application»</text>
+<text class="node-text text" x="296.50" y="189.50" font-size="14.00" text-anchor="middle" dominant-baseline="central">Web</text>
+</g>
+</svg>

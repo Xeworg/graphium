@@ -168,6 +168,41 @@ pub fn search(connection: &Connection, request: &SearchRequest) -> rusqlite::Res
     }
 }
 
+/// How many declaration places a query fits, in the unit [`SymbolCandidate`]
+/// counts.
+///
+/// This is the number the candidate cut needs and [`search`]'s outcome cannot
+/// carry: the ranked window reads at most [`ROW_LIMIT`] rows and an ambiguous
+/// answer names at most [`CANDIDATE_LIMIT`] candidates, so a caller that only
+/// read the outcome could not tell five owners from five hundred. The count
+/// runs over the **same** expression and the **same** join as [`search`], so
+/// the number a cut answer publishes is measured on the question it answered,
+/// never on a second query that could drift from it.
+///
+/// One row per distinct qualified name: two declarations that share a qname are
+/// one candidate of [`search`], so they are one here too — the notice a tool
+/// publishes has `shown` and `total` in the same unit as `candidates[]`.
+/// [`SearchRequest`] and [`SearchOutcome`] do not change: the count is a
+/// separate, cheap read of the same match.
+pub fn candidate_total(
+    connection: &Connection,
+    request: &SearchRequest,
+) -> rusqlite::Result<usize> {
+    let expression = match_expression(&request.query);
+    if expression.is_empty() {
+        return Ok(0);
+    }
+    let total: i64 = connection.query_row(
+        "SELECT COUNT(DISTINCT s.qname)
+         FROM symbol_fts
+         JOIN symbol s ON s.id = symbol_fts.rowid
+         WHERE symbol_fts MATCH ?1",
+        [expression],
+        |row| row.get(0),
+    )?;
+    Ok(usize::try_from(total).unwrap_or(usize::MAX))
+}
+
 /// One FTS row with the collation of its name.
 struct RankedRow {
     hit: SymbolHit,

@@ -7,14 +7,30 @@ binario, registra el servidor MCP para la sesión y agrega el comando
 ## Qué hace
 
 - **Registra el MCP solo.** Al cargar, busca el binario y llama
-  `pi.registerMcpServer("graphium", …)`. La sesión arranca con `render_diagram`,
-  `export_diagram` y el resto de las tools disponibles, sin `mcp.json`. Un
-  `mcp.json` con una entrada `graphium` sigue ganando: el humano tiene la última
-  palabra.
-- **Le cuenta al agente lo que registra.** La descripción del servidor nombra el
-  libro del proyecto y sus dos rutas de dibujo: `code_diagram` para el código y
-  `code_er` para un `.sql`. `/mcp` y el system prompt la leen, así que el agente
-  sabe que hay un índice antes de escribir un documento a mano.
+  `pi.registerMcpServer("graphium", …)` con `exposure: "direct"`, la exposición
+  que Pi documenta como «declarada al modelo mientras la sesión vive». Las tools
+  —`render_diagram`, `export_diagram`, `code_impact` y el resto— se declaran al
+  modelo; sin ese `exposure` el servidor cae en `codemode` y el agente solo las
+  encuentra si se le ocurre buscarlas. Un `mcp.json` con una entrada `graphium`
+  sigue ganando: el humano tiene la última palabra.
+- **Le cuenta al agente lo que registra.** La descripción del servidor es una
+  sola frase que nombra las cinco tools del libro —`code_search`,
+  `code_structure`, `code_impact`, `code_diagram` y `code_er`— y no promete de
+  más: `svg` siempre se exporta, un `png` necesita `path` y el rasterizador de la
+  app (y por eso lo cuenta la descripción de `export_diagram`, no esta línea), y
+  el libro necesita un proyecto y estar activo: `GRAPHIUM_BOOK=off` lo apaga y
+  sin proyecto contesta `invalid_value`. La frase es la misma que rankea la
+  búsqueda de tools y la que devuelve `describeNamespace()` en codemode.
+- **Enseña el momento, no solo la tool.** En `before_agent_start` la extensión
+  llena el slot de guías por tool (`toolGuidelines`) con un puñado de reglas
+  cortas, cada una con el nombre de su tool: que `code_impact` ya sabe quién usa
+  un símbolo antes de que grepeés, que antes de cambiar una firma recorre sus
+  llamadores, que `code_search` ubica un símbolo por su nombre, o que si un
+  archivo que esperabas no está en el libro, `code_index` dice por qué lo saltó.
+  Es el mismo mecanismo con el que Pi suma las reglas de sus propias tools, así
+  que el texto se lee junto a las declaraciones y no aparece si las tools no
+  están. El contrato de cada tool sigue siendo del servidor: acá solo va cuándo
+  conviene llamarlas.
 - **Declara quién es la sesión.** En el `env` del registro pasa
   `GRAPHIUM_CLIENT=pi`, `GRAPHIUM_PROJECT` (el directorio de trabajo) y
   `GRAPHIUM_SESSION` (el id de la sesión de Pi, cuando se puede leer). Gracias a
@@ -35,10 +51,16 @@ binario, registra el servidor MCP para la sesión y agrega el comando
 
 Dónde busca el binario, en orden:
 
-1. `GRAPHIUM_BIN`, si está definida y existe.
-2. `target/release/graphium` y después `target/debug/graphium` en el directorio
-   actual (un checkout de Graphium).
-3. `graphium` en el `PATH`.
+1. `GRAPHIUM_BIN`, si está definida y existe: quien la define ya respondió.
+2. Subiendo desde el directorio de la extensión: `target/release/graphium` y
+   después `target/debug/graphium` del checkout al que la extensión pertenece,
+   que es como se prueba un cambio en desarrollo.
+3. `graphium` en el `PATH`: es el producto instalado, y la extensión sirve al
+   producto.
+4. Al final, subiendo desde el directorio de trabajo: un build ahí es una
+   coincidencia del proyecto en el que estás, así que nunca le gana al binario
+   instalado. Queda como último recurso para cuando la extensión se carga desde
+   otro lado y querés el build de tu directorio.
 
 ## Instalar
 
@@ -90,10 +112,13 @@ node extensions/pi/graphium/verify.mjs
 
 Cubre la búsqueda del binario (incluida la ausencia), la raíz de exportes, el
 listado de archivos exportados, el orden de los bytes que muestra, el registro
-del servidor MCP, la descripción que vende el libro, la línea del libro y que el
-comando sin binario avise en vez de tirar. Para la comprobación que exige un
-build en el checkout (`target/release/graphium` o `target/debug/graphium`),
-compilá antes con `scripts/build.sh --release`.
+del servidor MCP con `exposure: "direct"`, la descripción que nombra las cinco
+tools del libro sin prometer lo que no cumple, el slot de guías por tool (cada
+bullet nombra su tool), que los hooks estén cableados y que una guía que falla
+no rompa la sesión, la línea del libro y que el comando sin binario avise en vez
+de tirar. Un check que falla no corta el resto: la corrida lista todos. Para la
+comprobación que exige un build en el checkout (`target/release/graphium` o
+`target/debug/graphium`), compilá antes con `scripts/build.sh --release`.
 
 ## La configuración que Pi lee
 
@@ -115,3 +140,10 @@ entrada, con la ruta absoluta del binario, para pegarla a mano:
 La extensión no pasa por ese archivo: registra el servidor desde `index.ts` y le
 agrega el `env` de identidad. Un `mcp.json` con una entrada `graphium` sigue
 ganando, así que el humano tiene la última palabra.
+
+Si escribís la entrada a mano, agregale `"exposure": "direct"` y el `env` si
+querés la identidad: una entrada de `mcp.json` sin `exposure` cae en `codemode`,
+y ahí el modelo no ve las tools hasta que se le ocurre buscarlas — el mismo
+problema que la extensión arregla, reintroducido por el archivo. `graphium
+mcp-config --client pi` imprime la entrada mínima del binario; la exposición es
+decisión del cliente.

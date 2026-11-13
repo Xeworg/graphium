@@ -80,9 +80,13 @@ los hosts de agente que el instalador conoce (hoy `pi` y `gentle-shell`):
   agente más tarde.
 - Si la terminal no da para el checklist (TERM tonta, sin `tput`/terminfo)
   pregunta con números, como antes.
-- Sin terminal (scripts, pipes) hay que pedir los agentes explícitos:
-  `./install.sh agent --env pi [--env gentle-shell]` o `./install.sh agent
-  --all`.
+- La terminal de control es la evidencia de un humano, no `stdin`: el
+  instalador abre `/dev/tty`, así que el checklist también aparece cuando el
+  script llega pipeado (`curl … | bash`), donde `stdin` es el propio script.
+- Solo sin terminal de control (cron, CI, `docker run` sin `-t`, `stdin`
+  cerrado) hay que pedir los agentes explícitos: `./install.sh agent --env pi
+  [--env gentle-shell]` o `./install.sh agent --all`. En ese caso el instalador
+  lo dice y termina, nunca espera una tecla.
 
 Agregar un agente nuevo es una línea en el registro `AGENT_REGISTRY` de
 `install.sh` (nombre, variable de entorno y directorio por defecto): la ayuda,
