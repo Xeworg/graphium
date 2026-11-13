@@ -115,3 +115,45 @@ arreglo.
 PR `staging` → `main`; las slices son los commits, y este es uno solo porque los
 tres defectos se arreglan en el mismo camino (empaquetar, elegir destino, elegir
 binario) y ninguno se puede probar sin los otros dos en su lugar.
+
+### Posterior (2026-11-12, segunda tanda): el camino publicado se puede probar sin publicar
+
+El dueño quiso ver el instalador `curl | bash` funcionando **antes** del PR. Dos
+cosas lo impedían:
+
+4. **`--version` / `GRAPHIUM_VERSION` se parseaba y se tiraba.** `main` lo leía
+   para `install`, y después `install_binary` llamaba
+   `install_binary_from_release ""`: la descarga iba a `/latest/download` aunque
+   el humano hubiera fijado una versión. La extensión tenía el mismo agujero en
+   `install_extension_from_release`, que pasaba `""` a `download_verified`. Ahora
+   hay **una** `RELEASE_VERSION` que fijan `install --version`,
+   `agent --version` y `GRAPHIUM_VERSION`, y la usan los dos caminos: el binario
+   y la extensión son el mismo release, y bajarlos de versiones distintas deja un
+   agente que no sabe con qué binario habla. `update` además baja **la versión que
+   anunció**, no `/latest`, porque entre el chequeo y la descarga `/latest` puede
+   moverse.
+5. **No había forma de apuntar el instalador a otro lado.** `RELEASES_URL` era
+   una constante; ahora es `GRAPHIUM_RELEASES_URL`, con el comentario que dice
+   para qué existe: ejercitar el camino publicado contra un servidor local. El
+   script no sabe la diferencia, así que la prueba es la misma que corre un
+   usuario.
+
+La prueba local completa, con los artefactos reales de `0.2.0` servidos por
+`python3 -m http.server` y un `HOME` de scratch:
+
+```
+cat install.sh | env GRAPHIUM_RELEASES_URL=http://127.0.0.1:8731/releases \
+  GRAPHIUM_VERSION=0.2.0 HOME=/tmp/f30-user bash
+  → Bajando .../releases/download/v0.2.0/graphium-linux-x86_64.tar.gz
+  → Instalado /tmp/f30-user/.local/bin/graphium            (46.207.640 B)
+
+cat install.sh | env ... bash -s -- agent --env pi
+  → Bajando .../releases/download/v0.2.0/graphium-pi-extension.tar.gz
+  → Extensión instalada en /tmp/f30-user/.pi/agent/extensions  ("version": "0.2.0")
+```
+
+`tests/installer/release_version_test.sh` fija ese comportamiento de forma
+hermética: arma un release falso bajo `file://` (binario, extensión y
+`SHA256SUMS`) y exige que las dos descargas vayan a `download/v0.2.0` y **nunca**
+a `latest/download`, además de probar `agent --version`. Se vio rojo revirtiendo
+sólo el plumbing de la versión, y verde con el arreglo.

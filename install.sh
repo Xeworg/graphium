@@ -38,8 +38,8 @@ set -euo pipefail
 usage() {
   local name env_name default_dir
   printf '%s\n' \
-    'Uso: ./install.sh [install]' \
-    '       ./install.sh agent [--env <name> ... | --all]' \
+    'Uso: ./install.sh [install] [--version <semver>]' \
+    '       ./install.sh agent [--env <name> ... | --all] [--version <semver>]' \
     '       ./install.sh update' \
     '       ./install.sh uninstall' \
     '       ./install.sh --help' \
@@ -49,6 +49,14 @@ usage() {
     'pipeado desde la red) baja el binario publicado y verifica su checksum.' \
     'Correrlo de nuevo sobreescribe el binario y, si hay un release más' \
     'nuevo, actualiza.' \
+    '' \
+    'Versión: sin --version baja el último release publicado. Con' \
+    '--version <semver> (o GRAPHIUM_VERSION en el entorno) baja ESE release,' \
+    'para el binario y para la extensión: las dos cosas son el mismo' \
+    'release, y mezclarlas deja un agente que no sabe con qué binario' \
+    'habla.' \
+    'GRAPHIUM_RELEASES_URL cambia la base de los releases; sirve para' \
+    'ejercitar el camino publicado contra un servidor local.' \
     '' \
     'Comandos:' \
     '  install    Instala (el comando por omisión). Con un release más nuevo' \
@@ -64,7 +72,8 @@ usage() {
     '             detectados ya marcados. Si la terminal no da para el' \
     '             checklist (TERM tonta, sin tput/terminfo) pregunta con' \
     '             números. Sin tty hay que pasar --env <name> (uno o más)' \
-    '             o --all.' \
+    '             o --all. Con --version instala la extensión de ese release' \
+    '             en vez de la del último.' \
     '  update     Si hay un release más nuevo que lo instalado, actualiza el' \
     '             binario y refresca la extensión en cada agente que ya la' \
     '             tiene. Antes del primer release avisa y no hace nada.' \
@@ -103,7 +112,16 @@ GRAPHIUM_BIN="$INSTALL_DIR/graphium"
 # El mismo script viaja en cada release. Estas constantes son el único lugar
 # que sabe dónde viven los releases.
 REPO_URL="https://github.com/Xeworg/graphium"
-RELEASES_URL="https://github.com/Xeworg/graphium/releases"
+# `GRAPHIUM_RELEASES_URL` existe para poder ejercitar el camino publicado sin
+# publicar: un servidor local con los mismos nombres de asset alcanza, y el
+# script no sabe la diferencia. En uso normal no se define.
+RELEASES_URL="${GRAPHIUM_RELEASES_URL:-https://github.com/Xeworg/graphium/releases}"
+# La versión de release que se pidió, si se pidió: `--version` en `install`
+# o en `agent`, o `GRAPHIUM_VERSION` en el entorno. Vacía significa «el
+# último publicado». Es una sola variable porque el binario y la extensión
+# son el mismo release: bajar uno de una versión y el otro de otra deja un
+# agente que no sabe con qué binario habla.
+RELEASE_VERSION="${GRAPHIUM_VERSION:-}"
 
 # Resuelve la raíz del repositorio sin herramientas externas para que el
 # chequeo de toolchain funcione aun con un PATH vacío.
@@ -362,8 +380,13 @@ install_binary_from_release() {
 # Instala o actualiza el binario, eligiendo el modo según el script. Con
 # announce_update en 1, un binario viejo instalado genera el aviso de
 # actualización (el modo release baja el nuevo; el modo repo compila).
+#
+# `requested` es la versión que pidió el humano (`--version` o
+# `GRAPHIUM_VERSION`). Con versión se baja ese release exacto; sin versión se
+# resuelve el último publicado. Antes se descartaba en silencio y el instalador
+# bajaba `/latest` aunque el humano hubiera fijado una versión.
 install_binary() {
-  local announce_update="${1:-0}"
+  local announce_update="${1:-0}" requested="${2:-$RELEASE_VERSION}"
   local previous
   previous="$(installed_version)"
   if ((IN_REPO == 1)); then
@@ -375,11 +398,11 @@ install_binary() {
     install_binary_from_source_repo
   else
     local latest=""
-    latest="$(latest_release_version 2>/dev/null || true)"
+    latest="${requested:-$(latest_release_version 2>/dev/null || true)}"
     if [[ -n "$previous" && -n "$latest" ]] && version_is_newer "$previous" "$latest"; then
       printf 'Actualizando: %s -> %s\n' "$previous" "$latest"
     fi
-    install_binary_from_release ""
+    install_binary_from_release "$requested"
   fi
   if ((announce_update == 1)) && [[ -n "$previous" ]]; then
     printf 'La versión anterior era %s; ahora es %s.\n' "$previous" "$(installed_version)"
@@ -461,7 +484,7 @@ install_extension_from_repo() {
 install_extension_from_release() {
   local env="$1" dest
   dest="$(agent_env_dir "$env")"
-  download_verified "graphium-pi-extension.tar.gz" "" || return 1
+  download_verified "graphium-pi-extension.tar.gz" "$RELEASE_VERSION" || return 1
   mkdir -p -- "$DOWNLOAD_DIR/extract"
   if ! tar -xzf "$ASSET_FILE" -C "$DOWNLOAD_DIR/extract"; then
     rm -rf -- "$DOWNLOAD_DIR"
@@ -938,7 +961,10 @@ cmd_update() {
     return 0
   fi
   printf 'Hay versión nueva: %s -> %s.\n' "$previous" "$latest"
-  install_binary_from_release "" || return 1
+  # La versión anunciada es la que se baja: entre el chequeo y la descarga
+  # `/latest` puede moverse, y actualizar a otra cosa que la anunciada es peor
+  # que no actualizar.
+  install_binary_from_release "$latest" || return 1
   # La extensión se refresca en cada agente que ya la tiene: instalarla en
   # hosts nuevos es trabajo de `agent`, no de `update`.
   local env dest version_ext
@@ -984,12 +1010,11 @@ main() {
   case "$command" in
     install)
       shift || true
-      local version="${GRAPHIUM_VERSION:-}"
       while (($# > 0)); do
         case "$1" in
           --version)
             (($# >= 2)) || die "--version necesita un valor"
-            version="$2"
+            RELEASE_VERSION="${2#v}"
             shift 2
             ;;
           *)
@@ -1005,7 +1030,21 @@ main() {
       ;;
     agent)
       shift || true
-      cmd_agent "$@"
+      local agent_args=()
+      while (($# > 0)); do
+        case "$1" in
+          --version)
+            (($# >= 2)) || die "--version necesita un valor"
+            RELEASE_VERSION="${2#v}"
+            shift 2
+            ;;
+          *)
+            agent_args+=("$1")
+            shift
+            ;;
+        esac
+      done
+      cmd_agent ${agent_args[@]+"${agent_args[@]}"}
       ;;
     update)
       shift || true
